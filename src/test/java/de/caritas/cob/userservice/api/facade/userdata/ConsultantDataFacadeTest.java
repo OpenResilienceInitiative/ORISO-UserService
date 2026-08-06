@@ -52,8 +52,7 @@ public class ConsultantDataFacadeTest {
   }
 
   @Test
-  public void
-      saveEnquiryMessageAndRocketChatGroupId_Should_RemoveHtmlCodeAndJsFromMessageForXssProtection() {
+  public void updateConsultantAbsent_Should_RemoveHtmlCodeAndJsFromMessageForXssProtection() {
     when(consultantService.saveConsultant(Mockito.any(Consultant.class))).thenReturn(CONSULTANT);
 
     Consultant consultant =
@@ -124,5 +123,180 @@ public class ConsultantDataFacadeTest {
     consultantDataFacade.addConsultantDisplayNameToSessionList(response);
 
     assertEquals(displayName, response.getSessions().get(0).getConsultant().getDisplayName());
+  }
+
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-03
+  // ---------------------------------------------------------------------------
+
+  // --- addConsultantDisplayNameToSessionList(GroupSessionListResponseDTO) ---
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_GroupSession_Should_ReturnEarly_When_DtoIsNull() {
+    consultantDataFacade.addConsultantDisplayNameToSessionList((GroupSessionListResponseDTO) null);
+
+    Mockito.verifyNoInteractions(accountManager);
+  }
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_GroupSession_Should_ReturnEarly_When_SessionsIsNull() {
+    GroupSessionListResponseDTO response = new GroupSessionListResponseDTO();
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(response);
+
+    Mockito.verifyNoInteractions(accountManager);
+  }
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_GroupSession_Should_SkipSession_When_ConsultantIsNull() {
+    de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO session =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO();
+    GroupSessionListResponseDTO response =
+        new GroupSessionListResponseDTO().sessions(List.of(session));
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(response);
+
+    Mockito.verifyNoInteractions(accountManager);
+  }
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_GroupSession_Should_SkipSession_When_ConsultantUsernameIsNull() {
+    de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO session =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO();
+    de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO consultant =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO();
+    session.setConsultant(consultant);
+    GroupSessionListResponseDTO response =
+        new GroupSessionListResponseDTO().sessions(List.of(session));
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(response);
+
+    Mockito.verifyNoInteractions(accountManager);
+  }
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_GroupSession_Should_NotSetDisplayName_When_AccountManagerReturnsEmpty() {
+    de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO session =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO();
+    de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO consultant =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO();
+    consultant.setUsername("someuser");
+    session.setConsultant(consultant);
+    GroupSessionListResponseDTO response =
+        new GroupSessionListResponseDTO().sessions(List.of(session));
+    when(accountManager.findConsultantByUsername("someuser")).thenReturn(Optional.empty());
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(response);
+
+    assertNull(response.getSessions().get(0).getConsultant().getDisplayName());
+  }
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_GroupSession_Should_ContinueProcessing_When_AccountManagerThrows() {
+    de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO session =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO();
+    de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO consultant =
+        new de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionConsultantDTO();
+    consultant.setUsername("someuser");
+    session.setConsultant(consultant);
+    GroupSessionListResponseDTO response =
+        new GroupSessionListResponseDTO().sessions(List.of(session));
+    when(accountManager.findConsultantByUsername("someuser"))
+        .thenThrow(new RuntimeException("keycloak down"));
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(response);
+
+    assertNull(response.getSessions().get(0).getConsultant().getDisplayName());
+  }
+
+  // --- addConsultantDisplayNameToSessionList(UserSessionListResponseDTO) ---
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_UserSession_Should_ReturnEarly_When_DtoIsNull() {
+    consultantDataFacade.addConsultantDisplayNameToSessionList((UserSessionListResponseDTO) null);
+
+    Mockito.verifyNoInteractions(accountManager);
+  }
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_UserSession_Should_ReturnEarly_When_SessionsIsNull() {
+    UserSessionListResponseDTO response = new UserSessionListResponseDTO();
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(response);
+
+    Mockito.verifyNoInteractions(accountManager);
+  }
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_UserSession_Should_ContinueProcessing_When_AccountManagerThrows() {
+    de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO session =
+        new de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO();
+    de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForUserDTO consultant =
+        new de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForUserDTO();
+    consultant.setUsername("someuser");
+    session.setConsultant(consultant);
+    UserSessionListResponseDTO response =
+        new UserSessionListResponseDTO().sessions(List.of(session));
+    when(accountManager.findConsultantByUsername("someuser"))
+        .thenThrow(new RuntimeException("keycloak down"));
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(response);
+
+    assertNull(response.getSessions().get(0).getConsultant().getDisplayName());
+  }
+
+  // --- addConsultantDisplayNameToSessionList(List<ConsultantSessionResponseDTO>) ---
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_ConsultantSession_Should_SkipSession_When_ConsultantIsNull() {
+    de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO session =
+        new de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO();
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(List.of(session));
+
+    Mockito.verifyNoInteractions(accountManager);
+  }
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_ConsultantSession_Should_NotSetDisplayName_When_AccountManagerReturnsEmpty() {
+    de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO session =
+        new de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO();
+    de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO consultant =
+        new de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO();
+    consultant.setUsername("chatowner");
+    session.setConsultant(consultant);
+    when(accountManager.findConsultantByUsername("chatowner")).thenReturn(Optional.empty());
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(List.of(session));
+
+    assertNull(session.getConsultant().getDisplayName());
+  }
+
+  @Test
+  public void
+      addConsultantDisplayNameToSessionList_ConsultantSession_Should_ContinueProcessing_When_AccountManagerThrows() {
+    de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO session =
+        new de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO();
+    de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO consultant =
+        new de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO();
+    consultant.setUsername("chatowner");
+    session.setConsultant(consultant);
+    when(accountManager.findConsultantByUsername("chatowner"))
+        .thenThrow(new RuntimeException("service unavailable"));
+
+    consultantDataFacade.addConsultantDisplayNameToSessionList(List.of(session));
+
+    assertNull(session.getConsultant().getDisplayName());
   }
 }

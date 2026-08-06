@@ -11,7 +11,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.io.FileReader;
@@ -50,7 +50,7 @@ public class ConsultantImportService {
   @Value("${multitenancy.enabled}")
   private Boolean multiTenancyEnabled;
 
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityUsernameAvailability identityUsernameAvailability;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull AgencyService agencyService;
@@ -187,7 +187,7 @@ public class ConsultantImportService {
           }
 
           // Check if decoded username is already taken
-          if (!identityClient.isUsernameAvailable(importRecord.getUsername())) {
+          if (!identityUsernameAvailability.isUsernameAvailable(importRecord.getUsername())) {
             writeToImportLog(
                 String.format(
                     "Could not create Keycloak user for old id %s - username or e-mail address is already taken.",
@@ -235,7 +235,7 @@ public class ConsultantImportService {
           logMessage = "Roles: " + String.join(",", roles);
           writeToImportLog(logMessage);
 
-          logMessage = "RocketChat-ID: " + consultant.getRocketChatId();
+          logMessage = "Matrix-ID: " + consultant.getMatrixUserId();
           writeToImportLog(logMessage);
         }
 

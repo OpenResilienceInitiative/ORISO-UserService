@@ -21,9 +21,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 
-@ExtendWith(SpringExtension.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 public class GetChatFacadeTest {
 
   @InjectMocks private GetChatFacade getChatFacade;
@@ -90,7 +93,7 @@ public class GetChatFacadeTest {
 
     assertThat(result, instanceOf(ChatInfoResponseDTO.class));
     assertEquals(ACTIVE_CHAT.getId(), result.getId());
-    assertEquals(ACTIVE_CHAT.getGroupId(), result.getGroupId());
+    assertEquals(ACTIVE_CHAT.getMatrixRoomId(), result.getMatrixRoomId());
     assertEquals(true, result.getActive());
 
     verify(chatService, times(1)).getChat(ACTIVE_CHAT.getId());
@@ -106,7 +109,7 @@ public class GetChatFacadeTest {
 
     assertThat(result, instanceOf(ChatInfoResponseDTO.class));
     assertEquals(ACTIVE_CHAT.getId(), result.getId());
-    assertEquals(ACTIVE_CHAT.getGroupId(), result.getGroupId());
+    assertEquals(ACTIVE_CHAT.getMatrixRoomId(), result.getMatrixRoomId());
     assertEquals(true, result.getActive());
 
     verify(chatService, times(1)).getChat(ACTIVE_CHAT.getId());

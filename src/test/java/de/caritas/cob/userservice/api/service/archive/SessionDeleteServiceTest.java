@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.ArchiveOrDeleteSessionStatisticsEvent;
@@ -37,6 +38,8 @@ class SessionDeleteServiceTest {
   @Mock StatisticsService statisticsService;
 
   @Mock SessionService sessionService;
+
+  @Mock MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
   @Test
   void deleteSessionAndInactiveUser_Should_ReturnOK_When_SessionIdIsKnown() {

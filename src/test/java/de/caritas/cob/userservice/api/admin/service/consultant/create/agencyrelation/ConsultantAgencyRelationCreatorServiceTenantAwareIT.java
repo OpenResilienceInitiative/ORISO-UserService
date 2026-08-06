@@ -6,8 +6,6 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.timeout;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.google.api.client.util.Lists;
@@ -15,10 +13,11 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
-import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
+import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -26,7 +25,16 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
@@ -41,19 +49,19 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.annotation.DirtiesContext.ClassMode;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @DirtiesContext(classMode = ClassMode.BEFORE_EACH_TEST_METHOD)
 @TestPropertySource(properties = "multitenancy.enabled=true")
 @Transactional(propagation = Propagation.NEVER)
@@ -73,13 +81,23 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
 
   @Autowired private SessionRepository sessionRepository;
 
-  @MockBean private AgencyService agencyService;
+  @MockitoBean private AgencyService agencyService;
 
-  @MockBean private IdentityClient identityClient;
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
+      })
+  private IdentityClient identityClient;
 
-  @MockBean private RocketChatFacade rocketChatFacade;
-
-  @MockBean private ConsultingTypeManager consultingTypeManager;
+  @MockitoBean private ConsultingTypeManager consultingTypeManager;
 
   @BeforeEach
   public void beforeTests() {
@@ -92,9 +110,7 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
   }
 
   @Test
-  void
-      createNewConsultantAgency_Should_addConsultantToEnquiriesRocketChatGroups_When_ParamsAreValidAndMultitenancyEnabled() {
-
+  void createNewConsultantAgency_ShouldPersistRelationWithTenant_WhenMultitenancyEnabled() {
     Consultant consultant = createConsultantWithoutAgencyAndSession();
 
     CreateConsultantAgencyDTO createConsultantAgencyDTO = new CreateConsultantAgencyDTO();
@@ -107,7 +123,9 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     agencyDTO.setId(15L);
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(0);
-    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    agencyDTO.setTenantId(1L);
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     Session enquirySessionWithoutConsultant =
         createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.NEW);
@@ -119,20 +137,51 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
         consultant.getId(), createConsultantAgencyDTO);
 
-    verify(rocketChatFacade, timeout(10000))
-        .addUserToRocketChatGroup(
-            consultant.getRocketChatId(), enquirySessionWithoutConsultant.getGroupId());
-
     List<ConsultantAgency> result =
         this.consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId());
 
     assertThat(result, notNullValue());
     assertThat(result, hasSize(1));
+    assertEquals(ConsultantAgencyStatus.CREATED, result.getFirst().getStatus());
     assertEquals(1, enquirySessionWithoutConsultant.getTenantId());
 
     List<ConsultantAgency> agenciesForConsultant =
         this.consultantAgencyRepository.findByConsultantId(consultant.getId());
     assertEquals(1, agenciesForConsultant.get(0).getTenantId());
+  }
+
+  @Test
+  void
+      createNewConsultantAgency_ShouldFinalizePersistedRelation_WhenMatrixOnlyAndMultitenancyEnabled() {
+    TenantContext.setCurrentTenant(0L);
+    Consultant consultant = createConsultantWithoutAgencyAndSession();
+    consultant.setTenantId(83L);
+    consultant.setStatus(ConsultantStatus.CREATED);
+    consultantRepository.save(consultant);
+
+    CreateConsultantAgencyDTO createConsultantAgencyDTO =
+        new CreateConsultantAgencyDTO().agencyId(15L).roleSetKey("valid-role-set");
+    when(identityClient.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
+    AgencyDTO agencyDTO = new AgencyDTO().id(15L).teamAgency(false).consultingType(0).tenantId(83L);
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
+    when(consultingTypeManager.getConsultingTypeSettings(0))
+        .thenReturn(new ExtendedConsultingTypeResponseDTO());
+
+    consultantAgencyRelationCreatorService.createNewConsultantAgency(
+        consultant.getId(), createConsultantAgencyDTO);
+
+    ConsultantAgency relation =
+        consultantAgencyRepository
+            .findByConsultantIdAndAgencyIdAndDeleteDateIsNull(consultant.getId(), 15L)
+            .getFirst();
+    assertEquals(ConsultantAgencyStatus.CREATED, relation.getStatus());
+    assertEquals(
+        ConsultantStatus.CREATED,
+        consultantRepository
+            .findByIdAndDeleteDateIsNull(consultant.getId())
+            .orElseThrow()
+            .getStatus());
   }
 
   private Consultant createConsultantWithoutAgencyAndSession() {
@@ -142,7 +191,9 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     consultant.setConsultantAgencies(null);
     consultant.setSessions(null);
     consultant.setConsultantMobileTokens(null);
-    consultant.setRocketChatId("RocketChatId");
+    consultant.setConsultantTopics(null);
+    // Required legacy model field; this slice removes its behavior, the schema cleanup follows.
+    consultant.setMatrixUserId("legacy-id");
     consultant.setDeleteDate(null);
     Set<Language> language = new HashSet<>();
     Language lang = new Language();
@@ -176,6 +227,7 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     session.setSessionTopics(Lists.newArrayList());
     session.setLanguageCode(LanguageCode.de);
     session.setIsConsultantDirectlySet(false);
+    session.setTenantId(1L);
 
     return this.sessionRepository.save(session);
   }

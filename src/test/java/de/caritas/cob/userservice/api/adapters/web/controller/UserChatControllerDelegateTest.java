@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -29,10 +30,9 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -57,6 +57,7 @@ class UserChatControllerDelegateTest {
   @Mock private Messaging messenger;
   @Mock private UserDtoMapper userDtoMapper;
   @Mock private AuthenticatedUser authenticatedUser;
+  @Mock private GroupChatFeatureGate groupChatFeatureGate;
 
   @InjectMocks private UserChatControllerDelegate delegate;
 
@@ -86,6 +87,7 @@ class UserChatControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
     assertThat(response.getBody()).isSameAs(createChatResponseDTO);
+    verify(groupChatFeatureGate).requireEnabled(consultant);
   }
 
   @Test
@@ -111,27 +113,38 @@ class UserChatControllerDelegateTest {
   }
 
   @Test
-  void getChatShouldReturnOkAndEnrichBannedUsersWhenMetadataExists() {
+  void getChatShouldReturnFacadeResponse() {
     var chatInfoResponseDTO = new ChatInfoResponseDTO();
-    var metadata = Map.<String, Object>of("banned", List.of("user-id"));
     when(getChatFacade.getChat(1L)).thenReturn(chatInfoResponseDTO);
-    when(authenticatedUser.getUserId()).thenReturn("consultant-id");
-    when(messenger.findChatMetaInfo(1L, "consultant-id")).thenReturn(Optional.of(metadata));
-    when(userDtoMapper.bannedChatUserIdsOf(metadata)).thenReturn(List.of("banned-user"));
 
     var response = delegate.getChat(1L);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(chatInfoResponseDTO);
-    assertThat(chatInfoResponseDTO.getBannedUsers()).containsExactly("banned-user");
   }
 
   @Test
   void assignChatShouldDelegateAndReturnOk() {
-    var response = delegate.assignChat("group-id");
+    var response = delegate.assignChat("!group:matrix.example");
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(assignChatFacade).assignChat("group-id", authenticatedUser);
+    verify(assignChatFacade).assignChat("!group:matrix.example", authenticatedUser);
+  }
+
+  @Test
+  void assignChatDelegatesStableNumericSeriesIdentifier() {
+    var response = delegate.assignChat("1013");
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(assignChatFacade).assignChat(1013L, authenticatedUser);
+  }
+
+  @Test
+  void assignChatRejectsNumericSeriesIdentifierAboveLongRange() {
+    assertThatThrownBy(() -> delegate.assignChat("9223372036854775808"))
+        .isInstanceOf(BadRequestException.class);
+
+    verify(assignChatFacade, never()).assignChat(anyLong(), any());
   }
 
   @Test
@@ -151,7 +164,7 @@ class UserChatControllerDelegateTest {
   }
 
   @Test
-  void stopChatShouldUnbanStopAndReturnOk() {
+  void stopChatShouldStopAndReturnOk() {
     var chat = chat();
     var consultant = consultant();
     when(chatService.getChat(1L)).thenReturn(Optional.of(chat));
@@ -160,7 +173,6 @@ class UserChatControllerDelegateTest {
     var response = delegate.stopChat(1L);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(messenger).unbanUsersInChat(1L, "consultant-id");
     verify(stopChatFacade).stopChat(chat, consultant);
   }
 
@@ -207,7 +219,7 @@ class UserChatControllerDelegateTest {
   @Test
   void banFromChatShouldBanAdviceSeekerAndReturnNoContent() {
     var adviceSeeker = adviceSeeker();
-    when(accountManager.findAdviceSeekerByChatUserId("chat-user-id"))
+    when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker));
     when(messenger.existsChat(1L)).thenReturn(true);
     when(messenger.banUserFromChat("advice-seeker-id", 1L)).thenReturn(true);
@@ -220,7 +232,8 @@ class UserChatControllerDelegateTest {
 
   @Test
   void banFromChatShouldThrowNotFoundWhenAdviceSeekerDoesNotExist() {
-    when(accountManager.findAdviceSeekerByChatUserId("chat-user-id")).thenReturn(Optional.empty());
+    when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
+        .thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> delegate.banFromChat("chat-user-id", 1L))
         .isInstanceOf(NotFoundException.class);
@@ -228,7 +241,7 @@ class UserChatControllerDelegateTest {
 
   @Test
   void banFromChatShouldThrowNotFoundWhenChatDoesNotExist() {
-    when(accountManager.findAdviceSeekerByChatUserId("chat-user-id"))
+    when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker()));
     when(messenger.existsChat(1L)).thenReturn(false);
 
@@ -238,7 +251,7 @@ class UserChatControllerDelegateTest {
 
   @Test
   void banFromChatShouldThrowNotFoundWhenBanFails() {
-    when(accountManager.findAdviceSeekerByChatUserId("chat-user-id"))
+    when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker()));
     when(messenger.existsChat(1L)).thenReturn(true);
     when(messenger.banUserFromChat(any(), anyLong())).thenReturn(false);
@@ -263,7 +276,7 @@ class UserChatControllerDelegateTest {
   private Consultant consultant() {
     return Consultant.builder()
         .id("consultant-id")
-        .rocketChatId("rocket-chat-id")
+        .matrixUserId("@member:matrix.example")
         .username("consultant")
         .firstName("Con")
         .lastName("Sultant")

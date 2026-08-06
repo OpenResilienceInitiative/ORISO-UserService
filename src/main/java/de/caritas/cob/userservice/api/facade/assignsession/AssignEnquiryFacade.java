@@ -3,35 +3,31 @@ package de.caritas.cob.userservice.api.facade.assignsession;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static java.util.Objects.nonNull;
-import static java.util.concurrent.CompletableFuture.supplyAsync;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
-import de.caritas.cob.userservice.api.admin.service.rocketchat.RocketChatRemoveFromGroupOperationService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
-import de.caritas.cob.userservice.api.facade.RocketChatFacade;
-import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
+import de.caritas.cob.userservice.api.facade.TeamDiscussionFacade;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
+import de.caritas.cob.userservice.api.helper.UserHelper;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.AssignSessionStatisticsEvent;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.statisticsservice.generated.web.model.UserRole;
-import java.util.List;
-import java.util.Map;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.UUID;
-import java.util.function.Supplier;
-import javax.servlet.http.HttpServletRequest;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -48,24 +44,32 @@ import org.springframework.stereotype.Service;
 public class AssignEnquiryFacade {
 
   private final @NonNull SessionService sessionService;
-  private final @NonNull RocketChatFacade rocketChatFacade;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull SessionToConsultantVerifier sessionToConsultantVerifier;
-  private final @NonNull ConsultingTypeManager consultingTypeManager;
-  private final @NonNull UnauthorizedMembersProvider unauthorizedMembersProvider;
   private final @NonNull StatisticsService statisticsService;
   private final @NonNull EmailNotificationFacade emailNotificationFacade;
-  private final @NonNull TenantContextProvider tenantContextProvider;
   private final @NonNull HttpServletRequest httpServletRequest;
-  private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull UserRepository userRepository;
+  private final @NonNull UserHelper userHelper;
+  private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
-  private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
 
   /**
-   * Assigns the given {@link Session} session to the given {@link Consultant}. Remove all other
-   * consultants from the Rocket.Chat group which don't have the right to view this session anymore.
+   * "Supervision (auto-assigned)" (grill 2026-07-13): attaches the accepting counsellor's standing
+   * supervisor once the case is theirs. Only the registered/Matrix path uses it — Live Chat ({@link
+   * #assignAnonymousEnquiry}) is out of scope for supervision per ADR-002 and has no Matrix room to
+   * observe.
+   */
+  private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
+
+  private final @NonNull TeamDiscussionFacade teamDiscussionFacade;
+
+  /**
+   * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
+   * no longer have permission from its Matrix room.
    *
    * <p>If the statistics function is enabled, the assignment of the enquired is processed as
    * statistical event.
@@ -84,43 +88,31 @@ public class AssignEnquiryFacade {
     var requestURI = httpServletRequest.getRequestURI();
     var requestReferer = httpServletRequest.getHeader(HttpHeaders.REFERER);
     assignEnquiry(session, consultant, skipConsultantAssignmentAndSessionInProgressCheck);
-    liveEventNotificationService.sendAcceptAnonymousEnquiryEventToUser(
-        session.getUser().getUserId());
+    // The case is now committed to this counsellor (assignEnquiry rolls back and rethrows on any
+    // failure), so it is safe to layer standing supervision on top. This call never throws.
+    sessionSupervisorFacade.attachStandingSupervisorIfAssigned(session.getId(), consultant);
+    // ADR-016 hard close: the pre-acceptance Team-Besprechung archives the moment the case is
+    // accepted. Best-effort by the same contract — never blocks the acceptance.
+    teamDiscussionFacade.archiveDiscussionIfPresent(session);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
-    supplyAsync(updateRocketChatRooms(session, consultant, TenantContext.getCurrentTenant()))
-        .thenRun(
-            () -> {
-              var event =
-                  new AssignSessionStatisticsEvent(
-                      consultant.getId(), UserRole.CONSULTANT, session.getId());
-              event.setRequestUri(requestURI);
-              event.setRequestReferer(requestReferer);
-              event.setRequestUserId(consultant.getId());
-
-              statisticsService.fireEvent(event);
-            });
+    var event =
+        new AssignSessionStatisticsEvent(consultant.getId(), UserRole.CONSULTANT, session.getId());
+    event.setRequestUri(requestURI);
+    event.setRequestReferer(requestReferer);
+    event.setRequestUserId(consultant.getId());
+    statisticsService.fireEvent(event);
   }
 
   /**
-   * Assigns the given {@link Session} session to the given {@link Consultant}. Add the given {@link
-   * Consultant} to the Rocket.Chat group.
+   * Assigns the given {@link Session} session to the given {@link Consultant} and provisions the
+   * Matrix room.
    *
    * @param session the session to assign the consultant
    * @param consultant the consultant to assign
    */
   public void assignAnonymousEnquiry(Session session, Consultant consultant) {
     assignEnquiry(session, consultant);
-    try {
-      this.rocketChatFacade.addUserToRocketChatGroup(
-          consultant.getRocketChatId(), session.getGroupId());
-      this.rocketChatFacade.removeSystemMessagesFromRocketChatGroup(session.getGroupId());
-    } catch (Exception e) {
-      rollbackSessionUpdate(session);
-      throw new InternalServerErrorException(
-          String.format(
-              "Could not add consultant %s to group %s",
-              consultant.getRocketChatId(), session.getGroupId()));
-    }
+    eventNotificationService.createInquiryAcceptedNotification(session, consultant);
   }
 
   private void assignEnquiry(Session session, Consultant consultant) {
@@ -143,38 +135,17 @@ public class AssignEnquiryFacade {
 
     // Create Matrix room and invite user
     try {
-      // First, ensure consultant has a Matrix account
-      if (consultant.getMatrixUserId() == null) {
-        try {
-          var consultantPassword = java.util.UUID.randomUUID() + "-" + java.util.UUID.randomUUID();
-          var matrixUserResponse =
-              matrixSynapseService.createUser(
-                  consultant.getUsername(),
-                  consultantPassword,
-                  consultant.getFirstName() + " " + consultant.getLastName());
-
-          if (matrixUserResponse.getBody() != null
-              && matrixUserResponse.getBody().getUserId() != null) {
-            consultant.setMatrixUserId(matrixUserResponse.getBody().getUserId());
-            consultantRepository.save(consultant);
-            log.info(
-                "Created Matrix account for consultant: {} with ID: {}",
-                consultant.getUsername(),
-                matrixUserResponse.getBody().getUserId());
-          }
-        } catch (Exception e) {
-          log.error(
-              "Failed to create Matrix account for consultant: {}", consultant.getUsername(), e);
-        }
-      }
+      var user = session.getUser();
+      ensureUserMatrixAccount(user);
+      ensureConsultantMatrixAccount(consultant);
 
       log.info(
           "Matrix account status for session {}: user_matrix_id={}, consultant_matrix_id={}",
           session.getId(),
-          session.getUser().getMatrixUserId(),
+          user.getMatrixUserId(),
           consultant.getMatrixUserId());
 
-      if (session.getUser().getMatrixUserId() != null && consultant.getMatrixUserId() != null) {
+      if (!isBlank(user.getMatrixUserId()) && !isBlank(consultant.getMatrixUserId())) {
         String existingRoomId = session.getMatrixRoomId();
 
         if (existingRoomId != null && !existingRoomId.isBlank()) {
@@ -211,7 +182,7 @@ public class AssignEnquiryFacade {
             // Extract agency Matrix username
             String agencyMatrixUsername = null;
             if (agencyCredentials.getMatrixUserId().startsWith("@")) {
-              agencyMatrixUsername = agencyCredentials.getMatrixUserId().substring(1).split(":")[0];
+              agencyMatrixUsername = MatrixIds.localpart(agencyCredentials.getMatrixUserId());
             }
 
             if (isBlank(agencyMatrixUsername)) {
@@ -222,7 +193,7 @@ public class AssignEnquiryFacade {
 
             // Login as agency service account (room creator)
             String agencyToken =
-                matrixSynapseService.loginUser(
+                sessionRoomGateway.loginUser(
                     agencyMatrixUsername, agencyCredentials.getMatrixPassword());
 
             if (isBlank(agencyToken)) {
@@ -234,7 +205,7 @@ public class AssignEnquiryFacade {
 
             // Use agency token to invite consultant to existing room
             try {
-              matrixSynapseService.inviteUserToRoom(
+              sessionRoomGateway.inviteUser(
                   existingRoomId, consultant.getMatrixUserId(), agencyToken);
               log.info(
                   "Agency invited consultant {} to existing room {}",
@@ -248,7 +219,7 @@ public class AssignEnquiryFacade {
 
             // Use agency token to set consultant as admin (power level 100)
             boolean powerLevelSet =
-                matrixSynapseService.setUserPowerLevel(
+                sessionRoomGateway.setUserPowerLevel(
                     existingRoomId, consultant.getMatrixUserId(), 100, agencyToken);
             if (powerLevelSet) {
               log.info(
@@ -263,8 +234,7 @@ public class AssignEnquiryFacade {
             }
 
             // Login consultant and join room
-            String consultantToken =
-                matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+            String consultantToken = sessionRoomGateway.loginAsUser(consultant.getMatrixUserId());
 
             if (isBlank(consultantToken)) {
               log.warn(
@@ -275,8 +245,7 @@ public class AssignEnquiryFacade {
             }
 
             // Auto-join consultant to room
-            boolean consultantJoined =
-                matrixSynapseService.joinRoom(existingRoomId, consultantToken);
+            boolean consultantJoined = sessionRoomGateway.joinRoom(existingRoomId, consultantToken);
             if (!consultantJoined) {
               log.warn(
                   "Consultant {} failed to join existing room {} for session {}, creating new room",
@@ -294,7 +263,7 @@ public class AssignEnquiryFacade {
 
             // Remove agency service account from room (now only consultant + user remain)
             boolean agencyRemoved =
-                matrixSynapseService.removeUserFromRoom(
+                sessionRoomGateway.removeUserFromRoom(
                     existingRoomId, agencyCredentials.getMatrixUserId(), agencyToken);
             if (agencyRemoved) {
               log.info(
@@ -332,8 +301,8 @@ public class AssignEnquiryFacade {
       } else {
         throw new InternalServerErrorException(
             String.format(
-                "Matrix room creation failed for session %s: missing Matrix user id",
-                session.getId()));
+                "Matrix room creation failed for session %s: missing Matrix user id (user=%s, consultant=%s)",
+                session.getId(), user.getMatrixUserId(), consultant.getMatrixUserId()));
       }
     } catch (Exception e) {
       rollbackSessionUpdate(session);
@@ -350,43 +319,6 @@ public class AssignEnquiryFacade {
 
     emailNotificationFacade.sendInquiryAcceptedNotification(
         session.getUser(), consultant, TenantContext.getCurrentTenantData());
-  }
-
-  private Supplier<Object> updateRocketChatRooms(
-      Session session, Consultant consultant, Long currentTenantId) {
-    return () -> {
-      tenantContextProvider.setCurrentTenantContextIfMissing(currentTenantId);
-      updateRocketChatRooms(session.getGroupId(), session, consultant);
-      return null;
-    };
-  }
-
-  public void updateRocketChatRooms(String rcGroupId, Session session, Consultant consultant) {
-    try {
-      var memberList = this.rocketChatFacade.retrieveRocketChatMembers(rcGroupId);
-      removeUnauthorizedMembers(rcGroupId, session, consultant, memberList);
-      this.rocketChatFacade.removeSystemMessagesFromRocketChatGroup(rcGroupId);
-
-    } catch (Exception e) {
-      LogService.logRocketChatError(e);
-      throw e;
-    }
-  }
-
-  private void removeUnauthorizedMembers(
-      String rcGroupId, Session session, Consultant consultant, List<GroupMemberDTO> memberList) {
-    var consultantsToRemoveFromRocketChat =
-        unauthorizedMembersProvider.obtainConsultantsToRemove(
-            rcGroupId, session, consultant, memberList);
-
-    var rocketChatRemoveFromGroupOperationService =
-        RocketChatRemoveFromGroupOperationService.getInstance(
-                this.rocketChatFacade, this.identityClient, this.consultingTypeManager)
-            .onSessionConsultants(Map.of(session, consultantsToRemoveFromRocketChat));
-
-    if (rcGroupId.equalsIgnoreCase(session.getGroupId())) {
-      rocketChatRemoveFromGroupOperationService.removeFromGroupAndIgnoreGroupNotFound();
-    }
   }
 
   private void rollbackSessionUpdate(Session session) {
@@ -414,13 +346,10 @@ public class AssignEnquiryFacade {
       var roomName = "Session " + session.getId() + " - " + consultant.getUsername();
       var roomAlias = buildUniqueSessionRoomAlias(session.getId(), consultant.getId());
 
-      var matrixResponse =
-          matrixSynapseService.createRoomAsMatrixUser(
-              roomName, roomAlias, consultant.getMatrixUserId());
+      String roomId =
+          sessionRoomGateway.createRoomAsUser(roomName, roomAlias, consultant.getMatrixUserId());
 
-      if (matrixResponse == null
-          || matrixResponse.getBody() == null
-          || matrixResponse.getBody().getRoomId() == null) {
+      if (roomId == null) {
         log.error(
             "Matrix createRoom returned no room id for session {}, keeping previous room {}",
             session.getId(),
@@ -428,10 +357,7 @@ public class AssignEnquiryFacade {
         return false;
       }
 
-      String roomId = matrixResponse.getBody().getRoomId();
-
-      String consultantToken =
-          matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+      String consultantToken = sessionRoomGateway.loginAsUser(consultant.getMatrixUserId());
 
       if (isBlank(consultantToken)) {
         log.error(
@@ -441,11 +367,9 @@ public class AssignEnquiryFacade {
         return false;
       }
 
-      matrixSynapseService.inviteUserToRoom(
-          roomId, session.getUser().getMatrixUserId(), consultantToken);
+      sessionRoomGateway.inviteUser(roomId, session.getUser().getMatrixUserId(), consultantToken);
 
-      String userToken =
-          matrixSynapseService.loginAsUserAccessToken(session.getUser().getMatrixUserId());
+      String userToken = sessionRoomGateway.loginAsUser(session.getUser().getMatrixUserId());
       if (isBlank(userToken)) {
         log.error(
             "Could not mint user Matrix token after inviting user {} to room {}",
@@ -454,7 +378,7 @@ public class AssignEnquiryFacade {
         return false;
       }
 
-      boolean userJoined = matrixSynapseService.joinRoom(roomId, userToken);
+      boolean userJoined = sessionRoomGateway.joinRoom(roomId, userToken);
       if (userJoined) {
         log.info(
             "User {} auto-accepted room invitation for room: {}",
@@ -468,7 +392,7 @@ public class AssignEnquiryFacade {
         return false;
       }
 
-      boolean consultantJoined = matrixSynapseService.joinRoom(roomId, consultantToken);
+      boolean consultantJoined = sessionRoomGateway.joinRoom(roomId, consultantToken);
       if (consultantJoined) {
         log.info("Consultant {} confirmed in room: {}", consultant.getUsername(), roomId);
       } else {
@@ -477,8 +401,15 @@ public class AssignEnquiryFacade {
       }
 
       session.setMatrixRoomId(roomId);
-      session.setGroupId(roomId);
       sessionService.saveSession(session);
+
+      // Best-effort: the notification listener syncs as the technical admin and must
+      // be a member of the room to see message events at all.
+      try {
+        sessionRoomGateway.ensureAdminInRoom(roomId, consultant.getMatrixUserId());
+      } catch (Exception adminJoinError) {
+        log.warn("Could not add Matrix admin to room {}: {}", roomId, adminJoinError.getMessage());
+      }
 
       log.info(
           "Successfully created new Matrix room: {} with ID: {} for session: {}",
@@ -495,6 +426,84 @@ public class AssignEnquiryFacade {
           e);
       return false;
     }
+  }
+
+  private void ensureUserMatrixAccount(User user) {
+    if (user == null || !isBlank(user.getMatrixUserId())) {
+      return;
+    }
+
+    var matrixLocalpart = usernameTranscoder.decodeUsername(user.getUsername());
+    var matrixUserId = createOrResolveMatrixUserId(matrixLocalpart, matrixLocalpart);
+    if (!isBlank(matrixUserId)) {
+      user.setMatrixUserId(matrixUserId);
+      userRepository.save(user);
+      log.info("Ensured Matrix account for user {} with ID: {}", user.getUserId(), matrixUserId);
+    }
+  }
+
+  private void ensureConsultantMatrixAccount(Consultant consultant) {
+    if (consultant == null || !isBlank(consultant.getMatrixUserId())) {
+      return;
+    }
+
+    var matrixLocalpart = usernameTranscoder.decodeUsername(consultant.getUsername());
+    var displayName = consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
+    var matrixUserId = createOrResolveMatrixUserId(matrixLocalpart, displayName);
+    if (!isBlank(matrixUserId)) {
+      consultant.setMatrixUserId(matrixUserId);
+      consultantRepository.save(consultant);
+      log.info(
+          "Ensured Matrix account for consultant {} with ID: {}",
+          consultant.getUsername(),
+          matrixUserId);
+    }
+  }
+
+  private String createOrResolveMatrixUserId(String matrixLocalpart, String displayName) {
+    boolean tryFallback = false;
+    try {
+      var matrixUserId =
+          sessionRoomGateway.createUser(
+              matrixLocalpart, userHelper.getRandomPassword(), displayName);
+      if (!isBlank(matrixUserId)) {
+        return matrixUserId;
+      }
+      // Body is null or userId missing — creation silently failed, do not attempt resolution
+      log.warn(
+          "Matrix user creation returned no userId for localpart {}, skipping fallback",
+          matrixLocalpart);
+      return null;
+    } catch (de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException e) {
+      // The server rejected the registration, most likely because the account already exists.
+      // Try to verify and reuse it via a login probe.
+      log.warn(
+          "Failed to create Matrix user {} (may already exist), attempting to resolve: {}",
+          matrixLocalpart,
+          e.getMessage());
+      tryFallback = true;
+    } catch (Exception e) {
+      // Some other error (network, serialisation, …) — swallow and leave the caller to decide
+      // what to do with a missing Matrix ID.  Do NOT attempt the login probe here, because a
+      // generic failure does not imply the account exists.
+      log.warn(
+          "Failed to create Matrix user {}, skipping fallback: {}",
+          matrixLocalpart,
+          e.getMessage());
+    }
+
+    if (tryFallback) {
+      var candidateUserId = sessionRoomGateway.userIdFor(matrixLocalpart);
+      if (!isBlank(sessionRoomGateway.loginAsUser(candidateUserId))) {
+        log.info(
+            "Resolved existing Matrix account for localpart {}: {}",
+            matrixLocalpart,
+            candidateUserId);
+        return candidateUserId;
+      }
+    }
+
+    return null;
   }
 
   private String buildUniqueSessionRoomAlias(Long sessionId, String consultantId) {

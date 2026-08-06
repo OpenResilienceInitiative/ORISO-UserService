@@ -10,16 +10,15 @@ import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettings
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.SettingDTO;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.Optional;
-import javax.servlet.http.HttpServletRequest;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
-import org.springframework.web.context.request.RequestContextHolder;
-import org.springframework.web.context.request.ServletRequestAttributes;
+import org.springframework.web.client.RestClientException;
 
 @Component
 @RequiredArgsConstructor
@@ -29,7 +28,7 @@ public class MultitenancyWithSingleDomainTenantResolver implements TenantResolve
 
   private static final String USERS_CONSULTANTS = "/users/consultants/";
   private static final String USERS_CONSULTANTS_BY_ID_URL_REGEX =
-      USERS_CONSULTANTS + "[0-9a-fA-F-]{36}";
+      ".*" + USERS_CONSULTANTS + "([0-9a-fA-F-]{36}|[a-z]+(-[a-z]+)*)$";
 
   @Value("${feature.multitenancy.with.single.domain.enabled}")
   private boolean multitenancyWithSingleDomain;
@@ -48,8 +47,8 @@ public class MultitenancyWithSingleDomainTenantResolver implements TenantResolve
   public Optional<Long> resolve(HttpServletRequest request) {
     if (multitenancyWithSingleDomain) {
       Optional<Long> tenantIDfromAgency = resolveTenantFromAgency();
-      if (tenantIDfromAgency.isEmpty() && requestParameterContainsConsultantId()) {
-        return resolveTenantFromConsultantRequestParameter();
+      if (tenantIDfromAgency.isEmpty() && requestParameterContainsConsultantId(request)) {
+        return resolveTenantFromConsultantRequestParameter(request);
       } else if (tenantIDfromAgency.isEmpty()) {
         return resolveMainTenantIdFromApplicationSettings();
       } else {
@@ -59,29 +58,33 @@ public class MultitenancyWithSingleDomainTenantResolver implements TenantResolve
     return Optional.empty();
   }
 
-  private Optional<Long> resolveTenantFromConsultantRequestParameter() {
-    // temporarily set technical tenant to be able to run query during tenant determination
+  private Optional<Long> resolveTenantFromConsultantRequestParameter(HttpServletRequest request) {
+    // temporarily set technical tenant to be able to run query during tenant determination;
+    // always clear it again, even when the lookup throws
     TenantContext.setCurrentTenant(0L);
-    Optional<Consultant> consultant = consultantService.getConsultant(getConsultantId());
-    TenantContext.clear();
-    if (consultant.isPresent()) {
-      return Optional.of(consultant.get().getTenantId());
+    try {
+      String consultantId = getConsultantId(request);
+      Optional<Consultant> consultant =
+          consultantService
+              .getConsultant(consultantId)
+              .or(() -> consultantService.getConsultantByPublicSlug(consultantId));
+      if (consultant.isPresent()) {
+        return Optional.of(consultant.get().getTenantId());
+      }
+      return Optional.empty();
+    } finally {
+      TenantContext.clear();
     }
-    return Optional.empty();
   }
 
-  private boolean requestParameterContainsConsultantId() {
-    HttpServletRequest request = getRequest();
+  private boolean requestParameterContainsConsultantId(HttpServletRequest request) {
     return request.getRequestURI().matches(USERS_CONSULTANTS_BY_ID_URL_REGEX);
   }
 
-  private String getConsultantId() {
-    return getRequest().getRequestURI().replace(USERS_CONSULTANTS, "");
-  }
-
-  private HttpServletRequest getRequest() {
-    return ((ServletRequestAttributes) RequestContextHolder.currentRequestAttributes())
-        .getRequest();
+  private String getConsultantId(HttpServletRequest request) {
+    String requestUri = request.getRequestURI();
+    return requestUri.substring(
+        requestUri.lastIndexOf(USERS_CONSULTANTS) + USERS_CONSULTANTS.length());
   }
 
   private Optional<Long> resolveTenantFromAgency() {
@@ -90,9 +93,17 @@ public class MultitenancyWithSingleDomainTenantResolver implements TenantResolve
       log.debug("Agency id is empty, multitenancyWithSingleDomainTenantResolver does not resolve");
       return Optional.empty();
     }
-    AgencyDTO agency = agencyService.getAgency(agencyId.get());
-    validateResolvedAgencyContainsTenant(agency);
-    return Optional.of(agency.getTenantId());
+    try {
+      AgencyDTO agency = agencyService.getAgency(agencyId.get());
+      validateResolvedAgencyContainsTenant(agency);
+      return Optional.of(agency.getTenantId());
+    } catch (RestClientException exception) {
+      log.warn(
+          "Could not resolve tenant from agencyId header {}. Falling back to main tenant.",
+          agencyId.get(),
+          exception);
+      return Optional.empty();
+    }
   }
 
   private Optional<Long> resolveMainTenantIdFromApplicationSettings() {
@@ -113,6 +124,9 @@ public class MultitenancyWithSingleDomainTenantResolver implements TenantResolve
   }
 
   private void validateResolvedAgencyContainsTenant(AgencyDTO agency) {
+    if (agency == null) {
+      throw new BadRequestException("Cannot resolve tenant, as the agency could not be found!");
+    }
     if (agency.getTenantId() == null) {
       throw new BadRequestException(
           "Cannot resolve tenant, as the resolved agency has null tenantId!");

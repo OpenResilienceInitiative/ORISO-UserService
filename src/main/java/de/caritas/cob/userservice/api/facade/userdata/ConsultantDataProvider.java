@@ -9,7 +9,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailToggle;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailType;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -27,6 +26,8 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
 
 /** Provider for consultant information. */
@@ -48,10 +49,16 @@ public class ConsultantDataProvider {
    * @param consultant a {@link Consultant} instance
    * @return the user data
    */
+  @Transactional(readOnly = true)
   public UserDataResponseDTO retrieveData(Consultant consultant) {
     if (isEmpty(consultant.getConsultantAgencies())) {
-      throw new InternalServerErrorException(
-          String.format("No agency available for consultant %s", consultant.getId()));
+      // A consultant without an assigned agency must not break login: /users/data is the first
+      // call the app makes after authentication, so throwing here dropped the consultant on an
+      // error page and made the account look "unable to log in". Return the profile with an empty
+      // agency list instead — consistent with agencyDTOsOf() already degrading on agency errors.
+      log.warn(
+          "Consultant {} has no assigned agency; returning user data with an empty agency list.",
+          consultant.getId());
     }
 
     return userDataResponseDtoOf(consultant);
@@ -76,6 +83,12 @@ public class ConsultantDataProvider {
         .preferredLanguage(preferredLanguageOf(consultant.getLanguageCode()))
         .encourage2fa(consultant.getEncourage2fa())
         .magicLinkLoginEnabled(consultant.getMagicLinkLoginEnabled())
+        .publicSlug(consultant.getPublicSlug())
+        .pendingPublicSlug(consultant.getPendingPublicSlug())
+        .publicSlugStatus(
+            consultant.getPublicSlugStatus() != null
+                ? consultant.getPublicSlugStatus().name()
+                : null)
         .absenceMessage(consultant.getAbsenceMessage())
         .isInTeamAgency(consultant.isTeamConsultant())
         .agencies(agencies)
@@ -112,8 +125,14 @@ public class ConsultantDataProvider {
       log.warn(
           "Could not load agencies for consultant {}: status={}, body={}",
           consultant.getId(),
-          e.getRawStatusCode(),
+          e.getStatusCode().value(),
           e.getResponseBodyAsString());
+      return List.of();
+    } catch (RestClientException e) {
+      log.warn(
+          "Could not load agencies for consultant {}; returning user data without agencies",
+          consultant.getId(),
+          e);
       return List.of();
     }
   }
@@ -132,10 +151,18 @@ public class ConsultantDataProvider {
   }
 
   private boolean hasAtLeastOneTypeWithAllowedAnonymousConversations(List<AgencyDTO> agencyDTOS) {
-    return agencyDTOS.stream()
-        .map(AgencyDTO::getConsultingType)
-        .map(this.consultingTypeManager::getConsultingTypeSettings)
-        .anyMatch(this::hasAnonymousConversationAllowed);
+    try {
+      return agencyDTOS.stream()
+          .map(AgencyDTO::getConsultingType)
+          .map(this.consultingTypeManager::getConsultingTypeSettings)
+          .anyMatch(this::hasAnonymousConversationAllowed);
+    } catch (Exception e) {
+      log.warn(
+          "Could not resolve consulting type settings for consultant user data; "
+              + "returning user data without anonymous conversation capability",
+          e);
+      return false;
+    }
   }
 
   private boolean hasAnonymousConversationAllowed(

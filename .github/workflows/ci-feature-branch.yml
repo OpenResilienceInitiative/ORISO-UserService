@@ -1,20 +1,48 @@
-name: CI - Feature Branch
+name: UserService Branch Validation
 
 on:
   push:
     branches-ignore:
     - main
     - dev
+    - pre-dev
 
 jobs:
-  build:
+  validate:
+    name: test and build UserService
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
 
-    - name: Compile and Package Java application
+    - name: Run UserService tests and build
       uses: ./.github/actions/maven-build
       with:
-        java_version: '17'
+        java_version: '21'
+
+  required-integration-tests:
+    name: required integration tests
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+        - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Run deterministic integration contract
+      uses: ./.github/actions/maven-verify-required
+      with:
+        java_version: '21'
+
+  mariadb-contract:
+    uses: ./.github/workflows/mariadb-contract.yml

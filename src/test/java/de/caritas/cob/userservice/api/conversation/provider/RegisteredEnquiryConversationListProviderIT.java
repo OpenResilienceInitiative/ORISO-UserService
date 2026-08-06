@@ -4,14 +4,15 @@ import static de.caritas.cob.userservice.api.conversation.model.ConversationList
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGISTERED;
 import static java.util.Objects.nonNull;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.api.client.util.Lists;
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
@@ -21,12 +22,19 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.SessionData;
+import de.caritas.cob.userservice.api.model.SessionData.SessionDataType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import jakarta.persistence.EntityManager;
+import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Map;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.iterators.PeekingIterator;
 import org.jeasy.random.EasyRandom;
@@ -34,15 +42,15 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 public class RegisteredEnquiryConversationListProviderIT {
 
   @Autowired
@@ -52,7 +60,9 @@ public class RegisteredEnquiryConversationListProviderIT {
 
   @Autowired private UserRepository userRepository;
 
-  @MockBean private UserAccountService userAccountProvider;
+  @Autowired private EntityManager entityManager;
+
+  @MockitoBean private UserAccountService userAccountProvider;
 
   @BeforeEach
   public void setup() {
@@ -112,9 +122,24 @@ public class RegisteredEnquiryConversationListProviderIT {
       ConsultantSessionResponseDTO current = peeker.next();
       ConsultantSessionResponseDTO next = peeker.peek();
       if (nonNull(next)) {
-        assertThat(next.getLatestMessage(), greaterThanOrEqualTo(current.getLatestMessage()));
+        assertThat(next.getLatestMessage(), lessThanOrEqualTo(current.getLatestMessage()));
       }
     }
+  }
+
+  @Test
+  public void
+      buildConversations_Should_includeSessionData_When_registeredEnquiryWasReloadedDetached() {
+    saveRegisteredSessionWithSessionData();
+    entityManager.clear();
+    PageableListRequest request = PageableListRequest.builder().count(1).offset(0).build();
+
+    ConsultantSessionListResponseDTO responseDTO =
+        this.registeredEnquiryConversationListProvider.buildConversations(request);
+
+    Map<String, Object> sessionData = responseDTO.getSessions().get(0).getUser().getSessionData();
+    assertThat(responseDTO.getCount(), is(1));
+    assertThat(sessionData.get("age"), is("42"));
   }
 
   @Test
@@ -130,8 +155,11 @@ public class RegisteredEnquiryConversationListProviderIT {
     List<Session> sessions =
         new EasyRandom().objects(Session.class, amount + 4).collect(Collectors.toList());
     User user = this.userRepository.findAll().iterator().next();
+    var sessionIndex = new AtomicInteger();
+    var baseDate = LocalDateTime.of(2026, 1, 1, 12, 0);
     sessions.forEach(
         session -> {
+          var orderedDate = baseDate.minusDays(sessionIndex.getAndIncrement());
           session.setRegistrationType(REGISTERED);
           session.setConsultant(null);
           session.setUser(user);
@@ -143,11 +171,31 @@ public class RegisteredEnquiryConversationListProviderIT {
           session.setConsultingTypeId(random.nextInt(127));
           session.setMainTopicId(null);
           session.setSessionTopics(Lists.newArrayList());
+          session.setCreateDate(orderedDate);
+          session.setEnquiryMessageDate(orderedDate);
+          session.setUpdateDate(orderedDate);
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);
     sessions.get(1).setStatus(SessionStatus.IN_PROGRESS);
     sessions.get(2).setStatus(SessionStatus.DONE);
     sessions.get(3).setStatus(SessionStatus.IN_ARCHIVE);
     this.sessionRepository.saveAll(sessions);
+  }
+
+  private void saveRegisteredSessionWithSessionData() {
+    User user = this.userRepository.findAll().iterator().next();
+    Session session = new Session(user, 1, "12345", 1L, SessionStatus.NEW, false);
+    session.setId(null);
+    session.setLanguageCode(LanguageCode.de);
+    session.setEnquiryMessageDate(LocalDateTime.now());
+    session.setCreateDate(LocalDateTime.now());
+    session.setUpdateDate(LocalDateTime.now());
+    session.setMainTopicId(9L);
+    session.setIsConsultantDirectlySet(false);
+    session.setSessionTopics(Lists.newArrayList());
+    SessionData age = new SessionData(session, SessionDataType.REGISTRATION, "age", "42");
+    session.setSessionData(Arrays.asList(age));
+
+    this.sessionRepository.save(session);
   }
 }

@@ -10,12 +10,10 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
-import de.caritas.cob.userservice.api.model.User;
 import org.assertj.core.api.Fail;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
@@ -93,40 +91,6 @@ class SessionToConsultantVerifierTest {
     } catch (Exception ex) {
       Fail.fail("exception was not expected");
     }
-  }
-
-  @Test
-  void
-      verifyPreconditionsForAssignment_Should_throwException_When_consultantDoesNotHaveRocketChatIdInDb() {
-    when(sessionToConsultantConditionProvider.hasConsultantNoRcId(any())).thenReturn(true);
-    ConsultantSessionDTO consultantSessionDTO =
-        ConsultantSessionDTO.builder()
-            .consultant(mock(Consultant.class))
-            .session(mock(Session.class))
-            .build();
-
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO));
-  }
-
-  @Test
-  void verifyPreconditionsForAssignment_Should_throwException_When_sessionUserHasNoRocketChatId() {
-    when(sessionToConsultantConditionProvider.hasSessionUserNoRcId(any())).thenReturn(true);
-
-    Session sessionWithUser = mock(Session.class);
-    User user = mock(User.class);
-    when(sessionWithUser.getUser()).thenReturn(user);
-
-    ConsultantSessionDTO consultantSessionDTO =
-        ConsultantSessionDTO.builder()
-            .consultant(mock(Consultant.class))
-            .session(sessionWithUser)
-            .build();
-
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> sessionToConsultantVerifier.verifyPreconditionsForAssignment(consultantSessionDTO));
   }
 
   @Test

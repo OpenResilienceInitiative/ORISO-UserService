@@ -7,24 +7,24 @@ import com.fasterxml.jackson.annotation.JsonIgnore;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
+import jakarta.persistence.CascadeType;
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.Lob;
+import jakarta.persistence.OneToMany;
+import jakarta.persistence.Table;
+import jakarta.persistence.Transient;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
-import javax.persistence.CascadeType;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.EnumType;
-import javax.persistence.Enumerated;
-import javax.persistence.Id;
-import javax.persistence.Index;
-import javax.persistence.Lob;
-import javax.persistence.OneToMany;
-import javax.persistence.Table;
-import javax.persistence.Transient;
-import javax.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -35,6 +35,7 @@ import org.apache.lucene.analysis.core.LowerCaseFilterFactory;
 import org.apache.lucene.analysis.standard.ClassicTokenizerFactory;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.Where;
 import org.hibernate.search.annotations.Analyzer;
@@ -45,6 +46,7 @@ import org.hibernate.search.annotations.IndexedEmbedded;
 import org.hibernate.search.annotations.SortableField;
 import org.hibernate.search.annotations.TokenFilterDef;
 import org.hibernate.search.annotations.TokenizerDef;
+import org.hibernate.type.SqlTypes;
 import org.springframework.lang.Nullable;
 
 /** Represents a consultant */
@@ -71,7 +73,7 @@ import org.springframework.lang.Nullable;
     })
 @FilterDef(
     name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = "long")})
+    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
 public class Consultant implements TenantAware, NotificationsAware {
 
@@ -82,11 +84,6 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Size(max = 36)
   @NonNull
   private String id;
-
-  @Column(name = "rc_user_id", updatable = false)
-  @Size(max = 17)
-  @NonNull
-  private String rocketChatId;
 
   @Column(name = "matrix_user_id")
   private String matrixUserId;
@@ -121,23 +118,56 @@ public class Consultant implements TenantAware, NotificationsAware {
   private String email;
 
   @Column(name = "is_absent", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   @Field
   private boolean absent;
 
   @Column(name = "is_team_consultant", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean teamConsultant;
 
   @Column(name = "is_supervisor", nullable = false, columnDefinition = "tinyint default 0")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean supervisor;
+
+  /**
+   * "Supervision (auto-assigned)" (grill 2026-07-13): this counsellor's STANDING supervisor — the
+   * consultant id of the colleague who is automatically attached, read-only, to every Agency
+   * Counselling case this counsellor accepts. Set by an agency admin; at most one at a time (one
+   * supervisor may hold this relationship with many counsellors). Null = no standing supervision.
+   *
+   * <p>Deliberately a plain id, not a self-referencing {@code @ManyToOne} — the relationship is
+   * only ever resolved on the accept path, and a self-join on Consultant would add fetch/cycle
+   * hazards to a heavily-loaded entity for no gain. Distinct from {@link #supervisor} ({@code
+   * is_supervisor}), which is the capability flag "may this consultant BE a supervisor at all".
+   */
+  @Column(name = "assigned_supervisor_id")
+  @Size(max = 36)
+  private String assignedSupervisorId;
 
   @Column(name = "display_name")
   private String displayName;
 
-  @Column(name = "absence_message")
+  @Column(name = "public_slug", length = 128)
+  private String publicSlug;
+
+  @Column(name = "pending_public_slug", length = 128)
+  private String pendingPublicSlug;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "public_slug_status", length = 32)
+  private PublicSlugStatus publicSlugStatus;
+
+  @Column(name = "public_slug_reviewed_at", columnDefinition = "datetime")
+  private LocalDateTime publicSlugReviewedAt;
+
   @Lob
+  @Column(name = "absence_message", columnDefinition = "longtext")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String absenceMessage;
 
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean languageFormal;
 
   @OneToMany(mappedBy = "consultant", cascade = CascadeType.ALL, orphanRemoval = true)
@@ -224,6 +254,7 @@ public class Consultant implements TenantAware, NotificationsAware {
   private ConsultantStatus status = ConsultantStatus.IN_PROGRESS;
 
   @Column(name = "walk_through_enabled", columnDefinition = "tinyint", nullable = false)
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private Boolean walkThroughEnabled;
 
   @Enumerated(EnumType.STRING)
@@ -237,6 +268,7 @@ public class Consultant implements TenantAware, NotificationsAware {
   private LocalDateTime dataPrivacyConfirmation;
 
   @Column(name = "notifications_enabled", columnDefinition = "tinyint", nullable = false)
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean notificationsEnabled;
 
   @Column(name = "notifications_settings")
@@ -354,8 +386,8 @@ public class Consultant implements TenantAware, NotificationsAware {
   public String toString() {
     return "Consultant [id="
         + id
-        + ", rocketChatId="
-        + rocketChatId
+        + ", matrixUserId="
+        + matrixUserId
         + ", username="
         + username
         + "]";

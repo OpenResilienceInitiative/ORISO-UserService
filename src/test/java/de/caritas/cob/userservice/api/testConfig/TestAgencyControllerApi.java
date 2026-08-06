@@ -20,7 +20,12 @@ public class TestAgencyControllerApi extends AgencyControllerApi {
 
   @Override
   public List<FullAgencyResponseDTO> getAgencies(
-      String postcode, Integer consultingType, Integer topicId, Integer age, String gender)
+      Integer consultingType,
+      String postcode,
+      Integer topicId,
+      Integer age,
+      String gender,
+      String counsellingRelation)
       throws RestClientException {
     return List.of(new FullAgencyResponseDTO());
   }

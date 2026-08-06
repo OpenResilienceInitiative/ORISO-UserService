@@ -30,7 +30,9 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.util.Collections;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -39,6 +41,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Facade to encapsulate admin functions for consultants. */
 @Service
@@ -95,7 +98,7 @@ public class ConsultantAdminFacade {
     if (sort == null
         || Stream.of(FieldEnum.values()).noneMatch(providedSortFieldIgnoringCase(sort))) {
       sort = new Sort();
-      sort.setField(FieldEnum.LASTNAME);
+      sort.setField(FieldEnum.LAST_NAME);
       sort.setOrder(OrderEnum.ASC);
     }
     return sort;
@@ -129,6 +132,15 @@ public class ConsultantAdminFacade {
    *     ConsultantAdminResponseDTO}
    */
   public ConsultantAdminResponseDTO createNewConsultant(CreateConsultantDTO createConsultantDTO) {
+    if (createConsultantDTO != null && createConsultantDTO.getAgencyIds() != null) {
+      var requestedAgencies =
+          createConsultantDTO.getAgencyIds().stream()
+              .filter(java.util.Objects::nonNull)
+              .distinct()
+              .map(agencyId -> new CreateConsultantAgencyDTO().agencyId(agencyId))
+              .collect(Collectors.toList());
+      checkPermissionsToAssignedAgencies(requestedAgencies);
+    }
     return this.consultantAdminService.createNewConsultant(createConsultantDTO);
   }
 
@@ -166,6 +178,44 @@ public class ConsultantAdminFacade {
       String consultantId, CreateConsultantAgencyDTO createConsultantAgencyDTO) {
     consultantAgencyRelationCreatorService.createNewConsultantAgency(
         consultantId, createConsultantAgencyDTO);
+  }
+
+  /**
+   * Sets the complete set of agency relations for a consultant: relations no longer present in the
+   * passed list are marked for deletion, missing relations are created, already-existing relations
+   * are left untouched (idempotency). Validation failures (e.g. topic/agency mismatch) are
+   * propagated to the caller instead of being swallowed, so the admin UI can surface them.
+   *
+   * <p>Runs in a single transaction. A rejected deletion (e.g. the consultant is the last one of a
+   * still-active agency) aborts the whole call, so the consultant can never be left with a partly
+   * applied agency set — earlier deletions rolled back, later creations never reached. A consultant
+   * stuck in such a half-applied state fails the subsequent topic update, because the topics are
+   * then validated against agencies that are no longer the ones the admin selected.
+   *
+   * @param consultantId the consultant to update
+   * @param agencyList the desired complete set of agency relations
+   */
+  @Transactional
+  public void setConsultantAgencies(
+      String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
+    var persistedAgencyIds =
+        consultantAgencyAdminService.findConsultantAgencyIds(consultantId).stream()
+            .collect(Collectors.toSet());
+    var desiredAgencyIds =
+        agencyList.stream().map(CreateConsultantAgencyDTO::getAgencyId).collect(Collectors.toSet());
+
+    var agencyIdsToDelete =
+        persistedAgencyIds.stream()
+            .filter(persistedAgencyId -> !desiredAgencyIds.contains(persistedAgencyId))
+            .collect(Collectors.toList());
+    if (!agencyIdsToDelete.isEmpty()) {
+      consultantAgencyAdminService.markConsultantAgenciesForDeletion(
+          consultantId, agencyIdsToDelete);
+    }
+
+    agencyList.stream()
+        .filter(agency -> !persistedAgencyIds.contains(agency.getAgencyId()))
+        .forEach(agency -> createNewConsultantAgency(consultantId, agency));
   }
 
   /**
@@ -209,7 +259,31 @@ public class ConsultantAdminFacade {
    * @param consultantId the consultant id
    */
   public void markConsultantForDeletion(String consultantId, Boolean forceDeleteSessions) {
+    assertCallerMayDeleteConsultant(consultantId);
     this.consultantAdminService.markConsultantForDeletion(consultantId, forceDeleteSessions);
+  }
+
+  /**
+   * A restricted agency admin (an agency-level admin without the broader agency-super-admin role)
+   * may only delete consultants sharing at least one of their own agencies. This mirrors {@code
+   * AgencyAdminUserService#assertCallerMayAccessAgencyAdmin} and prevents a single
+   * Beratungsstellen-Admin from deleting consultants of other Träger by targeting their id
+   * directly.
+   */
+  private void assertCallerMayDeleteConsultant(String consultantId) {
+    if (!authenticatedUser.hasRestrictedAgencyPriviliges()) {
+      return;
+    }
+    var callerAgencyIds = adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId());
+    var consultantAgencyIds = consultantAgencyAdminService.findConsultantAgencyIds(consultantId);
+    if (Collections.disjoint(callerAgencyIds, consultantAgencyIds)) {
+      log.warn(
+          "Restricted agency admin {} attempted to delete consultant {} outside their agencies",
+          authenticatedUser.getUserId(),
+          consultantId);
+      throw new ForbiddenException(
+          "Does not have permission to delete a consultant outside the own agencies");
+    }
   }
 
   public void pauseConsultantDeletion(
@@ -237,10 +311,17 @@ public class ConsultantAdminFacade {
    */
   public void prepareConsultantAgencyRelation(
       String consultantId, List<CreateConsultantAgencyDTO> agencies) {
+    Set<Long> additionalAgencyIds =
+        agencies.stream().map(CreateConsultantAgencyDTO::getAgencyId).collect(Collectors.toSet());
     agencies.forEach(
         agency ->
             this.consultantAgencyRelationCreatorService.prepareConsultantAgencyRelation(
-                new CreateConsultantAgencyDTOInputAdapter(consultantId, agency)));
+                new CreateConsultantAgencyDTOInputAdapter(consultantId, agency) {
+                  @Override
+                  public Set<Long> getAdditionalAgencyIds() {
+                    return additionalAgencyIds;
+                  }
+                }));
   }
 
   /**
@@ -335,7 +416,13 @@ public class ConsultantAdminFacade {
       List<CreateConsultantAgencyDTO> agencyList, Long consultantTenantId) {
     agencyList.stream()
         .map(a -> agencyService.getAgency(a.getAgencyId()))
-        .map(a -> a.getTenantId())
+        .map(
+            agency -> {
+              if (agency == null) {
+                throw new BadRequestException("Agency not found");
+              }
+              return agency.getTenantId();
+            })
         .filter(agencyTenantId -> !agencyTenantId.equals(consultantTenantId))
         .findAny()
         .ifPresent(

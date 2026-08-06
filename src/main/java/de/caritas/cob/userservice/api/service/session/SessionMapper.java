@@ -58,13 +58,16 @@ public class SessionMapper {
         .agencyId(session.getAgencyId())
         .consultingType(session.getConsultingTypeId())
         .status(session.getStatus().getValue())
+        .conversationType(
+            session.getConversationType() == null
+                ? null
+                : de.caritas.cob.userservice.api.adapters.web.dto.ConversationType.fromValue(
+                    session.getConversationType().name()))
         .postcode(session.getPostcode())
-        .groupId(session.getGroupId())
-        .matrixRoomId(
-            session.getMatrixRoomId()) // MATRIX MIGRATION: Add Matrix room ID to API response
-        .askerRcId(
-            nonNull(session.getUser()) && nonNull(session.getUser().getRcUserId())
-                ? session.getUser().getRcUserId()
+        .matrixRoomId(session.getMatrixRoomId())
+        .askerMatrixUserId(
+            nonNull(session.getUser()) && nonNull(session.getUser().getMatrixUserId())
+                ? session.getUser().getMatrixUserId()
                 : null)
         .messageDate(toUnixTime(session.getEnquiryMessageDate()))
         .isTeamSession(session.isTeamSession())
@@ -85,7 +88,12 @@ public class SessionMapper {
         new UsernameTranscoder().decodeUsername(session.getUser().getUsername()));
     sessionUserDto.setDeleted(session.getUser().getDeleteDate() != null);
     if (nonNull(session.getSessionData())) {
-      sessionUserDto.setSessionData(buildSessionDataMapFromSession(session));
+      var sessionData = buildSessionDataMapFromSession(session);
+      sessionUserDto.setSessionData(sessionData);
+      var displayName = sessionData.get(SessionDataKeyRegistration.DISPLAY_NAME.getValue());
+      if (displayName instanceof String value) {
+        sessionUserDto.setDisplayName(value);
+      }
     }
     return sessionUserDto;
   }

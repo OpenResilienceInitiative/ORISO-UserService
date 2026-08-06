@@ -14,23 +14,35 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ConsultantAgencyService {
 
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
+  private final @NonNull ConsultantTopicRepository consultantTopicRepository;
+  private final @NonNull SessionRepository sessionRepository;
   private final @NonNull AgencyService agencyService;
   private final @NonNull AccountManaging accountManager;
   private final @NonNull UserDtoMapper userDtoMapper;
+
+  @Value("${registration.agency-fallback.consulting-type-id:#{null}}")
+  private Integer registrationAgencyFallbackConsultingTypeId;
 
   /**
    * Save a {@link ConsultantAgency} to the database.
@@ -105,6 +117,7 @@ public class ConsultantAgencyService {
     return isNull(consultantAgency.getConsultant().getDeleteDate());
   }
 
+  @Transactional(readOnly = true)
   public Set<String> getLanguageCodesOfAgency(long agencyId) {
     var consultantAgencies = findConsultantsByAgencyId(agencyId);
 
@@ -172,11 +185,72 @@ public class ConsultantAgencyService {
             .map(ConsultantAgency::getAgencyId)
             .collect(Collectors.toList());
 
-    List<AgencyDTO> agencies = agencyService.getAgenciesNotCached(agencyIds);
-    return filterOutOfflineAgencies(agencies);
+    if (agencyIds.isEmpty()) {
+      return emptyList();
+    }
+
+    var consultantTopicIds = consultantTopicRepository.findTopicIdsByConsultantId(consultantId);
+
+    try {
+      List<AgencyDTO> agencies =
+          filterOutOfflineAgencies(agencyService.getAgenciesNotCached(agencyIds));
+      if (agencies.isEmpty()) {
+        log.warn(
+            "AgencyService returned no agencies for consultant {} and ids {}. Falling back to local topic assignments",
+            consultantId,
+            agencyIds);
+        return agenciesWithLocalTopicAssignments(agencyIds, consultantTopicIds);
+      }
+      return enrichAgenciesWithConsultantTopicIds(agencies, consultantTopicIds);
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Could not load agencies for consultant {} from AgencyService, falling back to local topic assignments",
+          consultantId,
+          exception);
+      return agenciesWithLocalTopicAssignments(agencyIds, consultantTopicIds);
+    }
+  }
+
+  private List<AgencyDTO> enrichAgenciesWithConsultantTopicIds(
+      List<AgencyDTO> agencies, List<Long> consultantTopicIds) {
+    if (consultantTopicIds == null || consultantTopicIds.isEmpty()) {
+      return agencies;
+    }
+
+    agencies.forEach(
+        agency -> {
+          if (agency.getTopicIds() == null || agency.getTopicIds().isEmpty()) {
+            agency.setTopicIds(consultantTopicIds);
+          }
+        });
+    return agencies;
   }
 
   private List<AgencyDTO> filterOutOfflineAgencies(List<AgencyDTO> agencies) {
-    return agencies.stream().filter(a -> !a.getOffline()).collect(Collectors.toList());
+    return agencies.stream()
+        .filter(a -> !Boolean.TRUE.equals(a.getOffline()))
+        .collect(Collectors.toList());
+  }
+
+  private List<AgencyDTO> agenciesWithLocalTopicAssignments(
+      List<Long> agencyIds, List<Long> topicIds) {
+    Map<Long, Integer> consultingTypesByAgency =
+        sessionRepository.findLowestConsultingTypeIdsByAgencyIds(Set.copyOf(agencyIds)).stream()
+            .collect(
+                Collectors.toMap(
+                    SessionRepository.AgencyConsultingTypeProjection::getAgencyId,
+                    SessionRepository.AgencyConsultingTypeProjection::getConsultingTypeId));
+
+    return agencyIds.stream()
+        .map(
+            agencyId ->
+                new AgencyDTO()
+                    .id(agencyId)
+                    .offline(false)
+                    .topicIds(topicIds)
+                    .consultingType(
+                        consultingTypesByAgency.getOrDefault(
+                            agencyId, registrationAgencyFallbackConsultingTypeId)))
+        .collect(Collectors.toList());
   }
 }

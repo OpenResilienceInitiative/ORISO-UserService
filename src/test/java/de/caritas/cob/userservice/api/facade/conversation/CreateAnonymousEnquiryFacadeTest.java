@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.facade.conversation;
 
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_SUCHT;
+import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
@@ -25,9 +26,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
+import org.mockito.junit.jupiter.MockitoExtension;
 
-@ExtendWith(SpringExtension.class)
+@ExtendWith(MockitoExtension.class)
 public class CreateAnonymousEnquiryFacadeTest {
 
   @InjectMocks private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
@@ -38,6 +39,29 @@ public class CreateAnonymousEnquiryFacadeTest {
   @Mock private ConsultingTypeManager consultingTypeManager;
 
   EasyRandom easyRandom = new EasyRandom();
+
+  @Test
+  void createAnonymousEnquiry_Should_ReturnMatrixOnlyResponse() {
+    CreateAnonymousEnquiryDTO request = new CreateAnonymousEnquiryDTO(CONSULTING_TYPE_ID_SUCHT);
+    AnonymousUserCredentials credentials =
+        AnonymousUserCredentials.builder()
+            .userId("user-id")
+            .accessToken("access-token")
+            .refreshToken("refresh-token")
+            .expiresIn(300)
+            .refreshExpiresIn(600)
+            .build();
+    Session session = easyRandom.nextObject(Session.class);
+    session.setMatrixRoomId(null);
+    when(anonymousUserCreatorService.createAnonymousUser(any())).thenReturn(credentials);
+    when(anonymousConversationCreatorService.createAnonymousConversation(any(), any()))
+        .thenReturn(session);
+
+    var response = createAnonymousEnquiryFacade.createAnonymousEnquiry(request, true);
+
+    assertEquals("access-token", response.getAccessToken());
+    assertEquals(session.getId(), response.getSessionId());
+  }
 
   @Test
   public void

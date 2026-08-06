@@ -3,17 +3,18 @@ package de.caritas.cob.userservice.api.adapters.web.controller.interceptor;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.http.HttpMethod;
 import org.springframework.lang.Nullable;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.stereotype.Component;
@@ -26,6 +27,8 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Slf4j
 public class HttpTenantFilter extends OncePerRequestFilter {
 
+  private static final String MATRIX_RTC_CALL_POLICY_PATH = "/internal/matrixrtc/call-policy";
+
   private final @Nullable TenantResolverService tenantResolverService;
 
   private final @Nullable TenantService tenantService;
@@ -37,7 +40,12 @@ public class HttpTenantFilter extends OncePerRequestFilter {
         "/actuator/loggers/**",
         "/actuator/loggers",
         "/swagger-ui.html",
-        "/favicon.ico"
+        "/favicon.ico",
+        MATRIX_RTC_CALL_POLICY_PATH,
+        "/users/askers/new",
+        "/users/magic-link/",
+        "/users/invitelinks/",
+        "/conversations/askers/anonymous/new"
       };
 
   private final DefaultRequiresTenantFilterMatcher requiresTenantFilterMatcher =
@@ -77,14 +85,22 @@ public class HttpTenantFilter extends OncePerRequestFilter {
   class DefaultRequiresTenantFilterMatcher implements RequestMatcher {
     @Override
     public boolean matches(HttpServletRequest request) {
+      if (HttpMethod.OPTIONS.matches(request.getMethod())) {
+        return false;
+      }
 
       List<String> tenantWhitelist = new ArrayList<>(Arrays.asList(TENANCY_FILTER_WHITELIST));
       return !belongsToWhitelist(request, tenantWhitelist);
     }
 
     private boolean belongsToWhitelist(HttpServletRequest request, List<String> tenantWhitelist) {
+      String requestUri = request.getRequestURI().toLowerCase();
       return tenantWhitelist.parallelStream()
-          .anyMatch(request.getRequestURI().toLowerCase()::contains);
+          .anyMatch(
+              whitelistUri ->
+                  MATRIX_RTC_CALL_POLICY_PATH.equals(whitelistUri)
+                      ? MATRIX_RTC_CALL_POLICY_PATH.equals(requestUri)
+                      : requestUri.contains(whitelistUri));
     }
   }
 }

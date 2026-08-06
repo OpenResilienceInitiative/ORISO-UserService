@@ -9,35 +9,35 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.internal.WhiteboxImpl.getInternalState;
-import static org.powermock.reflect.internal.WhiteboxImpl.setInternalState;
+import static org.springframework.test.util.ReflectionTestUtils.getField;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUsernameRegistry;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
-import org.junit.runner.RunWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoSettings;
-import org.powermock.modules.junit4.PowerMockRunner;
 
-@RunWith(PowerMockRunner.class)
 @MockitoSettings(strictness = org.mockito.quality.Strictness.LENIENT)
 class AnonymousUsernameRegistryTest {
 
   @InjectMocks private AnonymousUsernameRegistry anonymousUsernameRegistry;
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityUsernameAvailability identityUsernameAvailability;
+  @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private UsernameTranscoder usernameTranscoder;
 
   @BeforeEach
@@ -45,7 +45,12 @@ class AnonymousUsernameRegistryTest {
     setField(anonymousUsernameRegistry, "usernameTranscoder", usernameTranscoder);
     setField(anonymousUsernameRegistry, "usernamePrefix", "Ratsuchende_r ");
     // By default every candidate username is free in Keycloak; individual tests override this.
-    when(identityClient.isUsernameAvailable(anyString())).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable(anyString())).thenReturn(true);
+  }
+
+  @AfterEach
+  void clearTenantContext() {
+    TenantContext.clear();
   }
 
   @Test
@@ -62,8 +67,15 @@ class AnonymousUsernameRegistryTest {
     assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 3"));
   }
 
+  @SuppressWarnings("unchecked")
   private void setIdRegistryField(LinkedList<Integer> idRegistryListWithoutThree) {
-    setInternalState(AnonymousUsernameRegistry.class, "ID_REGISTRY", idRegistryListWithoutThree);
+    // ID_REGISTRY is a static final mutable LinkedList that is never reassigned in production, so
+    // instead of replacing the field reference (impossible on JDK 17) we clear and repopulate the
+    // existing list to control the registry contents for the test.
+    LinkedList<Integer> idRegistry =
+        (LinkedList<Integer>) getField(AnonymousUsernameRegistry.class, "ID_REGISTRY");
+    idRegistry.clear();
+    idRegistry.addAll(idRegistryListWithoutThree);
   }
 
   @Test
@@ -150,9 +162,9 @@ class AnonymousUsernameRegistryTest {
     when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
     when(consultantService.getConsultantByUsername(any())).thenReturn(Optional.empty());
     // 3 and 5 are gone from the local DB but still exist in Keycloak -> must be skipped.
-    when(identityClient.isUsernameAvailable("Ratsuchende_r 3")).thenReturn(false);
-    when(identityClient.isUsernameAvailable("Ratsuchende_r 5")).thenReturn(false);
-    when(identityClient.isUsernameAvailable("Ratsuchende_r 7")).thenReturn(true);
+    when(identityUsernameAvailability.isUsernameAvailable("Ratsuchende_r 3")).thenReturn(false);
+    when(identityUsernameAvailability.isUsernameAvailable("Ratsuchende_r 5")).thenReturn(false);
+    when(identityUsernameAvailability.isUsernameAvailable("Ratsuchende_r 7")).thenReturn(true);
 
     anonymousUsernameRegistry.generateUniqueUsername();
 
@@ -178,8 +190,9 @@ class AnonymousUsernameRegistryTest {
     verify(usernameTranscoder, times(1)).decodeUsername(usernameToDelete);
   }
 
+  @SuppressWarnings("unchecked")
   private List<Integer> getIdRegistryField() {
-    return getInternalState(AnonymousUsernameRegistry.class, "ID_REGISTRY");
+    return (List<Integer>) getField(AnonymousUsernameRegistry.class, "ID_REGISTRY");
   }
 
   @Test
@@ -241,5 +254,58 @@ class AnonymousUsernameRegistryTest {
     anonymousUsernameRegistry.removeRegistryIdByUsername(null);
     List<Integer> resultingRegistry = getIdRegistryField();
     assertThat(resultingRegistry, is(idRegistryListWithoutThree));
+  }
+
+  @Test
+  void generateUniqueUsername_Should_TreatUsernameOfAnotherTenantAsOccupied() {
+    // The anonymous username namespace is global: Matrix user IDs are global and the anonymous
+    // live-chat queue is deliberately cross-tenant. The DB lookups are tenant-filtered, so a
+    // caller in tenant 83 must still see an anon user that belongs to tenant 1 - otherwise the
+    // name is handed out again and Matrix rejects it with M_USER_IN_USE (500 on invite redeem).
+    TenantContext.setCurrentTenant(83L);
+    setIdRegistryField(new LinkedList<>());
+    // Simulate the Hibernate tenantFilter: "Ratsuchende_r 1" is only visible cross-tenant.
+    when(userService.findUserByUsername(any()))
+        .thenAnswer(
+            invocation ->
+                TenantContext.isTechnicalOrSuperAdminContext()
+                        && "Ratsuchende_r 1".equals(invocation.getArgument(0))
+                    ? Optional.of(USER)
+                    : Optional.empty());
+
+    anonymousUsernameRegistry.generateUniqueUsername();
+
+    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
+    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
+    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 2"));
+  }
+
+  @Test
+  void generateUniqueUsername_Should_TreatUsernameOrphanedInMatrixAsOccupied() {
+    // A localpart can survive in Matrix while absent from MariaDB and Keycloak (a rolled-back or
+    // externally cleaned-up anonymous account). Matrix user IDs are global, so such an orphan must
+    // be skipped - otherwise createUser fails with M_USER_IN_USE and, because the generator is
+    // deterministic, every redeem retry collides on the same id (invite redeem 500 forever).
+    setIdRegistryField(new LinkedList<>());
+    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
+    when(consultantService.getConsultantByUsername(any())).thenReturn(Optional.empty());
+    when(matrixSynapseService.userExists("Ratsuchende_r 1")).thenReturn(true);
+
+    anonymousUsernameRegistry.generateUniqueUsername();
+
+    ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
+    verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
+    assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 2"));
+  }
+
+  @Test
+  void generateUniqueUsername_Should_RestoreCallerTenantAfterTheCrossTenantLookup() {
+    TenantContext.setCurrentTenant(83L);
+    setIdRegistryField(new LinkedList<>());
+    when(userService.findUserByUsername(any())).thenReturn(Optional.empty());
+
+    anonymousUsernameRegistry.generateUniqueUsername();
+
+    assertThat(TenantContext.getCurrentTenant(), is(83L));
   }
 }

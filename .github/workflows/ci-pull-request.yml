@@ -1,4 +1,4 @@
-name: CI - Pull Request
+name: UserService PR Validation
 
 on:
   pull_request:
@@ -8,21 +8,147 @@ env:
   ORG: openresilienceinitiative
 
 jobs:
-  build:
+  validate:
+    name: test, build and Docker validation
     runs-on: ubuntu-latest
 
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
 
-    - name: Compile and Package Java application
+    - name: Run UserService tests and build
       uses: ./.github/actions/maven-build
       with:
-        java_version: '17'
+        java_version: '21'
 
-    - name: Create Docker image
+    - name: Docker build validation without publishing
       uses: ./.github/actions/docker-build-push
       with:
         push_to_ghcr: false
         image_name: oriso-userservice
         github_token: ${{ secrets.GITHUB_TOKEN }}
+
+  redis-contract:
+    name: Redis shared-state contracts
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+        - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      ORISO_LOCAL_REDIS_IT: true
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Set up JDK and Maven
+      uses: actions/setup-java@v5
+      with:
+        java-version: '21'
+        distribution: temurin
+        cache: maven
+
+    - name: Verify Redis-backed cross-instance contracts
+      run: >-
+        ./mvnw -B
+        -Dtest=ConsultantActivityRegistryRedisIT,RedisOneTimeTokenStoreIT
+        test
+
+  mariadb-contract:
+    uses: ./.github/workflows/mariadb-contract.yml
+
+  required-integration-tests:
+    name: required integration tests
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+        - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Run deterministic integration contract
+      uses: ./.github/actions/maven-verify-required
+      with:
+        java_version: '21'
+
+  required-ci:
+    name: required PreDev CI
+    if: always()
+    needs: [validate, redis-contract, mariadb-contract, required-integration-tests]
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Report the aggregate required conclusion
+      env:
+        VALIDATE_RESULT: ${{ needs.validate.result }}
+        REDIS_RESULT: ${{ needs.redis-contract.result }}
+        MARIADB_RESULT: ${{ needs.mariadb-contract.result }}
+        INTEGRATION_RESULT: ${{ needs.required-integration-tests.result }}
+      run: |
+        conclusion=success
+        if [[ "${VALIDATE_RESULT}" != success || "${REDIS_RESULT}" != success || "${MARIADB_RESULT}" != success || "${INTEGRATION_RESULT}" != success ]]; then
+          conclusion=failure
+        fi
+        if [[ "${conclusion}" != success ]]; then
+          echo "::error::Required CI failed: validate=${VALIDATE_RESULT}, redis=${REDIS_RESULT}, mariadb=${MARIADB_RESULT}, integration=${INTEGRATION_RESULT}"
+          exit 1
+        fi
+
+  # Non-blocking OpenAPI contract diff: flags breaking changes to this service's
+  # own vendored specs (api/*.yaml) between the PR base and head. Informational
+  # for now; flip to blocking once the process around intentional breaking
+  # changes (version bump / consumer sign-off) is agreed.
+  api-contract-diff:
+    name: api-contract-diff (non-blocking)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+
+    steps:
+    - name: Checkout PR head
+      uses: actions/checkout@v6
+
+    - name: Checkout base branch
+      uses: actions/checkout@v6
+      with:
+        ref: ${{ github.base_ref }}
+        path: .base
+
+    - name: Diff own OpenAPI specs against base (oasdiff breaking)
+      shell: bash
+      # This is an informational contract gate while the service specs are being
+      # stabilized. Keep the finding visible in logs, but do not mark the PR red
+      # until this non-blocking job is promoted to required CI.
+      continue-on-error: true
+      run: |
+        shopt -s nullglob
+        status=0
+        for spec in api/*.yaml api/*.yml; do
+          if [ -f ".base/$spec" ]; then
+            echo "::group::oasdiff breaking $spec"
+            docker run --rm -v "$PWD:/work:ro" tufin/oasdiff:latest \
+              breaking "/work/.base/$spec" "/work/$spec" --fail-on WARN || status=1
+            echo "::endgroup::"
+          else
+            echo "Skipping $spec (new on this branch, nothing to diff against)"
+          fi
+        done
+        if [ "$status" -ne 0 ]; then
+          echo "::warning::oasdiff found (formally) breaking API spec changes - report-only; see the log groups above. Flip to a hard failure once the breaking-change process is agreed."
+          echo "### api-contract-diff: breaking changes detected (report-only)" >> "$GITHUB_STEP_SUMMARY"
+        fi

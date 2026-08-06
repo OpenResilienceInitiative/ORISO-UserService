@@ -1,16 +1,16 @@
 package de.caritas.cob.userservice.api.model;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.EntityListeners;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
+import jakarta.persistence.Id;
+import jakarta.persistence.Index;
+import jakarta.persistence.Table;
+import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Objects;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.EntityListeners;
-import javax.persistence.EnumType;
-import javax.persistence.Enumerated;
-import javax.persistence.Id;
-import javax.persistence.Index;
-import javax.persistence.Table;
-import javax.validation.constraints.Size;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -48,7 +48,7 @@ import org.springframework.data.jpa.domain.support.AuditingEntityListener;
 @EntityListeners(AuditingEntityListener.class)
 @FilterDef(
     name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = "long")})
+    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
 @Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
 public class Admin implements TenantAware {
 
@@ -57,7 +57,9 @@ public class Admin implements TenantAware {
   public enum AdminType {
     AGENCY,
     TENANT,
-    SUPER
+    SUPER,
+    /** Global Support Admin (ADR-018) — additive support identity, separate from Platform Admin. */
+    SUPPORT
   }
 
   @Id
@@ -102,9 +104,6 @@ public class Admin implements TenantAware {
   @Enumerated(EnumType.STRING)
   @Column(length = 6, nullable = false)
   private AdminType type;
-
-  @Column(name = "rc_user_id")
-  private String rcUserId;
 
   @Column(name = "id_old", updatable = false)
   private Long oldId;

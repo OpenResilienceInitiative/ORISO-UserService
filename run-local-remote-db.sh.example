@@ -5,24 +5,29 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 
-export JAVA_HOME="${JAVA_HOME:-/Library/Java/JavaVirtualMachines/temurin-11.jdk/Contents/Home}"
+if [ -z "${JAVA_HOME:-}" ]; then
+  export JAVA_HOME="$(/usr/libexec/java_home -v 17 2>/dev/null || /usr/libexec/java_home)"
+fi
 export PATH="$JAVA_HOME/bin:$PATH"
 
-export SPRING_DATASOURCE_URL="jdbc:mariadb://46.224.170.69:32491/userservice"
-export SPRING_DATASOURCE_USERNAME=root
+export SPRING_DATASOURCE_URL="jdbc:mariadb://46.224.170.69:32492/userservice"
+export SPRING_DATASOURCE_USERNAME=userservice
 export SPRING_DATASOURCE_PASSWORD='CHANGE_ME'
 
-export CONSULTING_TYPE_SERVICE_API_URL="https://api.oriso.org/service"
-export AGENCY_SERVICE_API_URL="https://api.oriso.org/service"
-export TENANT_SERVICE_API_URL="https://api.oriso.org/service"
-export KEYCLOAK_AUTH_SERVER_URL="https://auth.oriso.org"
+export CONSULTING_TYPE_SERVICE_API_URL="https://api.oriso-dev.site/service"
+export AGENCY_SERVICE_API_URL="https://api.oriso-dev.site/service"
+# Use "http://localhost:8081/service" when TenantService is running locally.
+export TENANT_SERVICE_API_URL="https://api.oriso-dev.site/service"
+export KEYCLOAK_AUTH_SERVER_URL="https://auth.oriso-dev.site"
+export IDENTITY_TECHNICAL_USER_USERNAME="technical"
+export IDENTITY_TECHNICAL_USER_PASSWORD='CHANGE_ME'
 
-export ROCKET_CHAT_BASE_URL="http://localhost:3000/api/v1"
-export ROCKET_CHAT_MONGO_URL="mongodb://localhost:27017/rocketchat?retryWrites=false"
-export ROCKET_TECHNICAL_USERNAME="rocket-chat-technical-user"
-export ROCKET_TECHNICAL_PASSWORD="technical"
-
-export SPRING_DATA_MONGODB_URI="mongodb://localhost:27017/userservice"
+if [ -f config.env ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . ./config.env
+  set +a
+fi
 
 echo "Datasource: ${SPRING_DATASOURCE_URL}"
-mvn spring-boot:run -Dspring-boot.run.profiles=local -Dspotless.check.skip=true
+./mvnw spring-boot:run -Dspring-boot.run.profiles=local -Dspotless.check.skip=true

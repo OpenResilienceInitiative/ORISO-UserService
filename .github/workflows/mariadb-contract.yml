@@ -1,0 +1,48 @@
+name: Reusable UserService MariaDB contract
+
+on:
+  workflow_call:
+
+jobs:
+  verify:
+    name: MariaDB schema, statistics and replica contracts
+    runs-on: ubuntu-latest
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: root
+          MARIADB_DATABASE: userservice
+        ports:
+        - 3306:3306
+        options: >-
+          --health-cmd "healthcheck.sh --connect --innodb_initialized"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      LIQUIBASE_IT_DB_URL: jdbc:mariadb://127.0.0.1:3306/userservice
+      LIQUIBASE_IT_DB_PASSWORD: root
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Set up JDK and Maven
+      uses: actions/setup-java@v5
+      with:
+        java-version: '21'
+        distribution: temurin
+        cache: maven
+
+    - name: Verify real MariaDB schema contracts
+      run: >-
+        ./mvnw -B -Dskip.unit-tests=true
+        -Dtest=DatabaseChangelogDriftIT,AdminStatisticsRepositoryMariaDbIT,ProvisioningCompensationMariaDbIT,TutorialProgressServiceMariaDbReplicaIT,OrganizerMariaDbReplicaIT,DeactivateGroupChatSchedulerMariaDbReplicaIT
+        integration-test
+
+    - name: Prove authenticated writes across two replicas
+      env:
+        USERSERVICE_LOAD_REQUESTS: 80
+        USERSERVICE_LOAD_CONCURRENCY: 12
+      run: ./scripts/load/run-authenticated-write-replicas.sh

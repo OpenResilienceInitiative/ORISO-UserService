@@ -7,16 +7,23 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRespon
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixLoginRequestDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixPasswordUpdateRequestDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
+import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
+import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.security.InvalidKeyException;
 import java.security.NoSuchAlgorithmException;
+import java.util.UUID;
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.codec.binary.Hex;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -26,11 +33,12 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpStatusCodeException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.util.UriUtils;
 
 /** Service for Matrix Synapse functionalities. */
 @Slf4j
 @Service
-public class MatrixSynapseService {
+public class MatrixSynapseService implements MatrixUserClient {
 
   private static final long SERVER_OPERATION_TOKEN_TTL_MS = 10 * 60 * 1000L;
   private static final String ENDPOINT_REGISTER_USER = "/_synapse/admin/v1/register";
@@ -38,8 +46,16 @@ public class MatrixSynapseService {
   private static final String ENDPOINT_LOGIN = "/_matrix/client/r0/login";
   private static final String ENDPOINT_SYNC = "/_matrix/client/r0/sync";
   private static final String ENDPOINT_UPDATE_USER_ADMIN = "/_synapse/admin/v2/users/{userId}";
+  private static final String ENDPOINT_DEACTIVATE_USER = "/_synapse/admin/v1/deactivate/{userId}";
+  private static final String ENDPOINT_PURGE_ROOM = "/_synapse/admin/v2/rooms/{roomId}";
+  private static final String ENDPOINT_ROOM_MEMBERS = "/_synapse/admin/v1/rooms/{roomId}/members";
   private static final String ENDPOINT_JOINED_ROOMS = "/_matrix/client/r0/joined_rooms";
   private static final String ENDPOINT_PRESENCE = "/_matrix/client/r0/presence/{userId}/status";
+  private static final String ENDPOINT_SEND_MESSAGE =
+      "/_matrix/client/r0/rooms/{roomId}/send/m.room.message/{txnId}";
+  private static final String ENDPOINT_ROOM_EVENT =
+      "/_matrix/client/v3/rooms/{roomId}/event/{eventId}";
+  private static final String ENDPOINT_ROOM_MESSAGES = "/_matrix/client/r0/rooms/{roomId}/messages";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
 
   private final MatrixConfig matrixConfig;
@@ -48,16 +64,46 @@ public class MatrixSynapseService {
   private final MatrixRoomClient matrixRoomClient;
   private final MatrixMediaClient matrixMediaClient;
 
-  // Cache for Matrix access tokens (username -> access token)
-  private final java.util.Map<String, String> accessTokenCache =
+  // Time source for cache-expiry checks. Real deployment uses the wall clock; tests inject a
+  // controllable supplier so TTL expiry can be exercised deterministically without sleeping.
+  private final java.util.function.LongSupplier nowSupplier;
+
+  // Cache for Matrix access tokens (username -> access token + expiry). Bounded by a TTL so entries
+  // cannot accumulate forever and, crucially, so a token invalidated on the homeserver (e.g. after
+  // a
+  // password reset) is not served indefinitely. Mirrors the impersonationTokenCache mechanism
+  // below.
+  private final java.util.Map<String, CachedAccessToken> accessTokenCache =
       new java.util.concurrent.ConcurrentHashMap<>();
 
-  // Cache for Matrix sync tokens (username -> next_batch token)
+  // Rotating a browser-login password and consuming it must be atomic per Matrix identity.
+  private final java.util.Map<String, java.util.concurrent.locks.ReentrantLock> browserLoginLocks =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  private static final long ACCESS_TOKEN_CACHE_TTL_MS = 50 * 60 * 1000L;
+
+  private static final class CachedAccessToken {
+    private final String token;
+    private final long expiryMs;
+
+    private CachedAccessToken(String token, long expiryMs) {
+      this.token = token;
+      this.expiryMs = expiryMs;
+    }
+  }
+
+  // Cache for Matrix sync tokens (username -> next_batch cursor). Intentionally left without a TTL:
+  // a next_batch is an opaque /sync cursor, not an auth credential — it cannot leak access and
+  // never
+  // becomes dangerous when stale; losing it merely triggers a full re-sync from the current
+  // position.
   private final java.util.Map<String, String> syncTokenCache =
       new java.util.concurrent.ConcurrentHashMap<>();
 
-  // Short-lived cache of user presence (matrixUserId -> state + expiry) so the polled
-  // availability endpoint does not hit Synapse once per consultant on every request.
+  // Short-lived cache of user presence (matrixUserId -> state + expiry) so the
+  // polled
+  // availability endpoint does not hit Synapse once per consultant on every
+  // request.
   private final java.util.Map<String, CachedPresence> presenceCache =
       new java.util.concurrent.ConcurrentHashMap<>();
 
@@ -77,17 +123,64 @@ public class MatrixSynapseService {
   private String cachedAdminToken = null;
   private long adminTokenExpiry = 0;
 
+  // Short-lived impersonation tokens obtained via Synapse admin API (matrixUserId
+  // -> token)
+  private final java.util.Map<String, CachedImpersonationToken> impersonationTokenCache =
+      new java.util.concurrent.ConcurrentHashMap<>();
+
+  private static final long IMPERSONATION_TOKEN_TTL_MS = 50 * 60 * 1000L;
+
+  private static final class CachedImpersonationToken {
+    private final String token;
+    private final long expiryMs;
+
+    private CachedImpersonationToken(String token, long expiryMs) {
+      this.token = token;
+      this.expiryMs = expiryMs;
+    }
+  }
+
+  @Autowired
   public MatrixSynapseService(
       MatrixConfig matrixConfig,
       RestTemplate restTemplate,
       @Qualifier("matrixLongPollRestTemplate") RestTemplate matrixLongPollRestTemplate,
       MatrixRoomClient matrixRoomClient,
       MatrixMediaClient matrixMediaClient) {
+    this(
+        matrixConfig,
+        restTemplate,
+        matrixLongPollRestTemplate,
+        matrixRoomClient,
+        matrixMediaClient,
+        System::currentTimeMillis);
+  }
+
+  // Package-private constructor allowing tests to inject a controllable clock for TTL assertions.
+  MatrixSynapseService(
+      MatrixConfig matrixConfig,
+      RestTemplate restTemplate,
+      RestTemplate matrixLongPollRestTemplate,
+      MatrixRoomClient matrixRoomClient,
+      MatrixMediaClient matrixMediaClient,
+      java.util.function.LongSupplier nowSupplier) {
     this.matrixConfig = matrixConfig;
     this.restTemplate = restTemplate;
     this.matrixLongPollRestTemplate = matrixLongPollRestTemplate;
     this.matrixRoomClient = matrixRoomClient;
     this.matrixMediaClient = matrixMediaClient;
+    this.nowSupplier = nowSupplier;
+  }
+
+  /**
+   * Pure, testable expiry predicate for time-based cache entries.
+   *
+   * @param expiryMs the wall-clock time (epoch millis) at which the entry expires
+   * @param nowMs the current wall-clock time (epoch millis)
+   * @return {@code true} when the entry is expired and must be treated as a cache miss
+   */
+  static boolean isExpired(long expiryMs, long nowMs) {
+    return nowMs >= expiryMs;
   }
 
   /**
@@ -158,6 +251,13 @@ public class MatrixSynapseService {
     }
   }
 
+  @Override
+  public String createUserId(String username, String password, String displayName)
+      throws MatrixCreateUserException {
+    var response = createUser(username, password, displayName);
+    return response == null || response.getBody() == null ? null : response.getBody().getUserId();
+  }
+
   /**
    * Creates a new ADMIN user in Matrix Synapse.
    *
@@ -224,6 +324,52 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Checks whether a Matrix user with the given localpart already exists on this homeserver.
+   *
+   * <p>Matrix user IDs are global (not per-tenant), so this is the authoritative occupancy check
+   * for anonymous usernames: a localpart can be orphaned in Matrix (present here but absent from
+   * MariaDB and Keycloak, e.g. left behind by a rolled-back or externally cleaned-up account), and
+   * such an orphan still makes {@code createUser} fail with {@code M_USER_IN_USE}.
+   *
+   * @param localpart the Matrix localpart (the part before {@code :server}); it is lowercased,
+   *     because Synapse stores localparts in lower case
+   * @return {@code true} if the user exists, {@code false} if it does not (HTTP 404) or if
+   *     existence could not be determined (so callers still make forward progress rather than
+   *     looping forever when the admin API is unavailable)
+   */
+  public boolean userExists(String localpart) {
+    if (localpart == null || localpart.isBlank()) {
+      return false;
+    }
+    String matrixUserId =
+        "@" + localpart.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for Matrix user existence check of {}", matrixUserId);
+        return false;
+      }
+      URI url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(headers),
+              String.class);
+      return response.getStatusCode().is2xxSuccessful();
+    } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
+      return false;
+    } catch (Exception ex) {
+      log.warn("Could not check Matrix user existence for {}: {}", matrixUserId, ex.getMessage());
+      return false;
+    }
+  }
+
+  /**
    * Creates a short-lived Matrix access token for a user via the Synapse admin API.
    *
    * @param matrixUserId full Matrix user ID, e.g. {@code @user:server}
@@ -242,8 +388,7 @@ public class MatrixSynapseService {
     }
 
     try {
-      String url =
-          matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, matrixUserId));
+      URI uri = adminLoginAsUserUri(matrixUserId);
 
       var headers = getClientHttpHeaders(adminToken);
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -255,7 +400,7 @@ public class MatrixSynapseService {
 
       HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(body, headers);
 
-      var response = restTemplate.postForEntity(url, request, java.util.Map.class);
+      var response = restTemplate.postForEntity(uri, request, java.util.Map.class);
 
       @SuppressWarnings("unchecked")
       java.util.Map<String, Object> responseBody =
@@ -279,6 +424,22 @@ public class MatrixSynapseService {
     }
   }
 
+  private static String encodeMatrixUserIdForAdminPath(String matrixUserId) {
+    try {
+      return UriUtils.encode(
+          UriUtils.decode(matrixUserId, StandardCharsets.UTF_8), StandardCharsets.UTF_8);
+    } catch (IllegalArgumentException ex) {
+      return UriUtils.encode(matrixUserId, StandardCharsets.UTF_8);
+    }
+  }
+
+  private URI adminLoginAsUserUri(String matrixUserId) {
+    String encodedMatrixUserId = encodeMatrixUserIdForAdminPath(matrixUserId);
+    String url =
+        matrixConfig.getApiUrl(String.format(ENDPOINT_ADMIN_LOGIN_AS_USER, encodedMatrixUserId));
+    return URI.create(url);
+  }
+
   public String loginAsUserAccessToken(String matrixUserId) {
     var tokenResponse = loginAsUser(matrixUserId, SERVER_OPERATION_TOKEN_TTL_MS);
     if (tokenResponse == null || tokenResponse.get("access_token") == null) {
@@ -288,15 +449,93 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Creates a device-bound Matrix login for browser E2EE without persisting a Matrix password.
+   *
+   * <p>Synapse admin impersonation tokens deliberately have no device and therefore cannot upload
+   * encryption keys. A random password is rotated server-side, existing devices remain logged in,
+   * and the password is used exactly once for the standard client login that binds the returned
+   * token to {@code deviceId}.
+   *
+   * @param matrixUserId full local Matrix user ID
+   * @param deviceId stable browser device ID
+   * @return standard Matrix login response, or {@code null} when the login cannot be created
+   */
+  public java.util.Map<String, Object> loginBrowserDevice(String matrixUserId, String deviceId) {
+    if (matrixUserId == null || matrixUserId.isBlank() || !MatrixIds.isDeviceId(deviceId)) {
+      return null;
+    }
+
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      return null;
+    }
+
+    var browserLoginLock =
+        browserLoginLocks.computeIfAbsent(
+            matrixUserId, ignored -> new java.util.concurrent.locks.ReentrantLock());
+    browserLoginLock.lock();
+    try {
+      String transientPassword = UUID.randomUUID() + "-" + UUID.randomUUID();
+      var adminHeaders = getClientHttpHeaders(adminToken);
+      adminHeaders.setContentType(MediaType.APPLICATION_JSON);
+      var updateBody = new MatrixPasswordUpdateRequestDTO();
+      updateBody.setPassword(transientPassword);
+      updateBody.setLogoutDevices(false);
+      var updateUri =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      restTemplate.exchange(
+          updateUri,
+          org.springframework.http.HttpMethod.PUT,
+          new HttpEntity<>(updateBody, adminHeaders),
+          java.util.Map.class);
+
+      var loginHeaders = new HttpHeaders();
+      loginHeaders.setContentType(MediaType.APPLICATION_JSON);
+      var loginBody = new MatrixLoginRequestDTO();
+      loginBody.setType("m.login.password");
+      loginBody.setUser(matrixUserId);
+      loginBody.setPassword(transientPassword);
+      loginBody.setDeviceId(deviceId);
+      loginBody.setInitialDeviceDisplayName("ORISO Web");
+
+      var response =
+          restTemplate.postForEntity(
+              matrixConfig.getApiUrl(ENDPOINT_LOGIN),
+              new HttpEntity<>(loginBody, loginHeaders),
+              java.util.Map.class);
+      if (response.getBody() == null
+          || response.getBody().get("access_token") == null
+          || response.getBody().get("device_id") == null) {
+        return null;
+      }
+
+      @SuppressWarnings("unchecked")
+      var responseBody = (java.util.Map<String, Object>) response.getBody();
+      return responseBody;
+    } catch (Exception ex) {
+      log.error(
+          "Matrix browser device login failed for user {} and device {}: {}",
+          matrixUserId,
+          deviceId,
+          ex.getMessage());
+      return null;
+    } finally {
+      browserLoginLock.unlock();
+    }
+  }
+
+  /**
    * Gets or creates an admin access token for administrative operations. Creates a technical admin
    * user if it doesn't exist.
    *
    * @return admin access token, or null if failed
    */
   private String getAdminAccessToken() {
-    // Check if cached token is still valid (expires in 1 hour, we refresh after 50 minutes)
-    long now = System.currentTimeMillis();
-    if (cachedAdminToken != null && now < adminTokenExpiry) {
+    // Check if cached token is still valid (expires in 1 hour, we refresh after 50
+    // minutes)
+    long now = nowSupplier.getAsLong();
+    if (cachedAdminToken != null && !isExpired(adminTokenExpiry, now)) {
       return cachedAdminToken;
     }
 
@@ -347,6 +586,7 @@ public class MatrixSynapseService {
    * @param displayName the new display name
    * @return true if successful, false otherwise
    */
+  @Override
   public boolean updateUserDisplayName(String matrixUserId, String displayName) {
     try {
       // Get admin token
@@ -357,8 +597,9 @@ public class MatrixSynapseService {
       }
 
       // Update display name using Synapse ADMIN v2 API
-      String url =
-          matrixConfig.getApiUrl(ENDPOINT_UPDATE_USER_ADMIN.replace("{userId}", matrixUserId));
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
 
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
@@ -387,28 +628,172 @@ public class MatrixSynapseService {
   }
 
   /**
-   * Logs in a Matrix user and returns access token.
+   * Deactivates and erases a Matrix user via the Synapse admin API.
+   *
+   * @param matrixUserId the full Matrix user ID (e.g., @username:domain)
+   * @return true if successful, false otherwise
+   */
+  public boolean deactivateUser(String matrixUserId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for Matrix user deactivation");
+        return false;
+      }
+
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_DEACTIVATE_USER, java.util.Map.of("userId", matrixUserId));
+
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(adminToken);
+
+      var body = new java.util.HashMap<String, Object>();
+      body.put("erase", true);
+
+      var request = new HttpEntity<>(body, headers);
+
+      ResponseEntity<String> response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.POST, request, String.class);
+
+      log.info("Successfully deactivated Matrix user: {}", matrixUserId);
+      return response.getStatusCode().is2xxSuccessful();
+
+    } catch (Exception ex) {
+      log.warn("Failed to deactivate Matrix user {}: {}", matrixUserId, ex.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Purges a Matrix room and its message history via the Synapse admin API.
+   *
+   * @param matrixRoomId the Matrix room ID
+   * @return true if successful, false otherwise
+   */
+  public boolean purgeRoom(String matrixRoomId) {
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for Matrix room purge");
+        return false;
+      }
+
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_PURGE_ROOM, java.util.Map.of("roomId", matrixRoomId));
+
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(adminToken);
+
+      var body = new java.util.HashMap<String, Object>();
+      body.put("purge", true);
+
+      var request = new HttpEntity<>(body, headers);
+
+      ResponseEntity<String> response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.DELETE, request, String.class);
+
+      log.info("Successfully purged Matrix room: {}", matrixRoomId);
+      return response.getStatusCode().is2xxSuccessful();
+
+    } catch (Exception ex) {
+      log.warn("Failed to purge Matrix room {}: {}", matrixRoomId, ex.getMessage());
+      return false;
+    }
+  }
+
+  /**
+   * Obtains a short-lived Matrix access token for {@code matrixUserId} via the Synapse admin API,
+   * without requiring knowledge of the user's password.
+   *
+   * @param matrixUserId full Matrix user ID (e.g. {@code @username:domain})
+   * @return access token, or null if admin impersonation failed
+   */
+  public String loginUserViaAdmin(String matrixUserId) {
+    if (matrixUserId == null
+        || matrixUserId.isBlank()
+        || !matrixUserId.startsWith("@")
+        || !matrixUserId.contains(":")) {
+      return null;
+    }
+
+    long now = nowSupplier.getAsLong();
+    impersonationTokenCache.entrySet().removeIf(e -> isExpired(e.getValue().expiryMs, now));
+
+    CachedImpersonationToken cached = impersonationTokenCache.get(matrixUserId);
+    if (cached != null) {
+      return cached.token;
+    }
+
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      log.warn("Cannot impersonate Matrix user {} without admin token", matrixUserId);
+      return null;
+    }
+
+    try {
+      URI uri = adminLoginAsUserUri(matrixUserId);
+
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(adminToken);
+
+      var response =
+          restTemplate.postForEntity(
+              uri, new HttpEntity<>(java.util.Map.of(), headers), java.util.Map.class);
+
+      if (response.getBody() != null && response.getBody().containsKey("access_token")) {
+        String accessToken = (String) response.getBody().get("access_token");
+        impersonationTokenCache.put(
+            matrixUserId,
+            new CachedImpersonationToken(accessToken, now + IMPERSONATION_TOKEN_TTL_MS));
+        log.debug("Obtained admin impersonation token for Matrix user {}", matrixUserId);
+        return accessToken;
+      }
+
+      log.error(
+          "Matrix admin impersonation login failed for user {} - no access token", matrixUserId);
+      return null;
+    } catch (Exception ex) {
+      log.error(
+          "Matrix admin impersonation login failed for user {}: {}", matrixUserId, ex.getMessage());
+      return null;
+    }
+  }
+
+  /**
+   * Logs in a Matrix user with username/password and returns access token.
    *
    * @param username the username
    * @param password the password
    * @return the access token
    */
   public String loginUser(String username, String password) {
-    // Check cache first
-    if (accessTokenCache.containsKey(username)) {
-      return accessTokenCache.get(username);
+    // Check cache first, evicting expired entries so a token invalidated on the homeserver
+    // (e.g. after a password reset) is never served past its TTL and a fresh login is forced.
+    long now = nowSupplier.getAsLong();
+    accessTokenCache.entrySet().removeIf(e -> isExpired(e.getValue().expiryMs, now));
+
+    CachedAccessToken cached = accessTokenCache.get(username);
+    if (cached != null) {
+      return cached.token;
     }
 
     try {
       var headers = new HttpHeaders();
       headers.setContentType(MediaType.APPLICATION_JSON);
 
-      var loginRequest = new java.util.HashMap<String, Object>();
-      loginRequest.put("type", "m.login.password");
-      loginRequest.put("user", username);
-      loginRequest.put("password", password);
+      var loginRequest = new MatrixLoginRequestDTO();
+      loginRequest.setType("m.login.password");
+      loginRequest.setUser(username);
+      loginRequest.setPassword(password);
 
-      HttpEntity<java.util.Map<String, Object>> request = new HttpEntity<>(loginRequest, headers);
+      HttpEntity<MatrixLoginRequestDTO> request = new HttpEntity<>(loginRequest, headers);
 
       var url = matrixConfig.getApiUrl(ENDPOINT_LOGIN);
       log.info("Logging in Matrix user: {} at URL: {}", username, url);
@@ -417,7 +802,8 @@ public class MatrixSynapseService {
 
       if (response.getBody() != null && response.getBody().containsKey("access_token")) {
         String accessToken = (String) response.getBody().get("access_token");
-        accessTokenCache.put(username, accessToken);
+        accessTokenCache.put(
+            username, new CachedAccessToken(accessToken, now + ACCESS_TOKEN_CACHE_TTL_MS));
         log.info("Successfully logged in Matrix user: {}", username);
         return accessToken;
       }
@@ -478,7 +864,8 @@ public class MatrixSynapseService {
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
       String roomName, String roomAlias, String accessToken) throws MatrixCreateRoomException {
 
-    return matrixRoomClient.createRoom(roomName, roomAlias, accessToken);
+    return matrixRoomClient.createRoom(
+        roomName, roomAlias, accessToken, matrixConfig.isEncryptionEnabled());
   }
 
   /**
@@ -508,6 +895,113 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Ensures the technical Matrix admin is a member of the given room. The event-listener /sync loop
+   * runs with the admin account and only receives events for rooms the admin has joined — without
+   * this membership, message notifications for the room can never fire.
+   *
+   * <p>Invite-only session rooms reject a direct admin join, so an existing member is impersonated
+   * (Synapse admin login-as-user) to invite the admin first.
+   *
+   * @param roomId the Matrix room ID
+   * @param memberMatrixUserId full Matrix ID of a current room member used for the invite fallback
+   * @return true when the admin is (now) a member of the room
+   */
+  public boolean ensureAdminInRoom(String roomId, String memberMatrixUserId) {
+    if (roomId == null || roomId.isBlank()) {
+      return false;
+    }
+    String adminToken = getAdminToken();
+    if (adminToken == null) {
+      return false;
+    }
+
+    // Direct join succeeds for public rooms or when the admin is already invited/joined.
+    if (joinRoom(roomId, adminToken)) {
+      return true;
+    }
+
+    // Invite-only room: impersonate a current member to invite the admin, then join.
+    if (memberMatrixUserId == null || memberMatrixUserId.isBlank()) {
+      return false;
+    }
+    String memberToken = loginAsUserAccessToken(memberMatrixUserId);
+    if (memberToken == null) {
+      log.warn(
+          "Could not impersonate {} to invite the Matrix admin into {}",
+          memberMatrixUserId,
+          roomId);
+      return false;
+    }
+
+    String adminMatrixId =
+        "@" + matrixConfig.getAdminUsername() + ":" + matrixConfig.getServerName();
+    try {
+      inviteUserToRoom(roomId, adminMatrixId, memberToken);
+    } catch (Exception e) {
+      log.warn(
+          "Inviting Matrix admin {} into {} failed: {}", adminMatrixId, roomId, e.getMessage());
+    }
+    return joinRoom(roomId, adminToken);
+  }
+
+  /**
+   * Leaves a Matrix room with the given user's own access token.
+   *
+   * @param roomId the room ID
+   * @param accessToken the access token of the leaving user
+   * @return true when the user is not in the room afterwards, false when the leave failed
+   */
+  public boolean leaveRoom(String roomId, String accessToken) {
+    return matrixRoomClient.leaveRoom(roomId, accessToken);
+  }
+
+  /**
+   * Reads the current members of a Matrix room via the Synapse admin API ({@code GET
+   * /_synapse/admin/v1/rooms/{roomId}/members}).
+   *
+   * <p>Uses the admin token, so it works regardless of whether the admin user is a member of the
+   * room. Never throws.
+   *
+   * @param matrixRoomId the Matrix room ID
+   * @return the list of full Matrix user IDs currently joined to the room, or {@link
+   *     java.util.Optional#empty()} when the room state could not be determined (no admin token,
+   *     request failed, unexpected response shape). Callers must treat empty as "unknown", not as
+   *     "no members".
+   */
+  public java.util.Optional<java.util.List<String>> getRoomMembers(String matrixRoomId) {
+    String adminToken = getAdminAccessToken();
+    if (adminToken == null) {
+      log.warn("Could not get admin token for reading members of Matrix room {}", matrixRoomId);
+      return java.util.Optional.empty();
+    }
+
+    try {
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_ROOM_MEMBERS, java.util.Map.of("roomId", matrixRoomId));
+
+      var headers = getClientHttpHeaders(adminToken);
+      var request = new HttpEntity<>(headers);
+
+      ResponseEntity<java.util.Map> response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+
+      var body = response.getBody();
+      if (body == null || !(body.get("members") instanceof java.util.List<?> members)) {
+        log.warn("Unexpected response reading members of Matrix room {}", matrixRoomId);
+        return java.util.Optional.empty();
+      }
+
+      return java.util.Optional.of(members.stream().map(String::valueOf).toList());
+    } catch (Exception ex) {
+      log.warn(
+          "Matrix Error: Could not read members of room {}: {}", matrixRoomId, ex.getMessage());
+      return java.util.Optional.empty();
+    }
+  }
+
+  /**
    * Sends a message to a Matrix room.
    *
    * @param roomId the room ID
@@ -529,8 +1023,10 @@ public class MatrixSynapseService {
 
       String txnId = java.util.UUID.randomUUID().toString();
       var url =
-          matrixConfig.getApiUrl(
-              "/_matrix/client/r0/rooms/" + roomId + "/send/m.room.message/" + txnId);
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_SEND_MESSAGE,
+              java.util.Map.of("roomId", roomId, "txnId", txnId));
 
       log.info("Sending message to Matrix room: {}", roomId);
 
@@ -543,6 +1039,37 @@ public class MatrixSynapseService {
       log.error(
           "Matrix Error: Could not send message to room ({}). Reason: {}", roomId, ex.getMessage());
       return java.util.Map.of("error", ex.getMessage());
+    }
+  }
+
+  /**
+   * Reads one raw Matrix event from a room. Encrypted events remain encrypted here; this method is
+   * used only to validate event identity and metadata, never to access message plaintext.
+   */
+  public java.util.Optional<java.util.Map<String, Object>> getRoomEvent(
+      String roomId, String eventId, String accessToken) {
+    try {
+      var headers = getClientHttpHeaders(accessToken);
+      HttpEntity<Void> request = new HttpEntity<>(headers);
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_ROOM_EVENT,
+              java.util.Map.of("roomId", roomId, "eventId", eventId));
+      var response =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+      if (response.getBody() == null) {
+        return java.util.Optional.empty();
+      }
+      return java.util.Optional.of(response.getBody());
+    } catch (Exception ex) {
+      log.warn(
+          "Matrix Error: Could not read event {} from room {}: {}",
+          eventId,
+          roomId,
+          ex.getMessage());
+      return java.util.Optional.empty();
     }
   }
 
@@ -561,8 +1088,11 @@ public class MatrixSynapseService {
       HttpEntity<Void> request = new HttpEntity<>(headers);
 
       var url =
-          matrixConfig.getApiUrl(
-              "/_matrix/client/r0/rooms/" + roomId + "/messages?dir=b&limit=100");
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_ROOM_MESSAGES,
+              java.util.Map.of("roomId", roomId),
+              java.util.Map.of("dir", "b", "limit", 100));
 
       log.info("Getting messages from Matrix room: {}", roomId);
 
@@ -610,19 +1140,16 @@ public class MatrixSynapseService {
       // Get the last sync token if available
       String since = syncTokenCache.getOrDefault(username, "");
 
-      // Build sync URL with room filter
-      String filter =
-          java.net.URLEncoder.encode(
-              "{\"room\":{\"timeline\":{\"limit\":50},\"rooms\":[\"" + roomId + "\"]}}",
-              java.nio.charset.StandardCharsets.UTF_8);
+      String filter = "{\"room\":{\"timeline\":{\"limit\":50},\"rooms\":[\"" + roomId + "\"]}}";
+      var queryParams = new java.util.LinkedHashMap<String, Object>();
+      queryParams.put("timeout", timeout);
+      if (!since.isEmpty()) {
+        queryParams.put("since", since);
+      }
+      queryParams.put("filter", filter);
 
-      String url =
-          matrixConfig.getApiUrl(ENDPOINT_SYNC)
-              + "?timeout="
-              + timeout
-              + (since.isEmpty() ? "" : "&since=" + since)
-              + "&filter="
-              + filter;
+      var url =
+          MatrixUrlBuilder.buildUrl(matrixConfig, ENDPOINT_SYNC, java.util.Map.of(), queryParams);
 
       log.info("Syncing Matrix room: {} for user: {} (timeout: {}ms)", roomId, username, timeout);
 
@@ -745,7 +1272,8 @@ public class MatrixSynapseService {
   private String generateMac(String nonce, String username, String password, boolean admin)
       throws MatrixCreateUserException {
     try {
-      // Construct the message to sign: nonce + "\0" + username + "\0" + password + "\0" + (admin ?
+      // Construct the message to sign: nonce + "\0" + username + "\0" + password +
+      // "\0" + (admin ?
       // "admin" : "notadmin")
       String message =
           nonce + "\0" + username + "\0" + password + "\0" + (admin ? "admin" : "notadmin");
@@ -890,7 +1418,10 @@ public class MatrixSynapseService {
 
       var response =
           restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+              URI.create(url),
+              org.springframework.http.HttpMethod.GET,
+              request,
+              java.util.Map.class);
 
       if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
         @SuppressWarnings("unchecked")
@@ -933,7 +1464,10 @@ public class MatrixSynapseService {
 
       var response =
           restTemplate.exchange(
-              url, org.springframework.http.HttpMethod.GET, request, java.util.Map.class);
+              URI.create(url),
+              org.springframework.http.HttpMethod.GET,
+              request,
+              java.util.Map.class);
 
       if (response.getStatusCode().is2xxSuccessful() && response.getBody() != null) {
         @SuppressWarnings("unchecked")
@@ -972,6 +1506,14 @@ public class MatrixSynapseService {
   }
 
   /**
+   * Raises the room-wide {@code events_default} power level so ordinary members can no longer post
+   * (protocol-level read-only, US#473 team-discussion archive).
+   */
+  public boolean setRoomEventsDefaultPowerLevel(String roomId, int powerLevel, String accessToken) {
+    return matrixRoomClient.setRoomEventsDefaultPowerLevel(roomId, powerLevel, accessToken);
+  }
+
+  /**
    * Removes a user from a Matrix room (kick/leave).
    *
    * @param roomId The Matrix room ID
@@ -981,6 +1523,55 @@ public class MatrixSynapseService {
    */
   public boolean removeUserFromRoom(String roomId, String userId, String accessToken) {
     return matrixRoomClient.removeUserFromRoom(roomId, userId, accessToken);
+  }
+
+  /**
+   * Bans a user from a Matrix room using the given room-moderator access token.
+   *
+   * @param roomId the Matrix room ID
+   * @param userId the full Matrix user ID to ban
+   * @param accessToken access token of a user with ban permission in the room
+   * @return true when the user is banned afterwards, false otherwise
+   */
+  public boolean banUserFromRoom(String roomId, String userId, String accessToken) {
+    return matrixRoomClient.banUserFromRoom(roomId, userId, accessToken);
+  }
+
+  /**
+   * Bans a user from a Matrix room with a freshly minted admin impersonation token, so callers do
+   * not have to hold a moderator token themselves. Never throws.
+   *
+   * @param roomId the Matrix room ID
+   * @param bannedMatrixUserId the full Matrix user ID to ban
+   * @param actingModeratorMatrixUserId a Matrix user ID that has ban permission in the room (e.g. a
+   *     consultant or the room creator); impersonated via the Synapse admin API
+   * @return true when the ban succeeded, false when it could not be performed
+   */
+  public boolean banUserFromRoomAsModerator(
+      String roomId, String bannedMatrixUserId, String actingModeratorMatrixUserId) {
+    String moderatorToken = loginUserViaAdmin(actingModeratorMatrixUserId);
+    if (moderatorToken == null) {
+      log.warn(
+          "Could not obtain moderator token for {}; cannot ban {} from room {}",
+          actingModeratorMatrixUserId,
+          bannedMatrixUserId,
+          roomId);
+      return false;
+    }
+    return matrixRoomClient.banUserFromRoom(roomId, bannedMatrixUserId, moderatorToken);
+  }
+
+  /**
+   * Lifts a ban previously placed on a user in a Matrix room using the given room-moderator access
+   * token. Never throws.
+   *
+   * @param roomId the Matrix room ID
+   * @param userId the full Matrix user ID to unban
+   * @param accessToken access token of a user with unban permission in the room
+   * @return true when the unban succeeded, false otherwise
+   */
+  public boolean unbanUserFromRoom(String roomId, String userId, String accessToken) {
+    return matrixRoomClient.unbanUserFromRoom(roomId, userId, accessToken);
   }
 
   /**
@@ -1007,14 +1598,16 @@ public class MatrixSynapseService {
       return java.util.Optional.empty();
     }
 
-    long now = System.currentTimeMillis();
+    long now = nowSupplier.getAsLong();
     CachedPresence cached = presenceCache.get(matrixUserId);
-    if (cached != null && now < cached.expiresAt) {
+    if (cached != null && !isExpired(cached.expiresAt, now)) {
       return java.util.Optional.of(cached);
     }
 
     try {
-      String url = matrixConfig.getApiUrl(ENDPOINT_PRESENCE.replace("{userId}", matrixUserId));
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_PRESENCE, java.util.Map.of("userId", matrixUserId));
       HttpEntity<Void> request = new HttpEntity<>(getClientHttpHeaders(adminToken));
 
       var response =

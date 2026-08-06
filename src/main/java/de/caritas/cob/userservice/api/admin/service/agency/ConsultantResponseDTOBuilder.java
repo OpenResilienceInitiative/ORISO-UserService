@@ -94,7 +94,6 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
             new AgencyAdminResponseDTO()
                 .id(agency.getId())
                 .name(agency.getName())
-                .dioceseId(agency.getDioceseId())
                 .teamAgency(agency.getTeamAgency())
                 .offline(agency.getOffline())
                 .postcode(agency.getPostcode())

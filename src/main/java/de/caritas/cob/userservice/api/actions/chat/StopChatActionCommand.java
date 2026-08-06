@@ -1,13 +1,12 @@
 package de.caritas.cob.userservice.api.actions.chat;
 
-import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.BooleanUtils.isFalse;
 
 import de.caritas.cob.userservice.api.actions.ActionCommand;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.service.ChatService;
 import lombok.RequiredArgsConstructor;
@@ -19,11 +18,14 @@ import org.springframework.stereotype.Component;
 public class StopChatActionCommand implements ActionCommand<Chat> {
 
   private final ChatService chatService;
-  private final RocketChatService rocketChatService;
   private final ChatReCreator chatReCreator;
+  private final MatrixChatShutdownService matrixChatShutdownService;
 
   /**
-   * Deletes the given active chat and recreates it if repetitive.
+   * Deletes the given active chat and recreates it if repetitive. Repetitive chats get a fresh
+   * Matrix room for their next occurrence and the old room is shut down (via {@link
+   * ChatReCreator}); for non-repetitive chats the Matrix room is shut down directly. Either way the
+   * shutdown is best-effort and removes all members so their clients can show the chat as stopped.
    *
    * @param chat the {@link Chat} to be stopped
    */
@@ -31,19 +33,28 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
   public void execute(Chat chat) {
     checkActiveState(chat);
 
-    if (isNull(chat.getGroupId())) {
+    if (!MatrixIds.isRoomId(chat.getMatrixRoomId())) {
       throw new InternalServerErrorException(
-          String.format("Chat with id %s has no Rocket.Chat group id", chat.getId()));
+          String.format("Chat with id %s has no Matrix room id", chat.getId()));
     }
 
-    if (!chat.isRepetitive() || nonNull(chat.nextStart())) {
-      deleteMessengerChat(chat);
-      if (chat.isRepetitive()) {
-        var rcGroupId = chatReCreator.recreateMessengerChat(chat);
-        chatReCreator.updateAsNextChat(chat, rcGroupId);
+    if (chat.isRepetitive() && chat.getChatInterval() == null) {
+      throw new InternalServerErrorException(
+          String.format("Finite chat series with id %s has no interval", chat.getId()));
+    }
+
+    if (chat.isRepetitive()) {
+      if (nonNull(chat.nextStart())) {
+        var matrixRoomId = chatReCreator.recreateMessengerChat(chat);
+        chatReCreator.updateAsNextChat(chat, matrixRoomId);
       } else {
-        chatService.deleteChat(chat);
+        matrixChatShutdownService.shutdownRoom(chat);
+        chat.setActive(false);
+        chatService.saveChat(chat);
       }
+    } else {
+      chatService.deleteChat(chat);
+      matrixChatShutdownService.shutdownRoom(chat);
     }
   }
 
@@ -51,13 +62,6 @@ public class StopChatActionCommand implements ActionCommand<Chat> {
     if (isFalse(chat.isActive())) {
       throw new ConflictException(
           String.format("Chat with id %s is already stopped.", chat.getId()));
-    }
-  }
-
-  private void deleteMessengerChat(Chat chat) {
-    if (!rocketChatService.deleteGroupAsSystemUser(chat.getGroupId())) {
-      throw new InternalServerErrorException(
-          String.format("Could not delete Rocket.Chat group with id %s", chat.getGroupId()));
     }
   }
 }

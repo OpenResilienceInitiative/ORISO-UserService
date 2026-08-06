@@ -3,11 +3,11 @@ package de.caritas.cob.userservice.api.adapters.web.controller.interceptor;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -44,13 +44,36 @@ class HttpTenantFilterTest {
   }
 
   @Test
+  void matrixRtcPolicyEndpointDoesNotRequireBrowserTenantContext()
+      throws ServletException, IOException {
+    Mockito.when(request.getRequestURI()).thenReturn("/internal/matrixrtc/call-policy");
+
+    httpTenantFilter.doFilterInternal(request, response, filterChain);
+
+    Mockito.verifyNoInteractions(tenantResolverService, tenantService);
+    Mockito.verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
+  void siblingMatrixRtcEndpointStillRequiresTenantContext() throws ServletException, IOException {
+    Mockito.when(request.getRequestURI()).thenReturn("/internal/matrixrtc/future-endpoint");
+    Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
+    Mockito.when(tenantService.getRestrictedTenantData(1L)).thenReturn(new RestrictedTenantDTO());
+
+    httpTenantFilter.doFilterInternal(request, response, filterChain);
+
+    Mockito.verify(tenantResolverService).resolve(request);
+    Mockito.verify(filterChain).doFilter(request, response);
+  }
+
+  @Test
   void doFilterInternal_Should_Apply_When_DoesNotBelongBelongsToTenancyWhiteList()
       throws ServletException, IOException {
 
     // given
     Mockito.when(request.getRequestURI()).thenReturn("/users/1");
-    Mockito.when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
-        .thenReturn(new RestrictedTenantDTO());
+    Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
+    Mockito.when(tenantService.getRestrictedTenantData(1L)).thenReturn(new RestrictedTenantDTO());
 
     // when
     httpTenantFilter.doFilterInternal(request, response, filterChain);

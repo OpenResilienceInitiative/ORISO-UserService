@@ -13,9 +13,11 @@ import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
 import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.MediaType;
@@ -52,7 +54,9 @@ class UserAdminControllerPostUpdateRoutingTest {
             mock(AdminUserFacade.class),
             mock(AppointmentService.class),
             mock(AdminDtoMapper.class),
-            mock(AuthenticatedUser.class));
+            mock(AuthenticatedUser.class),
+            mock(GrantConsultantIdentityService.class),
+            mock(UserIdentitiesService.class));
 
     mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
   }

@@ -26,10 +26,9 @@ public class ConversationListResolver {
    * @return the relevant {@link ConsultantSessionListResponseDTO}
    */
   public ConsultantSessionListResponseDTO resolveConversations(
-      Integer offset, Integer count, ConversationListType conversationType, String rcToken) {
+      Integer offset, Integer count, ConversationListType conversationType) {
 
-    var pageableListRequest =
-        PageableListRequest.builder().offset(offset).count(count).rcToken(rcToken).build();
+    var pageableListRequest = PageableListRequest.builder().offset(offset).count(count).build();
 
     var responseDto =
         this.conversationListProviderRegistry

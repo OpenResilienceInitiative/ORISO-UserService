@@ -4,17 +4,17 @@ import static java.util.Objects.isNull;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.regex.Pattern;
 import java.util.stream.Stream;
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.http.Cookie;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -94,16 +94,44 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
     }
 
     private boolean isWhiteListUrl(HttpServletRequest request) {
+      // The MatrixRTC gateway is a cluster-internal machine client, not a browser session. It
+      // authenticates this one exact endpoint with its dedicated policy token, so it cannot
+      // provide the browser CSRF cookie/header pair. Keep the exemption exact: sibling internal
+      // endpoints must still pass the normal CSRF check.
+      if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())) {
+        return true;
+      }
       // Magic link endpoints are public login bootstrap endpoints and must work without a CSRF
       // token.
       if (request.getRequestURI() != null
           && request.getRequestURI().toLowerCase().contains("/users/magic-link/")) {
         return true;
       }
+      // Password reset endpoints are public login bootstrap endpoints too (ORISO-Helm#72) and
+      // must work without a CSRF token — the requester has no session yet. Scope the exemption to
+      // the two exact routes (optionally under a /service prefix), never an arbitrary substring.
+      if (request.getRequestURI() != null) {
+        String lowerUri = request.getRequestURI().toLowerCase();
+        if (lowerUri.endsWith("/users/password-reset/request")
+            || lowerUri.endsWith("/users/password-reset/confirm")) {
+          return true;
+        }
+      }
       // Invite-link redeem is a public bootstrap endpoint too — anyone opening the shared link
       // hits it before any session / CSRF cookie exists.
       if (request.getRequestURI() != null
           && request.getRequestURI().toLowerCase().contains("/users/invitelinks/")) {
+        return true;
+      }
+      // Registration is public and may be called with or without the /service prefix.
+      if (request.getRequestURI() != null
+          && request.getRequestURI().toLowerCase().contains("/users/askers/new")) {
+        return true;
+      }
+      // Client-side error intake (OBS-P3) must accept crash reports from a browser that has no
+      // session/CSRF cookie yet, e.g. an error thrown before login completes.
+      if (request.getRequestURI() != null
+          && request.getRequestURI().toLowerCase().contains("/error-reports")) {
         return true;
       }
       List<String> csrfWhitelist =

@@ -2,15 +2,19 @@ package de.caritas.cob.userservice.api.service.matrix;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
+import org.springframework.context.annotation.Profile;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
@@ -22,8 +26,11 @@ import org.springframework.stereotype.Service;
  */
 @Service
 @Slf4j
-@RequiredArgsConstructor
+@Profile("!prod")
+@ConditionalOnExpression("${debug.redis.message.mirror.enabled:false}")
 public class RedisMessageMirrorService {
+
+  private static final int MESSAGE_HASH_HEX_CHARS = 8;
 
   private final ObjectProvider<StringRedisTemplate> redisTemplateProvider;
   private final ObjectMapper objectMapper;
@@ -39,6 +46,13 @@ public class RedisMessageMirrorService {
 
   @Value("${debug.redis.message.mirror.keyPrefix:debug:msgmirror}")
   private String keyPrefix;
+
+  public RedisMessageMirrorService(
+      ObjectProvider<StringRedisTemplate> redisTemplateProvider, ObjectMapper objectMapper) {
+    this.redisTemplateProvider = redisTemplateProvider;
+    this.objectMapper = objectMapper;
+    log.warn("RedisMessageMirrorService active — debug only, must never run in prod");
+  }
 
   public void mirrorOutgoingMessage(
       Long sessionId,
@@ -77,10 +91,8 @@ public class RedisMessageMirrorService {
     payload.put("ts", Instant.now().toString());
     payload.put("sessionId", sessionId);
     payload.put("roomId", roomId);
-    payload.put("sender", senderUsername);
-    payload.put("senderRole", consultantSender ? "consultant" : "user");
-    payload.put("eventId", matrixEventId == null ? "" : matrixEventId);
-    payload.put("message", safeBody);
+    payload.put("messageLength", safeBody.length());
+    payload.put("messageHash", sha256Prefix(safeBody, MESSAGE_HASH_HEX_CHARS));
 
     try {
       String serializedPayload = objectMapper.writeValueAsString(payload);
@@ -91,6 +103,20 @@ public class RedisMessageMirrorService {
       log.warn("Failed to serialize Redis message mirror payload: {}", e.getMessage());
     } catch (Exception e) {
       log.warn("Failed writing mirrored message to Redis: {}", e.getMessage());
+    }
+  }
+
+  private static String sha256Prefix(String input, int hexChars) {
+    try {
+      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+      byte[] hash = digest.digest(input.getBytes(StandardCharsets.UTF_8));
+      StringBuilder hex = new StringBuilder(hash.length * 2);
+      for (byte value : hash) {
+        hex.append(String.format("%02x", value));
+      }
+      return hex.substring(0, hexChars);
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 not available", e);
     }
   }
 }

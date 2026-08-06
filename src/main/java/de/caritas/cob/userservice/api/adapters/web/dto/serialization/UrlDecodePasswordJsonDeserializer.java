@@ -1,32 +1,17 @@
 package de.caritas.cob.userservice.api.adapters.web.dto.serialization;
 
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.JsonDeserializer;
 import de.caritas.cob.userservice.api.helper.Helper;
-import java.io.IOException;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonParser;
+import tools.jackson.databind.DeserializationContext;
+import tools.jackson.databind.ValueDeserializer;
 
-public class UrlDecodePasswordJsonDeserializer extends JsonDeserializer<String> {
-
-  private Helper helper = new Helper();
+public class UrlDecodePasswordJsonDeserializer extends ValueDeserializer<String> {
 
   @Override
   public String deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
-      throws IOException, JsonProcessingException {
+      throws JacksonException {
     String password = jsonParser.getValueAsString();
-    String decodedPassword = helper.urlDecodeString(password);
-
-    // MATRIX MIGRATION: Store plain password in ThreadLocal for Matrix user creation
-    de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials current =
-        de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
-    if (current != null) {
-      de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(
-          current.getUsername(), decodedPassword);
-    } else {
-      de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(null, decodedPassword);
-    }
-
-    return decodedPassword;
+    return new Helper().urlDecodeString(password);
   }
 }

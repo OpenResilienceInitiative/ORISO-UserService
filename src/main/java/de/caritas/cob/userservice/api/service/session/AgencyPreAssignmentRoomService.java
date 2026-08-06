@@ -2,12 +2,12 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import java.util.Optional;
@@ -15,7 +15,6 @@ import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -24,8 +23,9 @@ import org.springframework.stereotype.Service;
 public class AgencyPreAssignmentRoomService {
 
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
-  private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull SessionService sessionService;
+  private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
 
   public void ensureHoldingRoom(Session session, User user) {
     if (session == null || user == null) {
@@ -77,7 +77,7 @@ public class AgencyPreAssignmentRoomService {
 
     String agencyMatrixUsername = extractLocalPart(credentials.getMatrixUserId());
     String agencyToken =
-        matrixSynapseService.loginUser(agencyMatrixUsername, credentials.getMatrixPassword());
+        sessionRoomGateway.loginUser(agencyMatrixUsername, credentials.getMatrixPassword());
 
     if (isBlank(agencyToken)) {
       log.error(
@@ -92,17 +92,14 @@ public class AgencyPreAssignmentRoomService {
     String roomName = buildRoomName(session, credentials.getMatrixUserId());
 
     try {
-      ResponseEntity<MatrixCreateRoomResponseDTO> response =
-          matrixSynapseService.createRoom(roomName, roomAlias, agencyToken);
-
-      if (response.getBody() == null || isBlank(response.getBody().getRoomId())) {
+      String roomId = sessionRoomGateway.createRoom(roomName, roomAlias, agencyToken);
+      if (isBlank(roomId)) {
         log.error("Matrix create room returned empty body for session {}", session.getId());
         return;
       }
 
-      String roomId = response.getBody().getRoomId();
-
       inviteUser(roomId, user, agencyToken);
+      joinAgencyConsultants(session, roomId, agencyToken);
 
       session.setMatrixRoomId(roomId);
       sessionService.saveSession(session);
@@ -121,13 +118,33 @@ public class AgencyPreAssignmentRoomService {
     }
   }
 
+  /**
+   * FE#811 / ADR-002 §1: the agency's counsellors become real room members here, while the room is
+   * still empty, so an enquiry is readable to everyone entitled to pick it up and no one ever joins
+   * after a Megolm session was already handed out.
+   *
+   * <p>A directly addressed enquiry (public counsellor link, appointment booking) is deliberately
+   * excluded — the advice seeker chose one counsellor, and fanning that case out to the whole
+   * department would widen its audience beyond what they consented to.
+   */
+  private void joinAgencyConsultants(Session session, String roomId, String agencyToken) {
+    if (Boolean.TRUE.equals(session.getIsConsultantDirectlySet())) {
+      log.debug(
+          "Session {} is directly assigned to a consultant, skipping department membership.",
+          session.getId());
+      return;
+    }
+
+    agencySilentMembershipService.joinAgencyConsultants(session.getAgencyId(), roomId, agencyToken);
+  }
+
   private void inviteUser(String roomId, User user, String agencyToken) {
     try {
-      matrixSynapseService.inviteUserToRoom(roomId, user.getMatrixUserId(), agencyToken);
+      sessionRoomGateway.inviteUser(roomId, user.getMatrixUserId(), agencyToken);
 
-      String userToken = matrixSynapseService.loginAsUserAccessToken(user.getMatrixUserId());
+      String userToken = sessionRoomGateway.loginAsUser(user.getMatrixUserId());
       if (!isBlank(userToken)) {
-        matrixSynapseService.joinRoom(roomId, userToken);
+        sessionRoomGateway.joinRoom(roomId, userToken);
       }
     } catch (MatrixInviteUserException ex) {
       log.error(
@@ -139,14 +156,7 @@ public class AgencyPreAssignmentRoomService {
   }
 
   private String extractLocalPart(String matrixUserId) {
-    if (isBlank(matrixUserId)) {
-      return matrixUserId;
-    }
-    if (matrixUserId.startsWith("@")) {
-      matrixUserId = matrixUserId.substring(1);
-    }
-    int colonIndex = matrixUserId.indexOf(':');
-    return colonIndex > 0 ? matrixUserId.substring(0, colonIndex) : matrixUserId;
+    return MatrixIds.localpartLenient(matrixUserId);
   }
 
   private String buildRoomAlias(Long sessionId) {

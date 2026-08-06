@@ -1,7 +1,9 @@
 package de.caritas.cob.userservice.api.service.agencyinvitelink;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
+import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -15,13 +17,13 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
+import jakarta.servlet.http.HttpServletRequest;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.Base64;
 import java.util.List;
 import java.util.Objects;
-import javax.servlet.http.HttpServletRequest;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -50,6 +52,7 @@ public class AgencyInviteLinkService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultingTypeService consultingTypeService;
   private final @NonNull AgencyService agencyService;
+  private final @NonNull CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
 
   /** Create a new invite link. All classification fields are optional — defaults are applied. */
   public AgencyInviteLink create(CreateInviteLinkCommand cmd) {
@@ -154,7 +157,7 @@ public class AgencyInviteLinkService {
 
   /**
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for
-   * the frontend registration flow. Does not create Keycloak or Rocket.Chat users on the server.
+   * the frontend registration flow. Does not create Keycloak or Matrix users on the server.
    */
   @Transactional
   public RedeemContext redeemWithContext(String token) {
@@ -190,6 +193,21 @@ public class AgencyInviteLinkService {
       TenantContext.setCurrentTenant(link.getTenantId());
 
       Integer consultingTypeId = pickConsultingTypeId(link);
+
+      // A Live Chat link binds only to a topic. Redeem creates a real anonymous session for the
+      // link's topic and returns it directly — no agency/tenant binding at entry. The client
+      // enters the cross-agency/cross-tenant topic queue; binding to a concrete agency/tenant and
+      // that agency's data-protection declaration happen only when a live consultant accepts.
+      if (InviteLinkChatType.LIVE_CHAT.name().equals(link.getChatType())) {
+        var dto = new CreateAnonymousEnquiryDTO(consultingTypeId).mainTopicId(link.getTopicId());
+        var session = createAnonymousEnquiryFacade.createAnonymousEnquiry(dto, true);
+        // Public Live Chat entry points are reusable until expiry so multiple clients can enter
+        // the shared topic queue through the same published link.
+        return new RedeemContext(
+            session, link.getTenantId(), null, consultingTypeId, link.getTopicId());
+      }
+
+      // Registered (non-live-chat) links keep the legacy client-side registration path.
       Long agencyId = resolveAgencyIdForRegistration(link, consultingTypeId);
 
       // Link is reusable until expiry date — stay ACTIVE, do not mark USED.
@@ -214,7 +232,19 @@ public class AgencyInviteLinkService {
       throw new BadRequestException(
           "No agency available for this invite link — set agencyId on the link or configure a topic fallback agency");
     }
-    return agencies.get(0).getId();
+    return agencies.stream()
+        .filter(agency -> Objects.equals(agency.getTenantId(), link.getTenantId()))
+        .filter(
+            agency ->
+                link.getTopicId() == null
+                    || (agency.getTopicIds() != null
+                        && agency.getTopicIds().contains(link.getTopicId())))
+        .map(AgencyDTO::getId)
+        .findFirst()
+        .orElseThrow(
+            () ->
+                new BadRequestException(
+                    "No agency in the invite link tenant serves the configured consulting type and topic"));
   }
 
   // ---------------------------------------------------------------------------------------------

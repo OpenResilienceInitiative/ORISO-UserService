@@ -9,29 +9,35 @@ import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantMobileToken;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.port.out.ConsultantMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @ExtendWith(MockitoExtension.class)
 public class DeleteDatabaseConsultantActionTest {
@@ -40,13 +46,27 @@ public class DeleteDatabaseConsultantActionTest {
 
   @Mock private ConsultantRepository consultantRepository;
 
+  @Mock private SessionSupervisorRepository sessionSupervisorRepository;
+
+  @Mock private ConsultantMobileTokenRepository consultantMobileTokenRepository;
+
   @Mock private SessionRepository sessionRepository;
 
-  @Mock private Logger logger;
+  @Mock private IdentityTombstoneService identityTombstoneService;
+
+  private final ch.qos.logback.classic.Logger logger =
+      (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(DeleteDatabaseConsultantAction.class);
+  private final ListAppender<ILoggingEvent> logAppender = new ListAppender<>();
 
   @BeforeEach
   public void setup() {
-    setInternalState(DeleteDatabaseConsultantAction.class, "log", logger);
+    logAppender.start();
+    logger.addAppender(logAppender);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logger.detachAppender(logAppender);
   }
 
   @Test
@@ -58,7 +78,8 @@ public class DeleteDatabaseConsultantActionTest {
     List<DeletionWorkflowError> workflowErrors = workflowDTO.getDeletionWorkflowErrors();
 
     assertThat(workflowErrors, hasSize(0));
-    verifyNoMoreInteractions(this.logger);
+    assertThat(
+        logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(false));
   }
 
   @Test
@@ -78,12 +99,13 @@ public class DeleteDatabaseConsultantActionTest {
     verify(sessionRepository).save(session);
     assertNull(session.getConsultant());
     assertThat(workflowErrors, hasSize(0));
-    verifyNoMoreInteractions(this.logger);
+    assertThat(
+        logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(false));
   }
 
   @Test
   public void execute_Should_returnExpectedWorkflowErrorAndLogError_When_deletionFails() {
-    doThrow(new RuntimeException()).when(this.consultantRepository).delete(any());
+    doThrow(new RuntimeException()).when(this.consultantRepository).delete(any(Consultant.class));
     Consultant consultant = new Consultant();
     consultant.setId("consultantId");
     ConsultantDeletionWorkflowDTO workflowDTO =
@@ -98,7 +120,8 @@ public class DeleteDatabaseConsultantActionTest {
     assertThat(workflowErrors.get(0).getIdentifier(), is("consultantId"));
     assertThat(workflowErrors.get(0).getReason(), is("Unable to delete consultant in database"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
-    verify(logger).error(anyString(), any(RuntimeException.class));
+    assertThat(
+        logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(true));
   }
 
   @Test
@@ -123,6 +146,47 @@ public class DeleteDatabaseConsultantActionTest {
         workflowErrors.get(0).getReason(),
         is("Unable to unassign consultant from his sessions with state NEW or INITIAL"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
-    verify(logger).error(anyString(), any(RuntimeException.class));
+    assertThat(
+        logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(true));
+  }
+
+  @Test
+  public void execute_Should_deleteSupervisionsAndMobileTokensBeforeConsultant() {
+    var consultant = new Consultant();
+    consultant.setId("consultant id");
+    var mobileToken = new ConsultantMobileToken();
+    when(this.consultantMobileTokenRepository.findByConsultant(consultant))
+        .thenReturn(List.of(mobileToken));
+    var workflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
+
+    this.deleteDatabaseConsultantAction.execute(workflowDTO);
+
+    var inOrder =
+        inOrder(
+            this.sessionSupervisorRepository,
+            this.consultantMobileTokenRepository,
+            this.consultantRepository);
+    inOrder.verify(this.sessionSupervisorRepository).deleteAllByConsultantId("consultant id");
+    inOrder.verify(this.consultantMobileTokenRepository).deleteAll(List.of(mobileToken));
+    inOrder.verify(this.consultantRepository).delete(consultant);
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
+  }
+
+  @Test
+  public void execute_Should_reportWorkflowError_When_supervisionDeletionFails() {
+    var consultant = new Consultant();
+    consultant.setId("consultant id");
+    doThrow(new RuntimeException())
+        .when(this.sessionSupervisorRepository)
+        .deleteAllByConsultantId("consultant id");
+    var workflowDTO = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
+
+    this.deleteDatabaseConsultantAction.execute(workflowDTO);
+
+    var workflowErrors = workflowDTO.getDeletionWorkflowErrors();
+    assertThat(workflowErrors, hasSize(1));
+    assertThat(workflowErrors.get(0).getReason(), is("Unable to delete consultant supervisions"));
+    assertThat(workflowErrors.get(0).getDeletionSourceType(), is(CONSULTANT));
+    assertThat(workflowErrors.get(0).getDeletionTargetType(), is(DATABASE));
   }
 }

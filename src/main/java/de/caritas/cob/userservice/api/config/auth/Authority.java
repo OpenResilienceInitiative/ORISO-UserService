@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.config.auth;
 
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.ANONYMOUS_DEFAULT;
+import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.CONSULTANT_CREATE;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.CONSULTANT_DEFAULT;
@@ -31,6 +32,7 @@ public enum Authority {
       UserRole.CONSULTANT,
       List.of(
           CONSULTANT_DEFAULT,
+          ASSIGN_CONSULTANT_TO_ENQUIRY,
           ASSIGN_CONSULTANT_TO_SESSION,
           VIEW_AGENCY_CONSULTANTS,
           CREATE_NEW_CHAT,
@@ -55,7 +57,9 @@ public enum Authority {
   RESTRICTED_AGENCY_ADMIN(
       UserRole.RESTRICTED_AGENCY_ADMIN, singletonList(AuthorityValue.RESTRICTED_AGENCY_ADMIN)),
   SUPERVISOR_CONSULTANT(
-      UserRole.SUPERVISOR_CONSULTANT, List.of(CONSULTANT_DEFAULT, VIEW_AGENCY_CONSULTANTS));
+      UserRole.SUPERVISOR_CONSULTANT, List.of(CONSULTANT_DEFAULT, VIEW_AGENCY_CONSULTANTS)),
+  GLOBAL_SUPPORT_ADMIN(
+      UserRole.GLOBAL_SUPPORT_ADMIN, singletonList(AuthorityValue.GLOBAL_SUPPORT_ADMIN));
 
   private final UserRole userRole;
   private final List<String> grantedAuthorities;
@@ -95,5 +99,6 @@ public enum Authority {
     public static final String SINGLE_TENANT_ADMIN = PREFIX + "SINGLE_TENANT_ADMIN";
     public static final String TENANT_ADMIN = PREFIX + "TENANT_ADMIN";
     public static final String RESTRICTED_AGENCY_ADMIN = PREFIX + "RESTRICTED_AGENCY_ADMIN";
+    public static final String GLOBAL_SUPPORT_ADMIN = PREFIX + "GLOBAL_SUPPORT_ADMIN";
   }
 }

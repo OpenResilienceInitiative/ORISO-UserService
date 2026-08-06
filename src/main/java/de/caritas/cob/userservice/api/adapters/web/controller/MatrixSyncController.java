@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -15,7 +16,7 @@ import org.springframework.web.bind.annotation.*;
 
 /**
  * Controller for Matrix session synchronization. Allows frontend to register Matrix rooms for
- * real-time event notifications via LiveService.
+ * real-time event notifications.
  */
 @RestController
 @RequestMapping({"/matrix/sync", "/service/matrix/sync"})
@@ -24,12 +25,13 @@ import org.springframework.web.bind.annotation.*;
 public class MatrixSyncController {
 
   private final @NonNull MatrixEventListenerService matrixEventListenerService;
+  private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
   private final @NonNull AuthenticatedUser authenticatedUser;
 
   /**
    * Register a Matrix room for real-time event listening. When messages arrive in this room, the
-   * backend will trigger LiveService events to notify connected users.
+   * backend will trigger notifications for the affected users.
    *
    * @param sessionId the session ID
    * @return success response
@@ -37,26 +39,47 @@ public class MatrixSyncController {
   @PostMapping("/register/{sessionId}")
   public ResponseEntity<?> registerRoomForSync(@PathVariable Long sessionId) {
 
+    // Authorize the authenticated caller against the session (asker owns it / consultant is
+    // assigned) BEFORE doing anything. Kept outside the try/catch so the ForbiddenException /
+    // NotFoundException propagate to the global exception handler (403/404) instead of being
+    // swallowed into a 500. Closes the unauthenticated IDOR that leaked room ids + participant
+    // counts and allowed anonymous state changes.
+    var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
+
     try {
       log.info("📡 Registering Matrix room for session {}", sessionId);
 
-      var session = sessionService.getSession(sessionId);
-      if (session.isEmpty() || session.get().getMatrixRoomId() == null) {
-        log.error("Session {} not found or has no Matrix room", sessionId);
+      if (session.getMatrixRoomId() == null) {
+        log.error("Session {} has no Matrix room", sessionId);
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
             .body(Map.of("error", "Session not found or has no Matrix room"));
       }
 
-      String matrixRoomId = session.get().getMatrixRoomId();
-      String userId = session.get().getUser().getUserId();
+      String matrixRoomId = session.getMatrixRoomId();
+      String userId = session.getUser().getUserId();
       String consultantId =
-          session.get().getConsultant() != null ? session.get().getConsultant().getId() : null;
+          session.getConsultant() != null ? session.getConsultant().getId() : null;
 
       // Build set of user IDs who should receive notifications
       Set<String> userIds = new HashSet<>();
       userIds.add(userId);
       if (consultantId != null) {
         userIds.add(consultantId);
+      }
+
+      // The listener /sync loop runs as the technical admin and only receives events
+      // for rooms the admin has joined — heal the membership on every registration so
+      // message notifications can actually fire. Best-effort: registration must not
+      // fail because of a transient Matrix problem.
+      try {
+        String memberMatrixUserId =
+            session.getUser() != null ? session.getUser().getMatrixUserId() : null;
+        if (!matrixSynapseService.ensureAdminInRoom(matrixRoomId, memberMatrixUserId)) {
+          log.warn("Could not ensure Matrix admin membership in room {}", matrixRoomId);
+        }
+      } catch (Exception e) {
+        log.warn(
+            "Ensuring Matrix admin membership in room {} failed: {}", matrixRoomId, e.getMessage());
       }
 
       // Register room with MatrixEventListenerService
@@ -87,13 +110,17 @@ public class MatrixSyncController {
   @DeleteMapping("/register/{sessionId}")
   public ResponseEntity<?> unregisterRoomFromSync(@PathVariable Long sessionId) {
 
+    // Authorize the caller against the session before unregistering, so an outsider cannot silently
+    // kill live-event notifications for another session (denial-of-function). Kept outside the
+    // try/catch so ForbiddenException / NotFoundException reach the global exception handler.
+    var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
+
     try {
-      var session = sessionService.getSession(sessionId);
-      if (session.isEmpty() || session.get().getMatrixRoomId() == null) {
+      if (session.getMatrixRoomId() == null) {
         return ResponseEntity.ok(Map.of("success", true));
       }
 
-      String matrixRoomId = session.get().getMatrixRoomId();
+      String matrixRoomId = session.getMatrixRoomId();
       matrixEventListenerService.unregisterRoom(matrixRoomId);
 
       log.info("✅ Unregistered Matrix room {} for session {}", matrixRoomId, sessionId);

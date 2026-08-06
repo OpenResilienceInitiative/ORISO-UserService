@@ -16,23 +16,22 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
-import java.util.AbstractMap;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
 
 @Service
 @RequiredArgsConstructor
-@Slf4j
 public class TenantAdminUserService {
 
   private final @NonNull RetrieveAdminService retrieveAdminService;
@@ -42,6 +41,7 @@ public class TenantAdminUserService {
   private final @NonNull UserServiceMapper userServiceMapper;
   private final @NonNull TenantService tenantService;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull ConsultantRepository consultantRepository;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
@@ -71,7 +71,11 @@ public class TenantAdminUserService {
 
   public AdminResponseDTO findTenantAdmin(final String adminId) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.TENANT);
-    return AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
+    var responseDTO = AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
+    responseDTO
+        .getEmbedded()
+        .setHasOtherIdentity(!consultantRepository.findActiveIdsByIdIn(Set.of(adminId)).isEmpty());
+    return responseDTO;
   }
 
   public AdminResponseDTO updateTenantAdmin(
@@ -85,7 +89,7 @@ public class TenantAdminUserService {
   }
 
   private void enrichResponseWithSubdomain(Admin updatedAdmin, AdminResponseDTO responseDTO) {
-    if (updatedAdmin.getTenantId() != null) {
+    if (isConcreteTenantId(updatedAdmin.getTenantId())) {
       var tenantData = tenantService.getRestrictedTenantData(updatedAdmin.getTenantId());
       responseDTO.getEmbedded().setTenantSubdomain(tenantData.getSubdomain());
     }
@@ -103,33 +107,40 @@ public class TenantAdminUserService {
 
     var tenantIdsToNameMap = tenantIdsToNameMap(fullAdmins);
 
+    Set<String> idsWithConsultantIdentity =
+        adminIds.isEmpty()
+            ? Collections.emptySet()
+            : consultantRepository.findActiveIdsByIdIn(adminIds);
+
     return userServiceMapper.mapOfAdmin(
-        adminsPage, fullAdmins, Lists.newArrayList(), Lists.newArrayList(), tenantIdsToNameMap);
+        adminsPage,
+        fullAdmins,
+        Lists.newArrayList(),
+        Lists.newArrayList(),
+        tenantIdsToNameMap,
+        idsWithConsultantIdentity);
   }
 
   private Map<Long, String> tenantIdsToNameMap(List<Admin> fullAdmins) {
-    return fullAdmins.stream()
-        .filter(admin -> admin.getTenantId() != null)
-        .map(admin -> new AbstractMap.SimpleEntry<>(admin.getTenantId(), tenantName(admin)))
-        .filter(entry -> entry.getValue() != null)
+    Set<Long> tenantIds =
+        fullAdmins.stream()
+            .map(Admin::getTenantId)
+            .filter(this::isConcreteTenantId)
+            .collect(Collectors.toSet());
+    if (tenantIds.isEmpty()) {
+      return Collections.emptyMap();
+    }
+    return tenantService.getRestrictedTenantData(tenantIds).stream()
+        .filter(tenant -> tenant.getId() != null && tenant.getName() != null)
         .collect(
             Collectors.toMap(
-                Map.Entry::getKey, Map.Entry::getValue, (existing, replacement) -> existing));
+                tenant -> tenant.getId(),
+                tenant -> tenant.getName(),
+                (existing, replacement) -> existing));
   }
 
-  private String tenantName(Admin admin) {
-    try {
-      return tenantService.getRestrictedTenantData(admin.getTenantId()).getName();
-    } catch (HttpClientErrorException exception) {
-      if (HttpStatus.NOT_FOUND.equals(exception.getStatusCode())) {
-        log.warn(
-            "Tenant data not found for tenant admin {} and tenantId {}",
-            admin.getId(),
-            admin.getTenantId());
-        return null;
-      }
-      throw exception;
-    }
+  private boolean isConcreteTenantId(Long tenantId) {
+    return tenantId != null && !TenantContext.TECHNICAL_TENANT_ID.equals(tenantId);
   }
 
   public List<AdminResponseDTO> findTenantAdmins(Long tenantId) {

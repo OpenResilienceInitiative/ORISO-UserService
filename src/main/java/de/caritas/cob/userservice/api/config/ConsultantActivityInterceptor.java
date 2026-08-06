@@ -2,8 +2,8 @@ package de.caritas.cob.userservice.api.config;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Component;
@@ -22,6 +22,8 @@ import org.springframework.web.servlet.HandlerInterceptor;
 @RequiredArgsConstructor
 public class ConsultantActivityInterceptor implements HandlerInterceptor {
 
+  static final String AVAILABILITY_PATH = "/conversations/consultants/availability";
+
   private final ObjectProvider<AuthenticatedUser> authenticatedUser;
   private final ObjectProvider<ConsultantActivityRegistry> consultantActivityRegistry;
 
@@ -29,6 +31,9 @@ public class ConsultantActivityInterceptor implements HandlerInterceptor {
   public boolean preHandle(
       HttpServletRequest request, HttpServletResponse response, Object handler) {
     try {
+      if (request.getRequestURI().startsWith(AVAILABILITY_PATH)) {
+        return true;
+      }
       AuthenticatedUser user = authenticatedUser.getIfAvailable();
       ConsultantActivityRegistry registry = consultantActivityRegistry.getIfAvailable();
       if (user != null && registry != null && user.isConsultant() && user.getUserId() != null) {

@@ -16,7 +16,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -33,6 +33,7 @@ class SessionToConsultantConditionProviderTest {
 
   @InjectMocks private SessionToConsultantConditionProvider sessionToConsultantConditionProvider;
   @Mock private AgencyService agencyService;
+  @Mock private ConsultantTopicRepository consultantTopicRepository;
 
   @BeforeEach
   public void setup() {
@@ -40,7 +41,7 @@ class SessionToConsultantConditionProviderTest {
     session.setId(1L);
     this.consultant = new Consultant();
     consultant.setId("id");
-    consultant.setRocketChatId("rc id");
+    consultant.setMatrixUserId("rc id");
   }
 
   @Test
@@ -146,47 +147,6 @@ class SessionToConsultantConditionProviderTest {
     boolean result =
         sessionToConsultantConditionProvider.isSessionAlreadyAssignedToConsultant(
             this.consultant, session);
-
-    assertThat(result, is(false));
-  }
-
-  @Test
-  void hasSessionUserNoRcId_Should_returnTrue_When_SessionHasUserWithoutRcId() {
-    this.session.setUser(mock(User.class));
-    boolean result = sessionToConsultantConditionProvider.hasSessionUserNoRcId(session);
-
-    assertThat(result, is(true));
-  }
-
-  @Test
-  void hasSessionUserNoRcId_Should_returnFalse_When_SessionHasNoUser() {
-    boolean result = sessionToConsultantConditionProvider.hasSessionUserNoRcId(session);
-
-    assertThat(result, is(false));
-  }
-
-  @Test
-  void hasSessionUserNoRcId_Should_returnFalse_When_SessionHasUserWithRcId() {
-    User userMock = mock(User.class);
-    when(userMock.getRcUserId()).thenReturn("user id");
-    this.session.setUser(userMock);
-    boolean result = sessionToConsultantConditionProvider.hasSessionUserNoRcId(session);
-
-    assertThat(result, is(false));
-  }
-
-  @Test
-  void hasConsultantNoRcId_Should_returnTrue_When_ConsultantHasNoRcId() {
-    consultant.setRocketChatId("");
-    boolean result = sessionToConsultantConditionProvider.hasConsultantNoRcId(consultant);
-
-    assertThat(result, is(true));
-  }
-
-  @Test
-  void hasConsultantNoRcId_Should_returnFalse_When_ConsultantHasRcId() {
-    consultant.setRocketChatId("rc id");
-    boolean result = sessionToConsultantConditionProvider.hasConsultantNoRcId(consultant);
 
     assertThat(result, is(false));
   }

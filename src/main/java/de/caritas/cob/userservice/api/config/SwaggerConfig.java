@@ -6,7 +6,7 @@ import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.hateoas.client.LinkDiscoverer;
 import org.springframework.hateoas.client.LinkDiscoverers;
-import org.springframework.plugin.core.SimplePluginRegistry;
+import org.springframework.plugin.core.PluginRegistry;
 
 @Configuration
 public class SwaggerConfig {
@@ -15,6 +15,6 @@ public class SwaggerConfig {
   public LinkDiscoverers discoverers() {
     List<LinkDiscoverer> plugins = new ArrayList<>();
     plugins.add(new org.springframework.hateoas.mediatype.hal.HalLinkDiscoverer());
-    return new LinkDiscoverers(SimplePluginRegistry.create(plugins));
+    return new LinkDiscoverers(PluginRegistry.of(plugins));
   }
 }

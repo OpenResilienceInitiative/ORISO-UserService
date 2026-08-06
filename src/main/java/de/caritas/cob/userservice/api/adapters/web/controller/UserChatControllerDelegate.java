@@ -16,9 +16,11 @@ import de.caritas.cob.userservice.api.facade.JoinAndLeaveChatFacade;
 import de.caritas.cob.userservice.api.facade.StartChatFacade;
 import de.caritas.cob.userservice.api.facade.StopChatFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -43,6 +45,7 @@ class UserChatControllerDelegate {
   private final @NonNull Messaging messenger;
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull GroupChatFeatureGate groupChatFeatureGate;
 
   ResponseEntity<CreateChatResponseDTO> createChatV1(ChatDTO chatDTO) {
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
@@ -53,6 +56,7 @@ class UserChatControllerDelegate {
 
   ResponseEntity<CreateChatResponseDTO> createChatV2(ChatDTO chatDTO) {
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
+    groupChatFeatureGate.requireEnabled(callingConsultant);
     var response = createChatFacade.createChatV2(chatDTO, callingConsultant);
     return new ResponseEntity<>(response, HttpStatus.CREATED);
   }
@@ -74,19 +78,22 @@ class UserChatControllerDelegate {
 
   ResponseEntity<ChatInfoResponseDTO> getChat(Long chatId) {
     var response = getChatFacade.getChat(chatId);
-    messenger
-        .findChatMetaInfo(chatId, authenticatedUser.getUserId())
-        .ifPresent(
-            chatMetaInfoMap -> {
-              var bannedChatUserIds = userDtoMapper.bannedChatUserIdsOf(chatMetaInfoMap);
-              response.setBannedUsers(bannedChatUserIds);
-            });
-
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 
-  ResponseEntity<Void> assignChat(String groupId) {
-    assignChatFacade.assignChat(groupId, authenticatedUser);
+  ResponseEntity<Void> assignChat(String chatReference) {
+    if (chatReference.matches("\\d+")) {
+      try {
+        assignChatFacade.assignChat(Long.parseLong(chatReference), authenticatedUser);
+      } catch (NumberFormatException exception) {
+        throw new BadRequestException("Numeric chat id is outside the supported range.");
+      }
+    } else if (MatrixIds.isRoomId(chatReference)) {
+      assignChatFacade.assignChat(chatReference, authenticatedUser);
+    } else {
+      throw new BadRequestException(
+          "A valid Matrix room ID or numeric chat series ID is required.");
+    }
 
     return new ResponseEntity<>(HttpStatus.OK);
   }
@@ -112,7 +119,6 @@ class UserChatControllerDelegate {
                             "Chat with id %s not found while trying to stop the chat.", chatId)));
 
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
-    messenger.unbanUsersInChat(chatId, callingConsultant.getId());
     stopChatFacade.stopChat(chat, callingConsultant);
 
     return new ResponseEntity<>(HttpStatus.OK);
@@ -135,13 +141,13 @@ class UserChatControllerDelegate {
     return new ResponseEntity<>(updateChatResponseDTO, HttpStatus.OK);
   }
 
-  ResponseEntity<Void> banFromChat(String chatUserId, Long chatId) {
+  ResponseEntity<Void> banFromChat(String matrixUserId, Long chatId) {
     var adviceSeeker =
         accountManager
-            .findAdviceSeekerByChatUserId(chatUserId)
+            .findAdviceSeekerByMatrixUserId(matrixUserId)
             .orElseThrow(
                 () -> {
-                  throw new NotFoundException("Chat User (%s) not found", chatUserId);
+                  throw new NotFoundException("Matrix user (%s) not found", matrixUserId);
                 });
     if (!messenger.existsChat(chatId)) {
       throw new NotFoundException("Chat (%s) not found", chatId);

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+
+  <changeSet id="0070-team-discussion" author="frank">
+    <sqlFile
+      path="db/changelog/changeset/0070_team_discussion/migrate.sql"
+      relativeToChangelogFile="false"
+      splitStatements="true"
+      stripComments="true"
+      endDelimiter=";"/>
+    <rollback>
+      <sql>DROP TABLE IF EXISTS notification_room_level;</sql>
+      <sql>DROP TABLE IF EXISTS team_discussion_participant;</sql>
+      <sql>DROP TABLE IF EXISTS team_discussion;</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

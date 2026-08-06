@@ -5,17 +5,30 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.query.Param;
 
 public interface SessionRepository extends CrudRepository<Session, Long> {
+
+  interface AgencyConsultingTypeProjection {
+
+    Long getAgencyId();
+
+    Integer getConsultingTypeId();
+  }
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
+  Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
 
   /**
    * Find a {@link Session} by a consultant id and a session status.
@@ -85,6 +98,14 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       boolean isTeamSession);
 
   /**
+   * Find metadata-only case handover candidates in the requester's agencies. These sessions are
+   * already owned by another consultant and are therefore not part of the normal "my sessions"
+   * list.
+   */
+  List<Session> findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
+      List<Long> agencyIds, Consultant consultant, List<SessionStatus> statuses);
+
+  /**
    * Find team {@link Session} list by agency ids and status where consultant is not the given
    * consultant ordered by creation date descending.
    *
@@ -97,6 +118,9 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       List<Long> agencyIds, Consultant consultant, SessionStatus sessionStatus);
 
   List<Session> findByUser(User user);
+
+  @Query("select distinct s from Session s left join fetch s.sessionData where s.user = :user")
+  List<Session> findByUserWithSessionData(@Param("user") User user);
 
   List<Session> findByUserAndConsultingTypeId(User user, int consultingTypeId);
 
@@ -118,14 +142,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   Page<Session> findByUserUserId(String userId, Pageable pageable);
 
   /**
-   * Find the {@link Session} by Rocket.Chat group id.
-   *
-   * @param groupId the rocket chat group id
-   * @return an {@link Optional} of the session
-   */
-  Optional<Session> findByGroupId(String groupId);
-
-  /**
    * Find the {@link Session} by Matrix room ID.
    *
    * @param matrixRoomId the Matrix room ID
@@ -134,9 +150,9 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   Optional<Session> findByMatrixRoomId(String matrixRoomId);
 
   @Query(
-      value = "SELECT * " + "FROM session s " + "WHERE s.rc_group_id IN :group_ids",
+      value = "SELECT * " + "FROM session s " + "WHERE s.matrix_room_id IN :room_ids",
       nativeQuery = true)
-  List<Session> findByGroupIds(@Param(value = "group_ids") Set<String> groupIds);
+  List<Session> findByMatrixRoomIdIn(@Param(value = "room_ids") Set<String> matrixRoomIds);
 
   /**
    * Find all {@link Session}s by an agency ID and SessionStatus where consultant is null.
@@ -255,6 +271,58 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       Pageable pageable);
 
   /**
+   * Topic-only visibility for the anonymous Live Chat queue. A live consultant sees anonymous
+   * enquiries for the topics they are assigned to, independent of consulting type — the queue is
+   * topic-bound and deliberately cross-agency/cross-tenant. Used instead of the consulting-type
+   * variant so the queue never needs an authenticated AgencyService lookup to resolve the
+   * consultant's consulting types.
+   */
+  @Query(
+      "SELECT s FROM Session s "
+          + "JOIN s.user u "
+          + "WHERE s.mainTopicId IN :topicIds "
+          + "AND s.status = :sessionStatus "
+          + "AND s.consultant IS NULL "
+          + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "AND s.updateDate >= :minUpdateDate "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
+          + "     OR u.username LIKE 'Anonymous-%') "
+          + "ORDER BY s.createDate DESC")
+  Page<Session> findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
+      @Param("topicIds") Set<Long> topicIds,
+      @Param("sessionStatus") SessionStatus sessionStatus,
+      @Param("minUpdateDate") LocalDateTime minUpdateDate,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType,
+      Pageable pageable);
+
+  /**
+   * Same topic-only visibility as {@link #findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly}
+   * but restricted to the given session ids, for opening a single queue entry rather than listing
+   * the queue (#774). The consultant sees these live-chat requests by topic across tenants; opening
+   * one must apply the identical visibility rule so a request that is visible can always be opened
+   * and accepted. The queue's {@code updateDate} staleness window is intentionally omitted here: it
+   * is a queue-freshness concern, not an access control, and re-applying it would re-introduce a
+   * visible-but-unopenable race for a card that aged out between render and click.
+   * Security-relevant predicates (topic-assigned, unassigned, NEW, anonymous, privacy confirmed)
+   * are all kept.
+   */
+  @Query(
+      "SELECT s FROM Session s "
+          + "JOIN s.user u "
+          + "WHERE s.id IN :sessionIds "
+          + "AND s.mainTopicId IN :topicIds "
+          + "AND s.status = :sessionStatus "
+          + "AND s.consultant IS NULL "
+          + "AND u.dataPrivacyConfirmation IS NOT NULL "
+          + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
+          + "     OR u.username LIKE 'Anonymous-%') ")
+  List<Session> findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
+      @Param("sessionIds") Set<Long> sessionIds,
+      @Param("topicIds") Set<Long> topicIds,
+      @Param("sessionStatus") SessionStatus sessionStatus,
+      @Param("anonymousRegistrationType") RegistrationType anonymousRegistrationType);
+
+  /**
    * Count live-chat enquiries that are visible in the consultant queue and were created before the
    * reference session — i.e. people genuinely ahead of the asker. Matches the same visibility rules
    * as {@code SessionService#isVisibleRegisteredEnquiryForConsultant}: anonymous-style session,
@@ -334,8 +402,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * @param user the user
    * @return an {@link List} of the result
    */
-  List<Session> findByConsultantAndUser(Consultant consultant, User user);
-
   List<Session> findByUserAndMainTopicId(User user, Long topicId);
 
   /**
@@ -355,4 +421,15 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
 
   @Query("SELECT max(s.updateDate) FROM Session s WHERE s.consultant = :consultant")
   LocalDateTime findMaxUpdateDateByConsultant(@Param("consultant") Consultant consultant);
+
+  @Query(
+      "SELECT DISTINCT s.consultingTypeId FROM Session s WHERE s.agencyId = :agencyId ORDER BY s.consultingTypeId")
+  List<Integer> findDistinctConsultingTypeIdsByAgencyId(
+      @Param("agencyId") Long agencyId, Pageable pageable);
+
+  @Query(
+      "SELECT s.agencyId AS agencyId, MIN(s.consultingTypeId) AS consultingTypeId "
+          + "FROM Session s WHERE s.agencyId IN :agencyIds GROUP BY s.agencyId")
+  List<AgencyConsultingTypeProjection> findLowestConsultingTypeIdsByAgencyIds(
+      @Param("agencyIds") Set<Long> agencyIds);
 }

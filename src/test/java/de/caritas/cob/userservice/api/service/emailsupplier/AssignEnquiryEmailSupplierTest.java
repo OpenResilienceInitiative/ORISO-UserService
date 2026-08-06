@@ -5,25 +5,23 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.nullable;
-import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
+import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 
 @ExtendWith(MockitoExtension.class)
 public class AssignEnquiryEmailSupplierTest {
@@ -34,7 +32,7 @@ public class AssignEnquiryEmailSupplierTest {
 
   @Mock private ConsultantService consultantService;
 
-  @Mock private Logger logger;
+  private LogbackCaptor logCaptor;
 
   @BeforeEach
   public void setup() {
@@ -50,7 +48,12 @@ public class AssignEnquiryEmailSupplierTest {
             consultantService,
             null,
             false);
-    setInternalState(AssignEnquiryEmailSupplier.class, "log", logger);
+    logCaptor = LogbackCaptor.forClass(AssignEnquiryEmailSupplier.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logCaptor.detach();
   }
 
   @Test
@@ -58,7 +61,9 @@ public class AssignEnquiryEmailSupplierTest {
     List<MailDTO> generatedMails = assignEnquiryEmailSupplier.generateEmails();
 
     assertThat(generatedMails, hasSize(0));
-    verify(logger).error(anyString(), nullable(String.class));
+    org.assertj.core.api.Assertions.assertThat(
+            logCaptor.contains(Level.ERROR, "Receiver consultant with id"))
+        .isTrue();
   }
 
   @Test
@@ -70,7 +75,9 @@ public class AssignEnquiryEmailSupplierTest {
     List<MailDTO> generatedMails = assignEnquiryEmailSupplier.generateEmails();
 
     assertThat(generatedMails, hasSize(0));
-    verify(logger).error(anyString(), anyString());
+    org.assertj.core.api.Assertions.assertThat(
+            logCaptor.contains(Level.ERROR, "Sender consultant with id"))
+        .isTrue();
   }
 
   @Test

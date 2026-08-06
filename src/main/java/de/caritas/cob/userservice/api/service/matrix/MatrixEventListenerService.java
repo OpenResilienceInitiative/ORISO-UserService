@@ -1,26 +1,32 @@
 package de.caritas.cob.userservice.api.service.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
+import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
+import io.micrometer.observation.Observation;
+import io.micrometer.observation.ObservationRegistry;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import java.util.*;
 import java.util.concurrent.*;
-import javax.annotation.PostConstruct;
-import javax.annotation.PreDestroy;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * Service to listen to Matrix events and trigger LiveService notifications. Uses Matrix /sync
- * endpoint for real-time event detection.
+ * Service to listen to Matrix events and trigger notifications. Uses the Matrix /sync endpoint for
+ * real-time event detection.
  */
 @Slf4j
 @Service
@@ -29,12 +35,16 @@ public class MatrixEventListenerService {
 
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
-  private final @NonNull LiveEventNotificationService liveEventNotificationService;
+  private final @NonNull MobilePushNotificationService mobilePushNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
-  private final @NonNull RedisMessageMirrorService redisMessageMirrorService;
+  private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull ConsultantMessageStatService consultantMessageStatService;
+
+  private OutboundHttpMetrics outboundHttpMetrics;
+  private ObservationRegistry observationRegistry = ObservationRegistry.NOOP;
 
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
@@ -54,8 +64,36 @@ public class MatrixEventListenerService {
   // Flag to control sync loop
   private volatile boolean running = false;
 
+  @Value("${matrix.event-listener.enabled:true}")
+  private boolean eventListenerEnabled = true;
+
+  @Autowired(required = false)
+  void setOutboundHttpMetrics(OutboundHttpMetrics outboundHttpMetrics) {
+    this.outboundHttpMetrics = outboundHttpMetrics;
+  }
+
+  @Autowired(required = false)
+  void setObservationRegistry(ObservationRegistry observationRegistry) {
+    this.observationRegistry = observationRegistry;
+  }
+
+  // Backoff bounds (milliseconds) for both the token bootstrap and the sync error path.
+  static final long INITIAL_BACKOFF_MS = 5_000L;
+  static final long MAX_BACKOFF_MS = 60_000L;
+
+  // Emit a heartbeat every N successful sync iterations so a healthy/stuck loop is observable.
+  // performMatrixSync uses a 30s long-poll, so ~10 iterations is roughly every 5 minutes.
+  static final int HEARTBEAT_EVERY_N_ITERATIONS = 10;
+
+  // Re-bootstrap the admin token after this many consecutive sync failures (likely an auth issue).
+  static final int SYNC_FAILURES_BEFORE_REBOOTSTRAP = 3;
+
   @PostConstruct
   public void initialize() {
+    if (!eventListenerEnabled) {
+      log.info("Matrix event listener is disabled");
+      return;
+    }
     log.info("🔷 Initializing Matrix Event Listener Service...");
     executorService = Executors.newFixedThreadPool(2);
 
@@ -111,45 +149,73 @@ public class MatrixEventListenerService {
   /**
    * Main sync loop - continuously polls Matrix /sync for new events. Uses long-polling with timeout
    * to get real-time updates.
+   *
+   * <p>Deployment is a single replica with no HPA, so no multi-replica leader election is needed
+   * here; a transient admin-token failure must not silently disable real-time events, so the loop
+   * bootstraps the token with backoff and re-acquires it on repeated sync failures.
    */
   private void startMatrixSyncLoop() {
     running = true;
     log.info("🔷 Starting Matrix sync loop...");
 
-    // Get admin token
-    try {
-      adminAccessToken = matrixSynapseService.getAdminToken();
-      if (adminAccessToken == null) {
-        log.error("❌ Failed to get admin token - sync loop cannot start");
-        return;
-      }
-      log.info("✅ Admin token obtained for Matrix sync");
-    } catch (Exception e) {
-      log.error("❌ Error getting admin token", e);
+    // Keep trying to obtain the admin token; a transient failure must not permanently kill events.
+    if (!bootstrapAdminToken()) {
+      // Only returns false on shutdown/interrupt.
+      log.info("🔷 Matrix sync loop stopped before obtaining admin token");
       return;
     }
 
+    long errorBackoffMs = INITIAL_BACKOFF_MS;
+    long iteration = 0;
+    int consecutiveSyncFailures = 0;
+
     while (running) {
       try {
-        // Perform Matrix sync (long-polling with 30-second timeout)
-        Map<String, Object> syncResult = performMatrixSync();
+        MatrixSyncCycleResult cycleResult = executeObservedMatrixSyncCycle();
 
-        if (syncResult != null) {
-          // Process events from sync result
-          processMatrixSyncEvents(syncResult);
+        if (cycleResult == MatrixSyncCycleResult.SUCCESS) {
+          // Successful sync: reset the error backoff and failure counter.
+          errorBackoffMs = INITIAL_BACKOFF_MS;
+          consecutiveSyncFailures = 0;
+        } else {
+          // performMatrixSync swallows exceptions and returns null; treat as a soft failure so an
+          // auth problem eventually forces a token re-bootstrap instead of spinning forever.
+          consecutiveSyncFailures++;
+          recordRetry("sync");
+          if (consecutiveSyncFailures >= SYNC_FAILURES_BEFORE_REBOOTSTRAP) {
+            log.warn(
+                "⚠️ {} consecutive Matrix sync failures - re-acquiring admin token",
+                consecutiveSyncFailures);
+            adminAccessToken = null;
+            if (!bootstrapAdminToken()) {
+              break;
+            }
+            consecutiveSyncFailures = 0;
+          }
         }
 
-        // Small delay to prevent CPU spinning if sync fails immediately
-        Thread.sleep(100);
+        // Heartbeat so a healthy/stuck loop is observable without log-spamming.
+        iteration++;
+        if (iteration % HEARTBEAT_EVERY_N_ITERATIONS == 0) {
+          log.info(
+              "💓 Matrix sync loop healthy (iteration {}, {} registered rooms)",
+              iteration,
+              roomToSessionMap.size());
+        }
+
+        // Small delay to prevent CPU spinning if sync returns immediately.
+        sleep(100);
 
       } catch (InterruptedException e) {
         Thread.currentThread().interrupt();
         break;
       } catch (Exception e) {
         log.error("❌ Error in Matrix sync loop", e);
+        recordRetry("sync-loop");
         try {
-          // Wait before retrying on error
-          Thread.sleep(5000);
+          // Exponential backoff before retrying on error (5s→10s→…→60s cap).
+          sleep(errorBackoffMs);
+          errorBackoffMs = nextBackoffMillis(errorBackoffMs);
         } catch (InterruptedException ie) {
           Thread.currentThread().interrupt();
           break;
@@ -158,6 +224,103 @@ public class MatrixEventListenerService {
     }
 
     log.info("🔷 Matrix sync loop stopped");
+  }
+
+  /**
+   * Observes one Matrix long poll and all event processing it triggers as one background operation.
+   * The result attribute is deliberately bounded; Matrix tokens, cursors, room identifiers and URL
+   * values must never become observation attributes.
+   */
+  private MatrixSyncCycleResult executeObservedMatrixSyncCycle() {
+    Observation observation =
+        Observation.createNotStarted("userservice.matrix.sync", observationRegistry).start();
+    String result = "exception";
+
+    try (Observation.Scope ignored = observation.openScope()) {
+      Map<String, Object> syncResult = performMatrixSync();
+      if (syncResult == null) {
+        result = "soft_failure";
+        return MatrixSyncCycleResult.SOFT_FAILURE;
+      }
+
+      processMatrixSyncEvents(syncResult);
+      result = "success";
+      return MatrixSyncCycleResult.SUCCESS;
+    } catch (RuntimeException | Error exception) {
+      observation.error(exception);
+      throw exception;
+    } finally {
+      observation.lowCardinalityKeyValue("result", result);
+      observation.stop();
+    }
+  }
+
+  private enum MatrixSyncCycleResult {
+    SUCCESS,
+    SOFT_FAILURE
+  }
+
+  /**
+   * Acquire the Matrix admin token, retrying with exponential backoff until it succeeds or the loop
+   * is shut down. On success {@link #adminAccessToken} is set.
+   *
+   * @return {@code true} once a token was obtained, {@code false} if the loop stopped (shutdown or
+   *     interrupt) before a token could be acquired
+   */
+  private boolean bootstrapAdminToken() {
+    long backoffMs = INITIAL_BACKOFF_MS;
+    while (running) {
+      try {
+        adminAccessToken = matrixSynapseService.getAdminToken();
+        if (adminAccessToken != null) {
+          log.info("✅ Admin token obtained for Matrix sync");
+          return true;
+        }
+        log.error(
+            "❌ Failed to get admin token - retrying in {}ms (sync loop not yet started)",
+            backoffMs);
+      } catch (Exception e) {
+        log.error("❌ Error getting admin token - retrying in {}ms", backoffMs, e);
+      }
+
+      recordRetry("admin-token");
+      try {
+        sleep(backoffMs);
+      } catch (InterruptedException ie) {
+        Thread.currentThread().interrupt();
+        return false;
+      }
+      backoffMs = nextBackoffMillis(backoffMs);
+    }
+    return false;
+  }
+
+  private void recordRetry(String operation) {
+    if (outboundHttpMetrics != null) {
+      outboundHttpMetrics.recordRetry("matrix", operation);
+    }
+  }
+
+  /**
+   * Compute the next backoff delay: double the current delay, capped at {@link #MAX_BACKOFF_MS}.
+   * Pure and side-effect free so it can be unit tested without real sleeps.
+   *
+   * @param currentMillis the current backoff delay in milliseconds
+   * @return the next backoff delay in milliseconds (5s→10s→20s→40s→60s→60s…)
+   */
+  static long nextBackoffMillis(long currentMillis) {
+    long doubled = currentMillis * 2;
+    return Math.min(doubled, MAX_BACKOFF_MS);
+  }
+
+  /**
+   * Sleep seam so the backoff timing can be stubbed out in unit tests (no real waiting).
+   *
+   * @param millis milliseconds to sleep
+   * @throws InterruptedException if the thread is interrupted while sleeping
+   */
+  void sleep(long millis) throws InterruptedException {
+    Thread.sleep(millis);
   }
 
   /**
@@ -247,7 +410,7 @@ public class MatrixEventListenerService {
   }
 
   /**
-   * Process a single Matrix event and trigger appropriate LiveService notifications.
+   * Process a single Matrix event and trigger the appropriate notifications.
    *
    * @param roomId the Matrix room ID
    * @param event the Matrix event
@@ -266,6 +429,10 @@ public class MatrixEventListenerService {
     // Handle different event types
     switch (eventType) {
       case "m.room.message":
+        // E2EE rooms deliver messages as m.room.encrypted — the payload is opaque
+        // (no msgtype/body), but sender + event id are cleartext, which is all the
+        // metadata-only notification pipeline needs (preview mode NONE).
+      case "m.room.encrypted":
         handleRoomMessage(roomId, event);
         break;
 
@@ -288,7 +455,7 @@ public class MatrixEventListenerService {
   }
 
   /**
-   * Handle m.room.message event - trigger directMessage live event.
+   * Handle an m.room.message event.
    *
    * @param roomId the Matrix room ID
    * @param event the message event
@@ -314,13 +481,15 @@ public class MatrixEventListenerService {
     // Debug mirror: capture actual Matrix timeline messages so Redis Commander can show them.
     // This is feature-flagged/TTL-bound in RedisMessageMirrorService.
     Long sessionId = roomToSessionMap.get(roomId);
-    redisMessageMirrorService.mirrorOutgoingMessage(
-        sessionId,
-        roomId,
-        senderId,
-        senderDomainUserId != null && senderDomainUserId.startsWith("consultant"),
-        messageBody,
-        event.get("event_id") != null ? String.valueOf(event.get("event_id")) : null);
+    redisMessageMirrorService.ifPresent(
+        mirror ->
+            mirror.mirrorOutgoingMessage(
+                sessionId,
+                roomId,
+                senderId,
+                senderDomainUserId != null && senderDomainUserId.startsWith("consultant"),
+                messageBody,
+                event.get("event_id") != null ? String.valueOf(event.get("event_id")) : null));
 
     // Get users who should receive notification (exclude sender)
     Set<String> userIds = getRecipientCandidatesForRoom(roomId);
@@ -328,37 +497,56 @@ public class MatrixEventListenerService {
       return;
     }
 
-    // Trigger LiveService directMessage event for all users except sender
+    // Notify all room participants except the sender.
     List<String> recipientIds =
         userIds.stream()
             .filter(userId -> senderDomainUserId == null || !userId.equals(senderDomainUserId))
             .collect(java.util.stream.Collectors.toList());
 
     if (!recipientIds.isEmpty()) {
-      log.info("🔔 Triggering LiveService directMessage event for {} users", recipientIds.size());
+      log.info("🔔 Triggering direct-message notification for {} users", recipientIds.size());
 
-      // Use existing LiveService notification service
-      // Note: We need to convert Matrix room ID to session/group ID
       Long mappedSessionId = roomToSessionMap.get(roomId);
-      if (mappedSessionId != null) {
-        // Trigger notification asynchronously to not block sync loop
-        executorService.submit(
-            () -> {
-              try {
-                liveEventNotificationService.sendLiveDirectMessageEventToUsers(roomId);
-                if (threadRootId != null && !threadRootId.isBlank()) {
-                  eventNotificationService.createThreadReplyNotificationFromRoom(
-                      roomId, senderDomainUserId, threadRootId, true, privacyEnvelope);
-                } else {
-                  eventNotificationService.createMessageNotificationFromRoom(
-                      roomId, senderDomainUserId, true, privacyEnvelope);
-                }
-              } catch (Exception e) {
-                log.error("❌ Failed to send LiveService notification", e);
-              }
-            });
+      if (mappedSessionId == null) {
+        log.warn(
+            "No session mapping for Matrix room {}; continuing notification delivery for {} users",
+            roomId,
+            recipientIds.size());
       }
+
+      // Notify asynchronously so the Matrix sync loop is not blocked.
+      executorService.submit(
+          () -> {
+            try {
+              mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
+            } catch (Exception e) {
+              log.error("❌ Failed to send mobile push notification", e);
+            }
+            // The persisted feed entry is the source of truth for the notification timeline.
+            // Isolate the failure domains so a push failure cannot swallow the notification row.
+            try {
+              if (threadRootId != null && !threadRootId.isBlank()) {
+                eventNotificationService.createThreadReplyNotificationFromRoom(
+                    roomId, senderDomainUserId, threadRootId, privacyEnvelope);
+              } else {
+                eventNotificationService.createMessageNotificationFromRoom(
+                    roomId, senderDomainUserId, privacyEnvelope);
+              }
+              if (mappedSessionId != null
+                  && senderDomainUserId != null
+                  && isConsultantMatrixUser(senderId)) {
+                consultantMessageStatService.recordMessageSent(senderDomainUserId, mappedSessionId);
+              }
+            } catch (Exception e) {
+              log.error("❌ Failed to create event notification from room", e);
+            }
+          });
     }
+  }
+
+  private boolean isConsultantMatrixUser(String matrixUserId) {
+    return matrixUserId != null
+        && consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId).isPresent();
   }
 
   private String resolveDomainUserIdFromMatrixUserId(String matrixUserId) {
@@ -464,8 +652,10 @@ public class MatrixEventListenerService {
       String msgtype,
       Map<String, Object> content) {
     String contentClass = classifyContent(msgtype);
+    // msgtype is null for m.room.encrypted events (opaque payload); Set.of(...) is
+    // null-hostile, so guard before the membership check.
     boolean hasAttachment =
-        Set.of("m.image", "m.file", "m.audio", "m.video").contains(msgtype)
+        (msgtype != null && Set.of("m.image", "m.file", "m.audio", "m.video").contains(msgtype))
             || (content != null && (content.containsKey("url") || content.containsKey("file")));
 
     Long timestamp = null;
@@ -539,7 +729,7 @@ public class MatrixEventListenerService {
   }
 
   /**
-   * Handle m.call.invite event - trigger videoCallRequest live event.
+   * Handle an m.call.invite event.
    *
    * @param roomId the Matrix room ID
    * @param event the call invite event
@@ -575,13 +765,7 @@ public class MatrixEventListenerService {
             .collect(java.util.stream.Collectors.toList());
 
     if (!recipientIds.isEmpty()) {
-      log.info(
-          "🔔 Triggering LiveService videoCallRequest event for {} users", recipientIds.size());
-
-      // TODO: Implement videoCallRequest event trigger
-      // This requires extending LiveEventNotificationService to support call events
-      // For now, we'll log it
-      log.warn("⚠️ videoCallRequest live event not yet implemented");
+      log.info("🔔 Matrix call invite received for {} users", recipientIds.size());
     }
   }
 
@@ -594,7 +778,7 @@ public class MatrixEventListenerService {
   private void handleCallAnswer(String roomId, Map<String, Object> event) {
     String senderId = (String) event.get("sender");
     log.info("📞 Call answered in room {} by {}", roomId, senderId);
-    // Can trigger additional live events if needed
+    // Additional call-state handling can be added here if needed.
   }
 
   /**
@@ -606,6 +790,6 @@ public class MatrixEventListenerService {
   private void handleCallHangup(String roomId, Map<String, Object> event) {
     String senderId = (String) event.get("sender");
     log.info("📞 Call ended in room {} by {}", roomId, senderId);
-    // Can trigger additional live events if needed
+    // Additional call-state handling can be added here if needed.
   }
 }

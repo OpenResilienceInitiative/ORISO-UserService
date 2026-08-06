@@ -17,8 +17,6 @@ import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValu
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.VIEW_AGENCY_CONSULTANTS;
 import static de.caritas.cob.userservice.api.conversation.model.ConversationListType.ANONYMOUS_ENQUIRY;
 import static de.caritas.cob.userservice.api.conversation.model.ConversationListType.REGISTERED_ENQUIRY;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN_HEADER_PARAMETER_NAME;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -35,16 +33,16 @@ import de.caritas.cob.userservice.api.conversation.facade.FinishAnonymousConvers
 import de.caritas.cob.userservice.api.conversation.service.ConversationListResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
-import javax.servlet.http.Cookie;
+import jakarta.servlet.http.Cookie;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 
@@ -53,24 +51,24 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 @AutoConfigureMockMvc
 class ConversationControllerAuthorizationIT {
 
-  private final String CSRF_COOKIE = "csrfCookie";
-  private final String CSRF_HEADER = "csrfHeader";
+  private final String CSRF_COOKIE = "CSRF-TOKEN";
+  private final String CSRF_HEADER = "X-CSRF-Token";
   private final String CSRF_VALUE = "test";
   private final Cookie csrfCookie = new Cookie(CSRF_COOKIE, CSRF_VALUE);
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private ConversationListResolver conversationListResolver;
+  @MockitoBean private ConversationListResolver conversationListResolver;
 
-  @MockBean private AcceptAnonymousEnquiryFacade acceptAnonymousEnquiryFacade;
+  @MockitoBean private AcceptAnonymousEnquiryFacade acceptAnonymousEnquiryFacade;
 
-  @MockBean private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
+  @MockitoBean private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
 
-  @MockBean private FinishAnonymousConversationFacade finishAnonymousConversationFacade;
+  @MockitoBean private FinishAnonymousConversationFacade finishAnonymousConversationFacade;
 
-  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private UsernameTranscoder usernameTranscoder;
 
@@ -83,14 +81,12 @@ class ConversationControllerAuthorizationIT {
             get(ConversationControllerIT.GET_ANONYMOUS_ENQUIRIES_PATH)
                 .cookie(csrfCookie)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .param("offset", "0")
                 .param("count", "10")
                 .contentType(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(this.conversationListResolver, times(1))
-        .resolveConversations(0, 10, ANONYMOUS_ENQUIRY, RC_TOKEN);
+    verify(this.conversationListResolver, times(1)).resolveConversations(0, 10, ANONYMOUS_ENQUIRY);
   }
 
   @Test
@@ -160,14 +156,12 @@ class ConversationControllerAuthorizationIT {
             get(ConversationControllerIT.GET_REGISTERED_ENQUIRIES_PATH)
                 .cookie(csrfCookie)
                 .header(CSRF_HEADER, CSRF_VALUE)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
                 .param("offset", "0")
                 .param("count", "10")
                 .contentType(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(this.conversationListResolver, times(1))
-        .resolveConversations(0, 10, REGISTERED_ENQUIRY, RC_TOKEN);
+    verify(this.conversationListResolver, times(1)).resolveConversations(0, 10, REGISTERED_ENQUIRY);
   }
 
   @Test

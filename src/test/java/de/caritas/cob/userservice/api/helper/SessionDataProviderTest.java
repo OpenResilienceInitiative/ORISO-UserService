@@ -9,7 +9,7 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_U25;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.EMAIL;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_TEAM_SESSION;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKETCHAT_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.MATRIX_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.STATE_VALUE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
@@ -57,8 +57,8 @@ class SessionDataProviderTest {
   private final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(USERNAME)
-          .username(ROCKETCHAT_ID)
+          .matrixUserId(USERNAME)
+          .username(MATRIX_USER_ID)
           .firstName("first name")
           .lastName("last name")
           .email("consultant@cob.de")
@@ -214,6 +214,20 @@ class SessionDataProviderTest {
         sessionDataProvider.createSessionDataList(INITIALIZED_SESSION_U25, SESSION_DATA_DTO);
 
     assertEquals(0, result.size());
+  }
+
+  @Test
+  void createSessionDataList_Should_AlwaysPersistAnonymousDisplayName() {
+    when(consultingTypeManager.getConsultingTypeSettings(CONSULTING_TYPE_ID_U25))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_WITH_NO_SESSION_DATA_ITEMS);
+
+    List<SessionData> result =
+        sessionDataProvider.createSessionDataList(
+            INITIALIZED_SESSION_U25, new SessionDataDTO().displayName("Behutsames Pferd Jules"));
+
+    assertEquals(
+        "Behutsames Pferd Jules",
+        getValueOfKey(result, SessionDataKeyRegistration.DISPLAY_NAME.getValue()));
   }
 
   @Test

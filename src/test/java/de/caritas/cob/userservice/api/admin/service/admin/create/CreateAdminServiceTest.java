@@ -13,16 +13,21 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import jakarta.ws.rs.NotFoundException;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
@@ -38,6 +43,8 @@ class CreateAdminServiceTest {
   @InjectMocks private CreateAdminService createAdminService;
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
+  @Mock private IdentityAccountRemover identityAccountRemover;
 
   @Mock private UserAccountInputValidator userAccountInputValidator;
 
@@ -71,10 +78,9 @@ class CreateAdminServiceTest {
 
   @Test
   void createNewAgencyAdmin_ShouldRollbackUser_WhenRoleAssignmentFails() {
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
+    CreatedIdentity keycloakResponse = new CreatedIdentity();
     keycloakResponse.setUserId("kc-user-id");
-    when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
-        .thenReturn(keycloakResponse);
+    when(identityClient.createUser(any(), anyString(), anyString())).thenReturn(keycloakResponse);
     doThrow(new RuntimeException("role assignment failed"))
         .when(identityClient)
         .updateRole(anyString(), any(UserRole.class));
@@ -87,6 +93,29 @@ class CreateAdminServiceTest {
         InternalServerErrorException.class,
         () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
 
-    verify(identityClient).rollBackUser("kc-user-id");
+    verify(identityAccountRemover).rollbackUser("kc-user-id");
+  }
+
+  @Test
+  void createNewAgencyAdmin_ShouldThrowRoleNotFoundReason_AndRollbackUser_WhenRealmRoleIsMissing() {
+    CreatedIdentity keycloakResponse = new CreatedIdentity();
+    keycloakResponse.setUserId("kc-user-id");
+    when(identityClient.createUser(any(), anyString(), anyString())).thenReturn(keycloakResponse);
+    doThrow(new NotFoundException("HTTP 404 Not Found"))
+        .when(identityClient)
+        .updateRole(anyString(), any(UserRole.class));
+
+    CreateAdminDTO createAdminDTO = easyRandom.nextObject(CreateAdminDTO.class);
+    createAdminDTO.setUsername("valid_username");
+    createAdminDTO.setEmail("valid@email.com");
+
+    CustomValidationHttpStatusException exception =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
+
+    assertThat(exception.getCustomHttpHeaders().getFirst("X-Reason"))
+        .isEqualTo(HttpStatusExceptionReason.ROLE_NOT_FOUND.name());
+    verify(identityAccountRemover).rollbackUser("kc-user-id");
   }
 }

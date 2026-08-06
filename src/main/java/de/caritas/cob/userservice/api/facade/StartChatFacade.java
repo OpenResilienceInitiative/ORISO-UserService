@@ -1,18 +1,17 @@
 package de.caritas.cob.userservice.api.facade;
 
-import static java.util.Objects.isNull;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatAddUserToGroupException;
-import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
+import de.caritas.cob.userservice.api.service.notification.GroupChatLifecycleNotificationService;
+import de.caritas.cob.userservice.api.service.notification.GroupChatNotificationRecipientService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -23,8 +22,10 @@ import org.springframework.stereotype.Service;
 public class StartChatFacade {
 
   private final @NonNull ChatService chatService;
-  private final @NonNull RocketChatService rocketChatService;
-  private final @NonNull ChatPermissionVerifier chatPermissionVerifier;
+  private final @NonNull GroupChatPermissionService groupChatPermissionService;
+  private final @NonNull GroupChatNotificationRecipientService notificationRecipientService;
+  private final @NonNull GroupChatLifecycleNotificationService
+      groupChatLifecycleNotificationService;
 
   /**
    * Starts the given {@link Chat}.
@@ -34,25 +35,15 @@ public class StartChatFacade {
    */
   public void startChat(Chat chat, Consultant consultant) {
 
-    checkConsultantsPermission(chat, consultant);
+    groupChatPermissionService.requireCanModerate(chat, consultant);
     checkIfChatIsAlreadyActive(chat);
-    checkRocketChatGroup(chat);
-
+    checkMatrixRoom(chat);
+    chat.setActive(true);
+    chatService.saveChat(chat);
     try {
-      rocketChatService.addUserToGroup(consultant.getRocketChatId(), chat.getGroupId());
-      chat.setActive(true);
-      chatService.saveChat(chat);
-    } catch (RocketChatAddUserToGroupException e) {
-      throw new InternalServerErrorException(e.getMessage(), LogService::logRocketChatError);
-    }
-  }
-
-  private void checkConsultantsPermission(Chat chat, Consultant consultant) {
-    if (!chatPermissionVerifier.hasSameAgencyAssigned(chat, consultant)) {
-      throw new ForbiddenException(
-          String.format(
-              "Consultant with id %s has no permission to start chat with id %s",
-              consultant.getId(), chat.getId()));
+      publishOpenedNotification(chat);
+    } catch (RuntimeException notificationException) {
+      LogService.logInternalServerError(notificationException);
     }
   }
 
@@ -63,10 +54,24 @@ public class StartChatFacade {
     }
   }
 
-  private void checkRocketChatGroup(Chat chat) {
-    if (isNull(chat.getGroupId())) {
+  private void checkMatrixRoom(Chat chat) {
+    if (!MatrixIds.isRoomId(chat.getMatrixRoomId())) {
       throw new InternalServerErrorException(
-          String.format("Chat with id %s has no Rocket.Chat group id", chat.getId()));
+          String.format("Chat with id %s has no Matrix room id", chat.getId()));
     }
+  }
+
+  private void publishOpenedNotification(Chat chat) {
+    if (chat.getId() == null) {
+      return;
+    }
+    groupChatLifecycleNotificationService.createOpenedNotifications(
+        chat.getId(),
+        chat.getCurrentOccurrenceIndex(),
+        chat.getStartDate(),
+        chat.getMatrixRoomId(),
+        null,
+        chat.getChatModality() == Chat.ChatModality.VIDEO,
+        notificationRecipientService.resolveRecipientIds(chat));
   }
 }

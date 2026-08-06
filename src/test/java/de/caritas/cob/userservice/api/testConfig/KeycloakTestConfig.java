@@ -1,24 +1,25 @@
 package de.caritas.cob.userservice.api.testConfig;
 
 import com.google.common.collect.Maps;
+import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
-import org.springframework.http.HttpStatus;
 import org.springframework.web.client.RestTemplate;
 
 @TestConfiguration
@@ -35,14 +36,17 @@ public class KeycloakTestConfig {
       KeycloakMapper keycloakMapper,
       UserHelper userHelper) {
 
+    var keycloakAuthClient =
+        new KeycloakAuthClient(restTemplate, authenticatedUser, identityClientConfig);
+
     return new KeycloakService(
-        restTemplate,
         authenticatedUser,
         userAccountInputValidator,
         identityClientConfig,
         keycloakClient,
         keycloakMapper,
-        userHelper) {
+        userHelper,
+        keycloakAuthClient) {
       @Override
       public boolean changePassword(String userId, String password) {
         return super.changePassword(userId, password);
@@ -66,12 +70,12 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public KeycloakLoginResponseDTO loginUser(String userName, String password) {
-        return new KeycloakLoginResponseDTO("", 0, 0, "", "", "", "");
+      public IdentityLogin login(String userName, String password) {
+        return new IdentityLogin("", 0, 0, "");
       }
 
       @Override
-      public boolean logoutUser(String refreshToken) {
+      public boolean logout(String refreshToken) {
         return true;
       }
 
@@ -81,15 +85,16 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public KeycloakCreateUserResponseDTO createKeycloakUser(UserDTO user) {
+      public CreatedIdentity createUser(UserDTO user) {
 
-        KeycloakCreateUserResponseDTO keycloakUserDTO = new KeycloakCreateUserResponseDTO();
+        CreatedIdentity keycloakUserDTO = new CreatedIdentity();
         keycloakUserDTO.setUserId("keycloak-user-id " + RandomStringUtils.randomNumeric(5));
-        keycloakUserDTO.setStatus(HttpStatus.OK);
-        /*if (shouldGenerateNewUsername(user)) {
-          keycloakUserDTO.setUserId("keycloak-user-id" + RandomStringUtils.randomNumeric(5));
-        }*/
         return keycloakUserDTO;
+      }
+
+      @Override
+      public boolean isUsernameAvailable(String username) {
+        return true;
       }
 
       private boolean shouldGenerateNewUsername(UserDTO user) {
@@ -97,9 +102,8 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public String updateDummyEmail(String userId, UserDTO user) {
+      public String updateDummyEmail(String userId, IdentityDummyEmailUpdate update) {
         var dummyMail = userId + "@dummy.du";
-        user.setEmail(dummyMail);
         return dummyMail;
       }
 
@@ -126,7 +130,7 @@ public class KeycloakTestConfig {
       public void updateEmail(String userId, String emailAddress) {}
 
       @Override
-      public void rollBackUser(String userId) {}
+      public void rollbackUser(String userId) {}
 
       @Override
       public void deleteUser(String userId) {}

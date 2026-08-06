@@ -20,8 +20,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
@@ -37,14 +35,25 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
+import jakarta.servlet.http.Cookie;
 import java.util.LinkedHashMap;
-import javax.servlet.http.Cookie;
 import net.minidev.json.JSONArray;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -54,14 +63,14 @@ import org.keycloak.admin.client.Keycloak;
 import org.mockito.Mockito;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,65 +79,69 @@ import org.springframework.web.client.RestTemplate;
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"feature.topics.enabled=true", "multitenancy.enabled=false"})
 @Transactional
 class UserAdminControllerE2EIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
 
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
   public static final int PAGE_SIZE = 10;
   @Autowired private MockMvc mockMvc;
 
   @Autowired private ObjectMapper objectMapper;
 
-  @SuppressWarnings("SpringJavaInjectionPointsAutowiringInspection")
-  @Autowired
-  private ConsultingTypeControllerApi consultingTypeControllerApi;
+  @MockitoBean private ConsultingTypeControllerApi consultingTypeControllerApi;
 
   @Autowired private IdentityConfig identityConfig;
 
   @Autowired private AdminRepository adminRepository;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
-
-  @MockBean
+  @MockitoBean
   private ConsultingTypeServiceApiControllerFactory consultingTypeServiceApiControllerFactory;
 
-  @MockBean private MailServiceApiControllerFactory mailServiceApiControllerFactory;
+  @MockitoBean private MailServiceApiControllerFactory mailServiceApiControllerFactory;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("restTemplate")
   private RestTemplate restTemplate;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("keycloakRestTemplate")
   private RestTemplate keycloakRestTemplate;
 
-  @MockBean
-  @Qualifier("rocketChatRestTemplate")
-  private RestTemplate rocketChatRestTemplate;
-
-  @MockBean
+  @MockitoBean
   @Qualifier("topicControllerApiPrimary")
   private TopicControllerApi topicControllerApi;
 
-  @MockBean
+  @MockitoBean
   @Qualifier("mailsControllerApi")
   private MailsControllerApi mailsControllerApi;
 
-  @MockBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockBean private Keycloak keycloak;
+  @MockitoBean private Keycloak keycloak;
 
-  @MockBean IdentityClient identityClient;
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class,
+        IdentityUsernameAvailability.class
+      })
+  IdentityClient identityClient;
 
-  @MockBean TenantService tenantService;
+  @MockitoBean TenantService tenantService;
 
   private User user;
 
@@ -139,6 +152,7 @@ class UserAdminControllerE2EIT {
 
   @BeforeEach
   public void setUp() {
+    when(consultingTypeControllerApi.getApiClient()).thenReturn(new ApiClient(restTemplate));
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
@@ -148,9 +162,9 @@ class UserAdminControllerE2EIT {
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
 
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
+    CreatedIdentity keycloakResponse = new CreatedIdentity();
     keycloakResponse.setUserId(new EasyRandom().nextObject(String.class));
-    when(identityClient.createKeycloakUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
+    when(identityClient.createUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(keycloakResponse);
   }
 
@@ -344,7 +358,7 @@ class UserAdminControllerE2EIT {
     // when, then
     this.mockMvc
         .perform(
-            put(AGENCY_ADMIN_PATH + adminId)
+            put(AGENCY_ADMIN_PATH + "/" + adminId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateAdminDTO)))
         .andExpect(status().isOk())
@@ -473,7 +487,7 @@ class UserAdminControllerE2EIT {
     // when, then
     this.mockMvc
         .perform(
-            put(AGENCY_ADMIN_PATH + adminId)
+            put(AGENCY_ADMIN_PATH + "/" + adminId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateAdminDTO)))
         .andExpect(status().isForbidden());
@@ -498,7 +512,7 @@ class UserAdminControllerE2EIT {
     // when, then
     this.mockMvc
         .perform(
-            put(TENANT_ADMIN_PATH + adminId)
+            put(TENANT_ADMIN_PATH + "/" + adminId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateAdminDTO)))
         .andExpect(status().isOk())
@@ -524,7 +538,7 @@ class UserAdminControllerE2EIT {
     // when, then
     this.mockMvc
         .perform(
-            put(TENANT_ADMIN_PATH + existingAdminId)
+            put(TENANT_ADMIN_PATH + "/" + existingAdminId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(updateAdminDTO)))
         .andExpect(status().isForbidden());
@@ -539,7 +553,7 @@ class UserAdminControllerE2EIT {
 
     // when, then
     this.mockMvc
-        .perform(get(AGENCY_ADMIN_PATH + existingAdminId))
+        .perform(get(AGENCY_ADMIN_PATH + "/" + existingAdminId))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.id", is(existingAdminId)))
         .andExpect(jsonPath("_embedded.username", is("bmachin1j")))
@@ -558,7 +572,7 @@ class UserAdminControllerE2EIT {
 
     // when, then
     this.mockMvc
-        .perform(get(AGENCY_ADMIN_PATH + existingAdminId))
+        .perform(get(AGENCY_ADMIN_PATH + "/" + existingAdminId))
         .andExpect(status().isForbidden());
   }
 
@@ -571,7 +585,7 @@ class UserAdminControllerE2EIT {
 
     // when, then
     this.mockMvc
-        .perform(get(TENANT_ADMIN_PATH + existingAdminId))
+        .perform(get(TENANT_ADMIN_PATH + "/" + existingAdminId))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.id", is(existingAdminId)))
         .andExpect(jsonPath("_embedded.username", is("cgenney5")))
@@ -656,6 +670,26 @@ class UserAdminControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmin_Should_acceptPageSizesAboveTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/tenantadmins/search?query=*&page=1&perPage=101&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmin_Should_acceptPageSizeAtTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/tenantadmins/search?query=*&page=1&perPage=100&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void searchTenantAdmin_Should_returnOk_When_sortingByUpdateDate() throws Exception {
 
     when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
@@ -669,6 +703,29 @@ class UserAdminControllerE2EIT {
             .andExpect(status().isOk())
             .andExpect(jsonPath("_embedded", hasSize(PAGE_SIZE)))
             .andExpect(jsonPath("_embedded[0]._embedded.updateDate").exists())
+            .andReturn();
+
+    String contentAsString = mvcResult.getResponse().getContentAsString();
+    JSONArray embedded = JsonPath.read(contentAsString, "_embedded");
+
+    assertAllElementsAreOfAdminType(embedded, AdminType.TENANT);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchTenantAdmin_Should_returnOk_When_attemptedToSearchTenantsWithUserAdminAuthority()
+      throws Exception {
+
+    when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
+        .thenReturn(new RestrictedTenantDTO().subdomain("subdomain").name("name"));
+
+    MvcResult mvcResult =
+        this.mockMvc
+            .perform(
+                get(
+                    "/useradmin/tenantadmins/search?query=*&page=1&perPage=10&order=ASC&field=FIRSTNAME"))
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("_embedded", hasSize(PAGE_SIZE)))
             .andReturn();
 
     String contentAsString = mvcResult.getResponse().getContentAsString();
@@ -698,6 +755,26 @@ class UserAdminControllerE2EIT {
     JSONArray embedded = JsonPath.read(contentAsString, "_embedded");
 
     assertAllElementsAreOfAdminType(embedded, AdminType.AGENCY);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_acceptPageSizesAboveTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/agencyadmins/search?query=*&page=1&perPage=101&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_acceptPageSizeAtTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/agencyadmins/search?query=*&page=1&perPage=100&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isOk());
   }
 
   @Test
@@ -785,7 +862,7 @@ class UserAdminControllerE2EIT {
 
     // when, then
     this.mockMvc
-        .perform(get(TENANT_ADMIN_PATH + existingAdminId))
+        .perform(get(TENANT_ADMIN_PATH + "/" + existingAdminId))
         .andExpect(status().isForbidden());
   }
 
@@ -799,7 +876,7 @@ class UserAdminControllerE2EIT {
 
     // when, then
     this.mockMvc
-        .perform(delete(TENANT_ADMIN_PATH + existingAdminId))
+        .perform(delete(TENANT_ADMIN_PATH + "/" + existingAdminId))
         .andExpect(status().isForbidden());
   }
 
@@ -811,10 +888,10 @@ class UserAdminControllerE2EIT {
     var adminId = givenNewTenantAdminIsCreated();
 
     // when
-    this.mockMvc.perform(delete(TENANT_ADMIN_PATH + adminId)).andExpect(status().isOk());
+    this.mockMvc.perform(delete(TENANT_ADMIN_PATH + "/" + adminId)).andExpect(status().isOk());
 
     // then
-    this.mockMvc.perform(get(TENANT_ADMIN_PATH + adminId)).andExpect(status().isNoContent());
+    this.mockMvc.perform(get(TENANT_ADMIN_PATH + "/" + adminId)).andExpect(status().isNoContent());
   }
 
   private String givenNewTenantAdminIsCreated() throws Exception {

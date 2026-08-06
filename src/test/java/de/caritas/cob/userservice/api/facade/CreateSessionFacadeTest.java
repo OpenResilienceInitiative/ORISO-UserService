@@ -19,14 +19,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -41,22 +39,28 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
+import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
+import de.caritas.cob.userservice.api.service.session.DirectSessionMatrixRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
-import org.slf4j.Logger;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
-import org.springframework.test.context.junit.jupiter.SpringExtension;
 
-@ExtendWith(SpringExtension.class)
+@ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class CreateSessionFacadeTest {
 
   @InjectMocks private CreateSessionFacade createSessionFacade;
@@ -65,16 +69,26 @@ class CreateSessionFacadeTest {
   @Mock private SessionDataService sessionDataService;
   @Mock private RollbackFacade rollbackFacade;
   @Mock private UserAccountService userAccountProvider;
-  @Mock private Logger logger;
 
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
+
+  @Mock private AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
+
+  @Mock private DirectSessionMatrixRoomService directSessionMatrixRoomService;
 
   List<NewSessionValidationConstraint> validationConstraints =
       Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE);
 
+  private LogbackCaptor logCaptor;
+
   @BeforeEach
   public void setup() {
-    setInternalState(LogService.class, "LOGGER", logger);
+    logCaptor = LogbackCaptor.attach(LogService.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logCaptor.detach();
   }
 
   /** Method: createUserSession */
@@ -107,7 +121,7 @@ class CreateSessionFacadeTest {
           createSessionFacade.createUserSession(
               USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
-          verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString());
+          assertThat(logCaptor.hasErrorLog(), is(true));
           verify(rollbackFacade, times(1)).rollBackUserAccount(any());
         });
   }
@@ -130,9 +144,31 @@ class CreateSessionFacadeTest {
           createSessionFacade.createUserSession(
               USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
 
-          verify(logger, atLeastOnce()).error(anyString(), anyString(), anyString());
+          assertThat(logCaptor.hasErrorLog(), is(true));
           verify(sessionService, times(1)).deleteSession(any());
           verify(rollbackFacade, times(1)).rollBackUserAccount(any());
+        });
+  }
+
+  @Test
+  public void
+      createUserSession_Should_NotRollbackUserAccount_When_SessionWasPersistedBeforeSessionDataFailure() {
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> {
+          when(sessionService.getSessionsForUserId(USER_ID))
+              .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
+          when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
+          when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
+              .thenReturn(SESSION_WITHOUT_CONSULTANT);
+          doThrow(INTERNAL_SERVER_ERROR_EXCEPTION)
+              .when(sessionDataService)
+              .saveSessionData(any(Session.class), any());
+
+          createSessionFacade.createUserSession(
+              USER_DTO_SUCHT, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
+
+          verify(rollbackFacade, never()).rollBackUserAccount(any());
         });
   }
 
@@ -198,7 +234,7 @@ class CreateSessionFacadeTest {
 
     assertThat(result.getStatus(), is(HttpStatus.CONFLICT));
     assertThat(result.getSessionId(), is(session.getId()));
-    assertThat(result.getRcGroupId(), is(session.getGroupId()));
+    assertThat(result.getMatrixRoomId(), is(session.getMatrixRoomId()));
   }
 
   @Test
@@ -211,6 +247,7 @@ class CreateSessionFacadeTest {
         .thenReturn(Optional.empty());
     when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean()))
         .thenReturn(session);
+    when(sessionService.saveSession(session)).thenReturn(session);
 
     var result =
         createSessionFacade.createDirectUserSession(
@@ -230,6 +267,7 @@ class CreateSessionFacadeTest {
         .thenReturn(Optional.empty());
     when(sessionService.initializeDirectSession(any(), any(), any(), anyBoolean()))
         .thenReturn(session);
+    when(sessionService.saveSession(session)).thenReturn(session);
     var consultingTypeResponseDTO = new ExtendedConsultingTypeResponseDTO();
     consultingTypeResponseDTO.id(session.getConsultingTypeId() + 1);
 

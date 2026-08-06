@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
@@ -10,6 +11,8 @@ import java.sql.SQLException;
 import java.time.LocalDateTime;
 import java.util.Base64;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import lombok.Builder;
 import lombok.Data;
 import lombok.NonNull;
@@ -25,6 +28,7 @@ public class SupervisorLogsService {
 
   private final @NonNull NamedParameterJdbcTemplate namedParameterJdbcTemplate;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminAuditAgencyScope adminAuditAgencyScope;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   public SupervisorLogsResult listSupervisorLogs(int page, int perPage) {
@@ -33,12 +37,29 @@ public class SupervisorLogsService {
     final int offset = (safePage - 1) * safePerPage;
 
     final Long tenantId = resolveEffectiveTenantId();
+    final Optional<Set<Long>> agencyIds = adminAuditAgencyScope.resolveAgencyIds();
+
+    // Fail closed: a Beratungsstellen-Admin without a single agency assignment reads nothing —
+    // never the whole tenant, and never an `IN ()` that the database would reject.
+    if (agencyIds.isPresent() && agencyIds.get().isEmpty()) {
+      return SupervisorLogsResult.builder()
+          .data(List.of())
+          .total(0L)
+          .page(safePage)
+          .perPage(safePerPage)
+          .build();
+    }
+
+    // Empty for tenant-wide admins, an agency filter for Beratungsstellen-Admins. Appended rather
+    // than parameterised because a NULL collection cannot be expanded into an `IN` list.
+    final String agencyFilter = agencyIds.isPresent() ? "\n  AND s.agency_id IN (:agencyIds)" : "";
 
     MapSqlParameterSource params =
         new MapSqlParameterSource()
             .addValue("tenantId", tenantId)
             .addValue("limit", safePerPage)
             .addValue("offset", offset);
+    agencyIds.ifPresent(ids -> params.addValue("agencyIds", ids));
 
     // Total count for pagination: added events + removed events (only where removed_date exists).
     Long total =
@@ -48,16 +69,18 @@ public class SupervisorLogsService {
                 + "    SELECT COUNT(*)\n"
                 + "    FROM session_supervisor ss\n"
                 + "    JOIN session s ON s.id = ss.session_id\n"
-                + "    WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))\n"
-                + "  )\n"
+                + "    WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
+                + agencyFilter
+                + "\n  )\n"
                 + "  +\n"
                 + "  (\n"
                 + "    SELECT COUNT(*)\n"
                 + "    FROM session_supervisor ss\n"
                 + "    JOIN session s ON s.id = ss.session_id\n"
                 + "    WHERE ss.removed_date IS NOT NULL\n"
-                + "      AND (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))\n"
-                + "  ) AS total",
+                + "      AND (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
+                + agencyFilter
+                + "\n  ) AS total",
             params,
             Long.class);
 
@@ -81,7 +104,9 @@ public class SupervisorLogsService {
                 + "  JOIN session s ON s.id = ss.session_id\n"
                 + "  JOIN consultant sup ON sup.consultant_id = ss.supervisor_consultant_id\n"
                 + "  JOIN consultant act ON act.consultant_id = ss.added_by_consultant_id\n"
-                + "  WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))\n"
+                + "  WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
+                + agencyFilter
+                + "\n"
                 + "\n"
                 + "  UNION ALL\n"
                 + "\n"
@@ -102,8 +127,9 @@ public class SupervisorLogsService {
                 + "  JOIN consultant sup ON sup.consultant_id = ss.supervisor_consultant_id\n"
                 + "  JOIN consultant act ON act.consultant_id = ss.added_by_consultant_id\n"
                 + "  WHERE ss.removed_date IS NOT NULL\n"
-                + "    AND (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))\n"
-                + ") e\n"
+                + "    AND (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
+                + agencyFilter
+                + "\n) e\n"
                 + "ORDER BY e.eventDate DESC\n"
                 + "LIMIT :limit OFFSET :offset",
             params,
@@ -120,6 +146,11 @@ public class SupervisorLogsService {
   private static class SupervisorLogEntryRowMapper implements RowMapper<SupervisorLogEntry> {
     @Override
     public SupervisorLogEntry mapRow(ResultSet rs, int rowNum) throws SQLException {
+      // ADR-008 item 4 (DRAFT): the stored note may be structured JSON (reason + justification +
+      // consent) or legacy free text. Decode it so the log surfaces the human justification (and
+      // reason/consent) rather than raw JSON. decode() is defensive: legacy free text decodes to a
+      // justification with null reason and NOT_REQUIRED consent, so old rows keep working.
+      SupervisionNotes.Payload note = SupervisionNotes.decode(rs.getString("notes"));
       return SupervisorLogEntry.builder()
           .relationId(rs.getLong("relationId"))
           .sessionId(rs.getLong("sessionId"))
@@ -131,7 +162,9 @@ public class SupervisorLogsService {
           .actorConsultantId(rs.getString("actorConsultantId"))
           .actorUsername(rs.getString("actorUsername"))
           .actorName(rs.getString("actorName"))
-          .notes(rs.getString("notes"))
+          .notes(note.justification)
+          .reasonCode(note.reasonCode)
+          .consent(note.consent)
           .build();
     }
   }
@@ -191,7 +224,11 @@ public class SupervisorLogsService {
     private String actorConsultantId;
     private String actorUsername;
     private String actorName;
+    // ADR-008: the human justification (decoded from the stored note; raw JSON is never exposed).
     private String notes;
+    // ADR-008 item 4 (DRAFT): decoded structured fields (null/NOT_REQUIRED for legacy rows).
+    private String reasonCode;
+    private String consent;
   }
 
   @Data

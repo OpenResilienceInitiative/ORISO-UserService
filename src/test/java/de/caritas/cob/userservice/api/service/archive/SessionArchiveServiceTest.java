@@ -8,10 +8,9 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.AccountManager;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -25,7 +24,9 @@ import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.ArchiveOrDeleteSessionStatisticsEvent;
 import de.caritas.cob.userservice.api.service.statistics.event.StatisticsEvent;
 import de.caritas.cob.userservice.statisticsservice.generated.web.model.EventType;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -34,7 +35,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
 
 @ExtendWith(MockitoExtension.class)
 public class SessionArchiveServiceTest {
@@ -50,10 +50,6 @@ public class SessionArchiveServiceTest {
 
   @Mock
   @SuppressWarnings("unused")
-  RocketChatService rocketChatService;
-
-  @Mock
-  @SuppressWarnings("unused")
   ConsultantAgencyService consultantAgencyService;
 
   @Mock
@@ -62,11 +58,16 @@ public class SessionArchiveServiceTest {
 
   @Mock StatisticsService statisticsService;
 
-  @Mock private Logger logger;
+  private LogbackCaptor logCaptor;
 
   @BeforeEach
   public void setUp() {
-    setInternalState(SessionArchiveService.class, "log", logger);
+    logCaptor = LogbackCaptor.forClass(SessionArchiveService.class);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logCaptor.detach();
   }
 
   @Test
@@ -180,8 +181,8 @@ public class SessionArchiveServiceTest {
     ArchiveOrDeleteSessionStatisticsEvent event = statisticsEventArgumentCaptor.getValue();
     assertThat(event.getEventType()).isEqualTo(EventType.ARCHIVE_SESSION);
     assertThat(event.getPayload().get()).isNotEmpty();
-    verify(logger)
-        .error("Could not create session archive statistics event", illegalStateException);
+    assertThat(logCaptor.contains(Level.ERROR, "Could not create session archive statistics event"))
+        .isTrue();
   }
 
   @Test

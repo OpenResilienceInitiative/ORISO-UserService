@@ -20,49 +20,51 @@ public class SessionStatisticsService {
   private final @NonNull SessionRepository sessionRepository;
 
   /**
-   * Retrieve session data via session id () or Rocket.Chat group id. If session id and Rocket.Chat
-   * group id is given the session will be retrieved via session id.
+   * Retrieve session data via session ID or Matrix room ID. If both are given, the session ID takes
+   * precedence.
    *
    * @param sessionId the session id
-   * @param rcGroupId the Rocket.Chat group id
+   * @param matrixRoomId Matrix room ID
    * @return an {@link SessionStatisticsResultDTO} instance.
    */
-  public SessionStatisticsResultDTO retrieveSession(Long sessionId, String rcGroupId) {
+  public SessionStatisticsResultDTO retrieveSession(Long sessionId, String matrixRoomId) {
 
-    checkRequestParameter(sessionId, rcGroupId);
-    Optional<Session> session = retrieveSessionViaSessionIdOrRcGroupId(sessionId, rcGroupId);
+    checkRequestParameter(sessionId, matrixRoomId);
+    Optional<Session> session = retrieveSessionViaSessionIdOrMatrixRoomId(sessionId, matrixRoomId);
     return buildSessionStatisticsResultDTO(
         session.orElseThrow(
             () ->
                 new NotFoundException(
-                    "Session with id %s or Rocket.Chat group id %s not found",
-                    sessionId, rcGroupId)));
+                    "Session with id %s or Matrix room ID %s not found", sessionId, matrixRoomId)));
   }
 
-  private void checkRequestParameter(Long sessionId, String rcGroupId) {
-    if (isNull(sessionId) && isNull(rcGroupId)) {
-      throw new BadRequestException("sessionId or rcGroupId required");
+  private void checkRequestParameter(Long sessionId, String matrixRoomId) {
+    if (isNull(sessionId) && isNull(matrixRoomId)) {
+      throw new BadRequestException("sessionId or matrixRoomId required");
     }
   }
 
-  private Optional<Session> retrieveSessionViaSessionIdOrRcGroupId(
-      Long sessionId, String rcGroupId) {
+  private Optional<Session> retrieveSessionViaSessionIdOrMatrixRoomId(
+      Long sessionId, String matrixRoomId) {
     if (nonNull(sessionId)) {
       return sessionRepository.findById(sessionId);
     } else {
-      return sessionRepository.findByGroupId(rcGroupId);
+      return sessionRepository.findByMatrixRoomId(matrixRoomId);
     }
   }
 
   private SessionStatisticsResultDTO buildSessionStatisticsResultDTO(Session session) {
     return new SessionStatisticsResultDTO()
         .id(session.getId())
-        .rcGroupId(session.getGroupId())
+        .matrixRoomId(session.getMatrixRoomId())
         .agencyId(session.getAgencyId())
         .consultingType(session.getConsultingTypeId())
         .isTeamSession(session.isTeamSession())
-        .createDate(String.valueOf(session.getCreateDate()))
-        .messageDate(String.valueOf(session.getEnquiryMessageDate()))
+        .createDate(session.getCreateDate() != null ? session.getCreateDate().toString() : null)
+        .messageDate(
+            session.getEnquiryMessageDate() != null
+                ? session.getEnquiryMessageDate().toString()
+                : null)
         .postcode(session.getPostcode());
   }
 }

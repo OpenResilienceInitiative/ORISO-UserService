@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeletionPauseRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RootDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
@@ -24,6 +25,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.UserIdentitiesDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ViolationDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.AdminDtoMapper;
 import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
@@ -31,23 +33,27 @@ import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.hallink.RootDTOBuilder;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
+import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import io.swagger.annotations.Api;
+import jakarta.validation.Valid;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
-import javax.validation.Valid;
-import javax.validation.constraints.NotNull;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.validation.annotation.Validated;
+import org.springframework.web.bind.annotation.DeleteMapping;
+import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
@@ -57,6 +63,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 /** Controller to handle all session admin requests. */
 @RestController
+@Validated
 @RequiredArgsConstructor
 @Slf4j
 @Api(tags = "admin-user-controller")
@@ -70,6 +77,8 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull AppointmentService appointmentService;
   private final @NonNull AdminDtoMapper adminDtoMapper;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
+  private final @NonNull UserIdentitiesService userIdentitiesService;
 
   /**
    * Creates the root hal based navigation entity.
@@ -92,9 +101,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<SessionAdminResultDTO> getSessions(
-      @NotNull @Valid Integer page,
-      @NotNull @Valid Integer perPage,
-      @Valid SessionFilter sessionFilter) {
+      Integer page, Integer perPage, SessionFilter sessionFilter) {
     SessionAdminResultDTO sessionAdminResultDTO =
         this.sessionAdminService.findSessions(page, perPage, sessionFilter);
     return ResponseEntity.ok(sessionAdminResultDTO);
@@ -108,7 +115,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<ConsultantAdminResponseDTO> createConsultant(
-      @Valid CreateConsultantDTO createConsultantDTO) {
+      CreateConsultantDTO createConsultantDTO) {
 
     // MATRIX MIGRATION: Capture plain username for Matrix user creation
     // CreateConsultantDTO doesn't use EncodeUsernameJsonDeserializer, so username is plain
@@ -119,6 +126,54 @@ public class UserAdminController implements UseradminApi {
     var consultant = consultantAdminFacade.createNewConsultant(createConsultantDTO);
 
     return ResponseEntity.ok(consultant);
+  }
+
+  /**
+   * Grants an existing admin user a full functional consultant identity (multi-identity
+   * foundation). Mirrors {@link #createConsultant} and returns the created consultant identity.
+   *
+   * <p>Mapped to both {@code /useradmin/admins/{adminId}/grant-consultant-identity} (direct) and
+   * the {@code /service}-prefixed variant (via API gateway) so internal service calls work without
+   * relying on the gateway to strip the {@code /service} prefix.
+   *
+   * @param adminId the Keycloak id of the existing admin user (required)
+   * @param grantConsultantIdentityDTO the consultant-specific attributes (required)
+   * @return {@link ConsultantAdminResponseDTO}
+   */
+  @PostMapping(
+      value = {
+        "/useradmin/admins/{adminId}/grant-consultant-identity",
+        "/service/useradmin/admins/{adminId}/grant-consultant-identity"
+      },
+      produces = "application/hal+json",
+      consumes = "application/json")
+  public ResponseEntity<ConsultantAdminResponseDTO> grantConsultantIdentity(
+      @PathVariable String adminId,
+      @Valid @RequestBody GrantConsultantIdentityDTO grantConsultantIdentityDTO) {
+    var consultant =
+        grantConsultantIdentityService.grantConsultantIdentityToAdmin(
+            adminId, grantConsultantIdentityDTO);
+    return ResponseEntity.ok(consultant);
+  }
+
+  /**
+   * Returns which platform identities the given user currently holds (admin row, non-deleted
+   * consultant row and Keycloak realm roles). Data source for the admin-panel "has rights
+   * elsewhere" badge.
+   *
+   * <p>Mapped to both {@code /useradmin/users/{userId}/identities} (direct) and the {@code
+   * /service}-prefixed variant (via API gateway).
+   *
+   * @param userId the Keycloak id of the user (required)
+   * @return {@link UserIdentitiesDTO}
+   */
+  @GetMapping(
+      value = {
+        "/useradmin/users/{userId}/identities",
+        "/service/useradmin/users/{userId}/identities"
+      })
+  public ResponseEntity<UserIdentitiesDTO> getUserIdentities(@PathVariable String userId) {
+    return ResponseEntity.ok(this.userIdentitiesService.getUserIdentities(userId));
   }
 
   /**
@@ -140,8 +195,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<Void> createConsultantAgency(
-      @PathVariable String consultantId,
-      @Valid CreateConsultantAgencyDTO createConsultantAgencyDTO) {
+      @PathVariable String consultantId, CreateConsultantAgencyDTO createConsultantAgencyDTO) {
     consultantAdminFacade.checkPermissionsToAssignedAgencies(
         Lists.newArrayList(createConsultantAgencyDTO));
     this.consultantAdminFacade.createNewConsultantAgency(consultantId, createConsultantAgencyDTO);
@@ -151,24 +205,9 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
-    // MATRIX MIGRATION: Use simple creation for each agency instead of complex update logic
-    // This avoids the 403 error from filterAgencyListForDeletion
-    try {
-      for (CreateConsultantAgencyDTO agencyDTO : agencyList) {
-        try {
-          this.consultantAdminFacade.createNewConsultantAgency(consultantId, agencyDTO);
-        } catch (Exception e) {
-          // If agency already exists, continue
-          System.out.println("Agency assignment (might already exist): " + e.getMessage());
-        }
-      }
-      return ResponseEntity.ok().build();
-    } catch (Exception e) {
-      // Return 200 anyway to not block consultant creation
-      System.out.println(
-          "ERROR: Agency assignment failed for consultant " + consultantId + ": " + e.getMessage());
-      return ResponseEntity.ok().build();
-    }
+    this.consultantAdminFacade.checkPermissionsToAssignedAgencies(agencyList);
+    this.consultantAdminFacade.setConsultantAgencies(consultantId, agencyList);
+    return ResponseEntity.ok().build();
   }
 
   /**
@@ -188,10 +227,15 @@ public class UserAdminController implements UseradminApi {
    *
    * @param consultantId consultant id (required)
    */
+  @DeleteMapping(
+      value = {
+        "/useradmin/consultants/{consultantId}",
+        "/service/useradmin/consultants/{consultantId}"
+      })
   @Override
   public ResponseEntity<Void> markConsultantForDeletion(
       @PathVariable String consultantId,
-      @Valid @RequestParam(required = false) Boolean forceDeleteSessions) {
+      @RequestParam(required = false, defaultValue = "false") Boolean forceDeleteSessions) {
     this.consultantAdminFacade.markConsultantForDeletion(consultantId, forceDeleteSessions);
     return new ResponseEntity<>(HttpStatus.OK);
   }
@@ -234,7 +278,7 @@ public class UserAdminController implements UseradminApi {
       consumes = "application/json")
   @Override
   public ResponseEntity<ConsultantAdminResponseDTO> updateConsultant(
-      @PathVariable String consultantId, @Valid UpdateAdminConsultantDTO updateConsultantDTO) {
+      @PathVariable String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
     return ResponseEntity.ok(performUpdate(consultantId, updateConsultantDTO));
   }
 
@@ -271,10 +315,7 @@ public class UserAdminController implements UseradminApi {
    */
   @Override
   public ResponseEntity<ConsultantSearchResultDTO> getConsultants(
-      @NotNull @Valid Integer page,
-      @NotNull @Valid Integer perPage,
-      @Valid ConsultantFilter consultantFilter,
-      @Valid Sort sort) {
+      Integer page, Integer perPage, ConsultantFilter consultantFilter, Sort sort) {
     var resultDTO =
         this.consultantAdminFacade.findFilteredConsultants(page, perPage, consultantFilter, sort);
     return ResponseEntity.ok(resultDTO);
@@ -313,7 +354,7 @@ public class UserAdminController implements UseradminApi {
    * @param agencyTypeDTO contains the target type
    */
   @Override
-  public ResponseEntity<Void> changeAgencyType(Long agencyId, @Valid AgencyTypeDTO agencyTypeDTO) {
+  public ResponseEntity<Void> changeAgencyType(Long agencyId, AgencyTypeDTO agencyTypeDTO) {
     this.consultantAdminFacade.changeAgencyType(agencyId, agencyTypeDTO);
     return new ResponseEntity<>(HttpStatus.OK);
   }

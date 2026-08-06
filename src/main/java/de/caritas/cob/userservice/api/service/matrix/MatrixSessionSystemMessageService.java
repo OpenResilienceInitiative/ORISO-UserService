@@ -4,6 +4,7 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -25,6 +26,10 @@ public class MatrixSessionSystemMessageService {
 
   public static final String SYSTEM_NOTIFICATION_PREFIX = "[SYSTEM_NOTIFICATION]";
   public static final String USER_LEFT_CHAT_TYPE = "USER_LEFT_CHAT";
+  public static final String CASE_HANDOVER_GRANTED_TYPE = "CASE_HANDOVER_GRANTED";
+
+  private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER =
+      new com.fasterxml.jackson.databind.ObjectMapper();
 
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
@@ -56,6 +61,95 @@ public class MatrixSessionSystemMessageService {
         .ifPresent(
             credentials ->
                 sendUserLeftMessage(session.getId(), roomId, displayUsername, credentials));
+  }
+
+  /**
+   * Notifies the room that a new counsellor took over the case (case handover GRANTED). The message
+   * is a normal m.text event with the [SYSTEM_NOTIFICATION] JSON envelope the web client renders as
+   * a system card. Posted as the new (requester) consultant when possible.
+   *
+   * @param session the handed-over session (room + participants)
+   * @param newAdvisorName display name of the consultant who took over
+   * @param reasonLabel the selected handover reason label
+   * @param explanation the free-text explanation given by the requester
+   * @param description localized client-facing template text (nullable)
+   */
+  public void postCaseHandoverGrantedMessage(
+      Session session,
+      String newAdvisorName,
+      String reasonLabel,
+      String explanation,
+      String description) {
+    if (session == null || session.getId() == null) {
+      return;
+    }
+    var matrixRoomId = session.getMatrixRoomId();
+    if (isBlank(matrixRoomId)) {
+      matrixRoomId =
+          sessionService.getSession(session.getId()).map(Session::getMatrixRoomId).orElse(null);
+    }
+    if (isBlank(matrixRoomId)) {
+      return;
+    }
+
+    var body = buildCaseHandoverGrantedBody(newAdvisorName, reasonLabel, explanation, description);
+    if (body == null) {
+      return;
+    }
+    var roomId = matrixRoomId;
+    resolveMatrixCredentialsPreferConsultant(session)
+        .ifPresent(credentials -> sendSystemMessage(session.getId(), roomId, body, credentials));
+  }
+
+  private void sendSystemMessage(
+      Long sessionId, String matrixRoomId, String body, MatrixCredentials credentials) {
+    var accessToken = credentials.accessToken(matrixSynapseService);
+    if (accessToken == null) {
+      log.warn(
+          "Skipping Matrix system message for session {} — token unavailable for {}",
+          sessionId,
+          credentials.principal());
+      return;
+    }
+    var response = matrixSynapseService.sendMessage(matrixRoomId, body, accessToken);
+    if (response != null && response.containsKey("error")) {
+      log.warn("Matrix system message for session {} failed: {}", sessionId, response.get("error"));
+    }
+  }
+
+  private Optional<MatrixCredentials> resolveMatrixCredentialsPreferConsultant(Session session) {
+    Consultant consultant = session.getConsultant();
+    if (consultant != null && isNotBlank(consultant.getId())) {
+      consultant = consultantService.getConsultant(consultant.getId()).orElse(consultant);
+      if (isNotBlank(consultant.getMatrixUserId())) {
+        return Optional.of(MatrixCredentials.forMatrixUser(consultant.getMatrixUserId()));
+      }
+    }
+    return resolveMatrixCredentials(session);
+  }
+
+  private String buildCaseHandoverGrantedBody(
+      String newAdvisorName, String reasonLabel, String explanation, String description) {
+    var payload = new java.util.LinkedHashMap<String, String>();
+    payload.put("type", CASE_HANDOVER_GRANTED_TYPE);
+    if (isNotBlank(newAdvisorName)) {
+      payload.put("username", newAdvisorName);
+    }
+    if (isNotBlank(description)) {
+      payload.put("description", description);
+    }
+    if (isNotBlank(reasonLabel)) {
+      payload.put("reasonLabel", reasonLabel);
+    }
+    if (isNotBlank(explanation)) {
+      payload.put("explanation", explanation);
+    }
+    try {
+      return SYSTEM_NOTIFICATION_PREFIX + OBJECT_MAPPER.writeValueAsString(payload);
+    } catch (com.fasterxml.jackson.core.JsonProcessingException exception) {
+      log.warn("Could not serialize case-handover system message payload", exception);
+      return null;
+    }
   }
 
   private void sendUserLeftMessage(
@@ -102,7 +196,7 @@ public class MatrixSessionSystemMessageService {
 
   private String extractMatrixLocalpart(String matrixUserId) {
     if (matrixUserId.startsWith("@")) {
-      return matrixUserId.substring(1).split(":")[0];
+      return MatrixIds.localpart(matrixUserId);
     }
     return matrixUserId;
   }

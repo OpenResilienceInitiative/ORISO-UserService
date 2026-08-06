@@ -8,12 +8,12 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.Authority;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
@@ -23,9 +23,27 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfile;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import jakarta.ws.rs.BadRequestException;
+import jakarta.ws.rs.NotAuthorizedException;
+import jakarta.ws.rs.NotFoundException;
+import jakarta.ws.rs.core.Response;
 import java.net.URI;
 import java.util.Collections;
 import java.util.HashMap;
@@ -33,9 +51,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import java.util.stream.Stream;
-import javax.ws.rs.BadRequestException;
-import javax.ws.rs.core.Response;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.Synchronized;
@@ -45,35 +63,31 @@ import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
-import org.springframework.util.LinkedMultiValueMap;
-import org.springframework.util.MultiValueMap;
 import org.springframework.util.ObjectUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestClientException;
 import org.springframework.web.client.RestClientResponseException;
-import org.springframework.web.client.RestTemplate;
 
 /** Service for Keycloak REST API calls. */
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class KeycloakService implements IdentityClient {
+public class KeycloakService
+    implements IdentityAccountRemover,
+        IdentityAuthentication,
+        IdentityClient,
+        IdentityDeactivator,
+        IdentityDummyEmailUpdater,
+        IdentityEmailOwnerLookup,
+        IdentityPasswordUpdater,
+        IdentityProfileLookup,
+        IdentityRoleLookup,
+        IdentityUsernameAvailability {
 
-  private static final String KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN = "refresh_token";
-  private static final String KEYCLOAK_GRANT_TYPE_PASSWORD = "password";
-  private static final String BODY_KEY_CLIENT_ID = "client_id";
-  private static final String BODY_KEY_GRANT_TYPE = "grant_type";
-  private static final String BODY_KEY_PASSWORD = "password";
-  private static final String BODY_KEY_USERNAME = "username";
-  private static final String ENDPOINT_OPENID_CONNECT_LOGIN = "/token";
-  private static final String ENDPOINT_OPENID_CONNECT_LOGOUT = "/logout";
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
   private static final String ENDPOINT_OTP_TEARDOWN = "/delete-otp/{username}";
@@ -82,25 +96,31 @@ public class KeycloakService implements IdentityClient {
   private static final String LOCALE = "locale";
   private static final String TENANT_ID_ATTRIBUTE = "tenantId";
   private static final String USER_ID_ATTRIBUTE = "userId";
+  private static final String USERNAME_ATTRIBUTE = "username";
+  private static final String LEGACY_USERNAME_ATTRIBUTE = "userName";
 
-  private final @NonNull RestTemplate restTemplate;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull KeycloakClient keycloakClient;
   private final @NonNull KeycloakMapper keycloakMapper;
   private final @NonNull UserHelper userHelper;
+  private final @NonNull KeycloakAuthClient keycloakAuthClient;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
-  @Value("${keycloak.config.app-client-id}")
-  private String keycloakClientId;
+  private OutboundHttpMetrics outboundHttpMetrics;
 
   @Value("${api.error.keycloakError}")
   private String keycloakError;
 
   @Value("${multitenancy.enabled}")
   private Boolean multiTenancyEnabled;
+
+  @Autowired(required = false)
+  void setOutboundHttpMetrics(OutboundHttpMetrics outboundHttpMetrics) {
+    this.outboundHttpMetrics = outboundHttpMetrics;
+  }
 
   /**
    * Changes the (Keycloak) password of a user and returns true on success.
@@ -142,116 +162,24 @@ public class KeycloakService implements IdentityClient {
         || !userRepresentation.getAttributes().get(LOCALE).contains(locale);
   }
 
-  /**
-   * Performs a Keycloak login and returns the Keycloak {@link KeycloakLoginResponseDTO} on success.
-   *
-   * @param userName the username
-   * @param password the password
-   * @return {@link KeycloakLoginResponseDTO}
-   */
-  public KeycloakLoginResponseDTO loginUser(final String userName, final String password) {
-    // Keycloak stores decoded usernames; callers often pass the encoded form from MariaDB.
-    var entity = loginRequest(usernameTranscoder.decodeUsername(userName), password);
-    var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGIN);
-
-    try {
-      return restTemplate.postForEntity(url, entity, KeycloakLoginResponseDTO.class).getBody();
-
-    } catch (RestClientResponseException exception) {
-      throw new BadRequestException(
-          String.format(
-              "Could not log in user %s into Keycloak: %s", userName, exception.getMessage()),
-          exception);
-    }
-  }
-
-  private HttpEntity<MultiValueMap<String, String>> loginRequest(String userName, String password) {
-    MultiValueMap<String, String> map = new SensitiveKeycloakFormData();
-    map.add(BODY_KEY_USERNAME, userName);
-    map.add(BODY_KEY_PASSWORD, password);
-    map.add(BODY_KEY_CLIENT_ID, keycloakClientId);
-    map.add(BODY_KEY_GRANT_TYPE, KEYCLOAK_GRANT_TYPE_PASSWORD);
-
-    var httpHeaders = new HttpHeaders();
-    httpHeaders.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-
-    return new HttpEntity<>(map, httpHeaders);
+  @Override
+  public IdentityLogin login(final String userName, final String password) {
+    KeycloakLoginResponseDTO response = keycloakAuthClient.loginUser(userName, password);
+    return new IdentityLogin(
+        response.getAccessToken(),
+        response.getExpiresIn(),
+        response.getRefreshExpiresIn(),
+        response.getRefreshToken());
   }
 
   @Override
-  public boolean verifyIgnoringOtp(String username, String password) {
-    var entity = loginRequest(username, password);
-    var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGIN);
-
-    ResponseEntity<KeycloakLoginResponseDTO> loginResponse;
-    try {
-      loginResponse = restTemplate.postForEntity(url, entity, KeycloakLoginResponseDTO.class);
-    } catch (HttpClientErrorException exception) {
-      return exception.getStatusCode().equals(HttpStatus.BAD_REQUEST)
-          && exception.getResponseBodyAsString().contains("Missing totp"); // but password correct
-    }
-
-    var responsePayload = loginResponse.getBody();
-    if (nonNull(responsePayload) && nonNull(responsePayload.getRefreshToken())) {
-      logoutUser(responsePayload.getRefreshToken());
-    }
-
-    return true;
+  public boolean verifyPasswordIgnoringSecondFactor(String username, String password) {
+    return keycloakAuthClient.verifyIgnoringOtp(username, password);
   }
 
-  /**
-   * Performs a Keycloak logout. This only destroys the Keycloak session, the (offline) access token
-   * will still be valid until expiration date/time ends.
-   *
-   * @param refreshToken the refreshToken
-   * @return true if logout was successful
-   */
-  public boolean logoutUser(final String refreshToken) {
-    MultiValueMap<String, String> map = new SensitiveKeycloakFormData();
-    map.add(BODY_KEY_CLIENT_ID, keycloakClientId);
-    map.add(BODY_KEY_GRANT_TYPE, KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN);
-    map.add(KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN, refreshToken);
-
-    var httpHeaders = new HttpHeaders();
-    httpHeaders.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-    httpHeaders.add("Authorization", "Bearer " + authenticatedUser.getAccessToken());
-    HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(map, httpHeaders);
-
-    var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGOUT);
-    try {
-      var response = restTemplate.postForEntity(url, request, Void.class);
-      return wasLogoutSuccessful(response);
-    } catch (Exception ex) {
-      log.error("Keycloak error: Could not log out user", ex);
-
-      return false;
-    }
-  }
-
-  private boolean wasLogoutSuccessful(ResponseEntity<Void> responseEntity) {
-    if (!responseEntity.getStatusCode().equals(HttpStatus.NO_CONTENT)) {
-      log.error("Keycloak error: Could not log out user");
-
-      return false;
-    }
-    return true;
-  }
-
-  private static final class SensitiveKeycloakFormData extends LinkedMultiValueMap<String, String> {
-
-    private static final String REDACTED = "[REDACTED]";
-
-    @Override
-    public String toString() {
-      var sanitized = new LinkedMultiValueMap<>(this);
-      if (sanitized.containsKey(KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN)) {
-        sanitized.put(KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN, Collections.singletonList(REDACTED));
-      }
-      if (sanitized.containsKey(BODY_KEY_PASSWORD)) {
-        sanitized.put(BODY_KEY_PASSWORD, Collections.singletonList(REDACTED));
-      }
-      return sanitized.toString();
-    }
+  @Override
+  public boolean logout(final String refreshToken) {
+    return keycloakAuthClient.logoutUser(refreshToken);
   }
 
   /**
@@ -276,23 +204,25 @@ public class KeycloakService implements IdentityClient {
   }
 
   public void deleteEmailAddress() {
-    updateDummyEmail(authenticatedUser.getUserId());
+    var userId = authenticatedUser.getUserId();
+    updateEmail(userId, userHelper.getDummyEmail(userId));
   }
 
   @Override
-  public Map<String, String> findUserByEmail(String email) {
+  public Optional<IdentityEmailOwner> findByEmail(String email) {
     return keycloakClient.getUsersResource().search(email, 0, Integer.MAX_VALUE).stream()
-        .filter(userRepresentation -> userRepresentation.getEmail().equals(email))
+        .filter(userRepresentation -> email.equals(userRepresentation.getEmail()))
         .findFirst()
-        .map(keycloakMapper::mapOf)
-        .orElseGet(Map::of);
+        .map(userRepresentation -> new IdentityEmailOwner(userRepresentation.getUsername()));
   }
 
   @Override
   public OtpInfoDTO getOtpCredential(String userName) {
-    var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_INFO, userName);
-    var response = keycloakClient.get(bearerToken, requestUrl, OtpInfoDTO.class);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_INFO, userName);
+    var response =
+        withFreshAdminTokenOnUnauthorized(
+            () ->
+                keycloakClient.get(keycloakClient.getBearerToken(), requestUrl, OtpInfoDTO.class));
 
     return response.getBody();
   }
@@ -300,11 +230,13 @@ public class KeycloakService implements IdentityClient {
   @Override
   public boolean setUpOtpCredential(String userName, String initialCode, String secret) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, secret, null);
-    var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_SETUP, userName);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_SETUP, userName);
 
     try {
-      keycloakClient.putForEntity(bearerToken, requestUrl, otpSetupDTO, OtpInfoDTO.class);
+      withFreshAdminTokenOnUnauthorized(
+          () ->
+              keycloakClient.putForEntity(
+                  keycloakClient.getBearerToken(), requestUrl, otpSetupDTO, OtpInfoDTO.class));
       return true;
     } catch (HttpClientErrorException exception) {
       if (exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)) {
@@ -317,19 +249,21 @@ public class KeycloakService implements IdentityClient {
 
   @Override
   public void deleteOtpCredential(String userName) {
-    var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_TEARDOWN, userName);
-    keycloakClient.delete(bearerToken, requestUrl, Void.class);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_TEARDOWN, userName);
+    withFreshAdminTokenOnUnauthorized(
+        () -> keycloakClient.delete(keycloakClient.getBearerToken(), requestUrl, Void.class));
   }
 
   @Override
   public Optional<String> initiateEmailVerification(String username, String email) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(null, null, email);
-    var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_VERIFY_EMAIL, username);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_VERIFY_EMAIL, username);
 
     try {
-      keycloakClient.putForEntity(bearerToken, requestUrl, otpSetupDTO, Success.class);
+      withFreshAdminTokenOnUnauthorized(
+          () ->
+              keycloakClient.putForEntity(
+                  keycloakClient.getBearerToken(), requestUrl, otpSetupDTO, Success.class));
       return Optional.empty();
     } catch (RestClientException exception) {
       return Optional.of("Keycloak answered: " + exception.getMessage());
@@ -339,16 +273,43 @@ public class KeycloakService implements IdentityClient {
   @Override
   public Map<String, String> finishEmailVerification(String username, String initialCode) {
     var otpSetupDTO = keycloakMapper.otpSetupDtoOf(initialCode, null, null);
-    var bearerToken = keycloakClient.getBearerToken();
-    var requestUrl = identityClientConfig.getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
+    var requestUrl = getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
 
     try {
       var response =
-          keycloakClient.postForEntity(
-              bearerToken, requestUrl, otpSetupDTO, SuccessWithEmail.class);
+          withFreshAdminTokenOnUnauthorized(
+              () ->
+                  keycloakClient.postForEntity(
+                      keycloakClient.getBearerToken(),
+                      requestUrl,
+                      otpSetupDTO,
+                      SuccessWithEmail.class));
       return keycloakMapper.mapOf(response);
     } catch (HttpClientErrorException exception) {
       return keycloakMapper.mapOf(exception);
+    }
+  }
+
+  private String getOtpUrl(String endpoint, String username) {
+    var decodedUsername = usernameTranscoder.decodeUsername(username);
+    return identityClientConfig.getOtpUrl(
+        endpoint, java.util.regex.Matcher.quoteReplacement(decodedUsername));
+  }
+
+  private <T> T withFreshAdminTokenOnUnauthorized(Supplier<T> request) {
+    try {
+      return request.get();
+    } catch (HttpClientErrorException exception) {
+      if (!exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)) {
+        throw exception;
+      }
+
+      log.warn(
+          "Keycloak admin session was unauthorized for an OTP provider request, forcing token"
+              + " refresh and retrying once");
+      recordRetry("admin-session-refresh");
+      keycloakClient.refreshAdminSession();
+      return request.get();
     }
   }
 
@@ -356,10 +317,10 @@ public class KeycloakService implements IdentityClient {
    * Creates a user in Keycloak and returns its Keycloak user ID.
    *
    * @param user {@link UserDTO}
-   * @return {@link KeycloakCreateUserResponseDTO}
+   * @return provider-neutral created identity
    */
-  public KeycloakCreateUserResponseDTO createKeycloakUser(final UserDTO user) {
-    return createKeycloakUser(user, null, null);
+  public CreatedIdentity createUser(final UserDTO user) {
+    return createUser(user, null, null);
   }
 
   /**
@@ -368,9 +329,9 @@ public class KeycloakService implements IdentityClient {
    * @param user {@link UserDTO}
    * @param firstName first name of user
    * @param lastName last name of user
-   * @return {@link KeycloakCreateUserResponseDTO}
+   * @return provider-neutral created identity
    */
-  public KeycloakCreateUserResponseDTO createKeycloakUser(
+  public CreatedIdentity createUser(
       final UserDTO user, final String firstName, final String lastName) {
     var locale =
         isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
@@ -385,14 +346,14 @@ public class KeycloakService implements IdentityClient {
               "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
               createdUserId,
               exception);
-          rollBackUser(createdUserId);
+          rollbackUser(createdUserId);
           throw new InternalServerErrorException(
               String.format(
                   "Could not persist mandatory keycloak user attributes for user %s",
                   createdUserId),
               exception);
         }
-        return new KeycloakCreateUserResponseDTO(createdUserId);
+        return new CreatedIdentity(createdUserId);
       }
       handleCreateKeycloakUserError(response);
     }
@@ -414,13 +375,12 @@ public class KeycloakService implements IdentityClient {
 
     String combinedError = rawResponse.toLowerCase();
 
-    if (combinedError.contains(identityClientConfig.getErrorMessageDuplicatedEmail().toLowerCase())
+    if (errorMatchesMarker(combinedError, identityClientConfig.getErrorMessageDuplicatedEmail())
         || (status == HttpStatus.CONFLICT.value() && combinedError.contains("email"))) {
       throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
-    if (combinedError.contains(
-            identityClientConfig.getErrorMessageDuplicatedUsername().toLowerCase())
+    if (errorMatchesMarker(combinedError, identityClientConfig.getErrorMessageDuplicatedUsername())
         || (status == HttpStatus.CONFLICT.value() && combinedError.contains("username"))) {
       throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
@@ -432,6 +392,15 @@ public class KeycloakService implements IdentityClient {
             : String.format("Keycloak create-user failed with status %s", status);
 
     log.warn("Keycloak create-user failed. status={}, rawResponse={}", status, rawResponse);
+  }
+
+  /**
+   * Null-safe check whether the (lower-cased) Keycloak error response contains the configured
+   * duplicate-account marker. A missing/blank marker simply does not match (the status-based
+   * fallback still applies) instead of throwing an NPE that would mask a 409 CONFLICT as a 500.
+   */
+  private boolean errorMatchesMarker(String combinedError, String marker) {
+    return marker != null && !marker.isBlank() && combinedError.contains(marker.toLowerCase());
   }
 
   /**
@@ -495,9 +464,19 @@ public class KeycloakService implements IdentityClient {
     }
     kcUser.setEnabled(true);
 
+    putUsernameAttributes(user, kcUser);
     updateTenantId(user, kcUser);
 
     return kcUser;
+  }
+
+  private void putUsernameAttributes(UserDTO userDTO, UserRepresentation kcUser) {
+    Map<String, List<String>> attributes =
+        kcUser.getAttributes() == null ? new HashMap<>() : new HashMap<>(kcUser.getAttributes());
+    var decodedUsername = usernameTranscoder.decodeUsername(userDTO.getUsername());
+    attributes.put(USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
+    attributes.put(LEGACY_USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
+    kcUser.setAttributes(attributes);
   }
 
   private void updateTenantId(UserDTO userDTO, UserRepresentation kcUser) {
@@ -521,6 +500,9 @@ public class KeycloakService implements IdentityClient {
             : new LinkedHashMap<>(representation.getAttributes());
 
     attributes.put(USER_ID_ATTRIBUTE, Collections.singletonList(keycloakUserId));
+    var decodedUsername = usernameTranscoder.decodeUsername(userDTO.getUsername());
+    attributes.put(USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
+    attributes.put(LEGACY_USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
     var tenantId = resolveTenantId(userDTO);
     if (tenantId != null) {
       attributes.put(TENANT_ID_ATTRIBUTE, Collections.singletonList(tenantId.toString()));
@@ -610,6 +592,21 @@ public class KeycloakService implements IdentityClient {
    * @param roleName Keycloak role name
    */
   public void updateRole(final String userId, final String roleName) {
+    try {
+      updateRoleOnce(userId, roleName);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized while assigning role {} to user {}, forcing"
+              + " token refresh and retrying once",
+          roleName,
+          userId);
+      recordRetry("admin-session-refresh");
+      keycloakClient.refreshAdminSession();
+      updateRoleOnce(userId, roleName);
+    }
+  }
+
+  private void updateRoleOnce(final String userId, final String roleName) {
     // Get realm and user resources
     var realmResource = keycloakClient.getRealmResource();
     UsersResource userRessource = realmResource.users();
@@ -628,6 +625,7 @@ public class KeycloakService implements IdentityClient {
     }
 
     for (int attempt = 0; attempt < 3; attempt++) {
+      recordRetry("role-visibility");
       try {
         Thread.sleep(100L);
       } catch (InterruptedException interruptedException) {
@@ -642,6 +640,12 @@ public class KeycloakService implements IdentityClient {
     }
 
     throw new KeycloakException("Could not update user role");
+  }
+
+  private void recordRetry(String operation) {
+    if (outboundHttpMetrics != null) {
+      outboundHttpMetrics.recordRetry("keycloak", operation);
+    }
   }
 
   private boolean isRoleAssigned(UserResource user, String roleName) {
@@ -660,6 +664,7 @@ public class KeycloakService implements IdentityClient {
    * @param userId Keycloak user ID
    * @param password user password
    */
+  @Override
   public void updatePassword(final String userId, final String password) {
     var newCredentials = getCredentialRepresentation(password);
     var userResource = keycloakClient.getUsersResource().get(userId);
@@ -685,7 +690,7 @@ public class KeycloakService implements IdentityClient {
       if (current instanceof RestClientResponseException) {
         RestClientResponseException restClientResponseException =
             (RestClientResponseException) current;
-        if (restClientResponseException.getRawStatusCode() == HttpStatus.BAD_REQUEST.value()
+        if (restClientResponseException.getStatusCode().value() == HttpStatus.BAD_REQUEST.value()
             && isPasswordPolicyMessage(restClientResponseException.getResponseBodyAsString())) {
           return true;
         }
@@ -711,28 +716,24 @@ public class KeycloakService implements IdentityClient {
   }
 
   /**
-   * If user didn't provide an email, set to dummy address (userId@online-beratung.de). No *
-   * success/error status possible, because the Keycloak Client doesn't provide one either. *
+   * Replaces a blank email with the configured dummy address.
    *
-   * @param userId Keycloak user ID
-   * @param user {@link UserDTO}
-   * @return the (dummy) email address
+   * @param userId identity-provider user ID
+   * @param identityUpdate provider-neutral identity metadata
+   * @return the dummy email address
    */
-  public String updateDummyEmail(final String userId, UserDTO user) {
-    user.setEmail(userHelper.getDummyEmail(userId));
+  @Override
+  public String updateDummyEmail(
+      final String userId, final IdentityDummyEmailUpdate identityUpdate) {
+    var dummyEmail = userHelper.getDummyEmail(userId);
+    var user = new UserDTO();
+    user.setUsername(identityUpdate.username());
+    user.setEmail(dummyEmail);
+    user.setTenantId(identityUpdate.tenantId());
     var userResource = keycloakClient.getUsersResource().get(userId);
     userResource.update(getUserRepresentation(user, null, null));
-    log.debug("Set email dummy for {} to {}", userId, userHelper.getDummyEmail(userId));
-    return userHelper.getDummyEmail(userId);
-  }
-
-  /**
-   * Sets a user's dummy email
-   *
-   * @param userId user ID
-   */
-  public void updateDummyEmail(String userId) {
-    updateEmail(userId, userHelper.getDummyEmail(userId));
+    log.debug("Set email dummy for {} to {}", userId, dummyEmail);
+    return dummyEmail;
   }
 
   /**
@@ -772,16 +773,11 @@ public class KeycloakService implements IdentityClient {
    * @param emailAddress the email address to set
    */
   public void updateEmail(String userId, String emailAddress) {
-    // Temporarily bypass Keycloak email update for testing
-    log.info("Bypassing Keycloak email update for user: {} with email: {}", userId, emailAddress);
-    return;
-
-    // Original code (commented out):
-    // var userResource = keycloakClient.getUsersResource().get(userId);
-    // verifyEmail(userResource, emailAddress);
-    // UserRepresentation representation = userResource.toRepresentation();
-    // representation.setEmail(emailAddress);
-    // userResource.update(representation);
+    var userResource = keycloakClient.getUsersResource().get(userId);
+    verifyEmail(userResource, emailAddress);
+    UserRepresentation representation = userResource.toRepresentation();
+    representation.setEmail(emailAddress);
+    userResource.update(representation);
   }
 
   /**
@@ -789,7 +785,8 @@ public class KeycloakService implements IdentityClient {
    *
    * @param userId Keycloak user ID
    */
-  public void rollBackUser(String userId) {
+  @Override
+  public void rollbackUser(String userId) {
     try {
       deleteUser(userId);
       log.debug("User {} has been removed due to rollback", userId);
@@ -803,8 +800,26 @@ public class KeycloakService implements IdentityClient {
    *
    * @param userId the userId
    */
+  @Override
   public void deleteUser(String userId) {
-    keycloakClient.getUsersResource().get(userId).remove();
+    try {
+      removeUserIfPresent(userId);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized for deleting user {}, forcing token refresh"
+              + " and retrying once",
+          userId);
+      keycloakClient.refreshAdminSession();
+      removeUserIfPresent(userId);
+    }
+  }
+
+  private void removeUserIfPresent(String userId) {
+    try {
+      keycloakClient.getUsersResource().get(userId).remove();
+    } catch (NotFoundException e) {
+      log.warn("User {} not found in Keycloak, skipping deletion.", userId);
+    }
   }
 
   /**
@@ -851,6 +866,25 @@ public class KeycloakService implements IdentityClient {
     }
   }
 
+  /**
+   * Returns the names of all realm roles currently assigned to the given user.
+   *
+   * @param userId Keycloak user ID
+   * @return the realm role names assigned to the user
+   */
+  @Override
+  public List<String> findAllByUserId(String userId) {
+    try {
+      return getUserRoles(userId).stream()
+          .map(RoleRepresentation::getName)
+          .collect(Collectors.toList());
+    } catch (Exception ex) {
+      var error = String.format("Could not get roles for user id %s", userId);
+      log.error("Keycloak error: " + error, ex);
+      throw new KeycloakException(error);
+    }
+  }
+
   private Optional<UserRole> toUserRole(RoleRepresentation roleRepresentation) {
     return UserRole.getRoleByValue(roleRepresentation.getName());
   }
@@ -867,25 +901,38 @@ public class KeycloakService implements IdentityClient {
    * @return {@link List} of found users
    */
   public List<UserRepresentation> findByUsername(String username) {
-    return keycloakClient.getUsersResource().search(username);
-  }
-
-  public UserRepresentation getById(String userId) {
-    UserResource userResource = keycloakClient.getUsersResource().get(userId);
-    if (userResource == null) {
-      log.error("Could not get user with id {} from keycloak", userId);
-      throw new KeycloakException("User with id not found in keycloak: " + userId);
+    try {
+      return keycloakClient.getUsersResource().search(username);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized while searching for username, forcing token"
+              + " refresh and retrying once");
+      keycloakClient.refreshAdminSession();
+      return keycloakClient.getUsersResource().search(username);
     }
-    return userResource.toRepresentation();
   }
 
-  /**
-   * Closes the provided session.
-   *
-   * @param sessionId Keycloak session ID
-   */
-  public void closeSession(String sessionId) {
-    keycloakClient.getRealmResource().deleteSession(sessionId);
+  @Override
+  public Optional<IdentityProfile> findById(String userId) {
+    try {
+      UserResource userResource = keycloakClient.getUsersResource().get(userId);
+      if (userResource == null) {
+        return Optional.empty();
+      }
+      var user = userResource.toRepresentation();
+      if (user == null) {
+        return Optional.empty();
+      }
+      return Optional.of(
+          new IdentityProfile(
+              user.getId(),
+              user.getUsername(),
+              user.getFirstName(),
+              user.getLastName(),
+              user.getEmail()));
+    } catch (NotFoundException ex) {
+      return Optional.empty();
+    }
   }
 
   /**
@@ -893,6 +940,7 @@ public class KeycloakService implements IdentityClient {
    *
    * @param userId the user id to be deactivated
    */
+  @Override
   public void deactivateUser(String userId) {
     var userResource = keycloakClient.getUsersResource().get(userId);
     var userRepresentation = userResource.toRepresentation();

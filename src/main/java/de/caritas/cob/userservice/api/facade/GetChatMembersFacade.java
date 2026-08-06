@@ -3,26 +3,18 @@ package de.caritas.cob.userservice.api.facade;
 import static java.util.Objects.isNull;
 import static org.apache.commons.lang3.BooleanUtils.isFalse;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMemberResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatMembersResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatGetGroupMembersException;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Chat;
-import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
-import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
 import java.util.List;
-import java.util.Optional;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -34,15 +26,14 @@ import org.springframework.stereotype.Service;
 public class GetChatMembersFacade {
 
   private final @NonNull ChatService chatService;
-  private final @NonNull RocketChatService rocketChatService;
   private final @NonNull ChatPermissionVerifier chatPermissionVerifier;
-
-  private final @NonNull UserRepository userRepository;
-
-  private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull GroupChatMembershipService groupChatMembershipService;
 
   /**
    * Get a filtered list of the members of a chat (without technical/system user).
+   *
+   * <p>Members come from the Matrix room state. Each Matrix member is mapped back to its
+   * application account so the UI keeps showing usernames and display names.
    *
    * @param chatId chat ID
    * @return {@link ChatMembersResponseDTO}
@@ -56,14 +47,11 @@ public class GetChatMembersFacade {
 
     verifyActiveStatus(chat);
     this.chatPermissionVerifier.verifyPermissionForChat(chat);
-    verifyRocketChatGroup(chat);
+    verifyMatrixRoom(chat);
 
-    try {
-      return convertGroupMemberDTOListToChatMemberResponseDTO(
-          rocketChatService.getStandardMembersOfGroup(chat.getGroupId()));
-    } catch (RocketChatGetGroupMembersException | RocketChatUserNotInitializedException e) {
-      throw new InternalServerErrorException(e.getMessage(), LogService::logInternalServerError);
-    }
+    var matrixRoomId = groupChatMembershipService.resolveMatrixRoomId(chat);
+    return convertResolvedMembersToChatMemberResponseDTO(
+        groupChatMembershipService.resolveHumanMembers(matrixRoomId));
   }
 
   private void verifyActiveStatus(Chat chat) {
@@ -74,41 +62,28 @@ public class GetChatMembersFacade {
     }
   }
 
-  private void verifyRocketChatGroup(Chat chat) {
-    if (isNull(chat.getGroupId())) {
+  private void verifyMatrixRoom(Chat chat) {
+    if (isNull(chat.getMatrixRoomId())) {
       throw new InternalServerErrorException(
-          String.format("Chat with id %s has no Rocket.Chat group id", chat.getId()));
+          String.format("Chat with id %s has no Matrix room ID", chat.getId()));
     }
   }
 
-  private ChatMembersResponseDTO convertGroupMemberDTOListToChatMemberResponseDTO(
-      List<GroupMemberDTO> groupMemberDTOList) {
+  private ChatMembersResponseDTO convertResolvedMembersToChatMemberResponseDTO(
+      List<ResolvedRoomMember> members) {
+    var transcoder = new UsernameTranscoder();
     return new ChatMembersResponseDTO()
         .members(
-            groupMemberDTOList.stream()
+            members.stream()
                 .map(
                     member ->
                         new ChatMemberResponseDTO()
-                            .id(member.get_id())
-                            .userId(getByRcUserIdAndDeleteDateIsNull(member))
-                            .status(member.getStatus())
-                            .username(new UsernameTranscoder().decodeUsername(member.getUsername()))
-                            .displayName(member.getName())
-                            .utcOffset(member.getUtcOffset()))
+                            .id(member.matrixUserId())
+                            .userId(member.accountId())
+                            .status(null)
+                            .username(transcoder.decodeUsername(member.username()))
+                            .displayName(member.displayName())
+                            .utcOffset(null))
                 .collect(Collectors.toList()));
-  }
-
-  private String getByRcUserIdAndDeleteDateIsNull(GroupMemberDTO member) {
-    Optional<User> user = userRepository.findByRcUserIdAndDeleteDateIsNull(member.get_id());
-    if (user.isPresent()) {
-      return user.get().getUserId();
-    } else {
-      Optional<Consultant> consultant =
-          consultantRepository.findByRocketChatIdAndDeleteDateIsNull(member.get_id());
-      if (consultant.isPresent()) {
-        return consultant.get().getId();
-      }
-    }
-    return null;
   }
 }

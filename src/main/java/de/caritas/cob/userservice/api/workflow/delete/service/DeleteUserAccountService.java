@@ -13,13 +13,14 @@ import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerRo
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteKeycloakAskerAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteRocketChatAskerAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteAppointmentServiceConsultantAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCaseHandoverRequestsForConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteChatAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteKeycloakConsultantAction;
-import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteRocketChatConsultantAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMatrixConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -69,9 +70,9 @@ public class DeleteUserAccountService {
     this.actionsRegistry
         .buildContainerForType(AskerDeletionWorkflowDTO.class)
         .addActionToExecute(DeleteKeycloakAskerAction.class)
+        .addActionToExecute(DeleteMatrixAskerAction.class)
         .addActionToExecute(DeleteAskerRoomsAndSessionsAction.class)
         .addActionToExecute(DeleteDatabaseAskerAgencyAction.class)
-        .addActionToExecute(DeleteRocketChatAskerAction.class)
         .addActionToExecute(DeleteAnonymousRegistryIdAction.class)
         .addActionToExecute(DeleteAppointmentServiceAskerAction.class)
         .addActionToExecute(DeleteDatabaseAskerAction.class)
@@ -97,10 +98,11 @@ public class DeleteUserAccountService {
     this.actionsRegistry
         .buildContainerForType(ConsultantDeletionWorkflowDTO.class)
         .addActionToExecute(DeleteKeycloakConsultantAction.class)
+        .addActionToExecute(DeleteMatrixConsultantAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAgencyAction.class)
         .addActionToExecute(DeleteChatAction.class)
-        .addActionToExecute(DeleteRocketChatConsultantAction.class)
         .addActionToExecute(DeleteAppointmentServiceConsultantAction.class)
+        .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAction.class)
         .executeActions(deletionWorkflowDTO);
 

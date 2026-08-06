@@ -8,26 +8,34 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoMoreInteractions;
-import static org.powermock.reflect.Whitebox.setInternalState;
+import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.UserChat;
+import de.caritas.cob.userservice.api.model.UserMobileToken;
+import de.caritas.cob.userservice.api.port.out.UserChatRepository;
+import de.caritas.cob.userservice.api.port.out.UserMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 @ExtendWith(MockitoExtension.class)
 public class DeleteDatabaseAskerActionTest {
@@ -36,11 +44,25 @@ public class DeleteDatabaseAskerActionTest {
 
   @Mock private UserRepository userRepository;
 
-  @Mock private Logger logger;
+  @Mock private UserChatRepository userChatRepository;
+
+  @Mock private UserMobileTokenRepository userMobileTokenRepository;
+
+  @Mock private IdentityTombstoneService identityTombstoneService;
+
+  private final ch.qos.logback.classic.Logger logger =
+      (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(DeleteDatabaseAskerAction.class);
+  private final ListAppender<ILoggingEvent> logAppender = new ListAppender<>();
 
   @BeforeEach
   public void setup() {
-    setInternalState(DeleteDatabaseAskerAction.class, "log", logger);
+    logAppender.start();
+    logger.addAppender(logAppender);
+  }
+
+  @AfterEach
+  public void tearDown() {
+    logger.detachAppender(logAppender);
   }
 
   @Test
@@ -52,7 +74,8 @@ public class DeleteDatabaseAskerActionTest {
 
     assertThat(workflowErrors, hasSize(0));
     verify(this.userRepository, times(1)).delete(any());
-    verifyNoMoreInteractions(this.logger);
+    assertThat(
+        logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(false));
   }
 
   @Test
@@ -71,6 +94,43 @@ public class DeleteDatabaseAskerActionTest {
     assertThat(workflowErrors.get(0).getIdentifier(), is("user id"));
     assertThat(workflowErrors.get(0).getReason(), is("Unable to delete user"));
     assertThat(workflowErrors.get(0).getTimestamp(), notNullValue());
-    verify(logger).error(anyString(), any(RuntimeException.class));
+    assertThat(
+        logAppender.list.stream().anyMatch(event -> event.getLevel() == Level.ERROR), is(true));
+  }
+
+  @Test
+  public void execute_Should_deleteChatMembershipsAndMobileTokensBeforeUser_When_askerIsDeleted() {
+    var user = new User();
+    user.setUserId("user id");
+    var userChat = new UserChat();
+    var mobileToken = new UserMobileToken();
+    when(this.userChatRepository.findByUser(user)).thenReturn(List.of(userChat));
+    when(this.userMobileTokenRepository.findByUser(user)).thenReturn(List.of(mobileToken));
+    var workflowDTO = new AskerDeletionWorkflowDTO(user, new ArrayList<>());
+
+    this.deleteDatabaseAskerAction.execute(workflowDTO);
+
+    var inOrder =
+        inOrder(this.userChatRepository, this.userMobileTokenRepository, this.userRepository);
+    inOrder.verify(this.userChatRepository).deleteAll(List.of(userChat));
+    inOrder.verify(this.userMobileTokenRepository).deleteAll(List.of(mobileToken));
+    inOrder.verify(this.userRepository).delete(user);
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(0));
+  }
+
+  @Test
+  public void execute_Should_reportWorkflowError_When_chatMembershipDeletionFails() {
+    var user = new User();
+    user.setUserId("user id");
+    doThrow(new RuntimeException()).when(this.userChatRepository).findByUser(user);
+    var workflowDTO = new AskerDeletionWorkflowDTO(user, new ArrayList<>());
+
+    this.deleteDatabaseAskerAction.execute(workflowDTO);
+
+    var workflowErrors = workflowDTO.getDeletionWorkflowErrors();
+    assertThat(workflowErrors, hasSize(1));
+    assertThat(workflowErrors.get(0).getReason(), is("Could not delete user chat memberships"));
+    assertThat(workflowErrors.get(0).getDeletionSourceType(), is(ASKER));
+    assertThat(workflowErrors.get(0).getDeletionTargetType(), is(DATABASE));
   }
 }

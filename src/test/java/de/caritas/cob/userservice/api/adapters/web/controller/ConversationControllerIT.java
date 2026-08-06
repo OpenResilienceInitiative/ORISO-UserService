@@ -1,8 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.INVALID_USER_REQUEST_BODY;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_TOKEN_HEADER_PARAMETER_NAME;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -24,14 +22,13 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
-import org.keycloak.adapters.KeycloakConfigResolver;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
-import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.hateoas.client.LinkDiscoverers;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @WebMvcTest(ConversationController.class)
@@ -48,128 +45,94 @@ class ConversationControllerIT {
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private ConversationListResolver conversationListResolver;
+  @MockitoBean private ConversationListResolver conversationListResolver;
 
-  @MockBean private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
+  @MockitoBean private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
 
-  @MockBean private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
+  @MockitoBean private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
 
-  @MockBean private LinkDiscoverers linkDiscoverers;
+  @MockitoBean private LinkDiscoverers linkDiscoverers;
 
-  @MockBean private AcceptAnonymousEnquiryFacade acceptAnonymousEnquiryFacade;
+  @MockitoBean private AcceptAnonymousEnquiryFacade acceptAnonymousEnquiryFacade;
 
-  @MockBean private FinishAnonymousConversationFacade finishAnonymousConversationFacade;
+  @MockitoBean private FinishAnonymousConversationFacade finishAnonymousConversationFacade;
 
   @SuppressWarnings("unused")
-  @MockBean
+  @MockitoBean
   private ConversationDtoMapper conversationDtoMapper;
 
   @SuppressWarnings("unused")
-  @MockBean
+  @MockitoBean
   private Messaging messaging;
 
   @SuppressWarnings("unused")
-  @MockBean
+  @MockitoBean
   private TopicConsultantRoutingService topicConsultantRoutingService;
 
   @SuppressWarnings("unused")
-  @MockBean
+  @MockitoBean
   private AuthenticatedUser authenticatedUser;
-
-  @MockBean private KeycloakConfigResolver keycloakConfigResolver;
 
   @Test
   void getAnonymousEnquiries_Should_returnOk_When_requestParamsAreValid() throws Exception {
     this.mvc
-        .perform(
-            get(GET_ANONYMOUS_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("offset", "0")
-                .param("count", "10"))
+        .perform(get(GET_ANONYMOUS_ENQUIRIES_PATH).param("offset", "0").param("count", "10"))
         .andExpect(status().isOk());
   }
 
   @Test
   void getAnonymousEnquiries_Should_returnBadRequest_When_offsetIsMissing() throws Exception {
     this.mvc
-        .perform(
-            get(GET_ANONYMOUS_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("count", "10"))
+        .perform(get(GET_ANONYMOUS_ENQUIRIES_PATH).param("count", "10"))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void getAnonymousEnquiries_Should_returnBadRequest_When_countIsMissing() throws Exception {
     this.mvc
-        .perform(
-            get(GET_ANONYMOUS_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("offset", "0"))
+        .perform(get(GET_ANONYMOUS_ENQUIRIES_PATH).param("offset", "0"))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void getAnonymousEnquiries_Should_returnBadRequest_When_offsetIsLowerThanZero() throws Exception {
     this.mvc
-        .perform(
-            get(GET_ANONYMOUS_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("offset", "-10")
-                .param("count", "10"))
+        .perform(get(GET_ANONYMOUS_ENQUIRIES_PATH).param("offset", "-10").param("count", "10"))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void getAnonymousEnquiries_Should_returnBadRequest_When_countIsZero() throws Exception {
     this.mvc
-        .perform(
-            get(GET_ANONYMOUS_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("offset", "0")
-                .param("count", "0"))
+        .perform(get(GET_ANONYMOUS_ENQUIRIES_PATH).param("offset", "0").param("count", "0"))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void getAnonymousEnquiries_Should_returnBadRequest_When_countIsLowerThanZero() throws Exception {
     this.mvc
-        .perform(
-            get(GET_ANONYMOUS_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("offset", "0")
-                .param("count", "-10"))
+        .perform(get(GET_ANONYMOUS_ENQUIRIES_PATH).param("offset", "0").param("count", "-10"))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void getRegisteredEnquiries_Should_returnOk_When_requestParamsAreValid() throws Exception {
     this.mvc
-        .perform(
-            get(GET_REGISTERED_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("offset", "0")
-                .param("count", "10"))
+        .perform(get(GET_REGISTERED_ENQUIRIES_PATH).param("offset", "0").param("count", "10"))
         .andExpect(status().isOk());
   }
 
   @Test
   void getRegisteredEnquiries_Should_returnBadRequest_When_offsetIsMissing() throws Exception {
     this.mvc
-        .perform(
-            get(GET_REGISTERED_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("count", "10"))
+        .perform(get(GET_REGISTERED_ENQUIRIES_PATH).param("count", "10"))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void getRegisteredEnquiries_Should_returnBadRequest_When_countIsMissing() throws Exception {
     this.mvc
-        .perform(
-            get(GET_REGISTERED_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("offset", "0"))
+        .perform(get(GET_REGISTERED_ENQUIRIES_PATH).param("offset", "0"))
         .andExpect(status().isBadRequest());
   }
 
@@ -177,42 +140,27 @@ class ConversationControllerIT {
   void getRegisteredEnquiries_Should_returnBadRequest_When_offsetIsLowerThanZero()
       throws Exception {
     this.mvc
-        .perform(
-            get(GET_REGISTERED_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("offset", "-10")
-                .param("count", "10"))
+        .perform(get(GET_REGISTERED_ENQUIRIES_PATH).param("offset", "-10").param("count", "10"))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void getRegisteredEnquiries_Should_returnBadRequest_When_countIsZero() throws Exception {
     this.mvc
-        .perform(
-            get(GET_REGISTERED_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("offset", "0")
-                .param("count", "0"))
+        .perform(get(GET_REGISTERED_ENQUIRIES_PATH).param("offset", "0").param("count", "0"))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void getRegisteredEnquiries_Should_returnBadRequest_When_countIsLowerThanZero() throws Exception {
     this.mvc
-        .perform(
-            get(GET_REGISTERED_ENQUIRIES_PATH)
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN)
-                .param("offset", "0")
-                .param("count", "-10"))
+        .perform(get(GET_REGISTERED_ENQUIRIES_PATH).param("offset", "0").param("count", "-10"))
         .andExpect(status().isBadRequest());
   }
 
   @Test
   void acceptAnonymousEnquiry_Should_returnOk_When_requestParamsAreValid() throws Exception {
-    this.mvc
-        .perform(
-            put(ACCEPT_ANONYMOUS_ENQUIRY_PATH).header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN))
-        .andExpect(status().isOk());
+    this.mvc.perform(put(ACCEPT_ANONYMOUS_ENQUIRY_PATH)).andExpect(status().isOk());
 
     verify(this.acceptAnonymousEnquiryFacade, times(1)).acceptAnonymousEnquiry(1L);
   }
@@ -220,9 +168,7 @@ class ConversationControllerIT {
   @Test
   void acceptAnonymousEnquiry_Should_returnBadRequest_When_sessionIdIsInvalid() throws Exception {
     this.mvc
-        .perform(
-            put(ACCEPT_ANONYMOUS_ENQUIRY_PATH.replace("1", "invalid"))
-                .header(RC_TOKEN_HEADER_PARAMETER_NAME, RC_TOKEN))
+        .perform(put(ACCEPT_ANONYMOUS_ENQUIRY_PATH.replace("1", "invalid")))
         .andExpect(status().isBadRequest());
 
     verifyNoInteractions(this.acceptAnonymousEnquiryFacade);

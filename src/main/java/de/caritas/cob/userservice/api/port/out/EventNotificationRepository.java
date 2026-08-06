@@ -8,7 +8,7 @@ import org.springframework.data.jpa.repository.JpaRepository;
 
 public interface EventNotificationRepository extends JpaRepository<EventNotification, Long> {
 
-  List<EventNotification> findByRecipientUserIdOrderByCreateDateDesc(
+  List<EventNotification> findByRecipientUserIdOrderByCreateDateDescIdDesc(
       String recipientUserId, Pageable pageable);
 
   long countByRecipientUserIdAndReadDateIsNull(String recipientUserId);
@@ -16,6 +16,9 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
   Optional<EventNotification> findByIdAndRecipientUserId(Long id, String recipientUserId);
 
   List<EventNotification> findByRecipientUserIdAndReadDateIsNull(String recipientUserId);
+
+  boolean existsByRecipientUserIdAndDeduplicationKey(
+      String recipientUserId, String deduplicationKey);
 
   void deleteByRecipientUserId(String recipientUserId);
 }

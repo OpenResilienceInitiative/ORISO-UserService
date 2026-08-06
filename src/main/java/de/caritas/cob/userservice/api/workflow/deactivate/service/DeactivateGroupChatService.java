@@ -4,9 +4,9 @@ import de.caritas.cob.userservice.api.actions.chat.StopChatActionCommand;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import jakarta.transaction.Transactional;
 import java.time.LocalDateTime;
 import java.util.function.Predicate;
-import javax.transaction.Transactional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,7 +33,11 @@ public class DeactivateGroupChatService {
   }
 
   private Predicate<Chat> isChatOutsideOfDeactivationTime(LocalDateTime deactivationTime) {
-    return chat -> chat.getUpdateDate().isBefore(deactivationTime.minusMinutes(chat.getDuration()));
+    return chat -> {
+      var plannedStart = chat.getStartDate() != null ? chat.getStartDate() : chat.getUpdateDate();
+      var plannedEnd = plannedStart.plusMinutes(chat.getDuration());
+      return !plannedEnd.isAfter(deactivationTime);
+    };
   }
 
   private void deactivateStaleActiveChat(Chat staleChat) {

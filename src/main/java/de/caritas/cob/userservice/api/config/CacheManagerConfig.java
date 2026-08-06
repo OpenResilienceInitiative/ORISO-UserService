@@ -1,13 +1,21 @@
 package de.caritas.cob.userservice.api.config;
 
-import net.sf.ehcache.config.CacheConfiguration;
+import com.github.benmanes.caffeine.cache.Caffeine;
+import java.time.Duration;
+import java.util.List;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.EnableCaching;
-import org.springframework.cache.ehcache.EhCacheCacheManager;
+import org.springframework.cache.caffeine.CaffeineCache;
+import org.springframework.cache.support.SimpleCacheManager;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
+/**
+ * Caffeine-backed cache configuration. Replaces the former Ehcache 2 bridge: the EOL Ehcache 2
+ * uber-jar bundled vulnerable Jetty 9.4 and Jackson 2.11 classes (flagged by the image CVE gate)
+ * and Spring Boot 4 no longer ships an Ehcache 2 integration.
+ */
 @Configuration
 @EnableCaching
 public class CacheManagerConfig {
@@ -19,8 +27,6 @@ public class CacheManagerConfig {
   public static final String TENANT_CACHE = "tenantCache";
   public static final String TENANT_ADMIN_CACHE = "tenantAdminCache";
   public static final String TOPICS_CACHE = "topicsCache";
-
-  public static final String ROCKET_CHAT_USER_CACHE = "rocketChatUserCache";
 
   @Value("${cache.agencies.configuration.maxEntriesLocalHeap}")
   private long agenciesMaxEntriesLocalHeap;
@@ -82,104 +88,66 @@ public class CacheManagerConfig {
   @Value("${cache.appsettings.configuration.timeToLiveSeconds}")
   private long appSettingsTimeToLiveSeconds;
 
-  @Value("${cache.rocketchat.configuration.maxEntriesLocalHeap}")
-  private long rocketchatCacheMaxEntriesLocalHeap;
-
-  @Value("${cache.rocketchat.configuration.eternal}")
-  private boolean rocketchatCacheEternal;
-
-  @Value("${cache.rocketchat.configuration.timeToIdleSeconds}")
-  private long rocketchatCacheTimeToIdleSeconds;
-
-  @Value("${cache.rocketchat.configuration.timeToLiveSeconds}")
-  private long rocketchatCacheTimeToLiveSeconds;
-
   @Bean
   public CacheManager cacheManager() {
-    return new EhCacheCacheManager(ehCacheManager());
+    var cacheManager = new SimpleCacheManager();
+    cacheManager.setCaches(
+        List.of(
+            buildCache(
+                AGENCY_CACHE,
+                agenciesMaxEntriesLocalHeap,
+                agenciesEternal,
+                agenciesTimeToIdleSeconds,
+                agenciesTimeToLiveSeconds),
+            buildCache(
+                CONSULTING_TYPE_CACHE,
+                consultingTypeMaxEntriesLocalHeap,
+                consultingTypeEternal,
+                consultingTypeTimeToIdleSeconds,
+                consultingTypeTimeToLiveSeconds),
+            buildCache(
+                TENANT_CACHE,
+                tenantMaxEntriesLocalHeap,
+                tenantEternal,
+                tenantTimeToIdleSeconds,
+                tenantTimeToLiveSeconds),
+            buildCache(
+                TENANT_ADMIN_CACHE,
+                tenantMaxEntriesLocalHeap,
+                tenantEternal,
+                tenantTimeToIdleSeconds,
+                tenantTimeToLiveSeconds),
+            buildCache(
+                TOPICS_CACHE,
+                topicMaxEntriesLocalHeap,
+                topicEternal,
+                topicTimeToIdleSeconds,
+                topicTimeToLiveSeconds),
+            buildCache(
+                APPLICATION_SETTINGS_CACHE,
+                appSettingsMaxEntriesLocalHeap,
+                appSettingsEternal,
+                appSettingsTimeToIdleSeconds,
+                appSettingsTimeToLiveSeconds)));
+
+    return cacheManager;
   }
 
-  @Bean(destroyMethod = "shutdown")
-  public net.sf.ehcache.CacheManager ehCacheManager() {
-    var config = new net.sf.ehcache.config.Configuration();
-    config.addCache(buildAgencyCacheConfiguration());
-    config.addCache(buildConsultingTypeCacheConfiguration());
-    config.addCache(buildTenantCacheConfiguration());
-    config.addCache(buildTenantAdminCacheConfiguration());
-    config.addCache(buildTopicCacheConfiguration());
-    config.addCache(buildApplicationSettingsCacheConfiguration());
-
-    config.addCache(buildRocketchatUserCacheConfiguration());
-    return net.sf.ehcache.CacheManager.newInstance(config);
-  }
-
-  private CacheConfiguration buildAgencyCacheConfiguration() {
-    var agencyCacheConfiguration = new CacheConfiguration();
-    agencyCacheConfiguration.setName(AGENCY_CACHE);
-    agencyCacheConfiguration.setMaxEntriesLocalHeap(agenciesMaxEntriesLocalHeap);
-    agencyCacheConfiguration.setEternal(agenciesEternal);
-    agencyCacheConfiguration.setTimeToIdleSeconds(agenciesTimeToIdleSeconds);
-    agencyCacheConfiguration.setTimeToLiveSeconds(agenciesTimeToLiveSeconds);
-    return agencyCacheConfiguration;
-  }
-
-  private CacheConfiguration buildConsultingTypeCacheConfiguration() {
-    var consultingTypeCacheConfiguration = new CacheConfiguration();
-    consultingTypeCacheConfiguration.setName(CONSULTING_TYPE_CACHE);
-    consultingTypeCacheConfiguration.setMaxEntriesLocalHeap(consultingTypeMaxEntriesLocalHeap);
-    consultingTypeCacheConfiguration.setEternal(consultingTypeEternal);
-    consultingTypeCacheConfiguration.setTimeToIdleSeconds(consultingTypeTimeToIdleSeconds);
-    consultingTypeCacheConfiguration.setTimeToLiveSeconds(consultingTypeTimeToLiveSeconds);
-    return consultingTypeCacheConfiguration;
-  }
-
-  private CacheConfiguration buildTenantCacheConfiguration() {
-    var tenantCacheConfiguration = new CacheConfiguration();
-    tenantCacheConfiguration.setName(TENANT_CACHE);
-    tenantCacheConfiguration.setMaxEntriesLocalHeap(tenantMaxEntriesLocalHeap);
-    tenantCacheConfiguration.setEternal(tenantEternal);
-    tenantCacheConfiguration.setTimeToIdleSeconds(tenantTimeToIdleSeconds);
-    tenantCacheConfiguration.setTimeToLiveSeconds(tenantTimeToLiveSeconds);
-    return tenantCacheConfiguration;
-  }
-
-  private CacheConfiguration buildTenantAdminCacheConfiguration() {
-    var tenantCacheConfiguration = new CacheConfiguration();
-    tenantCacheConfiguration.setName(TENANT_ADMIN_CACHE);
-    tenantCacheConfiguration.setMaxEntriesLocalHeap(tenantMaxEntriesLocalHeap);
-    tenantCacheConfiguration.setEternal(tenantEternal);
-    tenantCacheConfiguration.setTimeToIdleSeconds(tenantTimeToIdleSeconds);
-    tenantCacheConfiguration.setTimeToLiveSeconds(tenantTimeToLiveSeconds);
-    return tenantCacheConfiguration;
-  }
-
-  private CacheConfiguration buildTopicCacheConfiguration() {
-    var topicCacheConfiguration = new CacheConfiguration();
-    topicCacheConfiguration.setName(TOPICS_CACHE);
-    topicCacheConfiguration.setMaxEntriesLocalHeap(topicMaxEntriesLocalHeap);
-    topicCacheConfiguration.setEternal(topicEternal);
-    topicCacheConfiguration.setTimeToIdleSeconds(topicTimeToIdleSeconds);
-    topicCacheConfiguration.setTimeToLiveSeconds(topicTimeToLiveSeconds);
-    return topicCacheConfiguration;
-  }
-
-  private CacheConfiguration buildApplicationSettingsCacheConfiguration() {
-    var appSettingsCacheConfiguration = new CacheConfiguration();
-    appSettingsCacheConfiguration.setName(APPLICATION_SETTINGS_CACHE);
-    appSettingsCacheConfiguration.setMaxEntriesLocalHeap(appSettingsMaxEntriesLocalHeap);
-    appSettingsCacheConfiguration.setEternal(appSettingsEternal);
-    appSettingsCacheConfiguration.setTimeToIdleSeconds(appSettingsTimeToIdleSeconds);
-    appSettingsCacheConfiguration.setTimeToLiveSeconds(appSettingsTimeToLiveSeconds);
-    return appSettingsCacheConfiguration;
-  }
-
-  private CacheConfiguration buildRocketchatUserCacheConfiguration() {
-    var rocketchatCacheConfiguration = new CacheConfiguration();
-    rocketchatCacheConfiguration.setName(ROCKET_CHAT_USER_CACHE);
-    rocketchatCacheConfiguration.setMaxEntriesLocalHeap(rocketchatCacheMaxEntriesLocalHeap);
-    rocketchatCacheConfiguration.setEternal(rocketchatCacheEternal);
-    rocketchatCacheConfiguration.setTimeToIdleSeconds(rocketchatCacheTimeToIdleSeconds);
-    rocketchatCacheConfiguration.setTimeToLiveSeconds(rocketchatCacheTimeToLiveSeconds);
-    return rocketchatCacheConfiguration;
+  private CaffeineCache buildCache(
+      String name,
+      long maxEntries,
+      boolean eternal,
+      long timeToIdleSeconds,
+      long timeToLiveSeconds) {
+    var builder = Caffeine.newBuilder().maximumSize(maxEntries);
+    if (!eternal) {
+      if (timeToLiveSeconds > 0) {
+        builder.expireAfterWrite(Duration.ofSeconds(timeToLiveSeconds));
+      }
+      if (timeToIdleSeconds > 0) {
+        builder.expireAfterAccess(Duration.ofSeconds(timeToIdleSeconds));
+      }
+    }
+    return new CaffeineCache(name, builder.build(), true);
   }
 }

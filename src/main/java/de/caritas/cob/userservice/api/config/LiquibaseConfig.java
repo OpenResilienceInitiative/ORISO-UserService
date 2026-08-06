@@ -1,9 +1,10 @@
 package de.caritas.cob.userservice.api.config;
 
+import java.util.List;
 import javax.sql.DataSource;
 import liquibase.integration.spring.SpringLiquibase;
-import org.springframework.boot.autoconfigure.liquibase.LiquibaseProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.boot.liquibase.autoconfigure.LiquibaseProperties;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.context.annotation.Profile;
@@ -17,7 +18,7 @@ public class LiquibaseConfig {
   public SpringLiquibase liquibase(DataSource dataSource, LiquibaseProperties liquibaseProperties) {
 
     var liquibase = new BeanAwareSpringLiquibase();
-    liquibase.setContexts(liquibaseProperties.getContexts());
+    liquibase.setContexts(join(liquibaseProperties.getContexts()));
     liquibase.setChangeLog(liquibaseProperties.getChangeLog());
     liquibase.setChangeLogParameters(liquibaseProperties.getParameters());
     liquibase.setClearCheckSums(liquibaseProperties.isClearChecksums());
@@ -35,5 +36,9 @@ public class LiquibaseConfig {
     liquibase.setTestRollbackOnUpdate(liquibaseProperties.isTestRollbackOnUpdate());
 
     return liquibase;
+  }
+
+  private String join(List<String> values) {
+    return values == null || values.isEmpty() ? null : String.join(",", values);
   }
 }

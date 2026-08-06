@@ -10,22 +10,25 @@ import de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminServ
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import java.util.AbstractMap;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.HttpClientErrorException;
 
 @Service
 @RequiredArgsConstructor
@@ -39,6 +42,8 @@ public class AgencyAdminUserService {
   private final @NonNull UserServiceMapper userServiceMapper;
   private final @NonNull AgencyService agencyService;
   private final @NonNull TenantService tenantService;
+  private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull AuthenticatedUser authenticatedUser;
 
   public AdminResponseDTO createNewAgencyAdmin(final CreateAdminDTO createAgencyAdminDTO) {
     final Admin newAdmin = createAdminService.createNewAgencyAdmin(createAgencyAdminDTO);
@@ -46,18 +51,47 @@ public class AgencyAdminUserService {
   }
 
   public AdminResponseDTO findAgencyAdmin(final String adminId) {
+    assertCallerMayAccessAgencyAdmin(adminId);
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.AGENCY);
-    return AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
+    var responseDTO = AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
+    responseDTO
+        .getEmbedded()
+        .setHasOtherIdentity(!consultantRepository.findActiveIdsByIdIn(Set.of(adminId)).isEmpty());
+    return responseDTO;
   }
 
   public AdminResponseDTO updateAgencyAdmin(
       final String adminId, final UpdateAgencyAdminDTO updateAgencyAdminDTO) {
+    assertCallerMayAccessAgencyAdmin(adminId);
     final Admin updatedAdmin = updateAdminService.updateAgencyAdmin(adminId, updateAgencyAdminDTO);
     return AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();
   }
 
   public void deleteAgencyAdmin(final String adminId) {
+    assertCallerMayAccessAgencyAdmin(adminId);
     this.deleteAdminService.deleteAgencyAdmin(adminId);
+  }
+
+  /**
+   * A restricted agency admin (an agency-level admin without the broader agency-super-admin role)
+   * may only act on agency admins that share at least one of their own agencies. This prevents a
+   * single Beratungsstellen-Admin from reading, editing or deleting admins of other Träger by
+   * targeting their id directly, mirroring the agency scoping already applied to consultants.
+   */
+  private void assertCallerMayAccessAgencyAdmin(final String targetAdminId) {
+    if (!authenticatedUser.hasRestrictedAgencyPriviliges()) {
+      return;
+    }
+    var callerAgencyIds = retrieveAdminService.findAgencyIdsOfAdmin(authenticatedUser.getUserId());
+    var targetAgencyIds = retrieveAdminService.findAgencyIdsOfAdmin(targetAdminId);
+    if (Collections.disjoint(callerAgencyIds, targetAgencyIds)) {
+      log.warn(
+          "Restricted agency admin {} attempted to access agency admin {} outside their agencies",
+          authenticatedUser.getUserId(),
+          targetAdminId);
+      throw new ForbiddenException(
+          "Agency admin is not allowed to access an admin outside their own agencies");
+    }
   }
 
   public List<Long> findAgenciesOfAdmin(final String adminId) {
@@ -65,8 +99,7 @@ public class AgencyAdminUserService {
   }
 
   public Map<String, Object> findAgencyAdminsByInfix(String infix, PageRequest pageRequest) {
-    Page<AdminBase> adminsPage =
-        retrieveAdminService.findAllByInfix(infix, Admin.AdminType.AGENCY, pageRequest);
+    Page<AdminBase> adminsPage = findScopedAgencyAdminsByInfix(infix, pageRequest);
     var adminIds = adminsPage.stream().map(AdminBase::getId).collect(Collectors.toSet());
     var fullAdmins = retrieveAdminService.findAllById(adminIds);
 
@@ -81,8 +114,34 @@ public class AgencyAdminUserService {
 
     var agencies = agencyService.getAgenciesWithoutCaching(agencyIds);
 
+    Set<String> idsWithConsultantIdentity =
+        adminIds.isEmpty()
+            ? Collections.emptySet()
+            : consultantRepository.findActiveIdsByIdIn(adminIds);
+
     return userServiceMapper.mapOfAdmin(
-        adminsPage, fullAdmins, agencies, agenciesOfAdmin, tenantIdsToNameMap);
+        adminsPage,
+        fullAdmins,
+        agencies,
+        agenciesOfAdmin,
+        tenantIdsToNameMap,
+        idsWithConsultantIdentity);
+  }
+
+  /**
+   * Returns the infix-matched agency admins visible to the current caller. A restricted agency
+   * admin only sees admins of their own agencies; platform/tenant admins keep the full list. This
+   * closes the cross-Träger leak where any holder of the user-admin authority (which every agency
+   * admin also carries, to manage consultants) could list every agency admin of every Träger.
+   */
+  private Page<AdminBase> findScopedAgencyAdminsByInfix(String infix, PageRequest pageRequest) {
+    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
+      var callerAgencyIds =
+          retrieveAdminService.findAgencyIdsOfAdmin(authenticatedUser.getUserId());
+      return retrieveAdminService.findAllByInfixScopedToAgencies(
+          infix, Admin.AdminType.AGENCY, callerAgencyIds, pageRequest);
+    }
+    return retrieveAdminService.findAllByInfix(infix, Admin.AdminType.AGENCY, pageRequest);
   }
 
   public AdminResponseDTO patchAgencyAdmin(String adminId, PatchAdminDTO patchAdminDTO) {
@@ -92,27 +151,24 @@ public class AgencyAdminUserService {
   }
 
   private Map<Long, String> tenantIdsToNameMap(List<Admin> fullAdmins) {
-    return fullAdmins.stream()
-        .filter(admin -> admin.getTenantId() != null)
-        .map(admin -> new AbstractMap.SimpleEntry<>(admin.getTenantId(), tenantName(admin)))
-        .filter(entry -> entry.getValue() != null)
+    Set<Long> tenantIds =
+        fullAdmins.stream()
+            .map(Admin::getTenantId)
+            .filter(this::isConcreteTenantId)
+            .collect(Collectors.toSet());
+    if (tenantIds.isEmpty()) {
+      return Collections.emptyMap();
+    }
+    return tenantService.getRestrictedTenantData(tenantIds).stream()
+        .filter(tenant -> tenant.getId() != null && tenant.getName() != null)
         .collect(
             Collectors.toMap(
-                Map.Entry::getKey, Map.Entry::getValue, (existing, replacement) -> existing));
+                tenant -> tenant.getId(),
+                tenant -> tenant.getName(),
+                (existing, replacement) -> existing));
   }
 
-  private String tenantName(Admin admin) {
-    try {
-      return tenantService.getRestrictedTenantData(admin.getTenantId()).getName();
-    } catch (HttpClientErrorException exception) {
-      if (HttpStatus.NOT_FOUND.equals(exception.getStatusCode())) {
-        log.warn(
-            "Tenant data not found for agency admin {} and tenantId {}",
-            admin.getId(),
-            admin.getTenantId());
-        return null;
-      }
-      throw exception;
-    }
+  private boolean isConcreteTenantId(Long tenantId) {
+    return tenantId != null && !TenantContext.TECHNICAL_TENANT_ID.equals(tenantId);
   }
 }

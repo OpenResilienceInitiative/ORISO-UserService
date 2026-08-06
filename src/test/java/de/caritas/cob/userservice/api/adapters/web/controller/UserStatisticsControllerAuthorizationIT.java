@@ -11,34 +11,30 @@ import de.caritas.cob.userservice.api.service.statistics.SessionStatisticsServic
 import de.caritas.cob.userservice.api.statistics.model.SessionStatisticsResultDTO;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @TestPropertySource(
     properties = {
       "spring.profiles.active=testing",
-      "spring.datasource.url=jdbc:h2:mem:userstatistics-auth;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE",
+      "spring.datasource.url=jdbc:h2:mem:userstatistics-auth;DB_CLOSE_DELAY=-1;DB_CLOSE_ON_EXIT=FALSE;MODE=MariaDB;NON_KEYWORDS=USER",
       "spring.datasource.username=sa",
       "spring.datasource.password=sa",
       "spring.datasource.driver-class-name=org.h2.Driver",
-      "spring.jpa.hibernate.ddl-auto=none",
+      "spring.jpa.hibernate.ddl-auto=create-drop",
       "spring.jpa.properties.hibernate.dialect=org.hibernate.dialect.H2Dialect",
       "keycloak.auth-server-url=https://auth.testing",
       "keycloak.realm=testing",
       "keycloak.config.admin-username=admin",
       "keycloak.config.admin-password=secret",
       "identity.openid-connect-url=https://auth.testing/realms/testing/protocol/openid-connect",
-      "rocket.technical.username=technical",
-      "rocket.technical.password=secret",
-      "rocket-chat.base-url=https://testing.com/api/v1",
-      "rocket-chat.mongo-url=mongodb://localhost:27017/testing",
       "consulting.type.service.api.url=https://consulting-type.testing/service",
       "tenant.service.api.url=https://tenant.testing/service",
       "matrix.apiUrl=https://matrix.testing",
@@ -46,15 +42,15 @@ import org.springframework.test.web.servlet.MockMvc;
     })
 @SpringBootTest
 @AutoConfigureMockMvc
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @ActiveProfiles("testing")
 class UserStatisticsControllerAuthorizationIT {
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private SessionStatisticsService sessionStatisticsService;
+  @MockitoBean private SessionStatisticsService sessionStatisticsService;
 
-  @MockBean SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @Test
   void getSessionStatistics_Should_ReturnUnauthorized_WhenNoKeycloakAuthorization()

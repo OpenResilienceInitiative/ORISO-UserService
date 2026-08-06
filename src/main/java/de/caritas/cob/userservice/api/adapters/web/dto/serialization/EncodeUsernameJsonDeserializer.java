@@ -1,46 +1,31 @@
 package de.caritas.cob.userservice.api.adapters.web.dto.serialization;
 
-import com.fasterxml.jackson.core.JsonParser;
-import com.fasterxml.jackson.databind.DeserializationContext;
-import com.fasterxml.jackson.databind.JsonDeserializer;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
-import java.io.IOException;
-import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
-import org.springframework.stereotype.Component;
+import tools.jackson.core.JacksonException;
+import tools.jackson.core.JsonParser;
+import tools.jackson.databind.DeserializationContext;
+import tools.jackson.databind.ValueDeserializer;
 
-@Component
-@RequiredArgsConstructor
-public class EncodeUsernameJsonDeserializer extends JsonDeserializer<String> {
+public class EncodeUsernameJsonDeserializer extends ValueDeserializer<String> {
 
-  @Value("${user.username.invalid.length}")
-  private String errorUsernameInvalidLength;
-
-  private final UserHelper userHelper;
+  private static final String ERROR_USERNAME_INVALID_LENGTH =
+      "Please provide a username with at least 5 and at most 30 characters";
 
   @Override
   public String deserialize(JsonParser jsonParser, DeserializationContext deserializationContext)
-      throws IOException {
-    // MATRIX MIGRATION: Capture plain username BEFORE encryption
+      throws JacksonException {
+    // MATRIX MIGRATION: Capture plain username before encoding for Matrix localpart creation.
     String plainUsername = jsonParser.getValueAsString();
 
-    // Store plain username in ThreadLocal for Matrix user creation
-    de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials current =
-        de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
-    if (current != null) {
-      de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(
-          plainUsername, current.getPassword());
-    } else {
-      de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(plainUsername, null);
-    }
+    de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(plainUsername, null);
 
     String username = new UsernameTranscoder().encodeUsername(plainUsername);
 
     // Check if username is of valid length
-    if (!userHelper.isUsernameValid(username)) {
-      throw new BadRequestException(errorUsernameInvalidLength);
+    var decodedUsername = new UsernameTranscoder().decodeUsername(username);
+    if (decodedUsername.length() < 5 || decodedUsername.length() > 30) {
+      throw new BadRequestException(ERROR_USERNAME_INVALID_LENGTH);
     }
 
     return username;

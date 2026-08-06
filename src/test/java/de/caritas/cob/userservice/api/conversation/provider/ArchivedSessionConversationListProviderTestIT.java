@@ -5,9 +5,9 @@ import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGI
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_OFFENDER;
 import static java.util.Objects.nonNull;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.mockito.Mockito.when;
 
 import com.google.api.client.util.Lists;
@@ -27,9 +27,11 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
+import java.time.LocalDateTime;
 import java.util.Collections;
 import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.iterators.PeekingIterator;
 import org.apache.commons.lang3.RandomStringUtils;
@@ -37,15 +39,15 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class ArchivedSessionConversationListProviderTestIT {
 
   @Autowired
@@ -59,7 +61,7 @@ class ArchivedSessionConversationListProviderTestIT {
 
   @Autowired private UserRepository userRepository;
 
-  @MockBean private UserAccountService userAccountProvider;
+  @MockitoBean private UserAccountService userAccountProvider;
 
   @AfterEach
   void cleanDatabase() {
@@ -110,7 +112,7 @@ class ArchivedSessionConversationListProviderTestIT {
       ConsultantSessionResponseDTO current = peeker.next();
       ConsultantSessionResponseDTO next = peeker.peek();
       if (nonNull(next)) {
-        assertThat(next.getLatestMessage(), greaterThanOrEqualTo(current.getLatestMessage()));
+        assertThat(next.getLatestMessage(), lessThanOrEqualTo(current.getLatestMessage()));
       }
     }
   }
@@ -138,8 +140,11 @@ class ArchivedSessionConversationListProviderTestIT {
     List<Session> sessions =
         new EasyRandom().objects(Session.class, amount + 5).collect(Collectors.toList());
     User user = this.userRepository.findAll().iterator().next();
+    var sessionIndex = new AtomicInteger();
+    var baseDate = LocalDateTime.of(2026, 1, 1, 12, 0);
     sessions.forEach(
         session -> {
+          var orderedDate = baseDate.minusDays(sessionIndex.getAndIncrement());
           session.setRegistrationType(REGISTERED);
           session.setConsultant(consultant);
           session.setUser(user);
@@ -150,6 +155,9 @@ class ArchivedSessionConversationListProviderTestIT {
           session.setConsultingTypeId(CONSULTING_TYPE_ID_OFFENDER);
           session.setStatus(SessionStatus.IN_ARCHIVE);
           session.setSessionTopics(Lists.newArrayList());
+          session.setCreateDate(orderedDate);
+          session.setEnquiryMessageDate(orderedDate);
+          session.setUpdateDate(orderedDate);
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);
     sessions.get(1).setStatus(SessionStatus.IN_PROGRESS);
@@ -175,6 +183,7 @@ class ArchivedSessionConversationListProviderTestIT {
     consultant.setNotifyEnquiriesRepeating(true);
     consultant.setNotifyNewChatMessageFromAdviceSeeker(true);
     consultant.setWalkThroughEnabled(true);
+    consultant.setMagicLinkLoginEnabled(false);
     consultant.setLanguageCode(LanguageCode.de);
 
     return consultant;

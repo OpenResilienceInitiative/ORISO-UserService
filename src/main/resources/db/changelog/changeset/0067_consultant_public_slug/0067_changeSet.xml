@@ -1,0 +1,18 @@
+<?xml version="1.1" encoding="UTF-8" standalone="no"?>
+<databaseChangeLog xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
+  <changeSet author="oriso" id="consultantPublicSlug">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="consultant" columnName="public_slug"/>
+      </not>
+    </preConditions>
+    <rollback>
+      <sqlFile path="db/changelog/changeset/0067_consultant_public_slug/consultant-public-slug-rollback.sql"
+        stripComments="true"/>
+    </rollback>
+    <sqlFile path="db/changelog/changeset/0067_consultant_public_slug/consultant-public-slug.sql"
+      stripComments="true"/>
+  </changeSet>
+</databaseChangeLog>

@@ -1,6 +1,10 @@
 /target/
 !.mvn/wrapper/maven-wrapper.jar
+*.backup
+*.bak
+cookies.txt
 /node_modules
+/.understand-anything/
 
 ### STS ###
 .apt_generated
@@ -37,10 +41,17 @@ consultants-import.txt*
 ### Mac files ###
 .DS_Store
 
+### Python test helpers ###
+__pycache__/
+*.py[cod]
+
 #local helper files
 *localdev*
 *.jar
 run-local-remote-db.sh
+config.env
+dev-local-ca.pem
+dev-truststore.jks
 .env.local
 application-local.properties
 src/main/resources/application-local.properties

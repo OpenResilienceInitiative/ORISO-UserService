@@ -25,6 +25,7 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Assertions;
 import org.junit.jupiter.api.Test;
@@ -37,8 +38,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
@@ -67,6 +66,8 @@ class TenantAdminUserServiceTest {
   @Mock private AgencyService agencyService;
 
   @Mock private AuthenticatedUser authenticatedUser;
+
+  @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
 
   @Test
   void createNewTenantAdmin_Should_AllowPlatformTenantId_WhenAuthenticatedUserIsPlatformAdmin() {
@@ -123,6 +124,21 @@ class TenantAdminUserServiceTest {
   }
 
   @Test
+  void updateTenantAdmin_Should_NotLookUpTechnicalTenant() {
+    UpdateTenantAdminDTO tenantAdminDTO = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    Admin platformAdmin = tenantAdmin("platform-admin", 0L);
+    when(updateAdminService.updateTenantAdmin("platform-admin", tenantAdminDTO))
+        .thenReturn(platformAdmin);
+
+    AdminResponseDTO response =
+        tenantAdminUserService.updateTenantAdmin("platform-admin", tenantAdminDTO);
+
+    Mockito.verifyNoInteractions(tenantService);
+    assertThat(response.getEmbedded().getTenantId()).isEqualTo("0");
+    assertThat(response.getEmbedded().getTenantSubdomain()).isNull();
+  }
+
+  @Test
   void findTenantAdmins_Should_ReturnAllAdminsForSameTenant() {
     // given
     Long tenantId = 42L;
@@ -151,25 +167,67 @@ class TenantAdminUserServiceTest {
   }
 
   @Test
-  void findTenantAdminsByInfix_Should_NotFail_WhenTenantServiceReturnsNotFound() {
+  void findTenantAdmin_Should_SetHasOtherIdentityTrue_When_ConsultantIdentityExists() {
+    // given
+    Admin admin = new Admin();
+    admin.setId("tenant-admin-1");
+    admin.setType(Admin.AdminType.TENANT);
+    when(retrieveAdminService.findAdmin("tenant-admin-1", Admin.AdminType.TENANT))
+        .thenReturn(admin);
+    when(consultantRepository.findActiveIdsByIdIn(java.util.Set.of("tenant-admin-1")))
+        .thenReturn(java.util.Set.of("tenant-admin-1"));
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.findTenantAdmin("tenant-admin-1");
+
+    // then
+    assertThat(response.getEmbedded().getHasOtherIdentity()).isTrue();
+  }
+
+  @Test
+  void findTenantAdmin_Should_SetHasOtherIdentityFalse_When_NoConsultantIdentityExists() {
+    // given
+    Admin admin = new Admin();
+    admin.setId("tenant-admin-1");
+    admin.setType(Admin.AdminType.TENANT);
+    when(retrieveAdminService.findAdmin("tenant-admin-1", Admin.AdminType.TENANT))
+        .thenReturn(admin);
+    when(consultantRepository.findActiveIdsByIdIn(java.util.Set.of("tenant-admin-1")))
+        .thenReturn(java.util.Collections.emptySet());
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.findTenantAdmin("tenant-admin-1");
+
+    // then
+    assertThat(response.getEmbedded().getHasOtherIdentity()).isFalse();
+  }
+
+  @Test
+  void findTenantAdminsByInfix_Should_NotUsePerTenantLookups() {
     // given
     PageRequest pageRequest = PageRequest.of(0, 10);
     Admin.AdminBase firstAdminBase = adminBase("tenant-admin-1", 1L);
-    Admin.AdminBase secondAdminBase = adminBase("tenant-admin-2", 2L);
+    Admin.AdminBase secondAdminBase = adminBase("tenant-admin-2", 1L);
+    Admin.AdminBase thirdAdminBase = adminBase("tenant-admin-3", 2L);
     Page<Admin.AdminBase> adminsPage =
-        new PageImpl<>(Arrays.asList(firstAdminBase, secondAdminBase), pageRequest, 2);
+        new PageImpl<>(
+            Arrays.asList(firstAdminBase, secondAdminBase, thirdAdminBase), pageRequest, 3);
     Admin firstTenantAdmin = tenantAdmin("tenant-admin-1", 1L);
-    Admin secondTenantAdmin = tenantAdmin("tenant-admin-2", 2L);
-    List<Admin> fullAdmins = Arrays.asList(firstTenantAdmin, secondTenantAdmin);
+    Admin secondTenantAdmin = tenantAdmin("tenant-admin-2", 1L);
+    Admin thirdTenantAdmin = tenantAdmin("tenant-admin-3", 2L);
+    List<Admin> fullAdmins = Arrays.asList(firstTenantAdmin, secondTenantAdmin, thirdTenantAdmin);
     when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.TENANT, pageRequest))
         .thenReturn(adminsPage);
     when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(fullAdmins);
-    when(tenantService.getRestrictedTenantData(1L))
-        .thenReturn(new RestrictedTenantDTO().name("Known tenant"));
-    when(tenantService.getRestrictedTenantData(2L))
-        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+    when(tenantService.getRestrictedTenantData(Set.of(1L, 2L)))
+        .thenReturn(List.of(new RestrictedTenantDTO().id(1L).name("Known tenant")));
     when(userServiceMapper.mapOfAdmin(
-            Mockito.any(), Mockito.anyList(), Mockito.anyList(), Mockito.anyList(), Mockito.any()))
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
         .thenReturn(new HashMap<>());
 
     // when
@@ -183,9 +241,45 @@ class TenantAdminUserServiceTest {
             Mockito.eq(fullAdmins),
             Mockito.anyList(),
             Mockito.anyList(),
-            tenantNameMapCaptor.capture());
+            tenantNameMapCaptor.capture(),
+            Mockito.any());
     Assertions.assertEquals("Known tenant", tenantNameMapCaptor.getValue().get(1L));
     Assertions.assertFalse(tenantNameMapCaptor.getValue().containsKey(2L));
+    Mockito.verify(tenantService).getRestrictedTenantData(Set.of(1L, 2L));
+    Mockito.verify(tenantService, Mockito.never()).getRestrictedTenantData(Mockito.anyLong());
+  }
+
+  @Test
+  void findTenantAdminsByInfix_Should_NotLookUpTechnicalTenant() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    Admin.AdminBase platformAdminBase = adminBase("platform-admin", 0L);
+    Page<Admin.AdminBase> adminsPage = new PageImpl<>(List.of(platformAdminBase), pageRequest, 1);
+    Admin platformAdmin = tenantAdmin("platform-admin", 0L);
+    when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.TENANT, pageRequest))
+        .thenReturn(adminsPage);
+    when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(List.of(platformAdmin));
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+
+    Mockito.verify(tenantService, Mockito.never()).getRestrictedTenantData(0L);
+    ArgumentCaptor<Map<Long, String>> tenantNameMapCaptor = ArgumentCaptor.forClass(Map.class);
+    Mockito.verify(userServiceMapper)
+        .mapOfAdmin(
+            Mockito.eq(adminsPage),
+            Mockito.eq(List.of(platformAdmin)),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            tenantNameMapCaptor.capture(),
+            Mockito.any());
+    assertThat(tenantNameMapCaptor.getValue()).isEmpty();
   }
 
   private Admin tenantAdmin(String id, Long tenantId) {

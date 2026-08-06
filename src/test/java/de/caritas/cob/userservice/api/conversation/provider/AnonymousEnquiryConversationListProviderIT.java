@@ -6,9 +6,9 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING
 import static java.util.Collections.singletonList;
 import static java.util.Objects.nonNull;
 import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.lessThanOrEqualTo;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -33,6 +34,7 @@ import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 import org.apache.commons.collections4.iterators.PeekingIterator;
 import org.jeasy.random.EasyRandom;
@@ -40,16 +42,16 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.context.annotation.Import;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @Import({ConsultingTypeManagerTestConfig.class})
 class AnonymousEnquiryConversationListProviderIT {
 
@@ -60,9 +62,11 @@ class AnonymousEnquiryConversationListProviderIT {
 
   @Autowired private UserRepository userRepository;
 
-  @MockBean private AgencyService agencyService;
+  @MockitoBean private AgencyService agencyService;
 
-  @MockBean private UserAccountService userAccountProvider;
+  @MockitoBean private UserAccountService userAccountProvider;
+
+  @MockitoBean private ConsultantTopicRepository consultantTopicRepository;
 
   @BeforeEach
   void setup() {
@@ -73,6 +77,8 @@ class AnonymousEnquiryConversationListProviderIT {
     when(this.userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
     AgencyDTO agencyDTO = new AgencyDTO().consultingType(CONSULTING_TYPE_ID_OFFENDER);
     when(this.agencyService.getAgencies(any())).thenReturn(singletonList(agencyDTO));
+    when(this.consultantTopicRepository.findTopicIdsByConsultantId("consultant-id"))
+        .thenReturn(java.util.List.of(11L));
   }
 
   @AfterEach
@@ -122,7 +128,7 @@ class AnonymousEnquiryConversationListProviderIT {
       ConsultantSessionResponseDTO current = peeker.next();
       ConsultantSessionResponseDTO next = peeker.peek();
       if (nonNull(next)) {
-        assertThat(next.getLatestMessage(), greaterThanOrEqualTo(current.getLatestMessage()));
+        assertThat(next.getLatestMessage(), lessThanOrEqualTo(current.getLatestMessage()));
       }
     }
   }
@@ -141,8 +147,11 @@ class AnonymousEnquiryConversationListProviderIT {
     User user = this.userRepository.findAll().iterator().next();
     user.setDataPrivacyConfirmation(LocalDateTime.now());
     this.userRepository.save(user);
+    var sessionIndex = new AtomicInteger();
+    var baseDate = LocalDateTime.of(2026, 1, 1, 12, 0);
     sessions.forEach(
         session -> {
+          var orderedDate = baseDate.minusDays(sessionIndex.getAndIncrement());
           session.setRegistrationType(ANONYMOUS);
           session.setConsultant(null);
           session.setUser(user);
@@ -151,8 +160,10 @@ class AnonymousEnquiryConversationListProviderIT {
           session.setPostcode("12345");
           session.setConsultingTypeId(CONSULTING_TYPE_ID_OFFENDER);
           session.setStatus(SessionStatus.NEW);
-          session.setMainTopicId(null);
+          session.setMainTopicId(11L);
           session.setSessionTopics(Lists.newArrayList());
+          session.setCreateDate(orderedDate);
+          session.setEnquiryMessageDate(orderedDate);
           session.setUpdateDate(LocalDateTime.now());
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);

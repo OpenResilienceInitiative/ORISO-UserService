@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller.interceptor;
 
 import de.caritas.cob.userservice.api.exception.CustomCryptoException;
 import de.caritas.cob.userservice.api.exception.NoMasterKeyException;
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CreateEnquiryMessageException;
@@ -11,15 +12,16 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.exception.httpresponses.RocketChatUnauthorizedException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.CustomHttpHeader;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.service.LogService;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import jakarta.validation.ConstraintViolationException;
 import java.net.UnknownHostException;
 import java.util.Map;
 import java.util.Optional;
-import javax.validation.ConstraintViolationException;
 import lombok.NoArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.exception.ExceptionUtils;
@@ -30,6 +32,7 @@ import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.lang.Nullable;
@@ -93,7 +96,8 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final BadRequestException ex, final WebRequest request) {
     log.warn(BAD_REQUEST, ex);
 
-    return handleExceptionInternal(ex, null, new HttpHeaders(), HttpStatus.BAD_REQUEST, request);
+    return handleExceptionInternal(
+        ex, messageBody(ex.getMessage()), new HttpHeaders(), HttpStatus.BAD_REQUEST, request);
   }
 
   /**
@@ -140,9 +144,9 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   protected ResponseEntity<Object> handleHttpMessageNotReadable(
       final HttpMessageNotReadableException ex,
       final HttpHeaders headers,
-      final HttpStatus status,
+      final HttpStatusCode status,
       final WebRequest request) {
-    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status.getReasonPhrase(), ex.getStackTrace());
+    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status, ex.getMessage(), ex);
 
     return handleExceptionInternal(null, null, headers, status, request);
   }
@@ -157,26 +161,11 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   protected ResponseEntity<Object> handleMethodArgumentNotValid(
       final MethodArgumentNotValidException ex,
       final HttpHeaders headers,
-      final HttpStatus status,
+      final HttpStatusCode status,
       final WebRequest request) {
-    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status.getReasonPhrase(), ex);
+    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status, ex);
 
     return handleExceptionInternal(null, null, headers, status, request);
-  }
-
-  /**
-   * 401 - Unauthorized.
-   *
-   * @param ex {@link RocketChatUnauthorizedException}
-   * @param request {@link WebRequest}
-   * @return {@link HttpStatus#UNAUTHORIZED} without body or detailed information
-   */
-  @ExceptionHandler(RocketChatUnauthorizedException.class)
-  public ResponseEntity<Object> handleUnauthorized(
-      final RocketChatUnauthorizedException ex, final WebRequest request) {
-    log.warn(ExceptionUtils.getStackTrace(ex));
-
-    return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.UNAUTHORIZED, request);
   }
 
   /**
@@ -231,6 +220,46 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     return Map.of("reason", reason);
   }
 
+  private Map<String, String> messageBody(String message) {
+    return Map.of("message", Optional.ofNullable(message).orElse(HttpStatus.BAD_REQUEST.name()));
+  }
+
+  /**
+   * 502 - Bad Gateway: the SMTP server did not accept an outgoing mail (TEN-INV-U6, #890). The
+   * caller must treat this as a failed delivery — no SENT state exists.
+   *
+   * @param request the invoking request
+   * @param ex the thrown exception
+   */
+  @ExceptionHandler({SmtpSendException.class})
+  public ResponseEntity<Object> handleSmtpSendFailure(
+      final SmtpSendException ex, final WebRequest request) {
+    log.error("SMTP send failed", ex);
+
+    return handleExceptionInternal(
+        ex,
+        Map.of("reason", "SMTP_SEND_FAILED"),
+        new HttpHeaders(),
+        HttpStatus.BAD_GATEWAY,
+        request);
+  }
+
+  /**
+   * 410 - Gone: an invite link exists but is consumed, revoked, superseded or expired (TEN-INV-U6,
+   * #890). The body carries the machine-readable reason for the public frontends.
+   *
+   * @param request the invoking request
+   * @param ex the thrown exception
+   */
+  @ExceptionHandler({AccountInviteLinkException.class})
+  public ResponseEntity<Object> handleAccountInviteLinkGone(
+      final AccountInviteLinkException ex, final WebRequest request) {
+    log.warn("Account invite link rejected: {}", ex.getReason());
+
+    return handleExceptionInternal(
+        ex, reasonBody(ex.getReason().name()), new HttpHeaders(), HttpStatus.GONE, request);
+  }
+
   /**
    * 403 - Forbidden.
    *
@@ -269,6 +298,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     NullPointerException.class,
     IllegalArgumentException.class,
     IllegalStateException.class,
+    IdentityProvisioningException.class,
     KeycloakException.class,
     DataAccessException.class,
     UnknownHostException.class,
@@ -315,10 +345,10 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       @Nullable Exception ex,
       @Nullable Object body,
       HttpHeaders headers,
-      HttpStatus status,
+      HttpStatusCode status,
       WebRequest request) {
     if (HttpStatus.INTERNAL_SERVER_ERROR.equals(status)) {
-      request.setAttribute("javax.servlet.error.exception", ex, 0);
+      request.setAttribute("jakarta.servlet.error.exception", ex, 0);
     }
 
     return new ResponseEntity<>(body, headers, status);

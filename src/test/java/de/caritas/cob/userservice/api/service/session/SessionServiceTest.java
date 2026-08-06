@@ -15,14 +15,14 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ENQUIRY_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ENQUIRY_ID_2;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_TEAM_SESSION;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.MATRIX_ROOM_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.MATRIX_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.POSTCODE;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_GROUP_ID;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.ROCKETCHAT_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ROLES;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_RC_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_WITH_MATRIX_ID;
 import static java.util.Collections.singleton;
 import static java.util.Collections.singletonList;
 import static org.assertj.core.api.Assertions.assertThat;
@@ -46,7 +46,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
-import static org.powermock.reflect.Whitebox.setInternalState;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionDTO;
@@ -58,19 +57,24 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
-import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testHelper.TestConstants;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -87,8 +91,9 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.slf4j.Logger;
+import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
 class SessionServiceTest {
@@ -97,7 +102,7 @@ class SessionServiceTest {
   private final Consultant CONSULTANT =
       Consultant.builder()
           .id(CONSULTANT_ID)
-          .rocketChatId(ROCKETCHAT_ID)
+          .matrixUserId(MATRIX_USER_ID)
           .username("consultant")
           .firstName("first name")
           .lastName("last name")
@@ -187,8 +192,9 @@ class SessionServiceTest {
   @InjectMocks private SessionService sessionService;
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
+  @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
+  @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private AgencyService agencyService;
-  @Mock private Logger logger;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock UserService userService;
@@ -198,7 +204,6 @@ class SessionServiceTest {
   @BeforeEach
   public void setUp() {
     CONSULTANT_AGENCY_SET.add(CONSULTANT_AGENCY_1);
-    setInternalState(LogService.class, "LOGGER", logger);
   }
 
   @Test
@@ -247,6 +252,17 @@ class SessionServiceTest {
   }
 
   @Test
+  void getSessionForUpdate_Should_ReturnLockedSession() {
+    when(sessionRepository.findByIdForUpdate(ENQUIRY_ID)).thenReturn(Optional.of(SESSION));
+
+    Optional<Session> result = sessionService.getSessionForUpdate(ENQUIRY_ID);
+
+    assertTrue(result.isPresent());
+    assertEquals(SESSION, result.get());
+    verify(sessionRepository).findByIdForUpdate(ENQUIRY_ID);
+  }
+
+  @Test
   void updateConsultantAndStatusForSession_Should_SaveSession() {
 
     sessionService.updateConsultantAndStatusForSession(SESSION, CONSULTANT, SessionStatus.NEW);
@@ -269,6 +285,44 @@ class SessionServiceTest {
     Session expectedSession = sessionService.initializeSession(USER, USER_DTO, IS_TEAM_SESSION);
 
     assertEquals(expectedSession, SESSION);
+  }
+
+  @Test
+  void initializeSession_WithTopics_Should_SaveSessionBeforeCreatingSessionTopics() {
+    USER_DTO.setTopicIds(List.of(1L, 2L));
+    when(sessionRepository.save(any(Session.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
+
+    Session savedSession = sessionService.initializeSession(USER, USER_DTO, IS_TEAM_SESSION);
+
+    verify(sessionRepository, times(2)).save(any(Session.class));
+    assertThat(savedSession.getSessionTopics()).hasSize(2);
+    assertThat(savedSession.getSessionTopics())
+        .allMatch(topic -> topic.getSession() == savedSession);
+  }
+
+  @Test
+  void initializeSession_Should_PersistCurrentTenant() {
+    TenantContext.setCurrentTenant(83L);
+    when(sessionRepository.save(any(Session.class)))
+        .thenAnswer(
+            invocation -> {
+              Session persistedSession = invocation.getArgument(0);
+              assertEquals(83L, persistedSession.getTenantId());
+              return persistedSession;
+            });
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
+
+    try {
+      Session savedSession = sessionService.initializeSession(USER, USER_DTO, IS_TEAM_SESSION);
+
+      assertEquals(83L, savedSession.getTenantId());
+    } finally {
+      TenantContext.clear();
+    }
   }
 
   @Test
@@ -324,6 +378,30 @@ class SessionServiceTest {
     List<Session> result = sessionService.getSessionsForUser(USER);
 
     assertEquals(sessions, result);
+  }
+
+  @Test
+  void findSessionsByUser_Should_ReturnSessionsWithSessionData_When_ProvidedWithUser() {
+
+    List<Session> sessions = new ArrayList<>();
+    sessions.add(SESSION);
+    sessions.add(SESSION_2);
+
+    when(sessionRepository.findByUserWithSessionData(USER)).thenReturn(sessions);
+
+    List<Session> result = sessionService.findSessionsByUser(USER);
+
+    assertEquals(sessions, result);
+    verify(sessionRepository, never()).findByUser(USER);
+  }
+
+  @Test
+  void findSessionsByUser_Should_ReturnEmptyList_When_UserIsNull() {
+
+    List<Session> result = sessionService.findSessionsByUser(null);
+
+    assertEquals(List.of(), result);
+    verifyNoInteractions(sessionRepository);
   }
 
   @Test
@@ -384,9 +462,10 @@ class SessionServiceTest {
   void getSessionByGroupIdAndUser_Should_ReturnSession_WhenAskerIsSessionOwner() {
     Session session = easyRandom.nextObject(Session.class);
     session.getUser().setUserId(USER_ID);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
 
-    Session result = sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, USER_ROLES);
+    Session result =
+        sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, USER_ROLES);
 
     assertThat(result, instanceOf(Session.class));
   }
@@ -395,12 +474,12 @@ class SessionServiceTest {
   void getSessionByGroupIdAndUser_Should_ReturnSession_WhenConsultantIsAssignedToSession() {
     Session session = easyRandom.nextObject(Session.class);
     session.getConsultant().setId(USER_ID);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
     when(consultantService.getConsultant(anyString()))
         .thenReturn(Optional.of(session.getConsultant()));
 
     Session result =
-        sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, CONSULTANT_ROLES);
+        sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES);
 
     assertThat(result, instanceOf(Session.class));
   }
@@ -408,7 +487,7 @@ class SessionServiceTest {
   @Test
   void getSessionByGroupIdAndUser_Should_ReturnSession_WhenConsultantIsAssignedToAgencyOfSession() {
     Session session = easyRandom.nextObject(Session.class);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
     when(consultantService.getConsultant(anyString()))
         .thenReturn(Optional.of(session.getConsultant()));
     session.setAgencyId(AGENCY_ID);
@@ -418,28 +497,30 @@ class SessionServiceTest {
         .forEach(consultantAgency -> consultantAgency.setAgencyId(AGENCY_ID));
 
     Session result =
-        sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, CONSULTANT_ROLES);
+        sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES);
 
     assertThat(result, instanceOf(Session.class));
   }
 
   @Test
   void getSessionByGroupIdAndUser_Should_ThrowNotFoundException_When_SessionDoesNotExist() {
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.empty());
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.empty());
 
     assertThrows(
         NotFoundException.class,
-        () -> sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, CONSULTANT_ROLES));
+        () ->
+            sessionService.getSessionByMatrixRoomIdAndUser(
+                MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES));
   }
 
   @Test
   void getSessionByGroupIdAndUser_Should_ThrowForbiddenException_When_AskerIsNotOwnerOfSession() {
     Session session = easyRandom.nextObject(Session.class);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
 
     assertThrows(
         ForbiddenException.class,
-        () -> sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, USER_ROLES));
+        () -> sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, USER_ROLES));
   }
 
   @Test
@@ -448,23 +529,25 @@ class SessionServiceTest {
     Session session = easyRandom.nextObject(Session.class);
     session.getConsultant().setId("notDirectlyAssignedId");
     Consultant consultant = easyRandom.nextObject(Consultant.class);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
     when(consultantService.getConsultant(anyString())).thenReturn(Optional.of(consultant));
 
     assertThrows(
         ForbiddenException.class,
-        () -> sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, CONSULTANT_ROLES));
+        () ->
+            sessionService.getSessionByMatrixRoomIdAndUser(
+                MATRIX_ROOM_ID, USER_ID, CONSULTANT_ROLES));
   }
 
   @Test
   void getSessionByGroupIdAndUser_Should_ThrowForbiddenException_When_NotAskerOrConsultantRole() {
     var session = easyRandom.nextObject(Session.class);
-    when(sessionRepository.findByGroupId(any())).thenReturn(Optional.of(session));
+    when(sessionRepository.findByMatrixRoomId(any())).thenReturn(Optional.of(session));
 
     var roles = new HashSet<>(singletonList("no-role"));
     assertThrows(
         ForbiddenException.class,
-        () -> sessionService.getSessionByGroupIdAndUser(RC_GROUP_ID, USER_ID, roles));
+        () -> sessionService.getSessionByMatrixRoomIdAndUser(MATRIX_ROOM_ID, USER_ID, roles));
   }
 
   /** method: getTeamSessionsForConsultant */
@@ -537,7 +620,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
     ConsultantSessionDTO result =
@@ -547,12 +630,12 @@ class SessionServiceTest {
     assertEquals(session.isTeamSession(), result.getIsTeamSession());
     assertEquals(session.getAgencyId(), result.getAgencyId());
     assertEquals(session.getConsultant().getId(), result.getConsultantId());
-    assertEquals(session.getConsultant().getRocketChatId(), result.getConsultantRcId());
+    assertEquals(session.getConsultant().getMatrixUserId(), result.getConsultantMatrixUserId());
     assertEquals(session.getUser().getUserId(), result.getAskerId());
-    assertEquals(session.getUser().getRcUserId(), result.getAskerRcId());
+    assertEquals(session.getUser().getMatrixUserId(), result.getAskerMatrixUserId());
     assertEquals(session.getPostcode(), result.getPostcode());
     assertEquals(session.getStatus().getValue(), result.getStatus().intValue());
-    assertEquals(session.getGroupId(), result.getGroupId());
+    assertEquals(session.getMatrixRoomId(), result.getMatrixRoomId());
     assertEquals(session.getConsultingTypeId(), result.getConsultingType().intValue());
     assertEquals(session.getUserAge(), result.getAge());
     assertEquals(session.getUserGender(), result.getGender());
@@ -569,7 +652,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
     ConsultantSessionDTO result =
@@ -592,7 +675,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
 
     sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY);
@@ -610,7 +693,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY_2);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     session.setTeamSession(true);
     session.setAgencyId(AGENCY_3);
     Long sessionId = session.getId();
@@ -626,7 +709,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     session.setAgencyId(
         CONSULTANT_WITH_AGENCY.getConsultantAgencies().iterator().next().getAgencyId());
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
@@ -641,7 +724,7 @@ class SessionServiceTest {
 
     Session session = easyRandom.nextObject(Session.class);
     session.setConsultant(CONSULTANT_WITH_AGENCY_2);
-    session.setUser(USER_WITH_RC_ID);
+    session.setUser(USER_WITH_MATRIX_ID);
     session.setTeamSession(true);
     session.setAgencyId(
         CONSULTANT_WITH_AGENCY.getConsultantAgencies().iterator().next().getAgencyId());
@@ -730,7 +813,7 @@ class SessionServiceTest {
       getAllowedSessionsByConsultantAndGroupIds_should_find_new_anonymous_enquiry_if_consultant_may_advise_consulting_type() {
     Session anonymousEnquiry =
         createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
-    when(sessionRepository.findByGroupIds(singleton("rcGroupId")))
+    when(sessionRepository.findByMatrixRoomIdIn(singleton("matrixRoomId")))
         .thenReturn(singletonList(anonymousEnquiry));
     when(agencyService.getAgencies(singletonList(4711L))).thenReturn(AGENCY_DTO_LIST);
     ConsultantAgency agency = new ConsultantAgency();
@@ -738,8 +821,8 @@ class SessionServiceTest {
     var consultant = createConsultantWithAgencies(agency);
 
     var sessionResponse =
-        sessionService.getAllowedSessionsByConsultantAndGroupIds(
-            consultant, singleton("rcGroupId"), singleton(UserRole.CONSULTANT.getValue()));
+        sessionService.getAllowedSessionsByConsultantAndRoomIds(
+            consultant, singleton("matrixRoomId"), singleton(UserRole.CONSULTANT.getValue()));
 
     assertEquals(1, sessionResponse.size());
   }
@@ -755,11 +838,11 @@ class SessionServiceTest {
     var allowedSession = giveAllowedSessionWithID(1L, consultant);
     sessions.add(giveAllowedSessionWithID(2L, null));
     sessions.add(allowedSession);
-    when(sessionRepository.findByGroupIds(singleton("rcGroupId"))).thenReturn(sessions);
+    when(sessionRepository.findByMatrixRoomIdIn(singleton("matrixRoomId"))).thenReturn(sessions);
     // when
     var sessionResponse =
-        sessionService.getAllowedSessionsByConsultantAndGroupIds(
-            consultant, singleton("rcGroupId"), singleton(UserRole.CONSULTANT.getValue()));
+        sessionService.getAllowedSessionsByConsultantAndRoomIds(
+            consultant, singleton("matrixRoomId"), singleton(UserRole.CONSULTANT.getValue()));
     // then
     assertThat(sessionResponse).hasSize(1);
     assertThat(sessionResponse.get(0).getSession().getId()).isEqualTo(allowedSession.getId());
@@ -787,14 +870,39 @@ class SessionServiceTest {
   }
 
   @Test
+  void getSessionsByIds_should_not_find_registered_other_agency_session_by_topic_only() {
+    Session registeredSession = easyRandom.nextObject(Session.class);
+    registeredSession.setId(SESSION_ID);
+    registeredSession.setAgencyId(275L);
+    registeredSession.setConsultant(null);
+    registeredSession.setMainTopicId(42L);
+    registeredSession.setPostcode(POSTCODE);
+    registeredSession.setRegistrationType(REGISTERED);
+    registeredSession.setStatus(SessionStatus.NEW);
+
+    ConsultantAgency agency = new ConsultantAgency();
+    agency.setAgencyId(4711L);
+    var consultant = createConsultantWithAgencies(agency);
+
+    when(sessionRepository.findAllById(singleton(SESSION_ID)))
+        .thenReturn(singletonList(registeredSession));
+
+    var sessionResponse =
+        sessionService.getSessionsByIds(
+            consultant, singleton(SESSION_ID), singleton(UserRole.CONSULTANT.getValue()));
+
+    assertThat(sessionResponse).isEmpty();
+  }
+
+  @Test
   void getSessionsByUserAndGroupIds_should_find_session_for_anonymous_user_of_session() {
     Session anonymousEnquiry =
         createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
     anonymousEnquiry.setUser(USER);
-    when(sessionRepository.findByGroupIds(singleton("rcGroupId")))
+    when(sessionRepository.findByMatrixRoomIdIn(singleton("matrixRoomId")))
         .thenReturn(singletonList(anonymousEnquiry));
 
-    var sessionResponse = getSessionsByUserAndGroupIds(USER_ID);
+    var sessionResponse = getSessionsByUserAndRoomIds(USER_ID);
 
     assertEquals(1, sessionResponse.size());
   }
@@ -804,15 +912,15 @@ class SessionServiceTest {
     Session anonymousEnquiry =
         createAnonymousNewEnquiryWithConsultingType(AGENCY_DTO_SUCHT.getConsultingType());
     anonymousEnquiry.setUser(USER);
-    when(sessionRepository.findByGroupIds(singleton("rcGroupId")))
+    when(sessionRepository.findByMatrixRoomIdIn(singleton("matrixRoomId")))
         .thenReturn(singletonList(anonymousEnquiry));
 
-    assertThrows(ForbiddenException.class, () -> getSessionsByUserAndGroupIds("someOtherId"));
+    assertThrows(ForbiddenException.class, () -> getSessionsByUserAndRoomIds("someOtherId"));
   }
 
-  private List<UserSessionResponseDTO> getSessionsByUserAndGroupIds(String someOtherId) {
-    return sessionService.getSessionsByUserAndGroupIds(
-        someOtherId, singleton("rcGroupId"), singleton(UserRole.ANONYMOUS.getValue()));
+  private List<UserSessionResponseDTO> getSessionsByUserAndRoomIds(String someOtherId) {
+    return sessionService.getSessionsByUserAndRoomIds(
+        someOtherId, singleton("matrixRoomId"), singleton(UserRole.ANONYMOUS.getValue()));
   }
 
   @Test
@@ -866,7 +974,7 @@ class SessionServiceTest {
   Consultant createConsultantWithAgencies(ConsultantAgency... agencies) {
     return Consultant.builder()
         .id(CONSULTANT_ID)
-        .rocketChatId(ROCKETCHAT_ID)
+        .matrixUserId(MATRIX_USER_ID)
         .username("consultant")
         .firstName("first name")
         .lastName("last name")
@@ -885,5 +993,452 @@ class SessionServiceTest {
         .languageCode(LanguageCode.de)
         .notificationsEnabled(false)
         .build();
+  }
+
+  // ---------------------------------------------------------------------------
+  // assertUserHasAccess
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void assertUserHasAccess_Should_ThrowNotFoundException_When_SessionDoesNotExist() {
+    when(sessionRepository.findById(SESSION_ID)).thenReturn(Optional.empty());
+    AuthenticatedUser authenticatedUser = mock(AuthenticatedUser.class);
+
+    assertThrows(
+        NotFoundException.class,
+        () -> sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser));
+  }
+
+  @Test
+  void assertUserHasAccess_Should_ReturnSession_When_UserIsOwner() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.getUser().setUserId(USER_ID);
+    when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+    AuthenticatedUser authenticatedUser = mock(AuthenticatedUser.class);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(authenticatedUser.getRoles()).thenReturn(USER_ROLES);
+
+    Session result = sessionService.assertUserHasAccess(session.getId(), authenticatedUser);
+
+    assertThat(result).isEqualTo(session);
+  }
+
+  @Test
+  void assertUserHasAccess_Should_ThrowForbiddenException_When_UserIsNotOwner() {
+    Session session = easyRandom.nextObject(Session.class);
+    when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+    AuthenticatedUser authenticatedUser = mock(AuthenticatedUser.class);
+    when(authenticatedUser.getUserId()).thenReturn("some-other-user");
+    when(authenticatedUser.getRoles()).thenReturn(USER_ROLES);
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> sessionService.assertUserHasAccess(session.getId(), authenticatedUser));
+  }
+
+  // ---------------------------------------------------------------------------
+  // isAnonymousStyleRegistration
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void isAnonymousStyleRegistration_Should_ReturnFalse_When_SessionIsNull() {
+    assertThat(sessionService.isAnonymousStyleRegistration(null)).isFalse();
+  }
+
+  @Test
+  void isAnonymousStyleRegistration_Should_ReturnTrue_When_PostcodeIsZeros() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setPostcode("00000");
+
+    assertThat(sessionService.isAnonymousStyleRegistration(session)).isTrue();
+  }
+
+  @Test
+  void isAnonymousStyleRegistration_Should_ReturnTrue_When_UsernameStartsWithAnonymous() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setPostcode("12345");
+    session.getUser().setUsername("Anonymous-abc123");
+
+    assertThat(sessionService.isAnonymousStyleRegistration(session)).isTrue();
+  }
+
+  @Test
+  void isAnonymousStyleRegistration_Should_ReturnFalse_When_NormalRegisteredSession() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setPostcode("12345");
+    session.getUser().setUsername("regular-user");
+
+    assertThat(sessionService.isAnonymousStyleRegistration(session)).isFalse();
+  }
+
+  // ---------------------------------------------------------------------------
+  // getSessionsForUserId — Forbidden from agency service returns empty list
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void
+      getSessionsForUserId_Should_ReturnSessionWithNullAgency_When_AgencyServiceReturnsForbidden() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setAgencyId(1L);
+    when(sessionRepository.findByUserUserId(USER_ID)).thenReturn(List.of(session));
+    when(agencyService.getAgencies(any()))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null));
+
+    List<UserSessionResponseDTO> result = sessionService.getSessionsForUserId(USER_ID);
+
+    // 403 from agency service is swallowed; sessions still returned, agency field is null
+    assertThat(result).hasSize(1);
+    assertThat(result.get(0).getAgency()).isNull();
+  }
+
+  // ---------------------------------------------------------------------------
+  // getTeamSessionsForConsultant — participant and supervisor paths
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void
+      getTeamSessionsForConsultant_Should_IncludeParticipantSessions_When_ConsultantIsParticipant() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getConsultantAgencies()).thenReturn(CONSULTANT_AGENCY_SET);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+    when(sessionRepository
+            .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
+                any(), any(), any(), anyBoolean()))
+        .thenReturn(List.of());
+    when(sessionRepository.findByConsultantAndTeamSessionAndStatus(any(), anyBoolean(), any()))
+        .thenReturn(List.of());
+
+    Session participantSession = easyRandom.nextObject(Session.class);
+    GroupChatParticipant participant = mock(GroupChatParticipant.class);
+    when(participant.getChatId()).thenReturn(participantSession.getId());
+    when(groupChatParticipantRepository.findByConsultantId(CONSULTANT_ID))
+        .thenReturn(List.of(participant));
+    when(sessionRepository.findAllById(List.of(participantSession.getId())))
+        .thenReturn(List.of(participantSession));
+    when(sessionSupervisorRepository.findActiveSupervisionsByConsultantId(CONSULTANT_ID))
+        .thenReturn(List.of());
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getTeamSessionsForConsultant(consultant);
+
+    assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void getTeamSessionsForConsultant_Should_IncludeSupervisedSessions_When_ConsultantIsSupervisor() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getConsultantAgencies()).thenReturn(CONSULTANT_AGENCY_SET);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+    when(sessionRepository
+            .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
+                any(), any(), any(), anyBoolean()))
+        .thenReturn(List.of());
+    when(sessionRepository.findByConsultantAndTeamSessionAndStatus(any(), anyBoolean(), any()))
+        .thenReturn(List.of());
+    when(groupChatParticipantRepository.findByConsultantId(CONSULTANT_ID)).thenReturn(List.of());
+
+    Session supervisedSession = easyRandom.nextObject(Session.class);
+    supervisedSession.setStatus(SessionStatus.IN_PROGRESS);
+    SessionSupervisor supervision = mock(SessionSupervisor.class);
+    when(supervision.getSession()).thenReturn(supervisedSession);
+    when(sessionSupervisorRepository.findActiveSupervisionsByConsultantId(CONSULTANT_ID))
+        .thenReturn(List.of(supervision));
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getTeamSessionsForConsultant(consultant);
+
+    assertThat(result).hasSize(1);
+  }
+
+  // ---------------------------------------------------------------------------
+  // getRegisteredEnquiriesForConsultant — topic-based route + visibility filter
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void
+      getRegisteredEnquiriesForConsultant_Should_IncludeAnonymousStyleTopicBasedSessions_When_ConsultantHasTopics() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getConsultantAgencies()).thenReturn(null);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+    when(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID))
+        .thenReturn(List.of(42L));
+
+    Session topicBasedSession = easyRandom.nextObject(Session.class);
+    topicBasedSession.setPostcode("00000");
+    topicBasedSession.setMainTopicId(42L);
+    topicBasedSession.setRegistrationType(Session.RegistrationType.REGISTERED);
+    topicBasedSession.setStatus(SessionStatus.NEW);
+    topicBasedSession.setConsultant(null);
+    topicBasedSession.getUser().setDataPrivacyConfirmation(nowInUtc());
+
+    when(sessionRepository
+            .findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
+                any(), any(), any()))
+        .thenReturn(List.of(topicBasedSession));
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getRegisteredEnquiriesForConsultant(consultant);
+
+    assertThat(result).hasSize(1);
+  }
+
+  // ---------------------------------------------------------------------------
+  // getVisibleAnonymousLiveChatEnquiriesByIds — #774 open-path fallback
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void
+      getVisibleAnonymousLiveChatEnquiriesByIds_Should_ReturnEnquiry_When_ConsultantHasMatchingTopic() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+    when(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID))
+        .thenReturn(List.of(42L));
+
+    Session liveChatEnquiry = easyRandom.nextObject(Session.class);
+    liveChatEnquiry.setMainTopicId(42L);
+    liveChatEnquiry.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+    liveChatEnquiry.setStatus(SessionStatus.NEW);
+    liveChatEnquiry.setConsultant(null);
+    liveChatEnquiry.getUser().setDataPrivacyConfirmation(nowInUtc());
+
+    when(sessionRepository.findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
+            eq(Set.of(103507L)),
+            eq(Set.of(42L)),
+            eq(SessionStatus.NEW),
+            eq(Session.RegistrationType.ANONYMOUS)))
+        .thenReturn(List.of(liveChatEnquiry));
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getVisibleAnonymousLiveChatEnquiriesByIds(consultant, Set.of(103507L));
+
+    assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void
+      getDirectlyAssignedSessionsByIdsCrossTenant_Should_ReturnSession_When_ConsultantIsAssignedAdvisor() {
+    Consultant consultant = mock(Consultant.class);
+
+    // Only the directly-assigned advisor may resolve a cross-tenant session this way.
+    Session spied = org.mockito.Mockito.spy(easyRandom.nextObject(Session.class));
+    when(sessionRepository.findAllById(Set.of(103510L))).thenReturn(List.of(spied));
+    org.mockito.Mockito.doReturn(true).when(spied).isAdvisedBy(consultant);
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getDirectlyAssignedSessionsByIdsCrossTenant(consultant, Set.of(103510L));
+
+    assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void
+      getDirectlyAssignedSessionsByIdsCrossTenant_Should_ReturnEmpty_When_ConsultantIsNotAssigned() {
+    Consultant consultant = mock(Consultant.class);
+    Session spied = org.mockito.Mockito.spy(easyRandom.nextObject(Session.class));
+    when(sessionRepository.findAllById(Set.of(103510L))).thenReturn(List.of(spied));
+    org.mockito.Mockito.doReturn(false).when(spied).isAdvisedBy(consultant);
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getDirectlyAssignedSessionsByIdsCrossTenant(consultant, Set.of(103510L));
+
+    assertThat(result).isEmpty();
+  }
+
+  @Test
+  void
+      getVisibleAnonymousLiveChatEnquiriesByIds_Should_ReturnEmptyAndNotQuery_When_ConsultantHasNoTopics() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+    when(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID)).thenReturn(List.of());
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getVisibleAnonymousLiveChatEnquiriesByIds(consultant, Set.of(103507L));
+
+    assertThat(result).isEmpty();
+    verify(sessionRepository, never())
+        .findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(any(), any(), any(), any());
+  }
+
+  @Test
+  void getVisibleAnonymousLiveChatEnquiriesByIds_Should_ReturnEmpty_When_NoSessionIdsGiven() {
+    Consultant consultant = mock(Consultant.class);
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getVisibleAnonymousLiveChatEnquiriesByIds(consultant, Set.of());
+
+    assertThat(result).isEmpty();
+    verifyNoInteractions(consultantTopicRepository);
+  }
+
+  @Test
+  void
+      getRegisteredEnquiriesForConsultant_Should_ExcludeRegularTopicOnlySessions_When_ConsultantHasNoSessionAgency() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getConsultantAgencies()).thenReturn(null);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+    when(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID))
+        .thenReturn(List.of(42L));
+
+    Session topicOnlySession = easyRandom.nextObject(Session.class);
+    topicOnlySession.setPostcode("10115");
+    topicOnlySession.setMainTopicId(42L);
+    topicOnlySession.setRegistrationType(Session.RegistrationType.REGISTERED);
+    topicOnlySession.setStatus(SessionStatus.NEW);
+    topicOnlySession.setConsultant(null);
+    topicOnlySession.getUser().setUsername("regular-registered-user");
+    topicOnlySession.getUser().setDataPrivacyConfirmation(nowInUtc());
+
+    when(sessionRepository
+            .findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
+                any(), any(), any()))
+        .thenReturn(List.of(topicOnlySession));
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getRegisteredEnquiriesForConsultant(consultant);
+
+    assertThat(result).isEmpty();
+  }
+
+  @Test
+  void
+      getRegisteredEnquiriesForConsultant_Should_ExcludeAnonymousStyleSession_When_UserHasNoConsent() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getConsultantAgencies()).thenReturn(CONSULTANT_AGENCY_SET);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+
+    Session anonymousStyleSession = easyRandom.nextObject(Session.class);
+    anonymousStyleSession.setPostcode("00000");
+    anonymousStyleSession.setRegistrationType(Session.RegistrationType.REGISTERED);
+    anonymousStyleSession.setStatus(SessionStatus.NEW);
+    anonymousStyleSession.setConsultant(null);
+    anonymousStyleSession.getUser().setDataPrivacyConfirmation(null);
+
+    when(sessionRepository
+            .findByAgencyIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
+                any(), any(), any()))
+        .thenReturn(List.of(anonymousStyleSession));
+    when(consultantTopicRepository.findTopicIdsByConsultantId(any())).thenReturn(List.of());
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getRegisteredEnquiriesForConsultant(consultant);
+
+    assertThat(result).isEmpty();
+  }
+
+  // ---------------------------------------------------------------------------
+  // getActiveAndDoneSessionsForConsultant — supervisor path
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void
+      getActiveAndDoneSessionsForConsultant_Should_IncludeSupervisedSessions_When_ConsultantIsSupervisor() {
+    Session supervisedSession = easyRandom.nextObject(Session.class);
+    supervisedSession.setStatus(SessionStatus.IN_PROGRESS);
+    SessionSupervisor supervision = mock(SessionSupervisor.class);
+    when(supervision.getSession()).thenReturn(supervisedSession);
+
+    when(sessionRepository.findByConsultantAndStatus(any(), eq(SessionStatus.IN_PROGRESS)))
+        .thenReturn(List.of());
+    when(sessionRepository.findByConsultantAndStatus(any(), eq(SessionStatus.DONE)))
+        .thenReturn(List.of());
+    when(sessionSupervisorRepository.findActiveSupervisionsByConsultantId(any()))
+        .thenReturn(List.of(supervision));
+
+    List<ConsultantSessionResponseDTO> result =
+        sessionService.getActiveAndDoneSessionsForConsultant(CONSULTANT);
+
+    assertThat(result).hasSize(1);
+  }
+
+  // ---------------------------------------------------------------------------
+  // findSessionByConsultantAndUserAndConsultingType — null guard paths
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void findSessionByConsultantAndUserAndConsultingType_Should_ReturnEmpty_When_ConsultantIsNull() {
+    Optional<Session> result =
+        sessionService.findSessionByConsultantAndUserAndConsultingType(null, USER, 1);
+
+    assertThat(result).isEmpty();
+    verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
+  void findSessionByConsultantAndUserAndConsultingType_Should_ReturnEmpty_When_UserIsNull() {
+    Optional<Session> result =
+        sessionService.findSessionByConsultantAndUserAndConsultingType(CONSULTANT, null, 1);
+
+    assertThat(result).isEmpty();
+    verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
+  void saveSessionShouldDefaultRegisteredCounsellingToAgencyCounselling() {
+    var session =
+        Session.builder()
+            .registrationType(REGISTERED)
+            .postcode("10115")
+            .status(SessionStatus.NEW)
+            .teamSession(false)
+            .build();
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertThat(session.getConversationType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.AGENCY_COUNSELLING);
+  }
+
+  @Test
+  void saveSessionShouldDefaultAnonymousSessionsToLiveChat() {
+    var session =
+        Session.builder()
+            .registrationType(ANONYMOUS)
+            .postcode("00000")
+            .status(SessionStatus.NEW)
+            .teamSession(false)
+            .build();
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertThat(session.getConversationType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT);
+  }
+
+  @Test
+  void saveSessionShouldDefaultTeamSessionsToInternalGroupBeforeRegistrationType() {
+    var session =
+        Session.builder()
+            .registrationType(ANONYMOUS)
+            .postcode("00000")
+            .status(SessionStatus.NEW)
+            .teamSession(true)
+            .build();
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertThat(session.getConversationType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.INTERNAL_GROUP);
+  }
+
+  @Test
+  void saveSessionShouldPreserveAnExplicitModalityOverConflictingLegacyFields() {
+    var session =
+        Session.builder()
+            .registrationType(ANONYMOUS)
+            .postcode("00000")
+            .status(SessionStatus.NEW)
+            .teamSession(true)
+            .conversationType(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP)
+            .build();
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertThat(session.getConversationType())
+        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP);
   }
 }

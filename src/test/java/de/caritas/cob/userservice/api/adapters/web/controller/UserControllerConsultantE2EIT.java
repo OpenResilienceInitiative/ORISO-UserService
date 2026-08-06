@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_CREDENTIALS_SYSTEM_A;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 import static org.hamcrest.Matchers.contains;
@@ -15,10 +14,8 @@ import static org.hamcrest.Matchers.startsWith;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.contains;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -26,9 +23,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentialsProvider;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.RocketChatUserDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserInfoResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
@@ -39,7 +33,6 @@ import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiController
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatUserNotInitializedException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -59,6 +52,9 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
+import jakarta.servlet.http.Cookie;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.PositiveOrZero;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
@@ -68,10 +64,6 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import javax.servlet.http.Cookie;
-import javax.validation.constraints.NotBlank;
-import javax.validation.constraints.PositiveOrZero;
-import lombok.NonNull;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.assertj.core.util.Lists;
 import org.hamcrest.Matchers;
@@ -82,32 +74,30 @@ import org.junit.jupiter.api.Test;
 import org.springframework.beans.BeanUtils;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
-import org.springframework.boot.test.mock.mockito.SpyBean;
-import org.springframework.http.HttpEntity;
-import org.springframework.http.HttpMethod;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
-import org.springframework.http.ResponseEntity;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
-import org.springframework.web.client.RestTemplate;
+import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
-@AutoConfigureTestDatabase
+@AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = "feature.topics.enabled=true")
+@Transactional
 class UserControllerConsultantE2EIT {
 
   private static final EasyRandom easyRandom = new EasyRandom();
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   @Autowired private MockMvc mockMvc;
 
@@ -131,25 +121,19 @@ class UserControllerConsultantE2EIT {
 
   @Autowired private UsernameTranscoder usernameTranscoder;
 
-  @MockBean
-  @Qualifier("rocketChatRestTemplate")
-  private RestTemplate rocketChatRestTemplate;
+  @MockitoSpyBean private AgencyService agencyService;
 
-  @MockBean private RocketChatCredentialsProvider rocketChatCredentialsProvider;
-
-  @SpyBean private AgencyService agencyService;
-
-  @MockBean
+  @MockitoBean
   @Qualifier("topicControllerApiPrimary")
   private TopicControllerApi topicControllerApi;
 
-  @MockBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private AuthenticatedUser authenticatedUser;
 
-  @MockBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
-  @MockBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
+  @MockitoBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
 
-  @MockBean private AdminUserFacade adminUserFacade;
+  @MockitoBean private AdminUserFacade adminUserFacade;
 
   private User user;
   private Consultant consultant;
@@ -728,14 +712,10 @@ class UserControllerConsultantE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
-  void searchConsultantsShouldContainAgenciesMarkedForDeletionIfConsultantDeleted()
-      throws Exception {
+  void searchConsultantsShouldNotContainConsultantsMarkedForDeletion() throws Exception {
     givenAnInfix();
     givenConsultantsMatching(1, infix, true, true, Lists.newArrayList());
     givenAgencyServiceReturningDummyAgencies();
-    var consultantsMarkedAsDeleted = consultantRepository.findAllByDeleteDateNotNull();
-    assertEquals(1, consultantsMarkedAsDeleted.size());
-    var onlyConsultant = consultantsMarkedAsDeleted.get(0);
 
     mockMvc
         .perform(
@@ -746,16 +726,8 @@ class UserControllerConsultantE2EIT {
                 .param("query", infix)
                 .param("perPage", "1"))
         .andExpect(status().isOk())
-        .andExpect(jsonPath("total", is(1)))
-        .andExpect(jsonPath("_embedded", hasSize(1)))
-        .andExpect(jsonPath("_embedded[0]._embedded.id", is(onlyConsultant.getId())))
-        .andExpect(
-            jsonPath("_embedded[0]._embedded.status", is(onlyConsultant.getStatus().toString())))
-        .andExpect(jsonPath("_embedded[0]._embedded.agencies", hasSize(1)))
-        .andExpect(jsonPath("_embedded[0]._embedded.agencies[0].id", not(contains(nullValue()))))
-        .andExpect(jsonPath("_embedded[0]._embedded.agencies[0].name", not(contains(nullValue()))))
-        .andExpect(jsonPath("_embedded[0]._embedded.deleteDate", not(contains(nullValue()))))
-        .andExpect(jsonPath("_embedded[0]._embedded.email", is(onlyConsultant.getEmail())));
+        .andExpect(jsonPath("total", is(0)))
+        .andExpect(jsonPath("_embedded", hasSize(0)));
   }
 
   @Test
@@ -866,8 +838,7 @@ class UserControllerConsultantE2EIT {
   @WithMockUser(authorities = AuthorityValue.VIEW_AGENCY_CONSULTANTS)
   void getConsultantsShouldRespondWithDisplayNameAndUsername() throws Exception {
     var agencyId = givenAnAgencyIdWithDefaultLanguageOnly();
-    givenAValidRocketChatSystemUser();
-    givenAValidRocketChatInfoUserResponse("user1", "user2", "user3");
+    givenMatrixDisplayNames(agencyId, "user1", "user2", "user3");
 
     mockMvc
         .perform(
@@ -932,9 +903,9 @@ class UserControllerConsultantE2EIT {
         .andExpect(jsonPath("agencyId", is(121)))
         .andExpect(jsonPath("consultingType", is(1)))
         .andExpect(jsonPath("status", is(1)))
-        .andExpect(jsonPath("groupId", is("ix7E7HzXKTgGeQMyb")))
+        .andExpect(jsonPath("matrixRoomId", is("!ix7E7HzXKTgGeQMyb:matrix.example")))
         .andExpect(jsonPath("consultantId", is("473f7c4b-f011-4fc2-847c-ceb636a5b399")))
-        .andExpect(jsonPath("consultantRcId", is("CztX9SWF4SJPvgknZ")))
+        .andExpect(jsonPath("consultantMatrixUserId", is("@CztX9SWF4SJPvgknZ:matrix.example")))
         .andExpect(jsonPath("askerId", is("06c6601f-a5b4-4812-9260-20065390b1f5")))
         .andExpect(jsonPath("askerUserName", is("enc.OUZDK5DFON2DGNJVGU2Q....")))
         .andExpect(jsonPath("isTeamSession", is(true)))
@@ -988,35 +959,18 @@ class UserControllerConsultantE2EIT {
         .andExpect(status().isForbidden());
   }
 
-  @SuppressWarnings("unchecked,SameParameterValue")
-  private void givenAValidRocketChatInfoUserResponse(
-      String username1, String username2, String username3) {
-    var urlInfix = "/api/v1/users.info?userId=";
-    when(rocketChatRestTemplate.exchange(
-            contains(urlInfix), eq(HttpMethod.GET),
-            any(HttpEntity.class), eq(UserInfoResponseDTO.class)))
-        .thenReturn(
-            ResponseEntity.ok(userInfoResponseDTO(username1)),
-            ResponseEntity.ok(userInfoResponseDTO(username2)),
-            ResponseEntity.ok(userInfoResponseDTO(username3)));
-  }
+  private void givenMatrixDisplayNames(long agencyId, String... displayNames) {
+    var consultants =
+        consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(agencyId).stream()
+            .map(ConsultantAgency::getConsultant)
+            .toList();
 
-  @NonNull
-  private UserInfoResponseDTO userInfoResponseDTO(String clearTextUsername) {
-    var userInfoResponse = new UserInfoResponseDTO();
-    userInfoResponse.setSuccess(true);
-
-    var chatUser = easyRandom.nextObject(RocketChatUserDTO.class);
-    chatUser.setId(RandomStringUtils.randomAlphanumeric(17));
-    chatUser.setUsername(RandomStringUtils.randomAlphabetic(16));
-    chatUser.setName(usernameTranscoder.encodeUsername(clearTextUsername));
-    userInfoResponse.setUser(chatUser);
-    return userInfoResponse;
-  }
-
-  private void givenAValidRocketChatSystemUser() throws RocketChatUserNotInitializedException {
-    when(rocketChatCredentialsProvider.getSystemUserSneaky()).thenReturn(RC_CREDENTIALS_SYSTEM_A);
-    when(rocketChatCredentialsProvider.getSystemUser()).thenReturn(RC_CREDENTIALS_SYSTEM_A);
+    for (int index = 0; index < consultants.size(); index++) {
+      var consultant = consultants.get(index);
+      consultant.setDisplayName(usernameTranscoder.encodeUsername(displayNames[index]));
+      consultantRepository.save(consultant);
+      consultantsToReset.add(consultant);
+    }
   }
 
   private long aPositiveLong() {
@@ -1045,14 +999,13 @@ class UserControllerConsultantE2EIT {
       boolean includingAgenciesMarkedAsDeleted,
       boolean markedAsDeleted,
       List<Long> agenciesIdsToAssign) {
-    List<Consultant> savedConsultants = Lists.newArrayList();
     while (count-- > 0) {
       var dbConsultant = consultantRepository.findAll().iterator().next();
       var consultant = new Consultant();
       BeanUtils.copyProperties(dbConsultant, consultant);
       consultant.setId(UUID.randomUUID().toString());
       consultant.setUsername(RandomStringUtils.randomAlphabetic(8));
-      consultant.setRocketChatId(RandomStringUtils.randomAlphabetic(8));
+      consultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
       consultant.setFirstName(aStringWithoutInfix(infix));
       consultant.setLastName(aStringWithInfix(infix));
       consultant.setEmail(aValidEmailWithoutInfix(infix));
@@ -1067,7 +1020,7 @@ class UserControllerConsultantE2EIT {
       consultant.setLanguageFormal(easyRandom.nextBoolean());
       consultant.setTeamConsultant(easyRandom.nextBoolean());
 
-      consultantRepository.save(consultant);
+      consultant = consultantRepository.save(consultant);
       consultantIdsToDelete.add(consultant.getId());
 
       ConsultantAgency consultantAgency;
@@ -1090,9 +1043,7 @@ class UserControllerConsultantE2EIT {
       }
       consultantAgencyRepository.save(consultantAgency);
       consultantAgencies.add(consultantAgency);
-      consultant.setConsultantAgencies(Set.of(consultantAgency));
-      var saved = consultantRepository.save(consultant);
-      savedConsultants.add(saved);
+      consultant.setConsultantAgencies(new HashSet<>(Set.of(consultantAgency)));
     }
   }
 

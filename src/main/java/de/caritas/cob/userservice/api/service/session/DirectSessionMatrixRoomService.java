@@ -1,10 +1,11 @@
 package de.caritas.cob.userservice.api.service.session;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -21,10 +22,11 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class DirectSessionMatrixRoomService {
 
-  private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionService sessionService;
   private final @NonNull UserHelper userHelper;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   /**
    * Creates a Matrix room between {@code consultant} and the session's user, invites both parties,
@@ -63,24 +65,18 @@ public class DirectSessionMatrixRoomService {
       var roomName = "Session " + session.getId() + " - " + consultant.getUsername();
       var roomAlias = "session_" + session.getId();
 
-      var createRoomResponse =
-          matrixSynapseService.createRoomAsMatrixUser(
-              roomName, roomAlias, consultant.getMatrixUserId());
-
-      if (createRoomResponse == null
-          || createRoomResponse.getBody() == null
-          || createRoomResponse.getBody().getRoomId() == null) {
+      var roomId =
+          sessionRoomGateway.createRoomAsUser(roomName, roomAlias, consultant.getMatrixUserId());
+      if (roomId == null) {
         log.error(
             "Matrix createRoomAsConsultant returned no room id for session {}", session.getId());
         return;
       }
 
-      var roomId = createRoomResponse.getBody().getRoomId();
       session.setMatrixRoomId(roomId);
       sessionService.saveSession(session);
 
-      var consultantToken =
-          matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
+      var consultantToken = sessionRoomGateway.loginAsUser(consultant.getMatrixUserId());
       if (consultantToken == null) {
         log.error(
             "Could not create Matrix token for consultant {} after creating room {} for session {}",
@@ -91,7 +87,7 @@ public class DirectSessionMatrixRoomService {
       }
 
       try {
-        matrixSynapseService.inviteUserToRoom(roomId, user.getMatrixUserId(), consultantToken);
+        sessionRoomGateway.inviteUser(roomId, user.getMatrixUserId(), consultantToken);
       } catch (Exception ex) {
         log.warn(
             "Failed to invite user {} to direct-session room {}: {}",
@@ -101,9 +97,9 @@ public class DirectSessionMatrixRoomService {
       }
 
       if (user.getMatrixUserId() != null) {
-        var userToken = matrixSynapseService.loginAsUserAccessToken(user.getMatrixUserId());
+        var userToken = sessionRoomGateway.loginAsUser(user.getMatrixUserId());
         if (userToken != null) {
-          boolean joined = matrixSynapseService.joinRoom(roomId, userToken);
+          boolean joined = sessionRoomGateway.joinRoom(roomId, userToken);
           if (joined) {
             log.info("User {} auto-joined direct-session room {}", user.getUsername(), roomId);
           } else {
@@ -118,13 +114,21 @@ public class DirectSessionMatrixRoomService {
         }
       }
 
-      boolean consultantJoined = matrixSynapseService.joinRoom(roomId, consultantToken);
+      boolean consultantJoined = sessionRoomGateway.joinRoom(roomId, consultantToken);
       if (consultantJoined) {
         log.info(
             "Consultant {} confirmed in direct-session room {} (session {})",
             consultant.getUsername(),
             roomId,
             session.getId());
+      }
+
+      // Best-effort: the notification listener syncs as the technical admin and must
+      // be a member of the room to see message events at all.
+      try {
+        sessionRoomGateway.ensureAdminInRoom(roomId, consultant.getMatrixUserId());
+      } catch (Exception adminJoinError) {
+        log.warn("Could not add Matrix admin to room {}: {}", roomId, adminJoinError.getMessage());
       }
 
       log.info(
@@ -148,15 +152,13 @@ public class DirectSessionMatrixRoomService {
     }
     String generatedMatrixPassword = userHelper.getRandomPassword();
     try {
-      var response =
-          matrixSynapseService.createUser(
+      var matrixUserId =
+          sessionRoomGateway.createUser(
               consultant.getUsername(),
               generatedMatrixPassword,
-              consultant.getFirstName() + " " + consultant.getLastName());
-      if (response != null
-          && response.getBody() != null
-          && response.getBody().getUserId() != null) {
-        consultant.setMatrixUserId(response.getBody().getUserId());
+              consultantDisplayNameResolver.resolveMatrixDisplayName(consultant));
+      if (matrixUserId != null) {
+        consultant.setMatrixUserId(matrixUserId);
         consultantRepository.save(consultant);
         log.info(
             "Created Matrix account for consultant {} during direct-session provisioning",

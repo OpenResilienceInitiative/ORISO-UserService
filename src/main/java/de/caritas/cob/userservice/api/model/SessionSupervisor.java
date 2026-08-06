@@ -1,21 +1,23 @@
 package de.caritas.cob.userservice.api.model;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.JoinColumn;
+import jakarta.persistence.ManyToOne;
+import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.Objects;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
-import javax.persistence.Id;
-import javax.persistence.JoinColumn;
-import javax.persistence.ManyToOne;
-import javax.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 /**
  * Represents a consultant supervising a session. Supervisors can observe the chat but cannot send
@@ -55,12 +57,14 @@ public class SessionSupervisor {
   private LocalDateTime removedDate;
 
   @Column(name = "is_active", nullable = false, columnDefinition = "tinyint(4) default 1")
+  @JdbcTypeCode(SqlTypes.TINYINT)
   private Boolean isActive;
 
   @Column(name = "matrix_room_id")
   private String matrixRoomId;
 
   @Column(name = "notes", columnDefinition = "text")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String notes;
 
   @Override

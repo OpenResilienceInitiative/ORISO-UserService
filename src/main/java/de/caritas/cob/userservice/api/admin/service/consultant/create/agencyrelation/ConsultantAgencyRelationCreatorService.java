@@ -6,6 +6,7 @@ import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -14,11 +15,11 @@ import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collections;
 import java.util.Optional;
 import java.util.Set;
@@ -36,8 +37,11 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull AgencyService agencyService;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityRoleLookup identityRoleLookup;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
-  private final @NonNull RocketChatAsyncHelper rocketChatAsyncHelper;
+  private final @NonNull ConsultantAgencyRelationFinalizer consultantAgencyRelationFinalizer;
+  private final @NonNull ConsultantTopicAgencyCompatibilityValidator
+      consultantTopicAgencyCompatibilityValidator;
 
   /**
    * Creates a new {@link ConsultantAgency} based on the {@link ImportRecord} and agency ids.
@@ -50,8 +54,16 @@ public class ConsultantAgencyRelationCreatorService {
   public void createConsultantAgencyRelations(
       String consultantId, Set<Long> agencyIds, Set<String> roles, Consumer<String> logMethod) {
     checkConsultantHasRoleSet(roles, consultantId);
+    var additionalAgencyIds = Set.copyOf(agencyIds);
     agencyIds.stream()
-        .map(agencyId -> new ImportRecordAgencyCreationInputAdapter(consultantId, agencyId, roles))
+        .map(
+            agencyId ->
+                new ImportRecordAgencyCreationInputAdapter(consultantId, agencyId, roles) {
+                  @Override
+                  public Set<Long> getAdditionalAgencyIds() {
+                    return additionalAgencyIds;
+                  }
+                })
         .forEach(input -> createNewConsultantAgency(input, logMethod));
   }
 
@@ -71,11 +83,11 @@ public class ConsultantAgencyRelationCreatorService {
 
   private void createNewConsultantAgency(
       ConsultantAgencyCreationInput input, Consumer<String> logMethod) {
-    prepareConsultantAgencyRelation(input);
-    completeConsultantAgencyAssigment(input, logMethod);
+    var persistedRelation = prepareConsultantAgencyRelation(input);
+    completeConsultantAgencyAssigment(input, logMethod, persistedRelation);
   }
 
-  public void prepareConsultantAgencyRelation(ConsultantAgencyCreationInput input) {
+  public ConsultantAgency prepareConsultantAgencyRelation(ConsultantAgencyCreationInput input) {
     var consultant = this.retrieveConsultant(input.getConsultantId());
 
     var agency = retrieveAgency(input.getAgencyId());
@@ -83,12 +95,24 @@ public class ConsultantAgencyRelationCreatorService {
       this.verifyAllAssignedAgenciesHaveSameConsultingType(agency.getConsultingType(), consultant);
     }
 
+    consultantTopicAgencyCompatibilityValidator
+        .validateCurrentTopicsAgainstAssignedAndAdditionalAgencies(
+            consultant.getId(), input.getAdditionalAgencyIds(), consultant.getTenantId());
+
     ensureConsultingTypeRoles(input, agency);
-    consultantAgencyService.saveConsultantAgency(buildConsultantAgency(consultant, agency.getId()));
+    return consultantAgencyService.saveConsultantAgency(
+        buildConsultantAgency(consultant, agency.getId()));
   }
 
   public void completeConsultantAgencyAssigment(
       ConsultantAgencyCreationInput input, Consumer<String> logMethod) {
+    completeConsultantAgencyAssigment(input, logMethod, null);
+  }
+
+  private void completeConsultantAgencyAssigment(
+      ConsultantAgencyCreationInput input,
+      Consumer<String> logMethod,
+      ConsultantAgency persistedRelation) {
 
     var consultant = this.retrieveConsultant(input.getConsultantId());
     var agency = retrieveAgency(input.getAgencyId());
@@ -98,8 +122,15 @@ public class ConsultantAgencyRelationCreatorService {
       consultantRepository.save(consultant);
     }
 
-    rocketChatAsyncHelper.addConsultantToSessions(
-        consultant, agency, logMethod, TenantContext.getCurrentTenant());
+    if (persistedRelation == null) {
+      // Legacy two-step callers do not carry the prepared relation across requests.
+      consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(consultant, agency);
+    } else {
+      // The atomic create path already owns the persisted row. Carry it forward instead of
+      // relying on an immediate read-after-write query that may not see the row yet.
+      consultantAgencyRelationFinalizer.finalizeConsultantAgencyRelation(
+          consultant, persistedRelation);
+    }
 
     if (isTeamAgencyButNotTeamConsultant(agency, consultant)) {
       consultant.setTeamConsultant(true);
@@ -130,19 +161,18 @@ public class ConsultantAgencyRelationCreatorService {
   }
 
   private void checkConsultantHasRoleSet(Set<String> roles, String consultantId) {
-    roles.stream()
-        .filter(role -> identityClient.userHasRole(consultantId, role))
-        .findAny()
-        .orElseThrow(
-            () ->
-                new BadRequestException(
-                    String.format(
-                        "Consultant with id %s does not have the role set %s",
-                        consultantId, roles)));
+    var hasRequestedRole =
+        !roles.isEmpty()
+            && identityRoleLookup.findAllByUserId(consultantId).stream().anyMatch(roles::contains);
+    if (!hasRequestedRole) {
+      throw new BadRequestException(
+          String.format(
+              "Consultant with id %s does not have the role set %s", consultantId, roles));
+    }
   }
 
   private AgencyDTO retrieveAgency(Long agencyId) {
-    var agencyDto = this.agencyService.getAgencyWithoutCaching(agencyId);
+    var agencyDto = this.agencyService.getAgency(agencyId);
     return Optional.ofNullable(agencyDto)
         .orElseThrow(
             () ->

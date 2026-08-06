@@ -6,19 +6,18 @@ import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.actions.session.DeactivateSessionActionCommand;
-import de.caritas.cob.userservice.api.actions.session.PostConversationFinishedAliasMessageActionCommand;
+import de.caritas.cob.userservice.api.actions.session.PostMatrixUserLeftMessageActionCommand;
 import de.caritas.cob.userservice.api.actions.session.SendFinishedAnonymousConversationEventActionCommand;
-import de.caritas.cob.userservice.api.actions.session.SetRocketChatRoomReadOnlyActionCommand;
 import de.caritas.cob.userservice.api.actions.user.DeactivateKeycloakUserActionCommand;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import jakarta.transaction.Transactional;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
-import javax.transaction.Transactional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
@@ -77,8 +76,7 @@ public class DeactivateAnonymousUserService {
         staleSession ->
             sessionDeactivationActions
                 .addActionToExecute(DeactivateSessionActionCommand.class)
-                .addActionToExecute(PostConversationFinishedAliasMessageActionCommand.class)
-                .addActionToExecute(SetRocketChatRoomReadOnlyActionCommand.class)
+                .addActionToExecute(PostMatrixUserLeftMessageActionCommand.class)
                 .addActionToExecute(SendFinishedAnonymousConversationEventActionCommand.class)
                 .executeActions(staleSession));
   }

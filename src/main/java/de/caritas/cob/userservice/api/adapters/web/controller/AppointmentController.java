@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatCredentials;
 import de.caritas.cob.userservice.api.adapters.web.dto.Appointment;
 import de.caritas.cob.userservice.api.adapters.web.dto.AppointmentStatus;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateEnquiryMessageResponseDTO;
@@ -25,18 +24,17 @@ import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.AppointmentsApi;
 import io.swagger.annotations.Api;
+import jakarta.validation.constraints.NotNull;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import javax.validation.constraints.NotNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 @Slf4j
@@ -173,23 +171,18 @@ public class AppointmentController implements AppointmentsApi {
 
   @Override
   public ResponseEntity<CreateEnquiryMessageResponseDTO> createEnquiryAppointment(
-      @PathVariable Long sessionId,
-      @RequestHeader String rcToken,
-      @RequestHeader String rcUserId,
-      @RequestBody EnquiryAppointmentDTO enquiryAppointmentDTO) {
+      @PathVariable Long sessionId, @RequestBody EnquiryAppointmentDTO enquiryAppointmentDTO) {
 
     var user = this.userAccountProvider.retrieveValidatedUser();
-    var rocketChatCredentials =
-        RocketChatCredentials.builder().rocketChatToken(rcToken).rocketChatUserId(rcUserId).build();
     var enquiryData =
         new EnquiryData(
             user,
             sessionId,
             null,
             null,
-            rocketChatCredentials,
             enquiryAppointmentDTO.getT(),
-            enquiryAppointmentDTO.getCounselorEmail());
+            enquiryAppointmentDTO.getCounselorEmail(),
+            null);
 
     var response = createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 

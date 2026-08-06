@@ -3,23 +3,36 @@ package de.caritas.cob.userservice.api.service.notification;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import jakarta.mail.Authenticator;
+import jakarta.mail.Message;
+import jakarta.mail.PasswordAuthentication;
+import jakarta.mail.Transport;
+import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeMessage;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.Properties;
-import javax.mail.Authenticator;
-import javax.mail.Message;
-import javax.mail.PasswordAuthentication;
-import javax.mail.Transport;
-import javax.mail.internet.InternetAddress;
-import javax.mail.internet.MimeMessage;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 @Slf4j
 @Service
+@RequiredArgsConstructor
 public class GlobalSmtpTestEmailService {
 
+  private final @NonNull ApplicationSettingsService applicationSettingsService;
+
   public void sendTestEmail(GlobalSmtpTestEmailDTO dto) throws Exception {
+    var credentials =
+        applicationSettingsService
+            .getGlobalSmtpCredentials()
+            .orElseThrow(
+                () ->
+                    new IllegalStateException(
+                        "SMTP credentials are not configured in application settings."));
     Properties props = new Properties();
     props.put("mail.smtp.auth", "true");
     props.put("mail.smtp.host", dto.getHost());
@@ -30,13 +43,14 @@ public class GlobalSmtpTestEmailService {
       props.put("mail.smtp.starttls.enable", "true");
     }
 
-    javax.mail.Session session =
-        javax.mail.Session.getInstance(
+    jakarta.mail.Session session =
+        jakarta.mail.Session.getInstance(
             props,
             new Authenticator() {
               @Override
               protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(dto.getUsername(), dto.getPassword());
+                return new PasswordAuthentication(
+                    credentials.getGlobalSmtpUsername(), credentials.getGlobalSmtpPassword());
               }
             });
 

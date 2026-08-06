@@ -45,6 +45,10 @@ public class ConsultantService {
     return consultantRepository.findByIdAndDeleteDateIsNull(consultantId);
   }
 
+  public Optional<Consultant> getConsultantByPublicSlug(String publicSlug) {
+    return consultantRepository.findByPublicSlugAndDeleteDateIsNull(publicSlug);
+  }
+
   /**
    * Find a {@link Consultant} by ID regardless of soft-delete state (includes deleted records).
    * Used to distinguish "not found" from "found but flagged for deletion".
@@ -56,14 +60,8 @@ public class ConsultantService {
     return consultantRepository.findById(consultantId);
   }
 
-  /**
-   * Returns a {@link Consultant} by the provided Rocket.Chat user ID.
-   *
-   * @param rcUserId Rocket.Chat user ID
-   * @return An {@link Optional} with the {@link Consultant}
-   */
-  public Optional<Consultant> getConsultantByRcUserId(String rcUserId) {
-    return consultantRepository.findByRocketChatIdAndDeleteDateIsNull(rcUserId);
+  public Optional<Consultant> getConsultantByMatrixUserId(String matrixUserId) {
+    return consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(matrixUserId);
   }
 
   /**
@@ -145,6 +143,11 @@ public class ConsultantService {
    */
   public List<Consultant> findConsultantsByAgencyId(Long agencyId) {
     return consultantRepository.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(agencyId);
+  }
+
+  public List<Consultant> findActiveConsultantsForTenant(Long tenantId) {
+    return consultantRepository.findByTenantIdAndDeleteDateIsNullOrderByFirstNameAscLastNameAsc(
+        tenantId);
   }
 
   /**

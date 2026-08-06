@@ -5,16 +5,16 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
 
 public interface UserRepository extends CrudRepository<User, String> {
 
+  @EntityGraph(attributePaths = "userAgencies")
   Optional<User> findByUserIdAndDeleteDateIsNull(String userId);
 
   Optional<User> findByEmailAndDeleteDateIsNull(String email);
-
-  Optional<User> findByRcUserIdAndDeleteDateIsNull(String rcUserId);
 
   Optional<User> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
 
@@ -22,7 +22,15 @@ public interface UserRepository extends CrudRepository<User, String> {
 
   List<User> findAllByDeleteDateIsNull();
 
-  Optional<User> findByUsernameInAndDeleteDateIsNull(Collection<String> usernames);
+  /**
+   * Username lookups must tolerate duplicates: user.username carries no unique constraint and
+   * generated anonymous usernames repeat across service restarts (the in-memory id registry
+   * resets), so a single-result finder would throw {@code IncorrectResultSizeDataAccessException}
+   * as soon as two rows share a name — which 500s the anonymous invite-link redeem. Callers pick
+   * the oldest matching row deterministically.
+   */
+  List<User> findAllByUsernameInAndDeleteDateIsNullOrderByCreateDateAsc(
+      Collection<String> usernames);
 
   /**
    * Find all users whose create date is older than given date and having no new registered session
@@ -42,14 +50,14 @@ public interface UserRepository extends CrudRepository<User, String> {
               + "    WHERE u = s1.user "
               + "      AND s1.status > 0 "
               + "      AND s1.enquiryMessageDate IS NOT NULL "
-              + "      AND s1.groupId IS NOT NULL "
+              + "      AND s1.matrixRoomId IS NOT NULL "
               + "  )"
               + "  AND EXISTS ("
               + "    SELECT 1 FROM Session s2 "
               + "      WHERE u = s2.user "
               + "        AND s2.status = 0 "
               + "        AND s2.enquiryMessageDate IS NULL "
-              + "        AND s2.groupId IS NULL "
+              + "        AND s2.matrixRoomId IS NULL "
               + "        AND s2.createDate < ?1 "
               + "  )"
               + "  AND NOT EXISTS ("
@@ -57,7 +65,7 @@ public interface UserRepository extends CrudRepository<User, String> {
               + "    WHERE u = s3.user "
               + "    AND s3.status = 0 "
               + "    AND s3.enquiryMessageDate IS NULL "
-              + "    AND s3.groupId IS NULL "
+              + "    AND s3.matrixRoomId IS NULL "
               + "    AND s3.createDate >= ?1"
               + ")")
   List<User> findAllByDeleteDateNullAndNoRunningSessionsAndCreateDateOlderThan(LocalDateTime date);

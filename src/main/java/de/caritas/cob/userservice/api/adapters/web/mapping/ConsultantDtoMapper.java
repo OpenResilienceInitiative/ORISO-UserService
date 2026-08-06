@@ -19,8 +19,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UseradminApi;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
@@ -38,7 +38,7 @@ import org.springframework.stereotype.Service;
 @Service
 @Slf4j
 public class ConsultantDtoMapper implements DtoMapperUtils {
-  @Autowired private IdentityClient identityClient;
+  @Autowired private IdentityManaging identityManager;
   @Autowired private ConsultantTopicRepository consultantTopicRepository;
   @Autowired private TopicService topicService;
 
@@ -54,6 +54,7 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
         .languages(languageStringsOf(updateConsultantDTO.getLanguages()))
         .absent(consultant.isAbsent())
         .absenceMessage(consultant.getAbsenceMessage())
+        .publicSlug(updateConsultantDTO.getPublicSlug())
         .dataPrivacyConfirmation(updateConsultantDTO.getDataPrivacyConfirmation())
         .termsAndConditionsConfirmation(updateConsultantDTO.getTermsAndConditionsConfirmation());
   }
@@ -66,6 +67,7 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
     var consultantResponseDto =
         new ConsultantResponseDTO()
             .consultantId(consultant.getId())
+            .publicSlug(consultant.getPublicSlug())
             .agencies(agencyDtoList)
             .isSupervisor(consultant.isSupervisor());
 
@@ -173,14 +175,22 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
       consultant.setTenantId(tenantId.intValue());
     }
     consultant.setTenantName((String) consultantMap.get("tenantName"));
+    consultant.setHasOtherIdentity(Boolean.TRUE.equals(consultantMap.get("hasOtherIdentity")));
+    var otherIdentityTypes = (List<String>) consultantMap.get("otherIdentityTypes");
+    consultant.setOtherIdentityTypes(
+        otherIdentityTypes == null
+            ? new ArrayList<>()
+            : otherIdentityTypes.stream()
+                .map(ConsultantDTO.OtherIdentityTypesEnum::fromValue)
+                .collect(Collectors.toList()));
 
-    // Handle missing Keycloak users gracefully
+    // Handle missing identity-provider users gracefully.
     boolean isGroupChatConsultant = false;
     try {
       isGroupChatConsultant =
-          identityClient.userHasRole(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+          identityManager.hasRole(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT);
     } catch (Exception e) {
-      // If user doesn't exist in Keycloak, assume they don't have the role
+      // If the identity provider cannot resolve the user, assume they do not have the role.
       log.debug("Could not check role for consultant {}: {}", consultant.getId(), e.getMessage());
     }
     consultant.setIsGroupchatConsultant(isGroupChatConsultant);

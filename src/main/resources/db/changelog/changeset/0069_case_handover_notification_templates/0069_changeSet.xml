@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+    xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.4.xsd">
+  <changeSet id="0069_case_handover_notification_templates" author="caritas">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists
+            tableName="case_handover_reason_policy"
+            columnName="client_notification_templates"/>
+      </not>
+    </preConditions>
+    <sqlFile
+        path="db/changelog/changeset/0069_case_handover_notification_templates/addClientNotificationTemplates.sql"
+        splitStatements="true"
+        endDelimiter=";"/>
+  </changeSet>
+</databaseChangeLog>

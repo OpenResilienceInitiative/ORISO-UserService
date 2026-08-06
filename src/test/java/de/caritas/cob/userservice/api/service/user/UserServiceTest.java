@@ -3,11 +3,9 @@ package de.caritas.cob.userservice.api.service.user;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AUTHENTICATED_USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.EMAIL;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.IS_LANGUAGE_FORMAL;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.RC_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USERNAME;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_NO_RC_USER_ID;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
@@ -18,7 +16,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
@@ -29,13 +26,13 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserMobileToken;
 import de.caritas.cob.userservice.api.port.out.UserMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -65,6 +62,26 @@ class UserServiceTest {
 
     assertNotNull(result);
     assertEquals(USER, result);
+  }
+
+  @Test
+  void createUser_Should_PersistCurrentTenant() {
+    TenantContext.setCurrentTenant(83L);
+    when(userRepository.save(Mockito.any()))
+        .thenAnswer(
+            invocation -> {
+              User persistedUser = invocation.getArgument(0);
+              assertEquals(83L, persistedUser.getTenantId());
+              return persistedUser;
+            });
+
+    try {
+      var result = userService.createUser(USER_ID, USERNAME, EMAIL, IS_LANGUAGE_FORMAL);
+
+      assertEquals(83L, result.getTenantId());
+    } finally {
+      TenantContext.clear();
+    }
   }
 
   @Test
@@ -111,40 +128,6 @@ class UserServiceTest {
     userService.deleteUser(USER);
 
     verify(userRepository, times(1)).delete(Mockito.any());
-  }
-
-  @Test
-  void findUserByRcUserId_Should_ReturnUser_WhenRepositoryCallIsSuccessful() {
-    when(userRepository.findByRcUserIdAndDeleteDateIsNull(Mockito.anyString()))
-        .thenReturn(Optional.of(USER));
-
-    Optional<User> result = userService.findUserByRcUserId(USER_ID);
-
-    assertTrue(result.isPresent());
-    assertEquals(USER, result.get());
-  }
-
-  @Test
-  void updateRocketChatIdInDatabase_Should_UpdateUserObjectAndSaveToDb() {
-    userService.updateRocketChatIdInDatabase(USER_NO_RC_USER_ID, RC_USER_ID);
-
-    var captor = ArgumentCaptor.forClass(User.class);
-    verify(userRepository, times(1)).save(captor.capture());
-    assertEquals(RC_USER_ID, captor.getValue().getRcUserId());
-  }
-
-  @Test
-  void updateRocketChatIdInDatabase_ShouldNot_UpdateUserObject_When_UserNotGiven() {
-    userService.updateRocketChatIdInDatabase(null, RC_USER_ID);
-
-    verifyNoInteractions(userRepository);
-  }
-
-  @Test
-  void updateRocketChatIdInDatabase_ShouldNot_UpdateUserObject_When_UserIdNotGiven() {
-    userService.updateRocketChatIdInDatabase(USER_NO_RC_USER_ID, "");
-
-    verifyNoInteractions(userRepository);
   }
 
   @Test

@@ -25,4 +25,8 @@ public interface AppointmentRepository extends CrudRepository<Appointment, UUID>
   @Modifying
   @Query(value = "DELETE FROM appointment WHERE `datetime` <= :datetime", nativeQuery = true)
   void deleteOlderThan(Instant datetime);
+
+  @Modifying
+  @Query(value = "DELETE FROM appointment WHERE id = :id", nativeQuery = true)
+  int deleteExistingById(UUID id);
 }

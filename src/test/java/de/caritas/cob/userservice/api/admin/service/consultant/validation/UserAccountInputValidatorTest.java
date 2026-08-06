@@ -6,18 +6,15 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
-import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
-import javax.validation.Path;
-import javax.validation.Validator;
+import jakarta.validation.Path;
+import jakarta.validation.Validator;
 import org.hibernate.validator.internal.engine.ConstraintViolationImpl;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -74,29 +71,6 @@ public class UserAccountInputValidatorTest {
           e.getCustomHttpHeaders().get("X-Reason").get(0),
           is(MISSING_ABSENCE_MESSAGE_FOR_ABSENT_USER.name()));
     }
-  }
-
-  @Test
-  public void validateKeycloakResponse_ShouldNot_throwException_When_keycloakResponseDTOIsValid() {
-    KeycloakCreateUserResponseDTO responseDTO = new KeycloakCreateUserResponseDTO();
-    responseDTO.setUserId("userId");
-
-    try {
-      this.userAccountInputValidator.validateKeycloakResponse(responseDTO);
-    } catch (Exception e) {
-      fail("Exception should not be thrown");
-    }
-  }
-
-  @Test
-  public void validateKeycloakResponse_Should_throwKeycloakException_When_userIdIsNull() {
-    assertThrows(
-        KeycloakException.class,
-        () -> {
-          KeycloakCreateUserResponseDTO responseDTO = new KeycloakCreateUserResponseDTO();
-
-          this.userAccountInputValidator.validateKeycloakResponse(responseDTO);
-        });
   }
 
   @Test

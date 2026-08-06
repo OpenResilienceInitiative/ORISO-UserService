@@ -1,46 +1,24 @@
 package de.caritas.cob.userservice.api.facade.assignsession;
 
-import static de.caritas.cob.userservice.api.testHelper.AsyncVerification.verifyAsync;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
-import static java.util.Arrays.asList;
-import static java.util.Objects.requireNonNull;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.is;
-import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
-import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.argThat;
-import static org.mockito.Mockito.atLeastOnce;
-import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.util.ReflectionTestUtils.getField;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.group.GroupMemberDTO;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
-import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.SessionAssignmentChatGateway;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.AssignSessionStatisticsEvent;
-import de.caritas.cob.userservice.statisticsservice.generated.web.model.UserRole;
+import jakarta.servlet.http.HttpServletRequest;
 import java.util.List;
-import javax.servlet.http.HttpServletRequest;
-import org.apache.commons.lang3.RandomStringUtils;
-import org.jeasy.random.EasyRandom;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -48,210 +26,78 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class AssignSessionFacadeTest {
 
-  private static final EasyRandom easyRandom = new EasyRandom();
+  private static final String ROOM_ID = "!session:matrix.example";
 
   @InjectMocks AssignSessionFacade assignSessionFacade;
-  @Mock RocketChatFacade rocketChatFacade;
-  @Mock ConsultingTypeManager consultingTypeManager;
-
+  @Mock SessionAssignmentChatGateway sessionAssignmentChatGateway;
   @Mock SessionService sessionService;
-
-  @Mock
-  @SuppressWarnings("unused")
-  KeycloakService keycloakService;
-
   @Mock EmailNotificationFacade emailNotificationFacade;
   @Mock AuthenticatedUser authenticatedUser;
   @Mock SessionToConsultantVerifier sessionToConsultantVerifier;
   @Mock UnauthorizedMembersProvider unauthorizedMembersProvider;
   @Mock StatisticsService statisticsService;
   @Mock HttpServletRequest httpServletRequest;
+  @Mock Session session;
+  @Mock User user;
+  @Mock Consultant consultantToAssign;
+  @Mock Consultant authenticatedConsultant;
+  @Mock Consultant consultantToRemove;
 
-  @Test
-  void assignSession_Should_removeAllUnauthorizedMembers_When_sessionIsNotATeamSession() {
-    Session session = easyRandom.nextObject(Session.class);
-    session.setTeamSession(false);
-    session.setStatus(SessionStatus.NEW);
-    session.setConsultant(null);
-    session.getUser().setRcUserId("userRcId");
-    session.setRegistrationType(RegistrationType.REGISTERED);
-    session.setAgencyId(1L);
-    ConsultantAgency consultantAgency = easyRandom.nextObject(ConsultantAgency.class);
-    consultantAgency.setAgencyId(1L);
-    Consultant consultant = easyRandom.nextObject(Consultant.class);
-    consultant.setConsultantAgencies(asSet(consultantAgency));
-    consultant.setRocketChatId("consultantRcId");
-    when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(
-            asList(
-                new GroupMemberDTO("userRcId", null, "name", null, null),
-                new GroupMemberDTO("consultantRcId", null, "name", null, null),
-                new GroupMemberDTO("otherRcId", null, "name", null, null)));
-    Consultant consultantToRemove = easyRandom.nextObject(Consultant.class);
-    consultantToRemove.setRocketChatId("otherRcId");
-    when(this.authenticatedUser.getUserId()).thenReturn("authenticatedUserId");
-    when(unauthorizedMembersProvider.obtainConsultantsToRemove(any(), any(), any(), any(), any()))
+  @BeforeEach
+  void setUp() {
+    when(session.getId()).thenReturn(42L);
+    when(session.getStatus()).thenReturn(SessionStatus.IN_PROGRESS);
+    when(session.getMatrixRoomId()).thenReturn(ROOM_ID);
+    when(session.getUser()).thenReturn(user);
+    when(user.getUsername()).thenReturn("advice-seeker");
+    when(consultantToAssign.getId()).thenReturn("new-consultant");
+    when(authenticatedUser.getUserId()).thenReturn("assigning-consultant");
+    when(sessionAssignmentChatGateway.findMemberIds(ROOM_ID))
+        .thenReturn(List.of("@old:matrix.example", "@new:matrix.example"));
+    when(unauthorizedMembersProvider.obtainConsultantsToRemove(
+            ROOM_ID,
+            session,
+            consultantToAssign,
+            List.of("@old:matrix.example", "@new:matrix.example"),
+            authenticatedConsultant))
         .thenReturn(List.of(consultantToRemove));
-    var consultantToKeep = easyRandom.nextObject(Consultant.class);
-
-    assignSessionFacade.assignSession(session, consultant, consultantToKeep);
-
-    verify(sessionToConsultantVerifier, times(1))
-        .verifyPreconditionsForAssignment(
-            argThat(
-                consultantSessionDTO ->
-                    consultantSessionDTO.getConsultant().equals(consultant)
-                        && consultantSessionDTO.getSession().equals(session)));
-    verifyAsync(
-        a ->
-            verify(this.rocketChatFacade, atLeastOnce())
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    consultantToRemove.getRocketChatId(), session.getGroupId()));
-    verifyAsync(
-        a ->
-            verify(this.rocketChatFacade, atLeastOnce())
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    consultantToRemove.getRocketChatId(), session.getGroupId()));
-    verify(this.emailNotificationFacade, times(1))
-        .sendAssignEnquiryEmailNotification(any(), any(), any(), any());
   }
 
   @Test
-  void assignSession_ShouldNot_removeTeamMembers_When_sessionIsTeamSession() {
-    Session session = easyRandom.nextObject(Session.class);
-    session.setTeamSession(false);
-    session.setStatus(SessionStatus.NEW);
-    session.setConsultant(null);
-    session.getUser().setRcUserId("userRcId");
-    session.setRegistrationType(RegistrationType.REGISTERED);
-    session.setAgencyId(1L);
-    ConsultantAgency consultantAgency = easyRandom.nextObject(ConsultantAgency.class);
-    consultantAgency.setAgencyId(1L);
-    Consultant consultant = easyRandom.nextObject(Consultant.class);
-    consultant.setConsultantAgencies(asSet(consultantAgency));
-    consultant.setRocketChatId("newConsultantRcId");
-    when(this.rocketChatFacade.retrieveRocketChatMembers(anyString()))
-        .thenReturn(
-            asList(
-                new GroupMemberDTO("userRcId", null, "name", null, null),
-                new GroupMemberDTO("newConsultantRcId", null, "name", null, null),
-                new GroupMemberDTO("otherRcId", null, "name", null, null),
-                new GroupMemberDTO("teamConsultantRcId", null, "name", null, null),
-                new GroupMemberDTO("teamConsultantRcId2", null, "name", null, null)));
-    Consultant consultantToRemove = easyRandom.nextObject(Consultant.class);
-    consultantToRemove.setRocketChatId("otherRcId");
-    when(this.authenticatedUser.getUserId()).thenReturn("authenticatedUserId");
-    when(unauthorizedMembersProvider.obtainConsultantsToRemove(any(), any(), any(), any(), any()))
-        .thenReturn(List.of(consultantToRemove));
-    var consultantToKeep = easyRandom.nextObject(Consultant.class);
+  void assignSessionPreparesMatrixMembershipBeforePersistingTheAssignment() {
+    assignSessionFacade.assignSession(session, consultantToAssign, authenticatedConsultant);
 
-    assignSessionFacade.assignSession(session, consultant, consultantToKeep);
-
-    verify(sessionToConsultantVerifier, times(1))
-        .verifyPreconditionsForAssignment(
-            argThat(
-                consultantSessionDTO ->
-                    consultantSessionDTO.getConsultant().equals(consultant)
-                        && consultantSessionDTO.getSession().equals(session)));
-    verifyAsync(
-        a ->
-            verify(this.rocketChatFacade, atLeastOnce())
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    consultantToRemove.getRocketChatId(), session.getGroupId()));
-    verifyAsync(
-        a ->
-            verify(this.rocketChatFacade, never())
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    "teamConsultantRcId", session.getGroupId()));
-    verifyAsync(
-        a ->
-            verify(this.rocketChatFacade, never())
-                .removeUserFromGroupIgnoreGroupNotFound(
-                    "teamConsultantRcId2", session.getGroupId()));
-    verifyAsync(
-        a ->
-            verify(this.emailNotificationFacade, times(1))
-                .sendAssignEnquiryEmailNotification(any(), any(), any(), any()));
+    var order = inOrder(sessionAssignmentChatGateway, sessionService);
+    order.verify(sessionAssignmentChatGateway).prepareAssignment(session, consultantToAssign);
+    order
+        .verify(sessionService)
+        .updateConsultantAndStatusForSession(
+            session, consultantToAssign, SessionStatus.IN_PROGRESS);
   }
 
   @Test
-  void assignSession_Should_FireAssignSessionStatisticsEvent() {
-    Session session = new EasyRandom().nextObject(Session.class);
-    session.setTeamSession(false);
-    session.setStatus(SessionStatus.NEW);
-    session.setConsultant(null);
-    session.getUser().setRcUserId("userRcId");
-    session.setRegistrationType(RegistrationType.REGISTERED);
-    session.setAgencyId(1L);
-    ConsultantAgency consultantAgency = easyRandom.nextObject(ConsultantAgency.class);
-    consultantAgency.setAgencyId(1L);
-    Consultant consultant = easyRandom.nextObject(Consultant.class);
-    consultant.setConsultantAgencies(asSet(consultantAgency));
-    consultant.setRocketChatId("newConsultantRcId");
-    Consultant consultantToRemove = easyRandom.nextObject(Consultant.class);
-    consultantToRemove.setRocketChatId("otherRcId");
-    when(this.authenticatedUser.getUserId()).thenReturn("authenticatedUserId");
-    when(httpServletRequest.getRequestURI()).thenReturn(RandomStringUtils.randomAlphanumeric(32));
-    when(httpServletRequest.getHeader("Referer"))
-        .thenReturn(RandomStringUtils.randomAlphanumeric(32));
+  void assignSessionRemovesUnauthorizedMatrixConsultants() {
+    assignSessionFacade.assignSession(session, consultantToAssign, authenticatedConsultant);
 
-    this.assignSessionFacade.assignSession(session, consultant, CONSULTANT);
-
-    verify(statisticsService, times(1)).fireEvent(any(AssignSessionStatisticsEvent.class));
-
-    var captor = ArgumentCaptor.forClass(AssignSessionStatisticsEvent.class);
-    verify(statisticsService).fireEvent(captor.capture());
-
-    var event = captor.getValue();
-    var userId = requireNonNull(getField(event, "userId")).toString();
-    assertThat(userId, is(consultant.getId()));
-    var userRole = requireNonNull(getField(event, "userRole")).toString();
-    assertThat(userRole, is(UserRole.CONSULTANT.toString()));
-    var sessionId = Long.valueOf(requireNonNull(getField(event, "sessionId").toString()));
-    assertThat(sessionId, is(session.getId()));
-
-    assertEquals(httpServletRequest.getRequestURI(), event.getRequestUri());
-    assertEquals(httpServletRequest.getHeader("Referer"), event.getRequestReferer());
-    assertEquals(authenticatedUser.getUserId(), event.getRequestUserId());
+    verify(sessionAssignmentChatGateway).findMemberIds(ROOM_ID);
+    verify(sessionAssignmentChatGateway)
+        .removeConsultants(session, consultantToAssign, List.of(consultantToRemove));
   }
 
   @Test
-  void assignSession_Should_FireAssignSessionStatisticsEventWithoutOptionalArgs() {
-    var session = easyRandom.nextObject(Session.class);
-    session.setTeamSession(false);
-    session.setStatus(SessionStatus.NEW);
-    session.setConsultant(null);
-    session.getUser().setRcUserId("userRcId");
-    session.setRegistrationType(RegistrationType.REGISTERED);
-    session.setAgencyId(1L);
+  void assignSessionSendsTheConsultantChangeEmail() {
+    assignSessionFacade.assignSession(session, consultantToAssign, authenticatedConsultant);
 
-    var consultantAgency = easyRandom.nextObject(ConsultantAgency.class);
-    consultantAgency.setAgencyId(1L);
-    var consultant = easyRandom.nextObject(Consultant.class);
-    consultant.setConsultantAgencies(asSet(consultantAgency));
-    consultant.setRocketChatId("newConsultantRcId");
+    verify(emailNotificationFacade)
+        .sendAssignEnquiryEmailNotification(
+            consultantToAssign, "assigning-consultant", "advice-seeker", null);
+  }
 
-    var consultantToRemove = easyRandom.nextObject(Consultant.class);
-    consultantToRemove.setRocketChatId("otherRcId");
+  @Test
+  void assignSessionFiresTheStatisticsEvent() {
+    assignSessionFacade.assignSession(session, consultantToAssign, authenticatedConsultant);
 
-    when(authenticatedUser.getUserId()).thenReturn("authenticatedUserId");
-
-    assignSessionFacade.assignSession(session, consultant, CONSULTANT);
-
-    verify(statisticsService).fireEvent(any(AssignSessionStatisticsEvent.class));
-
-    var captor = ArgumentCaptor.forClass(AssignSessionStatisticsEvent.class);
-    verify(statisticsService).fireEvent(captor.capture());
-
-    var event = captor.getValue();
-    var userId = requireNonNull(getField(event, "userId")).toString();
-    assertThat(userId, is(consultant.getId()));
-    var userRole = requireNonNull(getField(event, "userRole")).toString();
-    assertThat(userRole, is(UserRole.CONSULTANT.toString()));
-    var sessionId = Long.valueOf(requireNonNull(getField(event, "sessionId")).toString());
-    assertThat(sessionId, is(session.getId()));
-
-    assertNull(event.getRequestUri());
-    assertNull(event.getRequestReferer());
+    verify(statisticsService)
+        .fireEvent(org.mockito.ArgumentMatchers.any(AssignSessionStatisticsEvent.class));
   }
 }

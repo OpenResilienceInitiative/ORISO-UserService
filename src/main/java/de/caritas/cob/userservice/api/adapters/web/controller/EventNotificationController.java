@@ -1,10 +1,18 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.NotificationRoomLevel;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
-import javax.validation.constraints.Min;
-import javax.validation.constraints.NotBlank;
+import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
+import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
+import jakarta.validation.Valid;
+import jakarta.validation.constraints.Min;
+import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.Size;
+import java.util.Locale;
+import java.util.Optional;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -25,8 +33,9 @@ import org.springframework.web.bind.annotation.RestController;
 public class EventNotificationController {
 
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull TeamDiscussionNotificationService teamDiscussionNotificationService;
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull RedisMessageMirrorService redisMessageMirrorService;
+  private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
   @GetMapping
   public ResponseEntity<EventNotificationService.NotificationFeedResponse> getFeed(
@@ -66,51 +75,208 @@ public class EventNotificationController {
 
   @PostMapping("/message-events")
   public ResponseEntity<Void> createMessageEventNotification(
-      @RequestBody MessageEventRequestDTO request) {
+      @Valid @RequestBody MessageEventRequestDTO request) {
     if (request == null || request.getRoomId() == null || request.getRoomId().isBlank()) {
       return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
     }
 
+    if (request.getTeamDiscussion() != null && request.getTeamDiscussion()) {
+      // US#473: team-discussion rooms have no session recipient pair — dedicated hybrid fan-out.
+      teamDiscussionNotificationService.createTeamDiscussionNotification(
+          request.getRoomId(),
+          authenticatedUser.getUserId(),
+          request.getSenderDisplayName(),
+          request.getMentionedUserIds());
+      return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+    }
+
+    // #942: the Matrix event id (when the client sends it) keys deduplication,
+    // so this producer and the server-side Matrix listener collapse into one
+    // row per recipient for the same message.
+    PrivacyEnvelope envelope =
+        request.getMatrixEventId() != null && !request.getMatrixEventId().isBlank()
+            ? PrivacyEnvelope.builder()
+                .messageId(request.getMatrixEventId())
+                .roomId(request.getRoomId())
+                .senderId(authenticatedUser.getUserId())
+                // Mirror MatrixEventListenerService#buildPrivacyEnvelope so the
+                // persisted row keeps the correct content class no matter which
+                // producer wins the dedup race.
+                .contentClass(normaliseContentClass(request.getContentClass()))
+                .hasAttachment(request.getHasAttachment() != null && request.getHasAttachment())
+                .build()
+            : null;
     if (request.getThreadRootId() != null && !request.getThreadRootId().isBlank()) {
       eventNotificationService.createThreadReplyNotificationFromRoom(
           request.getRoomId(),
           authenticatedUser.getUserId(),
           request.getMessagePreview(),
           request.getThreadRootId(),
-          request.getMatrixRoom() == null || request.getMatrixRoom(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
           request.getSenderDisplayName(),
-          request.getThreadParentPreview());
+          request.getThreadParentPreview(),
+          envelope);
     } else {
       eventNotificationService.createMessageNotificationFromRoom(
           request.getRoomId(),
           authenticatedUser.getUserId(),
           request.getMessagePreview(),
-          request.getMatrixRoom() == null || request.getMatrixRoom(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
-          request.getSenderDisplayName());
+          request.getSenderDisplayName(),
+          envelope);
     }
 
     // Debug-only mirror to Redis for Redis Commander verification of outgoing preview flow.
-    redisMessageMirrorService.mirrorOutgoingMessage(
-        null,
-        request.getRoomId(),
-        authenticatedUser.getUsername(),
-        authenticatedUser.getRoles() != null && authenticatedUser.getRoles().contains("consultant"),
-        request.getMessagePreview(),
-        null);
+    redisMessageMirrorService.ifPresent(
+        mirror ->
+            mirror.mirrorOutgoingMessage(
+                null,
+                request.getRoomId(),
+                authenticatedUser.getUsername(),
+                authenticatedUser.getRoles() != null
+                    && authenticatedUser.getRoles().contains("consultant"),
+                request.getMessagePreview(),
+                null));
 
     return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+  }
+
+  /** Vocabulary of {@code MatrixEventListenerService#classifyContent}. */
+  private static final Set<String> KNOWN_CONTENT_CLASSES =
+      Set.of("TEXT", "IMAGE", "FILE", "AUDIO", "VIDEO", "NOTICE", "EMOTE", "OTHER", "UNKNOWN");
+
+  /**
+   * Keep the client-supplied content class inside the classification vocabulary of {@code
+   * MatrixEventListenerService#classifyContent} — it feeds notification fallback text and the
+   * structured params rendered for other users.
+   */
+  private static String normaliseContentClass(String contentClass) {
+    if (contentClass == null || contentClass.isBlank()) {
+      return null;
+    }
+    String normalised = contentClass.trim().toUpperCase(Locale.ROOT);
+    return KNOWN_CONTENT_CLASSES.contains(normalised) ? normalised : "OTHER";
+  }
+
+  /**
+   * US#473: mirrors the user's per-conversation notification level (All / Mentions / Muted /
+   * Snoozed) so the server-side fan-out can honour it.
+   */
+  @PatchMapping("/conversation-level")
+  public ResponseEntity<Void> updateConversationLevel(
+      @RequestBody ConversationLevelRequestDTO request) {
+    if (request == null || request.getRoomId() == null || request.getRoomId().isBlank()) {
+      return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+    }
+    NotificationRoomLevel.Level level;
+    try {
+      level =
+          request.getLevel() != null
+              ? NotificationRoomLevel.Level.valueOf(request.getLevel().toUpperCase())
+              : NotificationRoomLevel.Level.ALL;
+    } catch (IllegalArgumentException ex) {
+      return new ResponseEntity<>(HttpStatus.BAD_REQUEST);
+    }
+    teamDiscussionNotificationService.updateConversationLevel(
+        authenticatedUser.getUserId(), request.getRoomId(), level, request.getSnoozedUntil());
+    return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+  }
+
+  public static class ConversationLevelRequestDTO {
+    @NotBlank private String roomId;
+    private String level;
+    private java.time.LocalDateTime snoozedUntil;
+
+    public String getRoomId() {
+      return roomId;
+    }
+
+    public void setRoomId(String roomId) {
+      this.roomId = roomId;
+    }
+
+    public String getLevel() {
+      return level;
+    }
+
+    public void setLevel(String level) {
+      this.level = level;
+    }
+
+    public java.time.LocalDateTime getSnoozedUntil() {
+      return snoozedUntil;
+    }
+
+    public void setSnoozedUntil(java.time.LocalDateTime snoozedUntil) {
+      this.snoozedUntil = snoozedUntil;
+    }
   }
 
   public static class MessageEventRequestDTO {
     @NotBlank private String roomId;
     private String messagePreview;
-    private Boolean matrixRoom;
     private String threadRootId;
     private Boolean supervisorMessage;
     private String senderDisplayName;
     private String threadParentPreview;
+    private Boolean teamDiscussion;
+    private java.util.List<String> mentionedUserIds;
+
+    /**
+     * Matrix event id of the message this event mirrors (#942, dedup key). Matrix event ids are at
+     * most 255 chars; the bound keeps oversized values away from the 191-char dedup column.
+     */
+    @Size(max = 255)
+    private String matrixEventId;
+
+    /**
+     * Optional content class of the mirrored message, from the client's {@code msgtype} — mirrors
+     * {@code MatrixEventListenerService#classifyContent} (TEXT, IMAGE, FILE, AUDIO, VIDEO, ...).
+     */
+    private String contentClass;
+
+    /** Optional: whether the mirrored message carries an attachment. */
+    private Boolean hasAttachment;
+
+    public Boolean getTeamDiscussion() {
+      return teamDiscussion;
+    }
+
+    public String getMatrixEventId() {
+      return matrixEventId;
+    }
+
+    public void setMatrixEventId(String matrixEventId) {
+      this.matrixEventId = matrixEventId;
+    }
+
+    public String getContentClass() {
+      return contentClass;
+    }
+
+    public void setContentClass(String contentClass) {
+      this.contentClass = contentClass;
+    }
+
+    public Boolean getHasAttachment() {
+      return hasAttachment;
+    }
+
+    public void setHasAttachment(Boolean hasAttachment) {
+      this.hasAttachment = hasAttachment;
+    }
+
+    public void setTeamDiscussion(Boolean teamDiscussion) {
+      this.teamDiscussion = teamDiscussion;
+    }
+
+    public java.util.List<String> getMentionedUserIds() {
+      return mentionedUserIds;
+    }
+
+    public void setMentionedUserIds(java.util.List<String> mentionedUserIds) {
+      this.mentionedUserIds = mentionedUserIds;
+    }
 
     public String getRoomId() {
       return roomId;
@@ -126,14 +292,6 @@ public class EventNotificationController {
 
     public void setMessagePreview(String messagePreview) {
       this.messagePreview = messagePreview;
-    }
-
-    public Boolean getMatrixRoom() {
-      return matrixRoom;
-    }
-
-    public void setMatrixRoom(Boolean matrixRoom) {
-      this.matrixRoom = matrixRoom;
     }
 
     public String getThreadRootId() {

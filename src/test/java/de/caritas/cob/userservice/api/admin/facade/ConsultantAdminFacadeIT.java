@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.admin.facade;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
-import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.core.Is.is;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.Mockito.when;
@@ -28,27 +27,29 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.RolesDTO;
+import jakarta.persistence.EntityManager;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import javax.persistence.EntityManager;
 import org.jeasy.random.EasyRandom;
 import org.jeasy.random.EasyRandomParameters;
 import org.jeasy.random.FieldPredicates;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class ConsultantAdminFacadeIT {
 
   @Autowired private ConsultantAdminFacade consultantAdminFacade;
@@ -57,13 +58,27 @@ class ConsultantAdminFacadeIT {
 
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
-  @MockBean private AgencyAdminService agencyAdminService;
+  @MockitoBean private AgencyAdminService agencyAdminService;
 
-  @MockBean private ConsultingTypeManager consultingTypeManager;
+  @MockitoBean private ConsultingTypeManager consultingTypeManager;
 
-  @MockBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  @MockitoBean private AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
   @Autowired private EntityManager entityManager;
+
+  private final Set<String> createdConsultantIds = new HashSet<>();
+
+  @BeforeEach
+  @AfterEach
+  void cleanDatabase() {
+    createdConsultantIds.forEach(
+        consultantId -> {
+          consultantAgencyRepository.deleteAll(
+              consultantAgencyRepository.findByConsultantId(consultantId));
+          consultantRepository.findById(consultantId).ifPresent(consultantRepository::delete);
+        });
+    createdConsultantIds.clear();
+  }
 
   @Test
   void findFilteredConsultants_Should_retrieveDeletedAgencyRelations_When_consultantIsDeleted() {
@@ -74,18 +89,15 @@ class ConsultantAdminFacadeIT {
             1,
             100,
             new ConsultantFilter(),
-            new Sort().field(FieldEnum.FIRSTNAME).order(OrderEnum.ASC));
-    var resultConsultant =
+            new Sort().field(FieldEnum.FIRST_NAME).order(OrderEnum.ASC));
+    var resultConsultants =
         searchResult.getEmbedded().stream()
             .filter(
                 consultantResponse ->
                     consultantResponse.getEmbedded().getId().equals(consultant.getId()))
-            .collect(Collectors.toSet())
-            .iterator()
-            .next();
+            .collect(Collectors.toSet());
 
-    assertThat(resultConsultant.getEmbedded().getDeleteDate(), notNullValue());
-    assertThat(resultConsultant.getEmbedded().getAgencies(), hasSize(10));
+    assertThat(resultConsultants, hasSize(0));
   }
 
   @Test
@@ -98,7 +110,7 @@ class ConsultantAdminFacadeIT {
             1,
             100,
             new ConsultantFilter(),
-            new Sort().field(FieldEnum.FIRSTNAME).order(OrderEnum.ASC));
+            new Sort().field(FieldEnum.FIRST_NAME).order(OrderEnum.ASC));
     var resultConsultant =
         searchResult.getEmbedded().stream()
             .filter(
@@ -120,7 +132,9 @@ class ConsultantAdminFacadeIT {
     var parameters = baseConsultantParameters().excludeField(FieldPredicates.named("deleteDate"));
     var consultant = new EasyRandom(parameters).nextObject(Consultant.class);
     consultant.setLanguages(null);
-    consultantRepository.save(consultant);
+    consultant.setConsultantTopics(null);
+    consultant = consultantRepository.save(consultant);
+    createdConsultantIds.add(consultant.getId());
     var consultantAgencies = buildPersistedAgenciesForConsultant(20, 5, consultant);
     consultant.setConsultantAgencies(consultantAgencies);
     mockAgencyServiceResponse(consultantAgencies);
@@ -147,7 +161,8 @@ class ConsultantAdminFacadeIT {
         .excludeField(FieldPredicates.named("languages"))
         .excludeField(FieldPredicates.named("consultantMobileTokens"))
         .excludeField(FieldPredicates.named("appointments"))
-        .excludeField(FieldPredicates.named("sessions"));
+        .excludeField(FieldPredicates.named("sessions"))
+        .excludeField(FieldPredicates.named("consultantTopics"));
   }
 
   private Set<ConsultantAgency> buildPersistedAgenciesForConsultant(
@@ -155,7 +170,11 @@ class ConsultantAdminFacadeIT {
     var consultantAgencies =
         new EasyRandom()
             .objects(ConsultantAgency.class, amount)
-            .peek(agencyRelation -> agencyRelation.setConsultant(consultant))
+            .peek(
+                agencyRelation -> {
+                  agencyRelation.setId(null);
+                  agencyRelation.setConsultant(consultant);
+                })
             .collect(Collectors.toList());
     for (int i = 0; i < notDeletedAmount; i++) {
       consultantAgencies.get(i).setDeleteDate(null);
@@ -168,8 +187,10 @@ class ConsultantAdminFacadeIT {
   private Consultant givenAPersistedDeletedConsultantWithTenAgencies() {
     var consultant = new EasyRandom(baseConsultantParameters()).nextObject(Consultant.class);
     consultant.setLanguages(null);
+    consultant.setConsultantTopics(null);
     consultant.setId(UUID.randomUUID().toString());
-    consultantRepository.save(consultant);
+    consultant = consultantRepository.save(consultant);
+    createdConsultantIds.add(consultant.getId());
     var consultantAgencies = buildPersistedAgenciesForConsultant(10, 0, consultant);
     consultant.setConsultantAgencies(consultantAgencies);
     mockAgencyServiceResponse(consultantAgencies);
@@ -197,7 +218,7 @@ class ConsultantAdminFacadeIT {
 
     var searchResult =
         this.consultantAdminFacade.findFilteredConsultants(
-            1, 100, consultantFilter, new Sort().field(FieldEnum.FIRSTNAME).order(OrderEnum.ASC));
+            1, 100, consultantFilter, new Sort().field(FieldEnum.FIRST_NAME).order(OrderEnum.ASC));
 
     assertThat(searchResult.getEmbedded(), hasSize(0));
 
@@ -205,7 +226,7 @@ class ConsultantAdminFacadeIT {
 
     searchResult =
         this.consultantAdminFacade.findFilteredConsultants(
-            1, 100, consultantFilter, new Sort().field(FieldEnum.FIRSTNAME).order(OrderEnum.ASC));
+            1, 100, consultantFilter, new Sort().field(FieldEnum.FIRST_NAME).order(OrderEnum.ASC));
     assertThat(searchResult.getEmbedded(), hasSize(greaterThanOrEqualTo(1)));
   }
 
@@ -222,16 +243,18 @@ class ConsultantAdminFacadeIT {
     newConsultant.setWalkThroughEnabled(false);
     newConsultant.setFirstName("firstName");
     newConsultant.setEmail("email@email.com");
-    newConsultant.setRocketChatId("rocketChatId");
+    newConsultant.setMatrixUserId("@consultant:matrix.example");
     newConsultant.setEncourage2fa(false);
     newConsultant.setUsername("username");
     newConsultant.setId(id);
     newConsultant.setNotifyEnquiriesRepeating(false);
     newConsultant.setNotifyNewChatMessageFromAdviceSeeker(false);
+    newConsultant.setMagicLinkLoginEnabled(false);
     newConsultant.setLanguageCode(LanguageCode.de);
     newConsultant.setLanguages(null);
 
     consultantRepository.save(newConsultant);
+    createdConsultantIds.add(id);
   }
 
   @Test

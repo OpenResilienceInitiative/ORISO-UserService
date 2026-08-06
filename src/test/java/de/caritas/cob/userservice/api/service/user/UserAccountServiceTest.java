@@ -4,7 +4,6 @@ import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deser
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -16,10 +15,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateDataDTO;
-import de.caritas.cob.userservice.api.adapters.rocketchat.dto.user.UserUpdateRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -28,11 +23,15 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.DeleteAccountStatisticsEvent;
+import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.util.Optional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
@@ -53,14 +52,18 @@ public class UserAccountServiceTest {
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
   @Mock private AuthenticatedUser authenticatedUser;
-  @Mock private KeycloakService keycloakService;
-  @Mock private RocketChatService rocketChatService;
+  @Mock private IdentityClient identityClient;
+  @Mock private IdentityDeactivator identityDeactivator;
   @Mock private UserHelper userHelper;
   @Mock private AppointmentService appointmentService;
 
   @Mock private IdentityClientConfig identityClientConfig;
 
   @Mock private StatisticsService statisticsService;
+
+  @Mock private SupervisorAddedEmailNotificationService supervisorAddedEmailNotificationService;
+
+  @Mock private DeletionLifecycleService deletionLifecycleService;
 
   @Test
   public void findUserByEmail_Should_CallUserService() {
@@ -123,6 +126,16 @@ public class UserAccountServiceTest {
   }
 
   @Test
+  public void retrieveValidatedUser_Should_Throw_ForbiddenException_When_UserIsSoftDeleted() {
+    User deletedUser = mock(User.class);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+    when(userService.findDeletedById(USER_ID)).thenReturn(Optional.of(deletedUser));
+
+    assertThrows(ForbiddenException.class, () -> accountProvider.retrieveValidatedUser());
+  }
+
+  @Test
   public void retrieveValidatedConsultant_Should_ReturnConsultant_When_ConsultantIsPresent() {
     Consultant consultantMock = mock(Consultant.class);
     when(consultantService.getConsultant(any())).thenReturn(Optional.of(consultantMock));
@@ -171,29 +184,24 @@ public class UserAccountServiceTest {
 
   @Test
   public void
-      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakRocketChatAndConsultantRepository_When_authenticatedUserIsConsultant() {
+      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndConsultantRepository_When_authenticatedUserIsConsultant() {
     Consultant consultant = EASY_RANDOM.nextObject(Consultant.class);
     when(this.authenticatedUser.getUserId()).thenReturn("consultant");
     when(this.consultantService.getConsultant("consultant")).thenReturn(Optional.of(consultant));
 
     this.accountProvider.changeUserAccountEmailAddress(Optional.of("newMail"));
 
-    verify(keycloakService).changeEmailAddress("newMail");
-    verify(this.rocketChatService, times(1))
-        .updateUser(
-            new UserUpdateRequestDTO(
-                consultant.getRocketChatId(), new UserUpdateDataDTO("newMail", true)));
+    verify(identityClient).changeEmailAddress("newMail");
     consultant.setEmail("newMail");
     verify(this.consultantService, times(1)).saveConsultant(consultant);
-    verifyNoMoreInteractions(this.rocketChatService);
-    verify(this.userService, times(1)).getUser(any());
+    verify(this.userService, times(2)).getUser(any());
     verifyNoMoreInteractions(this.userService);
     verifyNoInteractions(userHelper);
   }
 
   @Test
   public void
-      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakRocketChatAndUserRepository_When_authenticatedUserIsUser() {
+      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserIsUser() {
     User user = EASY_RANDOM.nextObject(User.class);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));
@@ -201,46 +209,38 @@ public class UserAccountServiceTest {
     final String newMail = "newMail";
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
-    verify(keycloakService).changeEmailAddress(newMail);
-    verify(this.rocketChatService, times(1))
-        .updateUser(
-            new UserUpdateRequestDTO(user.getRcUserId(), new UserUpdateDataDTO(newMail, true)));
+    verify(identityClient).changeEmailAddress(newMail);
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
-    verifyNoMoreInteractions(this.rocketChatService);
-    verify(this.consultantService, times(1)).getConsultant(any());
+    verify(this.consultantService, times(2)).getConsultant(any());
     verifyNoMoreInteractions(this.consultantService);
     verifyNoInteractions(userHelper);
   }
 
   @Test
   public void
-      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakUserRepositoryButNotInRocketChat_When_authenticatedUserIsUserWithoutRocketChatUserId() {
+      changeUserAccountEmailAddress_Should_changeNonEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserHasNoLegacyChatId() {
     User user = EASY_RANDOM.nextObject(User.class);
-    user.setRcUserId(null);
+    user.setMatrixUserId(null);
     when(this.authenticatedUser.getUserId()).thenReturn("user");
     when(this.userService.getUser("user")).thenReturn(Optional.of(user));
 
     final String newMail = "newMail";
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
-    verify(keycloakService).changeEmailAddress(newMail);
-    verify(this.rocketChatService, never())
-        .updateUser(
-            new UserUpdateRequestDTO(user.getRcUserId(), new UserUpdateDataDTO(newMail, true)));
+    verify(identityClient).changeEmailAddress(newMail);
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
-    verifyNoMoreInteractions(this.rocketChatService);
-    verify(this.consultantService, times(1)).getConsultant(any());
+    verify(this.consultantService, times(2)).getConsultant(any());
     verifyNoMoreInteractions(this.consultantService);
     verifyNoInteractions(userHelper);
   }
 
   @Test
   public void
-      changeUserAccountEmailAddress_Should_changeEmptyAddressInKeycloakRocketChatAndConsultantRepository_When_authenticatedUserIsConsultant() {
+      changeUserAccountEmailAddress_Should_changeEmptyAddressInKeycloakAndConsultantRepository_When_authenticatedUserIsConsultant() {
     var consultant = EASY_RANDOM.nextObject(Consultant.class);
     var consultantId = RandomStringUtils.randomAlphabetic(16);
     var dummyEmail = RandomStringUtils.randomAlphabetic(16);
@@ -250,22 +250,17 @@ public class UserAccountServiceTest {
 
     accountProvider.changeUserAccountEmailAddress(Optional.empty());
 
-    verify(keycloakService).deleteEmailAddress();
-    verify(keycloakService, never()).changeEmailAddress(anyString());
-    verify(rocketChatService)
-        .updateUser(
-            new UserUpdateRequestDTO(
-                consultant.getRocketChatId(), new UserUpdateDataDTO(dummyEmail, true)));
+    verify(identityClient).deleteEmailAddress();
+    verify(identityClient, never()).changeEmailAddress(anyString());
     consultant.setEmail(dummyEmail);
     verify(consultantService).saveConsultant(consultant);
-    verifyNoMoreInteractions(rocketChatService);
-    verify(userService).getUser(any());
+    verify(userService, times(2)).getUser(any());
     verifyNoMoreInteractions(userService);
   }
 
   @Test
   public void
-      changeUserAccountEmailAddress_Should_changeEmptyAddressInKeycloakRocketChatAndUserRepository_When_authenticatedUserIsUser() {
+      changeUserAccountEmailAddress_Should_changeEmptyAddressInKeycloakAndUserRepository_When_authenticatedUserIsUser() {
     var user = EASY_RANDOM.nextObject(User.class);
     var userId = RandomStringUtils.randomAlphabetic(16);
     var dummyEmail = RandomStringUtils.randomAlphabetic(16);
@@ -277,17 +272,13 @@ public class UserAccountServiceTest {
 
     accountProvider.changeUserAccountEmailAddress(Optional.empty());
 
-    verify(keycloakService).deleteEmailAddress();
-    verify(keycloakService, never()).changeEmailAddress(anyString());
-    verify(rocketChatService)
-        .updateUser(
-            new UserUpdateRequestDTO(user.getRcUserId(), new UserUpdateDataDTO(dummyEmail, true)));
+    verify(identityClient).deleteEmailAddress();
+    verify(identityClient, never()).changeEmailAddress(anyString());
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), dummyEmail);
     user.setEmail(dummyEmail);
     verify(userService).saveUser(user);
     assertAllAdviceSeekerNotificationsAreEnabled(user);
-    verifyNoMoreInteractions(rocketChatService);
-    verify(consultantService).getConsultant(any());
+    verify(consultantService, times(2)).getConsultant(any());
     verifyNoMoreInteractions(consultantService);
   }
 
@@ -300,6 +291,89 @@ public class UserAccountServiceTest {
     assertThat(notificationsSettingsDTO.getNewChatMessageNotificationEnabled()).isTrue();
   }
 
+  // ---------------------------------------------------------------------------
+  // Extended coverage — 2026-07-03
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void
+      retrieveValidatedConsultantById_Should_ThrowForbiddenException_When_ConsultantIsSoftDeleted() {
+    String consultantId = "soft-deleted-id";
+    when(consultantService.getConsultant(consultantId)).thenReturn(Optional.empty());
+    when(consultantService.findConsultantIncludingDeleted(consultantId))
+        .thenReturn(Optional.of(new Consultant()));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> accountProvider.retrieveValidatedConsultantById(consultantId));
+  }
+
+  @Test
+  public void
+      retrieveValidatedConsultantById_Should_ThrowInternalServerErrorException_When_ConsultantNotFoundAtAll() {
+    String consultantId = "unknown-id";
+    when(consultantService.getConsultant(consultantId)).thenReturn(Optional.empty());
+    when(consultantService.findConsultantIncludingDeleted(consultantId))
+        .thenReturn(Optional.empty());
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> accountProvider.retrieveValidatedConsultantById(consultantId));
+  }
+
+  @Test
+  public void updateUserMobileToken_Should_DoNothing_When_UserIsNotPresent() {
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+
+    accountProvider.updateUserMobileToken("mobileToken");
+
+    verify(userService, never()).saveUser(any());
+  }
+
+  @Test
+  public void
+      ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_UserIsInReadOnlySafeguard() {
+    var user = new User();
+    user.setDeleteDate(java.time.LocalDateTime.now());
+    user.setDeletionLifecycleState(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+            .READ_ONLY_SAFEGUARD);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(user));
+
+    assertThrows(ForbiddenException.class, () -> accountProvider.updateUserMobileToken("token"));
+  }
+
+  @Test
+  public void
+      ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_ConsultantIsInReadOnlySafeguard() {
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+    Consultant consultant = new Consultant();
+    consultant.setDeleteDate(java.time.LocalDateTime.now());
+    consultant.setDeletionLifecycleState(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+            .READ_ONLY_SAFEGUARD);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.of(consultant));
+
+    assertThrows(ForbiddenException.class, () -> accountProvider.addMobileAppToken("token"));
+  }
+
+  @Test
+  public void
+      deactivateAndFlagUserAccountForDeletion_Should_ContinueWithoutEvent_When_StatisticsServiceThrows() {
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(USER));
+    Mockito.doThrow(new RuntimeException("stats service down"))
+        .when(statisticsService)
+        .fireEvent(any());
+
+    accountProvider.deactivateAndFlagUserAccountForDeletion();
+
+    verify(userService).saveUser(USER);
+  }
+
   @Test
   public void
       deactivateAndFlagUserAccountForDeletion_Should_DeactivateKeycloakAccountAndSetDeleteDate() {
@@ -308,10 +382,9 @@ public class UserAccountServiceTest {
 
     this.accountProvider.deactivateAndFlagUserAccountForDeletion();
 
-    verify(keycloakService, times(1)).deactivateUser(USER.getUserId());
-    ArgumentCaptor<User> captor = ArgumentCaptor.forClass(User.class);
-    verify(userService, times(1)).saveUser(captor.capture());
-    assertNotNull(captor.getValue().getDeleteDate());
+    verify(identityDeactivator, times(1)).deactivateUser(USER.getUserId());
+    verify(deletionLifecycleService, times(1)).beginUserDeletion(USER, USER.getUserId());
+    verify(userService, times(1)).saveUser(USER);
     verify(statisticsService).fireEvent(any(DeleteAccountStatisticsEvent.class));
   }
 

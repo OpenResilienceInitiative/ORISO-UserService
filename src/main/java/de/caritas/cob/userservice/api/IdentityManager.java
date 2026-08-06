@@ -1,8 +1,13 @@
 package de.caritas.cob.userservice.api;
 
+import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import java.util.Map;
 import java.util.Optional;
 import lombok.RequiredArgsConstructor;
@@ -15,6 +20,10 @@ import org.springframework.stereotype.Service;
 public class IdentityManager implements IdentityManaging {
 
   private final IdentityClient identityClient;
+  private final IdentityAuthentication identityAuthentication;
+  private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  private final IdentityUsernameAvailability identityUsernameAvailability;
+  private final UsernameTranscoder usernameTranscoder;
 
   @Override
   public Optional<String> setUpOneTimePassword(String username, String email) {
@@ -31,7 +40,7 @@ public class IdentityManager implements IdentityManaging {
     var validationResult = identityClient.finishEmailVerification(username, code);
     if (validationResult.get("created").equals("true")) {
       var email = validationResult.get("email");
-      identityClient.changeEmailAddress(username, email);
+      identityClient.changeEmailAddress(usernameTranscoder.decodeUsername(username), email);
     }
 
     return validationResult;
@@ -39,7 +48,7 @@ public class IdentityManager implements IdentityManaging {
 
   @Override
   public boolean validatePasswordIgnoring2fa(String username, String password) {
-    return identityClient.verifyIgnoringOtp(username, password);
+    return identityAuthentication.verifyPasswordIgnoringSecondFactor(username, password);
   }
 
   @Override
@@ -63,11 +72,27 @@ public class IdentityManager implements IdentityManaging {
   }
 
   @Override
-  public boolean isEmailAvailableOrOwn(String username, String email) {
-    var user = identityClient.findUserByEmail(email);
+  public boolean isUsernameAvailable(String username) {
+    return identityUsernameAvailability.isUsernameAvailable(username);
+  }
 
-    return user.isEmpty()
-        || user.get("encodedUsername").equals(username)
-        || user.get("decodedUsername").equals(username);
+  @Override
+  public boolean isEmailAvailableOrOwn(String username, String email) {
+    var owner = identityEmailOwnerLookup.findByEmail(email);
+    if (owner.isEmpty()) {
+      return true;
+    }
+
+    var ownerUsername = owner.orElseThrow().username();
+    return ownerUsername != null
+        && (username.equals(ownerUsername)
+            || usernameTranscoder
+                .decodeUsername(username)
+                .equals(usernameTranscoder.decodeUsername(ownerUsername)));
+  }
+
+  @Override
+  public boolean hasRole(String userId, UserRole role) {
+    return identityClient.userHasRole(userId, role.getValue());
   }
 }

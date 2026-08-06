@@ -3,9 +3,9 @@ package de.caritas.cob.userservice.api.helper;
 import lombok.Data;
 
 /**
- * ThreadLocal holder for plain (unencrypted) credentials during registration. This is used to
- * capture the plain username/password before JSON deserialization encrypts them. Required for
- * Matrix user creation which needs plain credentials.
+ * ThreadLocal holder for registration data needed before JSON deserialization transforms it. Matrix
+ * account creation needs the plain username for the Matrix localpart; the platform password must
+ * not be retained here.
  */
 public class PlainCredentialsHolder {
 

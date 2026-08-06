@@ -1,6 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static javax.ws.rs.core.MediaType.APPLICATION_JSON;
+import static jakarta.ws.rs.core.MediaType.APPLICATION_JSON;
 import static org.hamcrest.Matchers.is;
 import static org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers.springSecurity;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -12,10 +12,10 @@ import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentServ
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
@@ -28,7 +28,7 @@ class ActuatorControllerIT {
 
   @Autowired private WebApplicationContext context;
 
-  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   private MockMvc mockMvc;
 
@@ -38,11 +38,11 @@ class ActuatorControllerIT {
   }
 
   @Test
-  void getHealtcheck_Should_returnHealtcheck() throws Exception {
+  void getLivenessHealthcheckShouldReturnUp() throws Exception {
 
     // when // then
     mockMvc
-        .perform(get("/actuator/health").contentType(APPLICATION_JSON))
+        .perform(get("/actuator/health/liveness").contentType(APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(jsonPath("status", is("UP")));
   }
@@ -69,13 +69,13 @@ class ActuatorControllerIT {
   }
 
   @Test
-  void getHealtcheck_Should_return403ByCsrfRulesForEndpointsNotExposed() throws Exception {
+  void endpointsThatAreNotExposedShouldReturnNotFound() throws Exception {
     mockMvc
         .perform(get("/actuator/env").contentType(APPLICATION_JSON))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isNotFound());
 
     mockMvc
         .perform(get("/actuator/beans").contentType(APPLICATION_JSON))
-        .andExpect(status().isForbidden());
+        .andExpect(status().isNotFound());
   }
 }

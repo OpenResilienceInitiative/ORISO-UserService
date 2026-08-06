@@ -1,0 +1,14 @@
+[INFO] Scanning for projects...
+[INFO] 
+[INFO] ---------------------< de.caritas.cob:userservice >---------------------
+[INFO] Building UserService 0.0.1-SNAPSHOT
+[INFO]   from pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- spotless:2.23.0:apply (default-cli) @ userservice ---
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD SUCCESS
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  3.351 s
+[INFO] Finished at: 2026-06-25T18:10:16+02:00
+[INFO] ------------------------------------------------------------------------

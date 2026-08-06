@@ -21,28 +21,28 @@ import org.jeasy.random.EasyRandom;
 import org.jetbrains.annotations.NotNull;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 public class ConsultantDataProviderIT {
 
   private final EasyRandom easyRandom = new EasyRandom();
 
   @Autowired private ConsultantDataProvider underTest;
 
-  @MockBean private AgencyService agencyService;
+  @MockitoBean private AgencyService agencyService;
 
-  @MockBean
+  @MockitoBean
   @SuppressWarnings("unused")
   private AuthenticatedUser authenticatedUser;
 
-  @MockBean private ConsultingTypeManager consultingTypeManager;
+  @MockitoBean private ConsultingTypeManager consultingTypeManager;
 
   @Test
   public void

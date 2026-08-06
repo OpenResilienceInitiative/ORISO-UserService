@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static java.util.Collections.emptyList;
+import static java.util.Collections.emptySet;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
@@ -16,11 +17,14 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -36,11 +40,13 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Comparator;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Objects;
@@ -50,13 +56,13 @@ import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
-import javax.ws.rs.BadRequestException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 
 /** Service for sessions */
@@ -95,6 +101,28 @@ public class SessionService {
    */
   public Optional<Session> getSession(Long sessionId) {
     return sessionRepository.findById(sessionId);
+  }
+
+  /** Returns the session while holding a write lock for the surrounding transaction. */
+  public Optional<Session> getSessionForUpdate(Long sessionId) {
+    return sessionRepository.findByIdForUpdate(sessionId);
+  }
+
+  /**
+   * Returns the session only if the authenticated user is allowed to access it.
+   *
+   * @param sessionId the session ID
+   * @param authenticatedUser the authenticated caller
+   * @return the authorized {@link Session}
+   */
+  public Session assertUserHasAccess(Long sessionId, AuthenticatedUser authenticatedUser) {
+    var session =
+        getSession(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
+    var roles = Optional.ofNullable(authenticatedUser.getRoles()).orElse(emptySet());
+
+    checkUserPermissionForSession(session, authenticatedUser.getUserId(), roles);
+    return session;
   }
 
   /**
@@ -196,6 +224,7 @@ public class SessionService {
     var session =
         Session.builder()
             .user(user)
+            .tenantId(TenantContext.getCurrentTenant())
             .consultingTypeId(obtainCheckedConsultingTypeId(extendedConsultingTypeResponseDTO))
             .registrationType(registrationType)
             .postcode(userDto.getPostcode())
@@ -213,8 +242,9 @@ public class SessionService {
             .isConsultantDirectlySet(false)
             .build();
 
-    session.setSessionTopics(createSessionTopics(userDto.getTopicIds(), session));
-    return saveSession(session);
+    Session savedSession = saveSession(session);
+    savedSession.setSessionTopics(createSessionTopics(userDto.getTopicIds(), savedSession));
+    return saveSession(savedSession);
   }
 
   private List<SessionTopic> createSessionTopics(
@@ -257,6 +287,14 @@ public class SessionService {
    * @return the {@link Session}
    */
   public Session saveSession(Session session) {
+    if (session.getConversationType() == null) {
+      session.setConversationType(
+          session.isTeamSession()
+              ? ConversationType.INTERNAL_GROUP
+              : session.getRegistrationType() == Session.RegistrationType.ANONYMOUS
+                  ? ConversationType.LIVE_CHAT
+                  : ConversationType.AGENCY_COUNSELLING);
+    }
     return sessionRepository.save(session);
   }
 
@@ -267,6 +305,7 @@ public class SessionService {
    * @param consultant the consultant
    * @return A list of {@link ConsultantSessionResponseDTO}
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getTeamSessionsForConsultant(Consultant consultant) {
 
     List<Session> sessions = new ArrayList<>();
@@ -336,6 +375,7 @@ public class SessionService {
    * @param consultant the consultant
    * @return the related {@link ConsultantSessionResponseDTO}s
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getRegisteredEnquiriesForConsultant(
       Consultant consultant) {
     List<Session> mergedSessions = new ArrayList<>();
@@ -395,6 +435,7 @@ public class SessionService {
         .findByMainTopicIdInAndConsultantIsNullAndStatusAndRegistrationTypeOrderByCreateDateDesc(
             topicIds, SessionStatus.NEW, RegistrationType.REGISTERED)
         .stream()
+        .filter(this::isAnonymousStyleRegistration)
         .filter(this::isVisibleRegisteredEnquiryForConsultant)
         .collect(Collectors.toList());
   }
@@ -429,6 +470,7 @@ public class SessionService {
    * @param consultant the consultant
    * @return the related {@link ConsultantSessionResponseDTO}s
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getActiveAndDoneSessionsForConsultant(
       Consultant consultant) {
     return Stream.of(
@@ -505,17 +547,17 @@ public class SessionService {
   }
 
   /**
-   * Retrieves user sessions by user ID and rocket chat group IDs
+   * Retrieves user sessions by user ID and Matrix room IDs.
    *
    * @param userId the user ID
-   * @param rcGroupIds rocket chat group IDs
+   * @param matrixRoomIds Matrix room IDs
    * @param roles the roles of the given user
    * @return {@link UserSessionResponseDTO}
    */
-  public List<UserSessionResponseDTO> getSessionsByUserAndGroupIds(
-      String userId, Set<String> rcGroupIds, Set<String> roles) {
+  public List<UserSessionResponseDTO> getSessionsByUserAndRoomIds(
+      String userId, Set<String> matrixRoomIds, Set<String> roles) {
     checkForAskerRoles(roles);
-    var sessions = sessionRepository.findByGroupIds(rcGroupIds);
+    var sessions = sessionRepository.findByMatrixRoomIdIn(matrixRoomIds);
     sessions.forEach(session -> checkAskerPermissionForSession(session, userId, roles));
     List<AgencyDTO> agencies = fetchAgencies(sessions);
     return convertToUserSessionResponseDTO(sessions, agencies);
@@ -563,17 +605,18 @@ public class SessionService {
   }
 
   /**
-   * Retrieves consultant sessions by consultant ID and rocket chat group IDs
+   * Retrieves consultant sessions by consultant ID and Matrix room IDs.
    *
    * @param consultant the ID of the consultant
-   * @param rcGroupIds rocket chat group IDs
+   * @param matrixRoomIds Matrix room IDs
    * @param roles the roles of the given consultant
    * @return {@link ConsultantSessionResponseDTO}
    */
-  public List<ConsultantSessionResponseDTO> getAllowedSessionsByConsultantAndGroupIds(
-      Consultant consultant, Set<String> rcGroupIds, Set<String> roles) {
+  @Transactional(readOnly = true)
+  public List<ConsultantSessionResponseDTO> getAllowedSessionsByConsultantAndRoomIds(
+      Consultant consultant, Set<String> matrixRoomIds, Set<String> roles) {
     checkForUserOrConsultantRole(roles);
-    var sessions = sessionRepository.findByGroupIds(rcGroupIds);
+    var sessions = sessionRepository.findByMatrixRoomIdIn(matrixRoomIds);
 
     List<Session> allowedSessions =
         sessions.stream()
@@ -591,6 +634,7 @@ public class SessionService {
    * @param roles the roles of the given consultant
    * @return {@link ConsultantSessionResponseDTO}
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getSessionsByIds(
       Consultant consultant, Set<Long> sessionIds, Set<String> roles) {
     checkForUserOrConsultantRole(roles);
@@ -602,25 +646,105 @@ public class SessionService {
   }
 
   /**
-   * Returns the session for the provided Rocket.Chat group ID. Logs a warning if the given user is
-   * not allowed to access this session.
+   * Loads anonymous Live Chat queue entries by id for a consultant, applying the exact same
+   * topic-based, cross-tenant visibility the queue itself uses ({@link
+   * de.caritas.cob.userservice.api.conversation.provider.AnonymousEnquiryConversationListProvider}).
    *
-   * @param rcGroupId Rocket.Chat group ID
-   * @param userId Rocket.Chat user ID
+   * <p>#774: the queue makes anonymous NEW enquiries visible by the consultant's topics across
+   * tenants, but {@link #getSessionsByIds} only permits sessions the consultant is assigned to /
+   * shares an agency with, and runs tenant-filtered. A consultant could therefore see a live chat
+   * request in the queue yet receive 204 opening it, blocking acceptance. This method is the scoped
+   * fallback the open path uses so a visible request can always be opened; it never widens access
+   * to registered sessions.
+   */
+  public List<ConsultantSessionResponseDTO> getVisibleAnonymousLiveChatEnquiriesByIds(
+      Consultant consultant, Set<Long> sessionIds) {
+    if (!isNotEmpty(sessionIds)) {
+      return emptyList();
+    }
+    var topicIds = consultantTopicRepository.findTopicIdsByConsultantId(consultant.getId());
+    if (topicIds == null || topicIds.isEmpty()) {
+      return emptyList();
+    }
+    var sessions =
+        runCrossTenant(
+            () ->
+                sessionRepository.findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
+                    sessionIds,
+                    new HashSet<>(topicIds),
+                    SessionStatus.NEW,
+                    RegistrationType.ANONYMOUS));
+    return mapSessionsToConsultantSessionDto(sessions);
+  }
+
+  /**
+   * Loads sessions the consultant is <b>directly assigned to</b> by id, bypassing the tenant
+   * filter.
+   *
+   * <p>#774 follow-up: once a consultant accepts a cross-tenant anonymous Live Chat, the session
+   * becomes IN_PROGRESS and keeps the asker's tenant. The frontend then re-reads it by id to route
+   * to the accepted conversation, but {@link #getSessionsByIds} is tenant-filtered and no longer
+   * matches the anonymous-NEW fallback above, so the post-accept read returns 204 and the accepted
+   * chat never opens. This scoped fallback resolves such a session across tenants, but only when
+   * the consultant is its directly assigned advisor ({@link Session#isAdvisedBy(Consultant)}) — it
+   * never widens access by agency or topic, and it does not change the session's tenant ownership
+   * (the asker keeps seeing their own chat).
+   */
+  public List<ConsultantSessionResponseDTO> getDirectlyAssignedSessionsByIdsCrossTenant(
+      Consultant consultant, Set<Long> sessionIds) {
+    if (!isNotEmpty(sessionIds)) {
+      return emptyList();
+    }
+    var sessions =
+        runCrossTenant(
+            () ->
+                StreamSupport.stream(sessionRepository.findAllById(sessionIds).spliterator(), false)
+                    .filter(session -> session.isAdvisedBy(consultant))
+                    .collect(Collectors.toList()));
+    return mapSessionsToConsultantSessionDto(sessions);
+  }
+
+  /**
+   * Runs a read in technical-tenant context so the anonymous Live Chat visibility query bypasses
+   * the Hibernate tenant filter (the queue is deliberately cross-tenant), restoring the caller's
+   * tenant afterwards so no other query in the request leaks. Mirrors the queue provider's own
+   * guard.
+   */
+  private <T> T runCrossTenant(Supplier<T> query) {
+    var callerTenant = TenantContext.getCurrentTenant();
+    try {
+      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+      return query.get();
+    } finally {
+      if (callerTenant == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.setCurrentTenant(callerTenant);
+      }
+    }
+  }
+
+  /**
+   * Returns the session for the provided Matrix room ID after verifying access.
+   *
+   * @param matrixRoomId Matrix room ID
+   * @param userId application account ID
    * @param roles user roles
    * @return {@link Session}
    */
-  public Session getSessionByGroupIdAndUser(String rcGroupId, String userId, Set<String> roles) {
-    var session = getSessionByGroupId(rcGroupId);
+  public Session getSessionByMatrixRoomIdAndUser(
+      String matrixRoomId, String userId, Set<String> roles) {
+    var session = getSessionByMatrixRoomId(matrixRoomId);
     checkUserPermissionForSession(session, userId, roles);
 
     return session;
   }
 
-  public Session getSessionByGroupId(String rcGroupId) {
+  public Session getSessionByMatrixRoomId(String matrixRoomId) {
     return sessionRepository
-        .findByGroupId(rcGroupId)
-        .orElseThrow(() -> new NotFoundException("Session with groupId %s not found.", rcGroupId));
+        .findByMatrixRoomId(matrixRoomId)
+        .orElseThrow(
+            () -> new NotFoundException("Session with Matrix room ID %s not found.", matrixRoomId));
   }
 
   private void checkUserPermissionForSession(Session session, String userId, Set<String> roles) {
@@ -716,6 +840,7 @@ public class SessionService {
    */
   private boolean isAllowedToAdviseByTopic(Consultant consultant, Session session) {
     return isTeamSessionOrNew(session)
+        && isAnonymousStyleRegistration(session)
         && nonNull(session.getMainTopicId())
         && consultantTopicRepository
             .findTopicIdsByConsultantId(consultant.getId())
@@ -780,13 +905,13 @@ public class SessionService {
             .id(session.getId())
             .status(session.getStatus().getValue())
             .askerId(session.getUser().getUserId())
-            .askerRcId(session.getUser().getRcUserId())
+            .askerMatrixUserId(session.getUser().getMatrixUserId())
             .askerUserName(session.getUser().getUsername())
-            .groupId(session.getGroupId())
+            .matrixRoomId(session.getMatrixRoomId())
             .postcode(session.getPostcode())
             .consultantId(nonNull(session.getConsultant()) ? session.getConsultant().getId() : null)
-            .consultantRcId(
-                nonNull(session.getConsultant()) ? session.getConsultant().getRocketChatId() : null)
+            .consultantMatrixUserId(
+                nonNull(session.getConsultant()) ? session.getConsultant().getMatrixUserId() : null)
             .age(session.getUserAge())
             .gender(session.getUserGender())
             .counsellingRelation(session.getCounsellingRelation())
@@ -801,6 +926,8 @@ public class SessionService {
                   .collect(Collectors.toList()));
       sessionTopicEnrichmentService.enrichSessionWithMainTopicData(consultantSessionDTO);
       sessionTopicEnrichmentService.enrichSessionWithTopicsData(consultantSessionDTO);
+    } else {
+      consultantSessionDTO.topics(null);
     }
 
     return consultantSessionDTO;
@@ -824,6 +951,7 @@ public class SessionService {
    * @param consultant the consultant
    * @return the related {@link ConsultantSessionResponseDTO}s
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getArchivedSessionsForConsultant(
       Consultant consultant) {
     final List<Session> sessions = retrieveArchivedSessions(consultant);
@@ -842,6 +970,7 @@ public class SessionService {
    * @param consultant the consultant
    * @return the related {@link ConsultantSessionResponseDTO}s
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getArchivedTeamSessionsForConsultant(
       Consultant consultant) {
     final List<Session> sessions = retrieveArchivedTeamSessionsForConsultant(consultant);
@@ -891,31 +1020,8 @@ public class SessionService {
 
   public List<Session> findSessionsByUser(User user) {
     if (nonNull(user)) {
-      return sessionRepository.findByUser(user);
+      return sessionRepository.findByUserWithSessionData(user);
     }
     return emptyList();
-  }
-
-  public String findGroupIdByConsultantAndUser(String consultantId, String askerId) {
-
-    Optional<Consultant> consultant = consultantService.getConsultant(consultantId);
-    if (!consultant.isPresent()) {
-      throw new BadRequestException(
-          String.format("Consultant for given id %s not found", consultantId));
-    }
-    Optional<User> user = userService.getUser(askerId);
-    if (!user.isPresent()) {
-      throw new BadRequestException(String.format("Asker for given id %s not found", askerId));
-    }
-
-    List<Session> sessions =
-        sessionRepository.findByConsultantAndUser(consultant.get(), user.get());
-
-    if (sessions.size() != 1) {
-      throw new BadRequestException(
-          "No rocketchat group found for given consultant or consultant is assigned to multiple sessions");
-    }
-
-    return sessions.get(0).getGroupId();
   }
 }

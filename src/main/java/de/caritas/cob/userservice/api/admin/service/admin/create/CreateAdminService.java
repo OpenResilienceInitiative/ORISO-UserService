@@ -1,10 +1,10 @@
 package de.caritas.cob.userservice.api.admin.service.admin.create;
 
+import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.ROLE_NOT_FOUND;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static org.apache.commons.lang3.Validate.notNull;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
@@ -16,14 +16,19 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import jakarta.ws.rs.NotFoundException;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.apache.commons.lang3.StringUtils;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 @Service
@@ -37,6 +42,8 @@ public class CreateAdminService {
   private boolean multitenancyWithSingleDomain;
 
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
+  private final @NonNull IdentityAccountRemover identityAccountRemover;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull UserHelper userHelper;
   private final @NonNull AdminRepository adminRepository;
@@ -87,34 +94,39 @@ public class CreateAdminService {
   }
 
   private Admin createNewAdmin(final CreateAdminDTO createAdminDTO, Admin.AdminType adminType) {
-    final String keycloakUserId = createKeycloakUser(createAdminDTO);
+    final String keycloakUserId = createUser(createAdminDTO);
     final String password =
         StringUtils.isNotBlank(createAdminDTO.getPassword())
             ? createAdminDTO.getPassword()
             : userHelper.getRandomPassword();
     try {
-      identityClient.updatePassword(keycloakUserId, password);
+      identityPasswordUpdater.updatePassword(keycloakUserId, password);
       getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
       return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
     } catch (CustomValidationHttpStatusException e) {
-      identityClient.rollBackUser(keycloakUserId);
+      identityAccountRemover.rollbackUser(keycloakUserId);
       throw e;
+    } catch (NotFoundException e) {
+      // A required Keycloak realm role (e.g. restricted-agency-admin or user-admin) is missing.
+      // Surface a specific, machine-readable reason so the admin panel can show a clear message
+      // instead of a generic 500, while still rolling back the partially created user.
+      identityAccountRemover.rollbackUser(keycloakUserId);
+      throw new CustomValidationHttpStatusException(ROLE_NOT_FOUND, HttpStatus.NOT_FOUND);
     } catch (RuntimeException e) {
-      identityClient.rollBackUser(keycloakUserId);
+      identityAccountRemover.rollbackUser(keycloakUserId);
       throw new InternalServerErrorException(
           String.format("Could not complete admin provisioning for type %s", adminType), e);
     }
   }
 
-  private String createKeycloakUser(final CreateAdminDTO createAgencyAdminDTO) {
+  private String createUser(final CreateAdminDTO createAgencyAdminDTO) {
     final UserDTO userDto = buildValidatedUserDTO(createAgencyAdminDTO);
 
-    final KeycloakCreateUserResponseDTO response =
-        identityClient.createKeycloakUser(
+    final CreatedIdentity response =
+        identityClient.createUser(
             userDto, createAgencyAdminDTO.getFirstname(), createAgencyAdminDTO.getLastname());
-    this.userAccountInputValidator.validateKeycloakResponse(response);
 
-    return response.getUserId();
+    return CreatedIdentity.requireUserId(response);
   }
 
   private UserDTO buildValidatedUserDTO(final CreateAdminDTO createAdminDTO) {

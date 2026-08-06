@@ -1,13 +1,14 @@
 package de.caritas.cob.userservice.api.model;
 
+import jakarta.persistence.Column;
+import jakarta.persistence.Entity;
+import jakarta.persistence.GeneratedValue;
+import jakarta.persistence.GenerationType;
+import jakarta.persistence.Id;
+import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import java.util.Objects;
-import javax.persistence.Column;
-import javax.persistence.Entity;
-import javax.persistence.GeneratedValue;
-import javax.persistence.GenerationType;
-import javax.persistence.Id;
-import javax.persistence.Table;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Getter;
@@ -16,11 +17,18 @@ import lombok.Setter;
 import lombok.ToString;
 import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
+import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
+import org.hibernate.type.SqlTypes;
 
 /** Persistent in-app notification event for a concrete recipient user. */
 @Entity
-@Table(name = "event_notification")
+@Table(
+    name = "event_notification",
+    uniqueConstraints =
+        @UniqueConstraint(
+            name = "uk_event_notification_recipient_deduplication",
+            columnNames = {"recipient_user_id", "deduplication_key"}))
 @AllArgsConstructor
 @NoArgsConstructor
 @Getter
@@ -29,7 +37,7 @@ import org.hibernate.annotations.ParamDef;
 @ToString
 @FilterDef(
     name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = "long")})
+    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
 @Filter(
     name = "tenantFilter",
     condition = "(tenant_id = :tenantId OR (:tenantId = 1 AND tenant_id IS NULL))")
@@ -53,7 +61,18 @@ public class EventNotification implements TenantAware {
   private String title;
 
   @Column(name = "text", columnDefinition = "text")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String text;
+
+  /**
+   * WP-06 / ADR-AT-01: structured params (JSON) the client uses to render the event's visible
+   * strings from i18n templates instead of server-stored text. Additive for now — populated
+   * alongside {@code title}/{@code text} until the frontend renders purely from params and the
+   * display-text columns are dropped.
+   */
+  @Column(name = "params", columnDefinition = "text")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
+  private String params;
 
   @Column(name = "action_path", length = 512)
   private String actionPath;
@@ -61,10 +80,14 @@ public class EventNotification implements TenantAware {
   @Column(name = "source_session_id")
   private Long sourceSessionId;
 
-  @Column(name = "read_date", columnDefinition = "datetime")
+  /** Stable producer-owned key used to make scheduled/lifecycle events idempotent per recipient. */
+  @Column(name = "deduplication_key", length = 191)
+  private String deduplicationKey;
+
+  @Column(name = "read_date", columnDefinition = "datetime(3)")
   private LocalDateTime readDate;
 
-  @Column(name = "create_date", nullable = false, columnDefinition = "datetime")
+  @Column(name = "create_date", nullable = false, columnDefinition = "datetime(3)")
   private LocalDateTime createDate;
 
   @Column(name = "tenant_id")

@@ -2,19 +2,19 @@ package de.caritas.cob.userservice.api.workflow.delete.action.consultant;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.CONSULTANT;
-import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.actions.ActionCommand;
-import de.caritas.cob.userservice.api.adapters.rocketchat.RocketChatService;
-import de.caritas.cob.userservice.api.exception.rocketchat.RocketChatDeleteGroupException;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -29,11 +29,13 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class DeleteChatAction implements ActionCommand<ConsultantDeletionWorkflowDTO> {
 
+  private static final String MATRIX_ROOM_ERROR_REASON = "Unable to delete Matrix room";
+
   private final @NonNull ChatRepository chatRepository;
-  private final @NonNull RocketChatService rocketChatService;
+  private final @NonNull MatrixSynapseService matrixSynapseService;
 
   /**
-   * Deletes all chats in database and Rocket.Chat owned by given {@link Consultant}.
+   * Deletes all chats in the database and purges their Matrix rooms.
    *
    * @param actionTarget the {@link ConsultantDeletionWorkflowDTO} containing the {@link Consultant}
    */
@@ -43,8 +45,7 @@ public class DeleteChatAction implements ActionCommand<ConsultantDeletionWorkflo
 
     var workflowErrors =
         chatsByChatOwner.stream()
-            .map(Chat::getGroupId)
-            .map(this::deleteRocketChatRoom)
+            .map(chat -> purgeMatrixRoom(chat.getMatrixRoomId()))
             .flatMap(Collection::stream)
             .collect(Collectors.toList());
 
@@ -52,21 +53,19 @@ public class DeleteChatAction implements ActionCommand<ConsultantDeletionWorkflo
     actionTarget.getDeletionWorkflowErrors().addAll(workflowErrors);
   }
 
-  private List<DeletionWorkflowError> deleteRocketChatRoom(String rcGroupId) {
-    try {
-      this.rocketChatService.deleteGroupAsTechnicalUser(rcGroupId);
-    } catch (RocketChatDeleteGroupException e) {
-      log.error("UserService delete workflow error: ", e);
-      return singletonList(
-          DeletionWorkflowError.builder()
-              .deletionSourceType(CONSULTANT)
-              .deletionTargetType(DeletionTargetType.ROCKET_CHAT)
-              .identifier(rcGroupId)
-              .reason("Deletion of Rocket.Chat group failed")
-              .timestamp(nowInUtc())
-              .build());
+  private List<DeletionWorkflowError> purgeMatrixRoom(String matrixRoomId) {
+    if (!isNotBlank(matrixRoomId) || matrixSynapseService.purgeRoom(matrixRoomId)) {
+      return new ArrayList<>();
     }
-    return emptyList();
+    log.error("UserService delete workflow error: Unable to purge Matrix room {}", matrixRoomId);
+    return singletonList(
+        DeletionWorkflowError.builder()
+            .deletionSourceType(CONSULTANT)
+            .deletionTargetType(DeletionTargetType.MATRIX)
+            .identifier(matrixRoomId)
+            .reason(MATRIX_ROOM_ERROR_REASON)
+            .timestamp(nowInUtc())
+            .build());
   }
 
   private void deleteDatabaseChat(

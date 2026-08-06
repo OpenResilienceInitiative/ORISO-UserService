@@ -10,12 +10,12 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties.ConfigProperty;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties.Whitelist;
+import jakarta.servlet.FilterChain;
+import jakarta.servlet.ServletException;
+import jakarta.servlet.http.Cookie;
+import jakarta.servlet.http.HttpServletRequest;
+import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import javax.servlet.FilterChain;
-import javax.servlet.ServletException;
-import javax.servlet.http.Cookie;
-import javax.servlet.http.HttpServletRequest;
-import javax.servlet.http.HttpServletResponse;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -97,6 +97,29 @@ public class StatelessCsrfFilterTest {
     this.csrfFilter.doFilterInternal(request, response, filterChain);
 
     verify(this.filterChain, times(1)).doFilter(request, response);
+  }
+
+  @Test
+  public void doFilterInternal_Should_executeFilterChain_ForExactInternalMatrixRtcPolicyEndpoint()
+      throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn("/internal/matrixrtc/call-policy");
+    when(request.getMethod()).thenReturn("POST");
+
+    this.csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(this.filterChain, times(1)).doFilter(request, response);
+  }
+
+  @Test
+  public void doFilterInternal_Should_requireCsrf_ForOtherInternalMatrixRtcEndpoints()
+      throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn("/internal/matrixrtc/call-policy-extra");
+    when(request.getMethod()).thenReturn("POST");
+
+    this.csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(this.accessDeniedHandler, times(1)).handle(any(), any(), any());
+    verifyNoMoreInteractions(this.filterChain);
   }
 
   @Test

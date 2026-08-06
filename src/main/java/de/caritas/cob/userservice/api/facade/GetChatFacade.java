@@ -36,7 +36,7 @@ public class GetChatFacade {
 
     return new ChatInfoResponseDTO()
         .id(chat.getId())
-        .groupId(chat.getGroupId())
+        .matrixRoomId(chat.getMatrixRoomId())
         .active(isTrue(chat.isActive()));
   }
 }

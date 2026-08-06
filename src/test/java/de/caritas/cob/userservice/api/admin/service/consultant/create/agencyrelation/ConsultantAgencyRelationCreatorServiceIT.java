@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation;
 
-import static de.caritas.cob.userservice.api.testHelper.AsyncVerification.verifyAsync;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.instanceOf;
@@ -11,8 +10,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.timeout;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -24,7 +21,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -45,17 +41,17 @@ import java.util.Set;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.annotation.DirtiesContext;
 import org.springframework.test.annotation.DirtiesContext.ClassMode;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @DirtiesContext(classMode = ClassMode.BEFORE_EACH_TEST_METHOD)
 class ConsultantAgencyRelationCreatorServiceIT {
 
@@ -73,17 +69,14 @@ class ConsultantAgencyRelationCreatorServiceIT {
 
   @Autowired private SessionRepository sessionRepository;
 
-  @MockBean private AgencyService agencyService;
+  @MockitoBean private AgencyService agencyService;
 
-  @MockBean private KeycloakService keycloakService;
+  @MockitoBean private KeycloakService keycloakService;
 
-  @MockBean private RocketChatFacade rocketChatFacade;
-
-  @MockBean private ConsultingTypeManager consultingTypeManager;
+  @MockitoBean private ConsultingTypeManager consultingTypeManager;
 
   @Test
-  void
-      createNewConsultantAgency_Should_addConsultantToEnquiriesRocketChatGroups_When_ParamsAreValid() {
+  void createNewConsultantAgency_ShouldPersistRelation_WhenParamsAreValid() {
 
     Consultant consultant = createConsultantWithoutAgencyAndSession();
 
@@ -97,10 +90,10 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setId(15L);
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(0);
-    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
 
-    Session enquirySessionWithoutConsultant =
-        createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.NEW);
+    createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.NEW);
 
     final var consultingTypeResponse =
         easyRandom.nextObject(ExtendedConsultingTypeResponseDTO.class);
@@ -109,22 +102,18 @@ class ConsultantAgencyRelationCreatorServiceIT {
     this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
         consultant.getId(), createConsultantAgencyDTO);
 
-    verifyAsync(
-        (a) ->
-            verify(rocketChatFacade, times(1))
-                .addUserToRocketChatGroup(
-                    consultant.getRocketChatId(), enquirySessionWithoutConsultant.getGroupId()));
-
     List<ConsultantAgency> result =
         this.consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId());
 
     assertThat(result, notNullValue());
     assertThat(result, hasSize(1));
+    assertThat(
+        result.getFirst().getStatus(),
+        is(de.caritas.cob.userservice.api.model.ConsultantAgencyStatus.CREATED));
   }
 
   @Test
-  void
-      createNewConsultantAgency_Should_addConsultantToTeamSessionRocketChatGroups_When_ParamsAreValid() {
+  void createNewConsultantAgency_ShouldMarkTeamConsultant_WhenTeamAgencyIsAssigned() {
 
     Consultant consultant = createConsultantWithoutAgencyAndSession();
 
@@ -139,19 +128,15 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setId(15L);
     agencyDTO.setTeamAgency(true);
     agencyDTO.setConsultingType(0);
-    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(extendedConsultingTypeResponseDTO);
 
-    Session enquirySessionWithoutConsultant =
-        createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.IN_PROGRESS);
+    createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.IN_PROGRESS);
 
     this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
         consultant.getId(), createConsultantAgencyDTO);
-
-    verify(rocketChatFacade, timeout(10000))
-        .addUserToRocketChatGroup(
-            consultant.getRocketChatId(), enquirySessionWithoutConsultant.getGroupId());
 
     List<ConsultantAgency> result =
         this.consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId());
@@ -178,7 +163,8 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setId(15L);
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(consultingType);
-    when(agencyService.getAgencyWithoutCaching(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     var consultant = createConsultantWithoutAgencyAndSession();
     when(keycloakService.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
@@ -223,7 +209,10 @@ class ConsultantAgencyRelationCreatorServiceIT {
     consultant.setConsultantAgencies(null);
     consultant.setSessions(null);
     consultant.setConsultantMobileTokens(null);
-    consultant.setRocketChatId("RocketChatId");
+    consultant.setConsultantTopics(null);
+    consultant.setTenantId(null);
+    // Required legacy model field; this slice removes its behavior, the schema cleanup follows.
+    consultant.setMatrixUserId("legacy-id");
     consultant.setDeleteDate(null);
     consultant.setLanguages(null);
     consultant.setAppointments(null);
@@ -296,7 +285,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
           CreateConsultantAgencyDTO createConsultantAgencyDTO =
               new CreateConsultantAgencyDTO().roleSetKey("valid role set");
           when(keycloakService.userHasRole(any(), any())).thenReturn(true);
-          when(this.agencyService.getAgencyWithoutCaching(any())).thenReturn(null);
+          when(this.agencyService.getAgency(any())).thenReturn(null);
 
           this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
               consultant.getId(), createConsultantAgencyDTO);
@@ -314,8 +303,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
           CreateConsultantAgencyDTO createConsultantAgencyDTO =
               new CreateConsultantAgencyDTO().roleSetKey("valid role set");
           when(keycloakService.userHasRole(any(), any())).thenReturn(true);
-          when(agencyService.getAgencyWithoutCaching(any()))
-              .thenThrow(new InternalServerErrorException(""));
+          when(agencyService.getAgency(any())).thenThrow(new InternalServerErrorException(""));
 
           this.consultantAgencyRelationCreatorService.createNewConsultantAgency(
               consultant.getId(), createConsultantAgencyDTO);
@@ -332,8 +320,8 @@ class ConsultantAgencyRelationCreatorServiceIT {
 
           AgencyDTO agencyDTO = new AgencyDTO().consultingType(1).id(2L);
 
-          when(agencyService.getAgencyWithoutCaching(1731L)).thenReturn(emigrationAgency);
-          when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(agencyDTO);
+          when(agencyService.getAgency(1731L)).thenReturn(emigrationAgency);
+          when(agencyService.getAgency(2L)).thenReturn(agencyDTO);
           when(keycloakService.userHasRole(any(), any())).thenReturn(true);
           when(consultingTypeManager.isConsultantBoundedToAgency(1)).thenReturn(true);
 
@@ -356,8 +344,8 @@ class ConsultantAgencyRelationCreatorServiceIT {
 
           AgencyDTO agencyDTO = new AgencyDTO().consultingType(15).id(2L);
 
-          when(agencyService.getAgencyWithoutCaching(1731L)).thenReturn(emigrationAgency);
-          when(agencyService.getAgencyWithoutCaching(2L)).thenReturn(agencyDTO);
+          when(agencyService.getAgency(1731L)).thenReturn(emigrationAgency);
+          when(agencyService.getAgency(2L)).thenReturn(agencyDTO);
           when(keycloakService.userHasRole(any(), any())).thenReturn(true);
           when(consultingTypeManager.isConsultantBoundedToAgency(15)).thenReturn(true);
 

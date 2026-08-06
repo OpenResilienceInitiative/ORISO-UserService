@@ -33,31 +33,31 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import jakarta.servlet.http.Cookie;
 import java.util.List;
 import java.util.UUID;
-import javax.servlet.http.Cookie;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
-import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @SpringBootTest
 @AutoConfigureMockMvc
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 class UserAdminControllerAuthorizationIT {
 
-  private static final String CSRF_HEADER = "csrfHeader";
+  private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
-  private static final Cookie CSRF_COOKIE = new Cookie("csrfCookie", CSRF_VALUE);
+  private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -65,15 +65,15 @@ class UserAdminControllerAuthorizationIT {
 
   @Autowired private MockMvc mvc;
 
-  @MockBean private SessionAdminService sessionAdminService;
+  @MockitoBean private SessionAdminService sessionAdminService;
 
-  @MockBean private ViolationReportGenerator violationReportGenerator;
+  @MockitoBean private ViolationReportGenerator violationReportGenerator;
 
-  @MockBean private ConsultantAdminFacade consultantAdminFacade;
+  @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
 
-  @MockBean private AskerUserAdminFacade askerUserAdminFacade;
+  @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
 
-  @MockBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+  @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   @Test
   void getSessions_Should_ReturnUnauthorizedAndCallNoMethods_When_noKeycloakAuthorizationIsPresent()
@@ -252,7 +252,7 @@ class UserAdminControllerAuthorizationIT {
       throws Exception {
 
     mvc.perform(
-            get(CONSULTANT_PATH + "consultantId")
+            get(CONSULTANT_PATH + "/consultantId")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE))
         .andExpect(status().isOk());
@@ -395,7 +395,7 @@ class UserAdminControllerAuthorizationIT {
         easyRandom.nextObject(UpdateAdminConsultantDTO.class);
 
     mvc.perform(
-            put(CONSULTANT_PATH + "consultantId")
+            put(CONSULTANT_PATH + "/consultantId")
                 .cookie(CSRF_COOKIE)
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
@@ -509,10 +509,8 @@ class UserAdminControllerAuthorizationIT {
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isOk());
 
-    verify(consultantAdminFacade).markConsultantAgenciesForDeletion(anyString(), any());
-    verify(consultantAdminFacade).filterAgencyListForCreation(anyString(), any());
-    verify(consultantAdminFacade).prepareConsultantAgencyRelation(anyString(), any());
-    verify(consultantAdminFacade).completeConsultantAgencyAssigment(anyString(), any());
+    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(agencies);
+    verify(consultantAdminFacade).setConsultantAgencies(anyString(), any());
   }
 
   @Test
@@ -676,6 +674,7 @@ class UserAdminControllerAuthorizationIT {
   @WithMockUser(authorities = {AuthorityValue.RESTRICTED_AGENCY_ADMIN})
   void deleteConsultant_Should_ReturnForbidden_When_userDoesNotHaveUserAdminAuthority()
       throws Exception {
+    // Non-UUID consultant ids stay governed by the /useradmin/** catch-all (USER_ADMIN only).
     mvc.perform(
             delete(DELETE_CONSULTANT_PATH)
                 .cookie(CSRF_COOKIE)
@@ -684,6 +683,38 @@ class UserAdminControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoInteractions(consultantAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.RESTRICTED_AGENCY_ADMIN})
+  void
+      deleteConsultant_Should_ReturnOkAndCallConsultantAdmin_When_restrictedAgencyAdminAuthorityOnUuidPath()
+          throws Exception {
+    // DEL-GUARD-01: real consultant ids are UUIDs; restricted agency admins must be able to
+    // reach the endpoint (agency scoping is enforced in ConsultantAdminFacade).
+    mvc.perform(
+            delete(CONSULTANT_PATH + "/" + UUID.randomUUID())
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    verify(this.consultantAdminFacade, times(1)).markConsultantForDeletion(any(), any());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void deleteConsultant_Should_NotBeDeniedBySecurity_When_userAdminUsesServicePrefixedPath()
+      throws Exception {
+    // DEL-GUARD-02: the service-prefixed path is both authorized and mapped inside the app.
+    mvc.perform(
+            delete("/service" + CONSULTANT_PATH + "/" + UUID.randomUUID())
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk());
+
+    verify(this.consultantAdminFacade, times(1)).markConsultantForDeletion(any(), any());
   }
 
   @Test

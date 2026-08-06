@@ -36,16 +36,16 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase;
-import org.springframework.boot.test.autoconfigure.jdbc.AutoConfigureTestDatabase.Replace;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
+import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.mock.mockito.MockBean;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Transactional;
 
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
-@AutoConfigureTestDatabase(replace = Replace.ANY)
+@AutoConfigureTestDatabase(replace = Replace.NONE)
 @TestPropertySource(properties = "multitenancy.enabled=true")
 @Transactional
 public class ConsultantAgencyAdminUserServiceTenantAwareIT {
@@ -59,13 +59,15 @@ public class ConsultantAgencyAdminUserServiceTenantAwareIT {
 
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
-  @MockBean private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
+  @MockitoBean
+  private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
 
-  @MockBean private AgencyService agencyService;
+  @MockitoBean private AgencyService agencyService;
 
-  @MockBean private AgencyAdminService agencyAdminService;
+  @MockitoBean private AgencyAdminService agencyAdminService;
 
-  @MockBean private RemoveConsultantFromRocketChatService removeConsultantFromRocketChatService;
+  @MockitoBean
+  private RemoveConsultantFromSessionRoomsService removeConsultantFromSessionRoomsService;
 
   private final EasyRandom easyRandom = new EasyRandom();
 
@@ -183,7 +185,7 @@ public class ConsultantAgencyAdminUserServiceTenantAwareIT {
 
     assertThat(teamConsultantsAfter, is(not(teamCosnultantsBefore)));
     assertThat(teamConsultantsAfter, is(lessThan(teamCosnultantsBefore)));
-    verify(this.removeConsultantFromRocketChatService, times(1))
+    verify(this.removeConsultantFromSessionRoomsService, times(1))
         .removeConsultantFromSessions(any());
   }
 
@@ -263,6 +265,7 @@ public class ConsultantAgencyAdminUserServiceTenantAwareIT {
     consultant.setNotifyNewChatMessageFromAdviceSeeker(true);
     consultant.setWalkThroughEnabled(true);
     consultant.setTeamConsultant(isTeamConsultant);
+    consultant.setMagicLinkLoginEnabled(false);
     consultant.setConsultantMobileTokens(Sets.newHashSet());
     consultant.setLanguageCode(LanguageCode.de);
 

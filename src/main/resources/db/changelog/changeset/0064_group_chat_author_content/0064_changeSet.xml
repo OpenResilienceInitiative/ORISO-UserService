@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.27.xsd">
+
+  <changeSet id="0064-group-chat-author-content" author="codex">
+    <preConditions onFail="MARK_RAN">
+      <tableExists tableName="chat" />
+      <not>
+        <columnExists tableName="chat" columnName="source_language" />
+      </not>
+    </preConditions>
+    <sqlFile
+      path="db/changelog/changeset/0064_group_chat_author_content/addGroupChatAuthorContent.sql"
+      relativeToChangelogFile="false" />
+  </changeSet>
+</databaseChangeLog>

@@ -4,6 +4,7 @@ import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatParticipantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
@@ -14,18 +15,29 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
+import de.caritas.cob.userservice.api.model.Chat.ChatModality;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
+import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
+import java.time.DateTimeException;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneId;
+import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -35,6 +47,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Chat service class */
 @Service
@@ -46,6 +59,8 @@ public class ChatService {
   private final @NonNull ChatAgencyRepository chatAgencyRepository;
   private final @NonNull UserChatRepository userChatRepository;
   private final @NonNull ConsultantService consultantService;
+  private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
+  private final @NonNull GroupChatParticipantReconciliationService participantReconciliationService;
 
   private final @NonNull AgencyService agencyService;
 
@@ -64,26 +79,42 @@ public class ChatService {
         consultant.getUsername(),
         agencyIds);
 
-    var chats = chatRepository.findByAgencyIds(agencyIds);
+    var chats =
+        chatRepository.findByAgencyIds(agencyIds).stream()
+            .filter(chat -> isVisibleToConsultant(chat, consultant))
+            .toList();
     log.info("🔍 ChatService: Found {} chats for agencyIds {}", chats.size(), agencyIds);
     chats.forEach(
         chat ->
             log.info(
-                "   - Chat ID: {}, Topic: {}, GroupId: {}, Owner: {}, Active: {}",
+                "   - Chat ID: {}, Topic: {}, MatrixRoomId: {}, Owner: {}, Active: {}",
                 chat.getId(),
                 chat.getTopic(),
-                chat.getGroupId(),
+                chat.getMatrixRoomId(),
                 chat.getChatOwner() != null ? chat.getChatOwner().getId() : null,
                 chat.isActive()));
 
+    var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
+
     return chats.stream()
-        .map(this::convertChatToConsultantSessionResponseDTO)
+        .map(
+            chat ->
+                convertChatToConsultantSessionResponseDTO(
+                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
         .collect(Collectors.toList());
   }
 
-  private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(Chat chat) {
+  private boolean isVisibleToConsultant(Chat chat, Consultant consultant) {
+    var explicitParticipants = groupChatParticipantRepository.findBySeriesId(chat.getId());
+    return explicitParticipants.isEmpty()
+        || explicitParticipants.stream()
+            .anyMatch(participant -> consultant.getId().equals(participant.getConsultantId()));
+  }
+
+  private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(
+      Chat chat, Set<ChatAgency> chatAgencies) {
     return new ConsultantSessionResponseDTO()
-        .chat(createUserChat(chat))
+        .chat(createUserChat(chat, chatAgencies))
         .consultant(
             new SessionConsultantForConsultantDTO()
                 .id(chat.getChatOwner().getId())
@@ -92,9 +123,23 @@ public class ChatService {
                 .username(chat.getChatOwner().getUsername()));
   }
 
-  private String[] getChatModerators(Set<ChatAgency> chatAgencies) {
+  private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(Chat chat) {
+    return convertChatToConsultantSessionResponseDTO(chat, loadChatAgencies(chat.getId()));
+  }
+
+  private String[] getChatModerators(Chat chat, Set<ChatAgency> chatAgencies) {
+    var explicitParticipants = groupChatParticipantRepository.findBySeriesId(chat.getId());
+    if (!explicitParticipants.isEmpty()) {
+      return explicitParticipants.stream()
+          .filter(
+              participant ->
+                  participant.getRole() == ParticipantRole.OWNER
+                      || participant.getRole() == ParticipantRole.CO_MODERATOR)
+          .map(participant -> participant.getConsultantId())
+          .toArray(String[]::new);
+    }
     return consultantService.findConsultantsByAgencyIds(chatAgencies).stream()
-        .map(Consultant::getRocketChatId)
+        .map(Consultant::getMatrixUserId)
         .toArray(String[]::new);
   }
 
@@ -105,6 +150,9 @@ public class ChatService {
    * @return {@link Chat} (will never be null)
    */
   public Chat saveChat(Chat chat) {
+    if (chat.getConversationType() == null) {
+      chat.setConversationType(ConversationType.INTERNAL_GROUP);
+    }
     return chatRepository.save(chat);
   }
 
@@ -134,6 +182,17 @@ public class ChatService {
   }
 
   /**
+   * Deletes the {@link UserChat} relation between the given chat and user, if one exists. Used when
+   * a user leaves a group chat so the assignment does not linger after the leave.
+   *
+   * @param chat the {@link Chat} that was left
+   * @param user the {@link User} who left
+   */
+  public void deleteUserChatRelation(Chat chat, User user) {
+    userChatRepository.findByChatAndUser(chat, user).ifPresent(userChatRepository::delete);
+  }
+
+  /**
    * Returns the list of current chats for the provided userId.
    *
    * <p>The chats are collected from the user_agency relation (V1) and the user_chat relation (V2).
@@ -142,61 +201,152 @@ public class ChatService {
    * @return list of user chats as {@link UserSessionResponseDTO}
    */
   public List<UserSessionResponseDTO> getChatsForUserId(String userId) {
-    List<Chat> chats = chatRepository.findByUserId(userId);
+    List<Chat> chats =
+        chatRepository.findByUserId(userId).stream()
+            .filter(chat -> groupChatParticipantRepository.findBySeriesId(chat.getId()).isEmpty())
+            .toList();
     List<Chat> assignedChats = chatRepository.findAssignedByUserId(userId);
-    return Stream.concat(chats.stream(), assignedChats.stream())
-        .map(this::convertChatToUserSessionResponseDTO)
+    var allChats = new ArrayList<>(chats);
+    assignedChats.stream()
+        .filter(
+            assigned ->
+                allChats.stream().noneMatch(existing -> existing.getId().equals(assigned.getId())))
+        .forEach(allChats::add);
+    var chatAgenciesByChatId = loadChatAgenciesByChatId(allChats);
+    return allChats.stream()
+        .map(
+            chat ->
+                convertChatToUserSessionResponseDTO(
+                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
         .collect(Collectors.toList());
   }
 
   public List<UserSessionResponseDTO> getChatSessionsByIds(Set<Long> chatIds) {
-    return StreamSupport.stream(chatRepository.findAllById(chatIds).spliterator(), false)
-        .map(this::convertChatToUserSessionResponseDTO)
+    var chats =
+        StreamSupport.stream(chatRepository.findAllById(chatIds).spliterator(), false)
+            .collect(Collectors.toList());
+    var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
+    return chats.stream()
+        .map(
+            chat ->
+                convertChatToUserSessionResponseDTO(
+                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
         .collect(Collectors.toList());
   }
 
+  private UserSessionResponseDTO convertChatToUserSessionResponseDTO(
+      Chat chat, Set<ChatAgency> chatAgencies) {
+    return new UserSessionResponseDTO().chat(createUserChat(chat, chatAgencies));
+  }
+
   private UserSessionResponseDTO convertChatToUserSessionResponseDTO(Chat chat) {
-    return new UserSessionResponseDTO().chat(createUserChat(chat));
+    return convertChatToUserSessionResponseDTO(chat, loadChatAgencies(chat.getId()));
   }
 
   private UserChatDTO createUserChat(Chat chat) {
-    if (chat.getChatAgencies().size() > 1) {
+    return createUserChat(chat, loadChatAgencies(chat.getId()));
+  }
+
+  private UserChatDTO createUserChat(Chat chat, Set<ChatAgency> chatAgencies) {
+    if (chatAgencies.size() > 1) {
       log.warn(
           "Chat with id {} has more than one agency assigned. " + "This should not be the case.",
           chat.getId());
     }
-    var chatAgencies =
-        chat.getChatAgencies().stream()
+    var agencies =
+        chatAgencies.stream()
             .map(chatAgency -> agencyService.getAgency(chatAgency.getAgencyId()))
             .collect(Collectors.toList());
 
-    return new UserChatDTO(
-        chat.getId(),
-        chat.getTopic(),
-        LocalDate.of(
-            chat.getStartDate().getYear(),
-            chat.getStartDate().getMonth(),
-            chat.getStartDate().getDayOfMonth()),
-        LocalTime.of(
-            chat.getStartDate().getHour(),
-            chat.getStartDate().getMinute(),
-            chat.getStartDate().getSecond()),
-        chat.getDuration(),
-        isTrue(chat.isRepetitive()),
-        isTrue(chat.isActive()),
-        chat.getConsultingTypeId(),
-        null,
-        null,
-        false,
-        chat.getGroupId(),
-        null,
-        false,
-        getChatModerators(chat.getChatAgencies()),
-        chat.getStartDate(),
-        null,
-        chat.getCreateDate() != null ? chat.getCreateDate().toString() : null,
-        chatAgencies,
-        chat.getHintMessage());
+    var result =
+        new UserChatDTO(
+            chat.getId(),
+            chat.getTopic(),
+            LocalDate.of(
+                chat.getStartDate().getYear(),
+                chat.getStartDate().getMonth(),
+                chat.getStartDate().getDayOfMonth()),
+            LocalTime.of(
+                chat.getStartDate().getHour(),
+                chat.getStartDate().getMinute(),
+                chat.getStartDate().getSecond()),
+            chat.getDuration(),
+            isTrue(chat.isRepetitive()),
+            isTrue(chat.isActive()),
+            chat.getConsultingTypeId(),
+            null,
+            null,
+            false,
+            chat.getMatrixRoomId(),
+            null,
+            false,
+            getChatModerators(chat, chatAgencies),
+            chat.getStartDate(),
+            null,
+            chat.getCreateDate() != null ? chat.getCreateDate().toString() : null,
+            agencies,
+            chat.getHintMessage());
+    result.setRepeatCount(chat.getRepeatCount());
+    result.setCurrentOccurrenceIndex(chat.getCurrentOccurrenceIndex());
+    result.setChatInterval(chat.getChatInterval());
+    result.setModality(chat.getChatModality());
+    result.setConversationType(chat.getConversationType());
+    result.setTimezone(chat.getTimezone());
+    result.setParticipants(getSeriesParticipants(chat));
+    result.setSourceLanguage(chat.getSourceLanguage());
+    result.setHintMessageTranslations(chat.getHintMessageTranslations());
+    result.setGroupChatRulesTranslations(chat.getGroupChatRulesTranslations());
+    return result;
+  }
+
+  private List<GroupChatParticipantDTO> getSeriesParticipants(Chat chat) {
+    return groupChatParticipantRepository.findBySeriesId(chat.getId()).stream()
+        .map(
+            participant -> {
+              var displayName =
+                  consultantService
+                      .getConsultant(participant.getConsultantId())
+                      .map(this::resolveParticipantDisplayName)
+                      .orElse(participant.getConsultantId());
+              return new GroupChatParticipantDTO()
+                  .consultantId(participant.getConsultantId())
+                  .role(GroupChatParticipantDTO.RoleEnum.fromValue(participant.getRole().name()))
+                  .displayName(displayName);
+            })
+        .toList();
+  }
+
+  private String resolveParticipantDisplayName(Consultant consultant) {
+    if (consultant.getDisplayName() != null && !consultant.getDisplayName().isBlank()) {
+      return consultant.getDisplayName();
+    }
+    var fullName =
+        Stream.of(consultant.getFirstName(), consultant.getLastName())
+            .filter(name -> name != null && !name.isBlank())
+            .collect(Collectors.joining(" "));
+    if (!fullName.isBlank()) {
+      return fullName;
+    }
+    if (consultant.getUsername() != null && !consultant.getUsername().isBlank()) {
+      return consultant.getUsername();
+    }
+    return consultant.getId();
+  }
+
+  private Set<ChatAgency> loadChatAgencies(Long chatId) {
+    return new HashSet<>(chatAgencyRepository.findByChat_Id(chatId));
+  }
+
+  private Map<Long, Set<ChatAgency>> loadChatAgenciesByChatId(List<Chat> chats) {
+    var chatIds = chats.stream().map(Chat::getId).collect(Collectors.toSet());
+    if (chatIds.isEmpty()) {
+      return Map.of();
+    }
+
+    return chatAgencyRepository.findByChat_IdIn(chatIds).stream()
+        .collect(
+            Collectors.groupingBy(
+                chatAgency -> chatAgency.getChat().getId(), Collectors.toCollection(HashSet::new)));
   }
 
   /**
@@ -206,17 +356,17 @@ public class ChatService {
    * @return {@link Optional} of {@link Chat}
    */
   public Optional<Chat> getChat(Long chatId) {
-    return chatRepository.findById(chatId);
+    return chatRepository.findByIdWithPermissionRelations(chatId);
   }
 
   /**
-   * Returns an {@link Optional} of {@link Chat} for the provided group ID.
+   * Returns an {@link Optional} of {@link Chat} for the provided Matrix room ID.
    *
-   * @param groupId rocket chat group ID
+   * @param matrixRoomId Matrix room ID
    * @return {@link Optional} of {@link Chat}
    */
-  public Optional<Chat> getChatByGroupId(String groupId) {
-    return chatRepository.findByGroupId(groupId);
+  public Optional<Chat> getChatByMatrixRoomId(String matrixRoomId) {
+    return chatRepository.findByMatrixRoomId(matrixRoomId);
   }
 
   /**
@@ -230,24 +380,27 @@ public class ChatService {
   public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByIds(Set<Long> chatIds) {
     log.info("🔍 ChatService.getChatSessionsForConsultantByIds - chatIds: {}", chatIds);
 
-    var chats =
-        StreamSupport.stream(chatRepository.findAllById(chatIds).spliterator(), false)
-            .collect(Collectors.toList());
+    var chats = chatRepository.findByIdsWithChatAgencies(chatIds);
 
     log.info("🔍 ChatService: Found {} chats in database", chats.size());
     chats.forEach(
         chat ->
             log.info(
-                "   - Chat ID: {}, Topic: {}, GroupId: {}, Owner: {}, Active: {}",
+                "   - Chat ID: {}, Topic: {}, Matrix room ID: {}, Owner: {}, Active: {}",
                 chat.getId(),
                 chat.getTopic(),
-                chat.getGroupId(),
+                chat.getMatrixRoomId(),
                 chat.getChatOwner() != null ? chat.getChatOwner().getId() : null,
                 chat.isActive()));
 
+    var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
+
     var result =
         chats.stream()
-            .map(this::convertChatToConsultantSessionResponseDTO)
+            .map(
+                chat ->
+                    convertChatToConsultantSessionResponseDTO(
+                        chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
             .collect(Collectors.toList());
 
     log.info("🔍 ChatService: Converted to {} ConsultantSessionResponseDTO", result.size());
@@ -256,21 +409,31 @@ public class ChatService {
   }
 
   /**
-   * Returns an {@link List} of {@link UserSessionResponseDTO} for the provided group IDs.
+   * Returns an {@link List} of {@link UserSessionResponseDTO} for the provided Matrix room IDs.
    *
-   * @param groupIds a list of rocket chat group IDs
+   * @param matrixRoomIds Matrix room IDs
    * @return {@link List<UserSessionResponseDTO>}
    */
-  public List<UserSessionResponseDTO> getChatSessionsByGroupIds(Set<String> groupIds) {
-    return chatRepository.findByGroupIds(groupIds).stream()
-        .map(this::convertChatToUserSessionResponseDTO)
+  public List<UserSessionResponseDTO> getChatSessionsByRoomIds(Set<String> matrixRoomIds) {
+    var chats = chatRepository.findByMatrixRoomIdIn(matrixRoomIds);
+    var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
+    return chats.stream()
+        .map(
+            chat ->
+                convertChatToUserSessionResponseDTO(
+                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
         .collect(Collectors.toList());
   }
 
-  public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByGroupIds(
-      Set<String> groupIds) {
-    return chatRepository.findByGroupIds(groupIds).stream()
-        .map(this::convertChatToConsultantSessionResponseDTO)
+  public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByRoomIds(
+      Set<String> matrixRoomIds) {
+    var chats = chatRepository.findByMatrixRoomIdIn(matrixRoomIds);
+    var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
+    return chats.stream()
+        .map(
+            chat ->
+                convertChatToConsultantSessionResponseDTO(
+                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
         .collect(Collectors.toList());
   }
 
@@ -279,7 +442,9 @@ public class ChatService {
    *
    * @param chat the {@link Chat}
    */
+  @Transactional
   public void deleteChat(Chat chat) {
+    groupChatParticipantRepository.deleteBySeriesId(chat.getId());
     chatRepository.delete(chat);
   }
 
@@ -291,6 +456,7 @@ public class ChatService {
    * @param authenticatedUser {@link AuthenticatedUser}
    * @return {@link UpdateChatResponseDTO}
    */
+  @Transactional
   public UpdateChatResponseDTO updateChat(
       Long chatId, ChatDTO chatDTO, AuthenticatedUser authenticatedUser) {
 
@@ -312,16 +478,47 @@ public class ChatService {
     }
 
     LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
+    // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
+    // one when the client sends it (validated like the create path), and preserve the existing
+    // zone when the DTO omits it rather than silently resetting to UTC.
+    if (chatDTO.getTimezone() != null && !chatDTO.getTimezone().isBlank()) {
+      try {
+        ZoneId.of(chatDTO.getTimezone());
+      } catch (DateTimeException invalidTimezone) {
+        throw new BadRequestException(
+            "Invalid timezone: " + chatDTO.getTimezone(), invalidTimezone);
+      }
+      chat.setTimezone(chatDTO.getTimezone());
+    }
     chat.setTopic(chatDTO.getTopic());
     chat.setDuration(chatDTO.getDuration());
-    chat.setRepetitive(isTrue(chatDTO.getRepetitive()));
-    chat.setChatInterval(isTrue(chatDTO.getRepetitive()) ? ChatInterval.WEEKLY : null);
+    // Defaulting must match the create path (ChatConverter.convertToEntity) so editing a
+    // repetitive series without re-sending repeatCount does not silently drop it to a single
+    // occurrence: default 12 for repetitive, derive repetitive + interval from repeatCount > 1.
+    int repeatCount =
+        chatDTO.getRepeatCount() != null
+            ? chatDTO.getRepeatCount()
+            : (isTrue(chatDTO.getRepetitive()) ? 12 : 1);
+    chat.setRepeatCount(repeatCount);
+    chat.setRepetitive(repeatCount > 1);
+    chat.setChatInterval(
+        repeatCount > 1
+            ? (chatDTO.getChatInterval() != null ? chatDTO.getChatInterval() : ChatInterval.WEEKLY)
+            : null);
+    chat.setChatModality(chatDTO.getModality() != null ? chatDTO.getModality() : ChatModality.TEXT);
     chat.setStartDate(startDate);
     chat.setInitialStartDate(startDate);
+    // The schedule anchor moved, so virtual occurrences must restart from index 0 —
+    // otherwise nextStart() would skip the first occurrences of the edited series.
+    chat.setCurrentOccurrenceIndex(0);
     chat.setHintMessage(chatDTO.getHintMessage());
+    chat.setSourceLanguage(chatDTO.getSourceLanguage());
+    chat.setHintMessageTranslations(chatDTO.getHintMessageTranslations());
+    chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
 
     this.saveChat(chat);
+    participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
 
-    return new UpdateChatResponseDTO().groupId(chat.getGroupId());
+    return new UpdateChatResponseDTO().matrixRoomId(chat.getMatrixRoomId());
   }
 }

@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+
+  <!-- #569 chain fix: the public tenant-admin onboarding two-factor endpoint receives only the
+       one-time password, so the TOTP secret issued at registration must be kept with the invite
+       until the activation succeeds (cleared afterwards). -->
+  <changeSet id="0077-account-invite-totp-pending-secret" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="account_invite" columnName="totp_pending_secret"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="account_invite">
+      <column name="totp_pending_secret" type="varchar(64)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="account_invite" columnName="totp_pending_secret"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
