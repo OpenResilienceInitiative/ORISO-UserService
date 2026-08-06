@@ -25,6 +25,8 @@ CI (GitHub Actions): `./mvnw -B test` then `./mvnw -B package -DskipTests` on Ja
 - Integration branch: `pre-dev` when used for ORISO feature work.
 - Skim `.understand-anything/` before non-trivial changes; verify graph freshness.
 - Do not invent DTOs/OpenAPI — read existing controllers and generated clients.
+- Entity changes need a Liquibase changeset in the same PR — see
+  `docs/schema-migrations.md`; the service refuses to start without one.
 - Secrets: prefer `config.env.example`; never commit `config.env` or logs with tokens.
 
 ## Done
