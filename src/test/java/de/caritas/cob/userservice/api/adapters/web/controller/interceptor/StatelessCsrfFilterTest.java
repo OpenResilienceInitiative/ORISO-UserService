@@ -89,6 +89,18 @@ public class StatelessCsrfFilterTest {
   }
 
   @Test
+  void accountInviteAcceptanceShouldNotRequireCsrfBeforeLogin()
+      throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn("/service/users/account-invites/emailed-token/accept");
+    when(request.getMethod()).thenReturn("POST");
+
+    csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(filterChain).doFilter(request, response);
+    verifyNoMoreInteractions(accessDeniedHandler);
+  }
+
+  @Test
   public void doFilterInternal_Should_executeFilterChain_When_requestHasCsrfWhitelistHeader()
       throws IOException, ServletException {
     when(request.getRequestURI()).thenReturn("uri");
