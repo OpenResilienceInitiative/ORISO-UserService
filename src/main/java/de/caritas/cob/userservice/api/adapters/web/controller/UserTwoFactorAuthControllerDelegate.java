@@ -40,12 +40,10 @@ class UserTwoFactorAuthControllerDelegate {
       return new ResponseEntity<>(HttpStatus.PRECONDITION_FAILED);
     }
 
-    identityManager
-        .setUpOneTimePassword(username, email)
-        .ifPresent(
-            message -> {
-              throw new InternalServerErrorException(message);
-            });
+    var verificationStart = identityManager.setUpOneTimePassword(username, email);
+    if (!verificationStart.started()) {
+      throw new InternalServerErrorException(verificationStart.failureMessage());
+    }
 
     return ResponseEntity.noContent().build();
   }
@@ -56,16 +54,16 @@ class UserTwoFactorAuthControllerDelegate {
     var username = usernameTranscoder.encodeUsername(authenticatedUser.getUsername());
     var validationResult = identityManager.validateOneTimePassword(username, tan);
 
-    if (Boolean.parseBoolean(validationResult.get("created"))) {
-      var patchMap = userDtoMapper.mapOf(validationResult.get("email"), authenticatedUser);
+    if (validationResult.created()) {
+      var patchMap = userDtoMapper.mapOf(validationResult.email(), authenticatedUser);
       accountManager.patchUser(patchMap);
       accountInviteService.markTwoFactorActive(authenticatedUser.getUserId());
       return ResponseEntity.noContent().build();
     }
-    if (Boolean.parseBoolean(validationResult.get("attemptsLeft"))) {
+    if (validationResult.attemptsLeft()) {
       return ResponseEntity.badRequest().build();
     }
-    if (Boolean.parseBoolean(validationResult.get("createdBefore"))) {
+    if (validationResult.createdBefore()) {
       return ResponseEntity.status(HttpStatus.PRECONDITION_FAILED).build();
     }
 

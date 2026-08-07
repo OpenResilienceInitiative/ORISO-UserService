@@ -13,8 +13,19 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -28,14 +39,28 @@ public class ConsultantUpdateServiceBase {
 
   @Autowired protected ConsultantUpdateService consultantUpdateService;
 
-  @MockitoBean protected IdentityClient identityClient;
-  @MockitoBean protected IdentityProfileUpdater identityProfileUpdater;
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityProfileUpdater.class,
+        IdentityRoleLookup.class,
+        IdentityRoleUpdater.class,
+        IdentitySecondFactor.class,
+        IdentityUsernameAvailability.class
+      })
+  protected IdentityClient identityClient;
 
   @MockitoBean protected AgencyService agencyService;
 
   @BeforeEach
   void stubAssignedAgencies() {
-    when(agencyService.getAgencies(anyList()))
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
         .thenAnswer(
             invocation ->
                 invocation.<List<Long>>getArgument(0).stream()

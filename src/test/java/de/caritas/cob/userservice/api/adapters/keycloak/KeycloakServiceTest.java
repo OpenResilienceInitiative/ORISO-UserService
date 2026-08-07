@@ -8,7 +8,6 @@ import static org.apache.commons.lang3.RandomStringUtils.random;
 import static org.apache.commons.lang3.RandomStringUtils.randomAlphabetic;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.instanceOf;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.*;
@@ -27,7 +26,6 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 import ch.qos.logback.classic.Level;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
@@ -40,17 +38,27 @@ import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
+import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
+import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Optional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -122,8 +130,7 @@ public class KeycloakServiceTest {
     givenAKeycloakLoginUrl();
     givenAKeycloakLogoutUrl();
     var realAuthClient =
-        new KeycloakAuthClient(
-            restTemplate, authenticatedUser, identityClientConfig, keycloakClient);
+        new KeycloakAuthClient(restTemplate, authenticatedUser, identityClientConfig);
     setField(realAuthClient, "keycloakClientId", "app");
     setField(keycloakService, "keycloakAuthClient", realAuthClient);
     setField(keycloakService, "usernameTranscoder", usernameTranscoder);
@@ -158,7 +165,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void loginUser_Should_ReturnKeycloakLoginResponseDTO_When_KeycloakLoginWasSuccessful() {
+  public void login_Should_MapKeycloakResponseToProviderNeutralCredentials() {
     KeycloakLoginResponseDTO loginResponseDTO =
         new EasyRandom().nextObject(KeycloakLoginResponseDTO.class);
     when(restTemplate.postForEntity(
@@ -167,13 +174,16 @@ public class KeycloakServiceTest {
             ArgumentMatchers.<Class<KeycloakLoginResponseDTO>>any()))
         .thenReturn(new ResponseEntity<>(loginResponseDTO, HttpStatus.OK));
 
-    KeycloakLoginResponseDTO response = keycloakService.loginUser(USER_ID, OLD_PW);
+    IdentityLogin response = keycloakService.login(USER_ID, OLD_PW);
 
-    assertThat(response, instanceOf(KeycloakLoginResponseDTO.class));
+    assertThat(response.accessToken(), is(loginResponseDTO.getAccessToken()));
+    assertThat(response.expiresIn(), is(loginResponseDTO.getExpiresIn()));
+    assertThat(response.refreshExpiresIn(), is(loginResponseDTO.getRefreshExpiresIn()));
+    assertThat(response.refreshToken(), is(loginResponseDTO.getRefreshToken()));
   }
 
   @Test
-  public void loginUser_Should_ReturnBadRequest_When_KeycloakLoginFails() {
+  public void login_Should_ReturnBadRequest_When_KeycloakLoginFails() {
     var exception =
         new RestClientResponseException("some exception", 500, "text", null, null, null);
     when(restTemplate.postForEntity(
@@ -183,7 +193,7 @@ public class KeycloakServiceTest {
         .thenThrow(exception);
 
     try {
-      keycloakService.loginUser(USER_ID, OLD_PW);
+      keycloakService.login(USER_ID, OLD_PW);
       fail("Expected exception: BadRequestException");
     } catch (BadRequestException badRequestException) {
       assertTrue(true, "Excepted BadRequestException thrown");
@@ -191,33 +201,33 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void logoutUser_Should_ReturnTrue_When_KeycloakLoginWasSuccessful() {
+  public void logout_Should_ReturnTrue_When_KeycloakLoginWasSuccessful() {
     when(restTemplate.postForEntity(
             ArgumentMatchers.anyString(), any(), ArgumentMatchers.<Class<Void>>any()))
         .thenReturn(new ResponseEntity<>(HttpStatus.NO_CONTENT));
 
-    assertTrue(keycloakService.logoutUser(REFRESH_TOKEN));
+    assertTrue(keycloakService.logout(REFRESH_TOKEN));
   }
 
   @Test
-  public void logoutUser_Should_ReturnFalseAndLogError_WhenKeycloakLogoutFailsWithException() {
+  public void logout_Should_ReturnFalseAndLogError_WhenKeycloakLogoutFailsWithException() {
     RestClientException exception = new RestClientException("error");
     when(restTemplate.postForEntity(ArgumentMatchers.anyString(), any(), any()))
         .thenThrow(exception);
 
-    boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
+    boolean response = keycloakService.logout(REFRESH_TOKEN);
 
     assertFalse(response);
     assertTrue(authLogCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
   }
 
   @Test
-  public void logoutUser_Should_ReturnFalseAndLogError_When_KeycloakLogoutFails() {
+  public void logout_Should_ReturnFalseAndLogError_When_KeycloakLogoutFails() {
     when(restTemplate.postForEntity(
             ArgumentMatchers.anyString(), any(), ArgumentMatchers.<Class<Void>>any()))
         .thenReturn(new ResponseEntity<>(HttpStatus.BAD_REQUEST));
 
-    boolean response = keycloakService.logoutUser(REFRESH_TOKEN);
+    boolean response = keycloakService.logout(REFRESH_TOKEN);
 
     assertFalse(response);
     assertTrue(authLogCaptor.contains(Level.ERROR, "Keycloak error: Could not log out user"));
@@ -280,10 +290,8 @@ public class KeycloakServiceTest {
 
   @Test
   public void deleteEmailAddress_Should_useServicesCorrectly() {
-    // deleteEmailAddress -> updateDummyEmail(userId) -> updateEmail(...), which now persists the
-    // dummy email to Keycloak (verifyEmail + setEmail + userResource.update). Verify the dummy
-    // email
-    // is resolved and actually written via UserResource#update.
+    // Current-user email deletion remains an email-address operation and writes the configured
+    // dummy address through the existing update path.
     var userId = random(16);
     when(authenticatedUser.getUserId()).thenReturn(userId);
     when(userHelper.getDummyEmail(userId)).thenReturn("dummy");
@@ -305,12 +313,15 @@ public class KeycloakServiceTest {
   public void getOtpCredential_Should_Return_Response_When_RequestWasSuccessful() {
     var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
     keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    var credential = new IdentityOtpCredential(true, "secret", "QrCode", IdentityOtpType.APP);
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
     var entity = new ResponseEntity(OTP_INFO_DTO, HttpStatus.OK);
     when(this.keycloakClient.get(anyString(), any(), any())).thenReturn(entity);
+    when(keycloakMapper.identityOtpCredentialOf(OTP_INFO_DTO)).thenReturn(credential);
 
-    assertEquals(OTP_INFO_DTO, keycloakService.getOtpCredential(USERNAME));
+    assertEquals(credential, keycloakService.getOtpCredential(USERNAME));
 
+    verify(keycloakClient).get(anyString(), any(), eq(OtpInfoDTO.class));
     verifyNoInteractions(outboundHttpMetrics);
   }
 
@@ -332,18 +343,20 @@ public class KeycloakServiceTest {
   public void getOtpCredential_Should_RefreshAdminSessionOnce_When_FirstRequestIsUnauthorized() {
     var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
     keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    var credential = new IdentityOtpCredential(true, "secret", "QrCode", IdentityOtpType.APP);
     var unauthorized =
         new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
     var entity = new ResponseEntity(OTP_INFO_DTO, HttpStatus.OK);
     when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
     when(keycloakClient.get(eq("stale-token"), any(), any())).thenThrow(unauthorized);
     when(keycloakClient.get(eq("fresh-token"), any(), any())).thenReturn(entity);
+    when(keycloakMapper.identityOtpCredentialOf(OTP_INFO_DTO)).thenReturn(credential);
 
-    assertEquals(OTP_INFO_DTO, keycloakService.getOtpCredential(USERNAME));
+    assertEquals(credential, keycloakService.getOtpCredential(USERNAME));
 
     verify(keycloakClient).refreshAdminSession();
     verify(keycloakClient, times(2)).getBearerToken();
-    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
+    verify(outboundHttpMetrics).recordRetry("keycloak", "otp-fetch");
   }
 
   @Test
@@ -361,7 +374,7 @@ public class KeycloakServiceTest {
 
     verify(keycloakClient).refreshAdminSession();
     verify(keycloakClient, times(2)).get(any(), any(), any());
-    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
+    verify(outboundHttpMetrics).recordRetry("keycloak", "otp-fetch");
   }
 
   @Test
@@ -394,6 +407,8 @@ public class KeycloakServiceTest {
 
   @Test
   public void setUpOtpCredential_Should_RefreshAdminSessionOnce_When_FirstRequestIsUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
     var unauthorized =
         new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
     when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
@@ -406,6 +421,7 @@ public class KeycloakServiceTest {
 
     verify(keycloakClient).refreshAdminSession();
     verify(keycloakClient, times(2)).getBearerToken();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "otp-setup");
   }
 
   @Test
@@ -418,6 +434,8 @@ public class KeycloakServiceTest {
 
   @Test
   public void deleteOtpCredential_Should_RefreshAdminSessionOnce_When_FirstRequestIsUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
     var unauthorized =
         new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
     when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
@@ -429,6 +447,7 @@ public class KeycloakServiceTest {
 
     verify(keycloakClient).refreshAdminSession();
     verify(keycloakClient, times(2)).getBearerToken();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "otp-delete");
   }
 
   @Test
@@ -467,7 +486,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void createKeycloakUser_Should_createExpectedUser_When_keycloakReturnsCreated() {
+  public void createUser_Should_createExpectedUser_When_keycloakReturnsCreated() {
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
     UsersResource usersResource = mock(UsersResource.class);
     Response response = mock(Response.class);
@@ -479,16 +498,14 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    KeycloakCreateUserResponseDTO keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
+    CreatedIdentity keycloakUser = this.keycloakService.createUser(userDTO);
 
     assertThat(keycloakUser, notNullValue());
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
     assertThat(keycloakUser.getUserId(), is(USER_ID));
   }
 
   @Test
-  public void
-      createKeycloakUser_Should_createExpectedTenantAwareUser_When_keycloakReturnsCreated() {
+  public void createUser_Should_createExpectedTenantAwareUser_When_keycloakReturnsCreated() {
     TenantContext.setCurrentTenant(1L);
     setField(keycloakService, "multiTenancyEnabled", true);
 
@@ -504,10 +521,10 @@ public class KeycloakServiceTest {
     when(this.keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    KeycloakCreateUserResponseDTO keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
+    CreatedIdentity keycloakUser = this.keycloakService.createUser(userDTO);
 
     assertThat(keycloakUser, notNullValue());
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
+    assertThat(keycloakUser.getUserId(), is(USER_ID));
 
     ArgumentCaptor<UserRepresentation> argumentCaptor =
         ArgumentCaptor.forClass(UserRepresentation.class);
@@ -521,7 +538,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void createKeycloakUser_Should_updateIdentityAttributes_When_keycloakReturnsCreated() {
+  public void createUser_Should_updateIdentityAttributes_When_keycloakReturnsCreated() {
     TenantContext.setCurrentTenant(7L);
     setField(keycloakService, "multiTenancyEnabled", true);
 
@@ -543,7 +560,7 @@ public class KeycloakServiceTest {
     when(userResource.toRepresentation()).thenReturn(storedRepresentation);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    var keycloakUser = this.keycloakService.createKeycloakUser(userDTO);
+    var keycloakUser = this.keycloakService.createUser(userDTO);
 
     assertThat(keycloakUser.getUserId(), is(USER_ID));
 
@@ -559,7 +576,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void createKeycloakUser_Should_createUserWithDefaultLocale() {
+  public void createUser_Should_createUserWithDefaultLocale() {
     var userDTO = easyRandom.nextObject(UserDTO.class);
     userDTO.setPreferredLanguage(null);
     var usersResource = mock(UsersResource.class);
@@ -572,9 +589,9 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    var keycloakUser = keycloakService.createKeycloakUser(userDTO);
+    var keycloakUser = keycloakService.createUser(userDTO);
 
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
+    assertThat(keycloakUser.getUserId(), is(USER_ID));
 
     var argumentCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
     verify(usersResource).create(argumentCaptor.capture());
@@ -600,7 +617,7 @@ public class KeycloakServiceTest {
 
   @Test
   public void
-      createKeycloakUser_Should_throwExpectedStatusException_When_keycloakResponseHasEmailErrorMessage() {
+      createUser_Should_throwExpectedStatusException_When_keycloakResponseHasEmailErrorMessage() {
     var emailError = givenADuplicatedEmailErrorMessage();
     givenADuplicatedUserErrorMessage();
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
@@ -613,7 +630,7 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     try {
-      this.keycloakService.createKeycloakUser(userDTO);
+      this.keycloakService.createUser(userDTO);
     } catch (CustomValidationHttpStatusException e) {
       assertThat(e.getCustomHttpHeaders(), notNullValue());
       assertThat(e.getCustomHttpHeaders().get("X-Reason").get(0), is(EMAIL_NOT_AVAILABLE.name()));
@@ -622,7 +639,7 @@ public class KeycloakServiceTest {
 
   @Test
   public void
-      createKeycloakUser_Should_throwExpectedStatusException_When_keycloakResponseHasUsernameErrorMessage() {
+      createUser_Should_throwExpectedStatusException_When_keycloakResponseHasUsernameErrorMessage() {
     givenADuplicatedEmailErrorMessage();
     var keycloakErrorUsername = givenADuplicatedUserErrorMessage();
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
@@ -636,7 +653,7 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     try {
-      this.keycloakService.createKeycloakUser(userDTO);
+      this.keycloakService.createUser(userDTO);
     } catch (CustomValidationHttpStatusException e) {
       assertThat(e.getCustomHttpHeaders(), notNullValue());
       assertThat(
@@ -645,8 +662,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void
-      createKeycloakUser_Should_throwExpectedResponseException_When_keycloakMailUpdateFails() {
+  public void createUser_Should_throwExpectedResponseException_When_keycloakMailUpdateFails() {
     givenADuplicatedEmailErrorMessage();
     var keycloakErrorUsername = givenADuplicatedUserErrorMessage();
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
@@ -660,7 +676,7 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     try {
-      this.keycloakService.createKeycloakUser(userDTO);
+      this.keycloakService.createUser(userDTO);
     } catch (CustomValidationHttpStatusException e) {
       assertThat(e.getCustomHttpHeaders(), notNullValue());
       assertThat(
@@ -669,7 +685,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void createKeycloakUser_Should_ThrowInternalServerException_When_errorIsUnknown() {
+  public void createUser_Should_ThrowInternalServerException_When_errorIsUnknown() {
     assertThrows(
         InternalServerErrorException.class,
         () -> {
@@ -687,13 +703,12 @@ public class KeycloakServiceTest {
           when(keycloakClient.getUsersResource()).thenReturn(usersResource);
           UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
 
-          this.keycloakService.createKeycloakUser(userDTO);
+          this.keycloakService.createUser(userDTO);
         });
   }
 
   @Test
-  public void
-      createKeycloakUser_Should_notThrowNpe_When_duplicateMarkersAreNull_And_fallBackToStatus() {
+  public void createUser_Should_notThrowNpe_When_duplicateMarkersAreNull_And_fallBackToStatus() {
     // Guards the null-safe errorMatchesMarker(...): when the configured duplicate-email/username
     // markers are unset (null), production must NOT NPE while lower-casing them. Instead it falls
     // through to the status-based handling and still maps a 409 CONFLICT carrying "email" to a
@@ -710,7 +725,7 @@ public class KeycloakServiceTest {
     CustomValidationHttpStatusException exception =
         assertThrows(
             CustomValidationHttpStatusException.class,
-            () -> this.keycloakService.createKeycloakUser(userDTO));
+            () -> this.keycloakService.createUser(userDTO));
 
     assertThat(
         exception.getCustomHttpHeaders().get("X-Reason").get(0), is(EMAIL_NOT_AVAILABLE.name()));
@@ -718,7 +733,7 @@ public class KeycloakServiceTest {
 
   @Test
   public void
-      createKeycloakUser_Should_throwInternalServerError_When_duplicateMarkersAreNull_And_statusUnknown() {
+      createUser_Should_throwInternalServerError_When_duplicateMarkersAreNull_And_statusUnknown() {
     // Same null-marker guard, but with a non-conflict status and an unrelated error body: the
     // method must fall through to a generic InternalServerErrorException rather than NPE.
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
@@ -731,21 +746,27 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     assertThrows(
-        InternalServerErrorException.class, () -> this.keycloakService.createKeycloakUser(userDTO));
+        InternalServerErrorException.class, () -> this.keycloakService.createUser(userDTO));
   }
 
   @Test
-  public void isUsernameAvailable_Should_returnTrue_When_usernameIsAvailable() {
-    UserRepresentation userMock = mock(UserRepresentation.class);
-    when(userMock.getUsername()).thenReturn("Unique");
-    List<UserRepresentation> userRepresentations = singletonList(userMock);
+  public void isUsernameAvailable_ShouldSearchDecodedAndEncodedUsernameExactlyOnce() {
+    String inputUsername = "enc.KVXGS4LVMU......";
+    String decodedUsername = "NotUnique";
+    String encodedUsername = "enc.JZXW6......";
     UsersResource usersResource = mock(UsersResource.class);
-    when(usersResource.search(any())).thenReturn(userRepresentations);
+    when(usernameTranscoder.decodeUsername(inputUsername)).thenReturn(decodedUsername);
+    when(usernameTranscoder.encodeUsername(inputUsername)).thenReturn(encodedUsername);
+    when(usersResource.search(decodedUsername)).thenReturn(List.of());
+    when(usersResource.search(encodedUsername)).thenReturn(List.of());
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    boolean isAvailable = this.keycloakService.isUsernameAvailable("username");
+    boolean isAvailable = this.keycloakService.isUsernameAvailable(inputUsername);
 
     assertThat(isAvailable, is(true));
+    verify(usersResource).search(decodedUsername);
+    verify(usersResource).search(encodedUsername);
+    verify(usersResource, times(2)).search(anyString());
   }
 
   @Test
@@ -960,6 +981,8 @@ public class KeycloakServiceTest {
 
     this.keycloakService.updatePassword("userId", "password");
 
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get("userId");
     verify(userResource, times(1)).resetPassword(any());
   }
 
@@ -986,29 +1009,34 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     when(this.userHelper.getDummyEmail(anyString())).thenReturn("dummy");
 
-    String dummyMail = this.keycloakService.updateDummyEmail("userId", new UserDTO());
+    String dummyMail =
+        this.keycloakService.updateDummyEmail(
+            "userId", new IdentityDummyEmailUpdate("encoded-user", 42L));
 
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get("userId");
     verify(userResource, times(1)).update(any());
     assertThat(dummyMail, is("dummy"));
   }
 
   @Test
-  public void updateDummyMail_id_Should_callServicesCorrectly() {
-    // updateDummyEmail(String) -> updateEmail(...), which now persists the dummy email to Keycloak
-    // (verifyEmail + setEmail + userResource.update). Verify the dummy email is computed and
-    // written
-    // via UserResource#update.
-    when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
-    UserRepresentation userRepresentation = givenUserRepresentation("oldEmail");
-    UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
+  public void updateDummyMail_Should_MapProviderNeutralIdentityMetadata() {
+    setField(keycloakService, "multiTenancyEnabled", true);
+    UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
+    when(usernameTranscoder.decodeUsername("encoded-user")).thenReturn("decoded-user");
 
-    keycloakService.updateDummyEmail("userId");
+    keycloakService.updateDummyEmail("userId", new IdentityDummyEmailUpdate("encoded-user", 42L));
 
-    verify(userHelper).getDummyEmail("userId");
-    verify(userRepresentation).setEmail("dummy");
-    verify(userResource).update(userRepresentation);
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    var representation = representationCaptor.getValue();
+    assertThat(representation.getUsername(), is("decoded-user"));
+    assertThat(representation.getEmail(), is("dummy"));
+    assertThat(representation.getAttributes().get("tenantId").get(0), is("42"));
+    setField(keycloakService, "multiTenancyEnabled", false);
   }
 
   @Test
@@ -1087,8 +1115,10 @@ public class KeycloakServiceTest {
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    this.keycloakService.rollBackUser("userId");
+    this.keycloakService.rollbackUser("userId");
 
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get("userId");
     verify(userResource, times(1)).remove();
   }
 
@@ -1099,7 +1129,7 @@ public class KeycloakServiceTest {
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    this.keycloakService.rollBackUser("userId");
+    this.keycloakService.rollbackUser("userId");
 
     assertTrue(
         logCaptor.contains(Level.ERROR, "Keycloak error: User could not be removed/rolled back:"));
@@ -1156,16 +1186,6 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void closeSession_Should_deleteSession() {
-    RealmResource realmResource = mock(RealmResource.class);
-    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
-
-    this.keycloakService.closeSession("sessionId");
-
-    verify(realmResource, times(1)).deleteSession(anyString(), eq(false));
-  }
-
-  @Test
   public void deactivateUser_Should_deactivateUser() {
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);
@@ -1176,6 +1196,9 @@ public class KeycloakServiceTest {
 
     this.keycloakService.deactivateUser("userId");
 
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get("userId");
+    verify(userResource, times(1)).toRepresentation();
     verify(userRepresentation, times(1)).setEnabled(false);
     verify(userResource, times(1)).update(userRepresentation);
   }
@@ -1270,10 +1293,15 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void getById_Should_getUserById() {
+  public void findById_Should_MapUserRepresentation() {
 
     // given
-    UserRepresentation userRepresentation = mock(UserRepresentation.class);
+    UserRepresentation userRepresentation = new UserRepresentation();
+    userRepresentation.setId("userId");
+    userRepresentation.setUsername("username");
+    userRepresentation.setFirstName("first");
+    userRepresentation.setLastName("last");
+    userRepresentation.setEmail("email@example.org");
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);
     when(userResource.toRepresentation()).thenReturn(userRepresentation);
@@ -1281,15 +1309,19 @@ public class KeycloakServiceTest {
     when(usersResource.get("userId")).thenReturn(userResource);
 
     // when
-    UserRepresentation userId = this.keycloakService.getById("userId");
+    Optional<IdentityProfile> profile = this.keycloakService.findById("userId");
 
     // then
     verify(keycloakClient, times(1)).getUsersResource();
-    assertThat(userId, equalTo(userRepresentation));
+    assertThat(
+        profile,
+        equalTo(
+            Optional.of(
+                new IdentityProfile("userId", "username", "first", "last", "email@example.org"))));
   }
 
   @Test
-  public void getById_Should_ThrowKeycloakExceptionIfUserNotFound() {
+  public void findById_Should_ReturnEmptyIfUserResourceIsAbsent() {
 
     // given
     UsersResource usersResource = mock(UsersResource.class);
@@ -1297,7 +1329,21 @@ public class KeycloakServiceTest {
     when(usersResource.get("userId")).thenReturn(null);
 
     // when, then
-    assertThrows(KeycloakException.class, () -> this.keycloakService.getById("userId"));
+    assertThat(this.keycloakService.findById("userId"), equalTo(Optional.empty()));
+  }
+
+  @Test
+  public void findById_Should_ReturnEmptyIfKeycloakReportsUserNotFound() {
+
+    // given
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usersResource.get("userId")).thenReturn(userResource);
+    when(userResource.toRepresentation()).thenThrow(new NotFoundException());
+
+    // when, then
+    assertThat(this.keycloakService.findById("userId"), equalTo(Optional.empty()));
   }
 
   /**
@@ -1331,33 +1377,36 @@ public class KeycloakServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  public void verifyIgnoringOtp_Should_ReturnTrue_When_MissingTotpButPasswordCorrect() {
+  public void
+      verifyPasswordIgnoringSecondFactor_Should_ReturnTrue_When_MissingTotpButPasswordCorrect() {
     var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
     when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
-    when(exception.getResponseBodyAsString()).thenReturn("Missing totp");
+    when(exception.getResponseBodyAsString())
+        .thenReturn("{\"error\":\"invalid_grant\",\"error_description\":\"Missing totp\"}");
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenThrow(exception);
 
-    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+    boolean result = keycloakService.verifyPasswordIgnoringSecondFactor(USERNAME, OLD_PW);
 
     assertThat(result, is(true));
   }
 
   @Test
-  public void verifyIgnoringOtp_Should_ReturnFalse_When_OtherBadRequest() {
+  public void verifyPasswordIgnoringSecondFactor_Should_ReturnFalse_When_OtherBadRequest() {
     var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
     when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
     when(exception.getResponseBodyAsString()).thenReturn("Invalid credentials");
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenThrow(exception);
 
-    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+    boolean result = keycloakService.verifyPasswordIgnoringSecondFactor(USERNAME, OLD_PW);
 
     assertThat(result, is(false));
   }
 
   @Test
-  public void verifyIgnoringOtp_Should_ReturnTrueAndLogout_When_LoginSucceedsWithRefreshToken() {
+  public void
+      verifyPasswordIgnoringSecondFactor_Should_ReturnTrueAndLogout_When_LoginSucceedsWithRefreshToken() {
     var loginResponse = mock(KeycloakLoginResponseDTO.class);
     when(loginResponse.getRefreshToken()).thenReturn(REFRESH_TOKEN);
     ResponseEntity<KeycloakLoginResponseDTO> responseEntity =
@@ -1368,14 +1417,15 @@ public class KeycloakServiceTest {
     ResponseEntity<Void> logoutResponse = new ResponseEntity<>(HttpStatus.NO_CONTENT);
     when(restTemplate.postForEntity(anyString(), any(), eq(Void.class))).thenReturn(logoutResponse);
 
-    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+    boolean result = keycloakService.verifyPasswordIgnoringSecondFactor(USERNAME, OLD_PW);
 
     assertThat(result, is(true));
     verify(restTemplate).postForEntity(anyString(), any(), eq(Void.class));
   }
 
   @Test
-  public void verifyIgnoringOtp_Should_ReturnTrueWithoutLogout_When_NoRefreshToken() {
+  public void
+      verifyPasswordIgnoringSecondFactor_Should_ReturnTrueWithoutLogout_When_NoRefreshToken() {
     var loginResponse = mock(KeycloakLoginResponseDTO.class);
     when(loginResponse.getRefreshToken()).thenReturn(null);
     ResponseEntity<KeycloakLoginResponseDTO> responseEntity =
@@ -1383,7 +1433,7 @@ public class KeycloakServiceTest {
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenReturn(responseEntity);
 
-    boolean result = keycloakService.verifyIgnoringOtp(USERNAME, OLD_PW);
+    boolean result = keycloakService.verifyPasswordIgnoringSecondFactor(USERNAME, OLD_PW);
 
     assertThat(result, is(true));
     verify(restTemplate, org.mockito.Mockito.never())
@@ -1391,26 +1441,49 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void initiateEmailVerification_Should_ReturnEmptyOptional_When_RequestSucceeds() {
+  public void initiateEmailVerification_Should_ReturnTypedSuccess_When_RequestSucceeds() {
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
     when(keycloakClient.putForEntity(any(), any(), any(), any()))
         .thenReturn(new ResponseEntity<>(HttpStatus.OK));
 
     var result = keycloakService.initiateEmailVerification(USERNAME, "mail@example.com");
 
-    assertThat(result.isPresent(), is(false));
+    assertThat(result.started(), is(true));
+    assertNull(result.failureMessage());
+    verify(keycloakClient).putForEntity(any(), any(), any(), any());
   }
 
   @Test
-  public void initiateEmailVerification_Should_ReturnMessage_When_KeycloakRejects() {
+  public void initiateEmailVerification_Should_ReturnTypedFailure_When_ProviderRejects() {
     when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
     when(keycloakClient.putForEntity(any(), any(), any(), any()))
         .thenThrow(new RestClientException("Keycloak said no"));
 
     var result = keycloakService.initiateEmailVerification(USERNAME, "mail@example.com");
 
-    assertThat(result.isPresent(), is(true));
-    assertThat(result.get().contains("Keycloak said no"), is(true));
+    assertThat(result.started(), is(false));
+    assertThat(result.failureMessage().contains("Keycloak said no"), is(true));
+  }
+
+  @Test
+  public void
+      initiateEmailVerification_Should_RecordOperationSpecificRetry_OnInitialUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    var unauthorized =
+        new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
+    when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
+    when(keycloakClient.putForEntity(eq("stale-token"), any(), any(), any()))
+        .thenThrow(unauthorized);
+    when(keycloakClient.putForEntity(eq("fresh-token"), any(), any(), any()))
+        .thenReturn(new ResponseEntity<>(HttpStatus.OK));
+
+    var result = keycloakService.initiateEmailVerification(USERNAME, "mail@example.com");
+
+    assertThat(result.started(), is(true));
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).putForEntity(any(), any(), any(), any());
+    verify(outboundHttpMetrics).recordRetry("keycloak", "email-verification-start");
   }
 
   @Test
@@ -1422,13 +1495,13 @@ public class KeycloakServiceTest {
     when(keycloakClient.postForEntity(
             any(), any(), any(), eq(de.caritas.cob.userservice.api.model.SuccessWithEmail.class)))
         .thenReturn(responseEntity);
-    var expected = new HashMap<String, String>();
-    expected.put("status", "ok");
-    when(keycloakMapper.mapOf(responseEntity)).thenReturn(expected);
+    var expected = new IdentityEmailVerification(false, true, false, "mail@example.com");
+    when(keycloakMapper.identityEmailVerificationOf(responseEntity)).thenReturn(expected);
 
     var result = keycloakService.finishEmailVerification(USERNAME, "123456");
 
     assertThat(result, is(expected));
+    verify(keycloakClient).postForEntity(any(), any(), any(), any());
   }
 
   @Test
@@ -1437,9 +1510,8 @@ public class KeycloakServiceTest {
     var exception =
         new org.springframework.web.client.HttpClientErrorException(HttpStatus.BAD_REQUEST);
     when(keycloakClient.postForEntity(any(), any(), any(), any())).thenThrow(exception);
-    var expected = new HashMap<String, String>();
-    expected.put("status", "error");
-    when(keycloakMapper.mapOf(exception)).thenReturn(expected);
+    var expected = new IdentityEmailVerification(false, false, true, null);
+    when(keycloakMapper.identityEmailVerificationOf(exception)).thenReturn(expected);
 
     var result = keycloakService.finishEmailVerification(USERNAME, "123456");
 
@@ -1448,31 +1520,57 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void findUserByEmail_Should_ReturnMappedUser_When_MatchFound() {
+  public void finishEmailVerification_Should_RecordOperationSpecificRetry_OnInitialUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    var unauthorized =
+        new org.springframework.web.client.HttpClientErrorException(HttpStatus.UNAUTHORIZED);
+    var responseEntity =
+        new ResponseEntity<>(
+            new de.caritas.cob.userservice.api.model.SuccessWithEmail(), HttpStatus.CREATED);
+    var expected = new IdentityEmailVerification(true, false, false, "mail@example.com");
+    when(keycloakClient.getBearerToken()).thenReturn("stale-token").thenReturn("fresh-token");
+    when(keycloakClient.postForEntity(eq("stale-token"), any(), any(), any()))
+        .thenThrow(unauthorized);
+    when(keycloakClient.postForEntity(
+            eq("fresh-token"),
+            any(),
+            any(),
+            eq(de.caritas.cob.userservice.api.model.SuccessWithEmail.class)))
+        .thenReturn(responseEntity);
+    when(keycloakMapper.identityEmailVerificationOf(responseEntity)).thenReturn(expected);
+
+    var result = keycloakService.finishEmailVerification(USERNAME, "123456");
+
+    assertThat(result, is(expected));
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).postForEntity(any(), any(), any(), any());
+    verify(outboundHttpMetrics).recordRetry("keycloak", "email-verification-finish");
+  }
+
+  @Test
+  public void findByEmail_Should_ReturnTypedOwner_When_ExactMatchFound() {
     var email = "mail@example.com";
     UserRepresentation userRepresentation = mock(UserRepresentation.class);
     when(userRepresentation.getEmail()).thenReturn(email);
+    when(userRepresentation.getUsername()).thenReturn(USERNAME);
     UsersResource usersResource = mock(UsersResource.class);
     when(usersResource.search(email, 0, Integer.MAX_VALUE))
         .thenReturn(singletonList(userRepresentation));
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-    var expected = new HashMap<String, String>();
-    expected.put("email", email);
-    when(keycloakMapper.mapOf(userRepresentation)).thenReturn(expected);
+    var result = keycloakService.findByEmail(email);
 
-    var result = keycloakService.findUserByEmail(email);
-
-    assertThat(result, is(expected));
+    assertThat(result, is(Optional.of(new IdentityEmailOwner(USERNAME))));
   }
 
   @Test
-  public void findUserByEmail_Should_ReturnEmptyMap_When_NoMatchFound() {
+  public void findByEmail_Should_ReturnEmpty_When_NoMatchFound() {
     var email = "mail@example.com";
     UsersResource usersResource = mock(UsersResource.class);
     when(usersResource.search(email, 0, Integer.MAX_VALUE)).thenReturn(List.of());
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    var result = keycloakService.findUserByEmail(email);
+    var result = keycloakService.findByEmail(email);
 
     assertThat(result.isEmpty(), is(true));
   }
@@ -1524,23 +1622,23 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void getRealmRoles_Should_ReturnRoleNames_When_LookupSucceeds() {
+  public void findAllByUserId_Should_ReturnRoleNames_When_LookupSucceeds() {
     UserResource userResource = givenUserResourceWithRealmRoles("user", "consultant");
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    List<String> roles = keycloakService.getRealmRoles(USER_ID);
+    List<String> roles = keycloakService.findAllByUserId(USER_ID);
 
     assertThat(roles, is(Lists.newArrayList("user", "consultant")));
   }
 
   @Test
-  public void getRealmRoles_Should_ThrowKeycloakException_When_LookupFails() {
+  public void findAllByUserId_Should_ThrowKeycloakException_When_LookupFails() {
     UsersResource usersResource = mock(UsersResource.class);
     when(usersResource.get(any())).thenThrow(new RuntimeException("boom"));
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    assertThrows(KeycloakException.class, () -> keycloakService.getRealmRoles(USER_ID));
+    assertThrows(KeycloakException.class, () -> keycloakService.findAllByUserId(USER_ID));
   }
 
   @Test
@@ -1579,7 +1677,9 @@ public class KeycloakServiceTest {
 
     keycloakService.deleteUser(USER_ID);
 
-    verify(userResource).remove();
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get(USER_ID);
+    verify(userResource, times(1)).remove();
   }
 
   @Test
@@ -1596,6 +1696,10 @@ public class KeycloakServiceTest {
 
     assertThat(
         logCaptor.contains(Level.WARN, "not found in Keycloak, skipping deletion"), is(true));
+    verify(keycloakClient, times(1)).getUsersResource();
+    verify(usersResource, times(1)).get(USER_ID);
+    verify(userResource, times(1)).remove();
+    verify(keycloakClient, never()).refreshAdminSession();
   }
 
   @Test
@@ -1611,46 +1715,163 @@ public class KeycloakServiceTest {
 
     keycloakService.deleteUser(USER_ID);
 
-    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).getUsersResource();
+    verify(usersResource, times(2)).get(USER_ID);
+    verify(keycloakClient, times(1)).refreshAdminSession();
     verify(userResource, times(2)).remove();
   }
 
   @Test
-  public void ensureRole_Should_SkipUpdate_When_UserAlreadyHasRole() {
-    UserResource userResource = givenUserResourceWithRealmRoles("consultant");
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+  public void deleteUser_Should_TreatNotFoundAfterUnauthorizedRetryAsAlreadyDeleted() {
+    UsersResource usersResource = mock(UsersResource.class);
+    UserResource userResource = mock(UserResource.class);
+    org.mockito.Mockito.doThrow(new jakarta.ws.rs.NotAuthorizedException("unauthorized"))
+        .doThrow(new jakarta.ws.rs.NotFoundException("already deleted"))
+        .when(userResource)
+        .remove();
+    when(usersResource.get(any())).thenReturn(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    keycloakService.ensureRole(USER_ID, "consultant");
+    keycloakService.deleteUser(USER_ID);
 
-    verify(usersResource, times(1)).get(USER_ID);
+    verify(keycloakClient).refreshAdminSession();
+    verify(userResource, times(2)).remove();
+    assertThat(
+        logCaptor.contains(Level.WARN, "not found in Keycloak, skipping deletion"), is(true));
   }
 
   @Test
-  public void ensureRole_Should_UpdateRole_When_UserDoesNotHaveRole() {
-    // ensureRole's own userHasRole pre-check goes through keycloakClient.getUsersResource() —
-    // report no roles so the check fails and updateRole proceeds.
-    UserResource userResourceForCheck = givenUserResourceWithRealmRoles();
-    UsersResource usersResourceForCheck = givenUsersResourceWithAnyUserId(userResourceForCheck);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResourceForCheck);
+  public void ensureRoles_Should_NotCallKeycloak_When_NoRolesAreRequested() {
+    keycloakService.ensureRoles(USER_ID, List.of());
 
-    // updateRole goes through keycloakClient.getRealmResource().users() — report the role as
-    // already assigned so the post-add verification loop succeeds immediately.
+    verifyNoInteractions(keycloakClient);
+  }
+
+  @Test
+  public void ensureRoles_Should_DeduplicateAndAddOnlyMissingRolesInOneCall() {
+    UserResource userResource = givenUserResourceWithRealmRoles("consultant");
+    RoleScopeResource currentRoles = userResource.roles().realmLevel();
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
     var realmResource = mock(RealmResource.class);
     var rolesResource = mock(RolesResource.class);
     var roleResource = mock(RoleResource.class);
     var roleRepresentation = new RoleRepresentation();
+    roleRepresentation.setName("group-chat-consultant");
     when(roleResource.toRepresentation()).thenReturn(roleRepresentation);
-    when(rolesResource.get("consultant")).thenReturn(roleResource);
+    when(rolesResource.get("group-chat-consultant")).thenReturn(roleResource);
     when(realmResource.roles()).thenReturn(rolesResource);
-    UserResource userResourceForUpdate = givenUserResourceWithRealmRoles("consultant");
+    UserResource userResourceForUpdate = givenUserResourceWithRealmRoles("group-chat-consultant");
+    RoleScopeResource updatedRoles = userResourceForUpdate.roles().realmLevel();
     UsersResource usersResourceForUpdate = givenUsersResourceWithAnyUserId(userResourceForUpdate);
     when(realmResource.users()).thenReturn(usersResourceForUpdate);
     when(keycloakClient.getRealmResource()).thenReturn(realmResource);
 
-    keycloakService.ensureRole(USER_ID, "consultant");
+    keycloakService.ensureRoles(
+        USER_ID, List.of("consultant", "group-chat-consultant", "group-chat-consultant"));
 
-    verify(userResourceForUpdate.roles().realmLevel()).add(singletonList(roleRepresentation));
+    verify(currentRoles, times(1)).listAll();
+    verify(rolesResource, never()).get("consultant");
+    verify(rolesResource, times(1)).get("group-chat-consultant");
+    verify(updatedRoles).add(singletonList(roleRepresentation));
+    verify(updatedRoles, times(1)).listAll();
+  }
+
+  @Test
+  public void ensureRoles_Should_VerifyAllMissingRolesWithOneReadPerAttempt() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    UserResource userResourceForCheck = givenUserResourceWithRealmRoles();
+    RoleScopeResource currentRoles = userResourceForCheck.roles().realmLevel();
+    UsersResource usersResourceForCheck = givenUsersResourceWithAnyUserId(userResourceForCheck);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResourceForCheck);
+
+    var realmResource = mock(RealmResource.class);
+    var rolesResource = mock(RolesResource.class);
+    var consultantRoleResource = mock(RoleResource.class);
+    var groupChatRoleResource = mock(RoleResource.class);
+    var consultantRole = new RoleRepresentation();
+    consultantRole.setName("consultant");
+    var groupChatRole = new RoleRepresentation();
+    groupChatRole.setName("group-chat-consultant");
+    when(consultantRoleResource.toRepresentation()).thenReturn(consultantRole);
+    when(groupChatRoleResource.toRepresentation()).thenReturn(groupChatRole);
+    when(rolesResource.get("consultant")).thenReturn(consultantRoleResource);
+    when(rolesResource.get("group-chat-consultant")).thenReturn(groupChatRoleResource);
+    when(realmResource.roles()).thenReturn(rolesResource);
+
+    RoleScopeResource updatedRoles = mock(RoleScopeResource.class);
+    when(updatedRoles.listAll())
+        .thenReturn(List.of())
+        .thenReturn(List.of(consultantRole, groupChatRole));
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(updatedRoles);
+    UserResource userResourceForUpdate = mock(UserResource.class);
+    when(userResourceForUpdate.roles()).thenReturn(roleMappingResource);
+    UsersResource usersResourceForUpdate = givenUsersResourceWithAnyUserId(userResourceForUpdate);
+    when(realmResource.users()).thenReturn(usersResourceForUpdate);
+    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+
+    keycloakService.ensureRoles(USER_ID, List.of("consultant", "group-chat-consultant"));
+
+    verify(currentRoles, times(1)).listAll();
+    verify(updatedRoles).add(List.of(consultantRole, groupChatRole));
+    verify(updatedRoles, times(2)).listAll();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "role-visibility");
+  }
+
+  @Test
+  public void ensureRoles_Should_RefreshAdminSessionAndRetryInitialRead_When_Unauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    UserResource userResource = givenUserResourceWithRealmRoles("consultant");
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource())
+        .thenThrow(new NotAuthorizedException("Bearer"))
+        .thenReturn(usersResource);
+
+    keycloakService.ensureRoles(USER_ID, List.of("consultant"));
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).getUsersResource();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
+    verify(keycloakClient, never()).getRealmResource();
+  }
+
+  @Test
+  public void ensureRoles_Should_RefreshAdminSessionAndRetryBatchOnce_When_AddIsUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    UserResource userResourceForCheck = givenUserResourceWithRealmRoles();
+    UsersResource usersResourceForCheck = givenUsersResourceWithAnyUserId(userResourceForCheck);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResourceForCheck);
+
+    var realmResource = mock(RealmResource.class);
+    var rolesResource = mock(RolesResource.class);
+    var roleResource = mock(RoleResource.class);
+    var roleRepresentation = new RoleRepresentation();
+    roleRepresentation.setName("consultant");
+    when(roleResource.toRepresentation()).thenReturn(roleRepresentation);
+    when(rolesResource.get("consultant")).thenReturn(roleResource);
+    when(realmResource.roles()).thenReturn(rolesResource);
+    RoleScopeResource updatedRoles = mock(RoleScopeResource.class);
+    doThrow(new NotAuthorizedException("Bearer")).doNothing().when(updatedRoles).add(any());
+    when(updatedRoles.listAll()).thenReturn(List.of(roleRepresentation));
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(updatedRoles);
+    UserResource userResourceForUpdate = mock(UserResource.class);
+    when(userResourceForUpdate.roles()).thenReturn(roleMappingResource);
+    UsersResource usersResourceForUpdate = givenUsersResourceWithAnyUserId(userResourceForUpdate);
+    when(realmResource.users()).thenReturn(usersResourceForUpdate);
+    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+
+    keycloakService.ensureRoles(USER_ID, List.of("consultant"));
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).getUsersResource();
+    verify(updatedRoles, times(2)).add(singletonList(roleRepresentation));
+    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
   }
 
   // ---------------------------------------------------------------------------
@@ -1784,8 +2005,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void
-      createKeycloakUser_Should_LeaveTenantIdAttributeUnset_When_TenantIdAndCurrentTenantAreNull() {
+  public void createUser_Should_LeaveTenantIdAttributeUnset_When_TenantIdAndCurrentTenantAreNull() {
     setField(keycloakService, "multiTenancyEnabled", true);
     TenantContext.clear();
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
@@ -1798,9 +2018,9 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    var keycloakUser = keycloakService.createKeycloakUser(userDTO);
+    var keycloakUser = keycloakService.createUser(userDTO);
 
-    assertThat(keycloakUser.getStatus(), is(HttpStatus.CREATED));
+    assertThat(keycloakUser.getUserId(), is(USER_ID));
     setField(keycloakService, "multiTenancyEnabled", false);
   }
 

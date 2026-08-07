@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -39,7 +40,6 @@ import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -76,10 +76,10 @@ class AssignEnquiryFacadeTest {
   @Mock UserHelper userHelper;
   @Mock UsernameTranscoder usernameTranscoder;
   @Mock AgencyMatrixCredentialClient agencyMatrixCredentialClient;
-  @Mock LiveEventNotificationService liveEventNotificationService;
   @Mock EventNotificationService eventNotificationService;
   @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
   @Mock de.caritas.cob.userservice.api.facade.TeamDiscussionFacade teamDiscussionFacade;
+  @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
@@ -88,6 +88,10 @@ class AssignEnquiryFacadeTest {
 
   @BeforeEach
   public void setup() throws MatrixCreateRoomException {
+    // ADR-002 §2: the display name comes from the resolver, never from the real name.
+    lenient()
+        .when(consultantDisplayNameResolver.resolveMatrixDisplayName(any(Consultant.class)))
+        .thenReturn("pseudonym");
     // dev's Matrix migration: assignEnquiry now provisions a Matrix room and reads
     // session.getUser().getMatrixUserId() / consultant.getMatrixUserId(). The shared
     // TestConstants do not set these, so populate them here (reset in tearDown) and stub the
@@ -222,6 +226,9 @@ class AssignEnquiryFacadeTest {
     verifyConsultantAndSessionHaveBeenChecked(
         ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
     verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(
+            ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
   }
 
   // ---------------------------------------------------------------------------
@@ -250,6 +257,8 @@ class AssignEnquiryFacadeTest {
     verify(sessionSupervisorFacade)
         .attachStandingSupervisorIfAssigned(
             SESSION_WITHOUT_CONSULTANT.getId(), CONSULTANT_WITH_AGENCY);
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
   }
 
   // ---------------------------------------------------------------------------

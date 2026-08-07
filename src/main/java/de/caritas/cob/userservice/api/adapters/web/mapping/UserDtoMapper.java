@@ -12,7 +12,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.TwoFactorAuthDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.model.OtpInfoDTO;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
+import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,24 +32,23 @@ public class UserDtoMapper {
 
   public UserDataResponseDTO userDataOf(
       UserDataResponseDTO userData,
-      OtpInfoDTO otpInfoDTO,
+      IdentityOtpCredential otpCredential,
       boolean isE2eEncEnabled,
       boolean isDisplayNameAllowed) {
     var twoFactorAuthDTO = new TwoFactorAuthDTO();
 
-    if (nonNull(otpInfoDTO)) {
+    if (nonNull(otpCredential)) {
       twoFactorAuthDTO.setIsEnabled(true);
-      if (Boolean.TRUE.equals(otpInfoDTO.getOtpSetup())) {
+      if (Boolean.TRUE.equals(otpCredential.setup())) {
         twoFactorAuthDTO.isActive(true);
-        var foreignType = otpInfoDTO.getOtpType();
-        if (nonNull(foreignType)) {
-          var type = foreignType.getValue().equals("APP") ? OtpType.APP : OtpType.EMAIL;
+        if (nonNull(otpCredential.type())) {
+          var type = otpCredential.type() == IdentityOtpType.APP ? OtpType.APP : OtpType.EMAIL;
           twoFactorAuthDTO.setType(type);
         }
       }
 
-      twoFactorAuthDTO.setQrCode(otpInfoDTO.getOtpSecretQrCode());
-      twoFactorAuthDTO.setSecret(otpInfoDTO.getOtpSecret());
+      twoFactorAuthDTO.setQrCode(otpCredential.secretQrCode());
+      twoFactorAuthDTO.setSecret(otpCredential.secret());
     }
 
     twoFactorAuthDTO.setIsToEncourage(userData.getEncourage2fa());

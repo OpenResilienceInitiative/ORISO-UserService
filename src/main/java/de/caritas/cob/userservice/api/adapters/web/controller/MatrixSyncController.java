@@ -16,7 +16,7 @@ import org.springframework.web.bind.annotation.*;
 
 /**
  * Controller for Matrix session synchronization. Allows frontend to register Matrix rooms for
- * real-time event notifications via LiveService.
+ * real-time event notifications.
  */
 @RestController
 @RequestMapping({"/matrix/sync", "/service/matrix/sync"})
@@ -31,7 +31,7 @@ public class MatrixSyncController {
 
   /**
    * Register a Matrix room for real-time event listening. When messages arrive in this room, the
-   * backend will trigger LiveService events to notify connected users.
+   * backend will trigger notifications for the affected users.
    *
    * @param sessionId the session ID
    * @return success response
