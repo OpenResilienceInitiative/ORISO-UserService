@@ -22,7 +22,10 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
@@ -47,7 +50,10 @@ public class ConsultantUpdateServiceBase {
         IdentityEmailOwnerLookup.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
+        IdentityProfileUpdater.class,
         IdentityRoleLookup.class,
+        IdentityRoleUpdater.class,
+        IdentitySecondFactor.class,
         IdentityUsernameAvailability.class
       })
   protected IdentityClient identityClient;
@@ -56,7 +62,7 @@ public class ConsultantUpdateServiceBase {
 
   @BeforeEach
   void stubAssignedAgencies() {
-    when(agencyService.getAgencies(anyList()))
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
         .thenAnswer(
             invocation ->
                 invocation.<List<Long>>getArgument(0).stream()

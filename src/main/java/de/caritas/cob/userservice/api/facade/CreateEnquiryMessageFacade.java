@@ -73,25 +73,8 @@ public class CreateEnquiryMessageFacade {
 
     String matrixMessageEventId = "";
     if (!isAppointmentEnquiryMessage(enquiryData)) {
-      String matrixAccessToken =
-          matrixSynapseService.loginAsUserAccessToken(enquiryData.getUser().getMatrixUserId());
-      if (isBlank(matrixAccessToken)) {
-        throw new InternalServerErrorException(
-            String.format(
-                "Could not create Matrix token for enquiry user %s",
-                enquiryData.getUser().getUserId()));
-      }
-
-      var matrixResponse =
-          matrixSynapseService.sendMessage(
-              matrixRoomId, enquiryData.getMessage(), matrixAccessToken);
-      if (matrixResponse == null || matrixResponse.containsKey("error")) {
-        throw new InternalServerErrorException(
-            String.format(
-                "Could not post Matrix enquiry message to room %s for session %s",
-                matrixRoomId, session.getId()));
-      }
-      matrixMessageEventId = String.valueOf(matrixResponse.getOrDefault("event_id", ""));
+      matrixMessageEventId =
+          validateEncryptedMatrixEvent(enquiryData, matrixRoomId, enquiryData.getMatrixEventId());
     }
 
     var exceptionInformation =
@@ -106,6 +89,49 @@ public class CreateEnquiryMessageFacade {
         .matrixRoomId(matrixRoomId)
         .sessionId(enquiryData.getSessionId())
         .t(matrixMessageEventId);
+  }
+
+  private String validateEncryptedMatrixEvent(
+      EnquiryData enquiryData, String matrixRoomId, String matrixEventId) {
+    if (isBlank(matrixEventId)) {
+      throw new InternalServerErrorException(
+          String.format(
+              "Initial enquiry for session %s requires an encrypted Matrix event",
+              enquiryData.getSessionId()));
+    }
+
+    String matrixUserId = enquiryData.getUser().getMatrixUserId();
+    String matrixAccessToken = matrixSynapseService.loginAsUserAccessToken(matrixUserId);
+    if (isBlank(matrixAccessToken)) {
+      throw new InternalServerErrorException(
+          String.format(
+              "Could not validate encrypted Matrix enquiry event for user %s",
+              enquiryData.getUser().getUserId()));
+    }
+
+    var event =
+        matrixSynapseService
+            .getRoomEvent(matrixRoomId, matrixEventId, matrixAccessToken)
+            .orElseThrow(
+                () ->
+                    new InternalServerErrorException(
+                        String.format(
+                            "Could not read Matrix enquiry event %s in room %s",
+                            matrixEventId, matrixRoomId)));
+
+    if (!matrixEventId.equals(event.get("event_id"))) {
+      throw new InternalServerErrorException(
+          String.format("Matrix enquiry event response did not match %s", matrixEventId));
+    }
+    if (!"m.room.encrypted".equals(event.get("type"))) {
+      throw new InternalServerErrorException(
+          String.format("Matrix enquiry event %s is not an encrypted Matrix event", matrixEventId));
+    }
+    if (!matrixUserId.equals(event.get("sender"))) {
+      throw new InternalServerErrorException(
+          String.format("Matrix enquiry event %s was not sent by enquiry user", matrixEventId));
+    }
+    return matrixEventId;
   }
 
   private String ensureMatrixRoomForEnquiry(Session session, User user) {

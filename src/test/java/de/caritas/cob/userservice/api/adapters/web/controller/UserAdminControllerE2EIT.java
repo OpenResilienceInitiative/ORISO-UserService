@@ -20,7 +20,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
@@ -45,8 +44,12 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
@@ -138,7 +141,10 @@ class UserAdminControllerE2EIT {
         IdentityEmailOwnerLookup.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
+        IdentityProfileUpdater.class,
         IdentityRoleLookup.class,
+        IdentityRoleUpdater.class,
+        IdentitySecondFactor.class,
         IdentityUsernameAvailability.class
       })
   IdentityClient identityClient;
@@ -164,9 +170,9 @@ class UserAdminControllerE2EIT {
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
 
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
+    CreatedIdentity keycloakResponse = new CreatedIdentity();
     keycloakResponse.setUserId(new EasyRandom().nextObject(String.class));
-    when(identityClient.createKeycloakUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
+    when(identityClient.createUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(keycloakResponse);
   }
 

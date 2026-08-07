@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.CustomHttpHeader;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
@@ -297,6 +298,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     NullPointerException.class,
     IllegalArgumentException.class,
     IllegalStateException.class,
+    IdentityProvisioningException.class,
     KeycloakException.class,
     DataAccessException.class,
     UnknownHostException.class,

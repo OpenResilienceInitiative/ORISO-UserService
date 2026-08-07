@@ -2493,6 +2493,9 @@ components:
           $ref: '#/components/schemas/LanguageCode'
         t:
           type: string
+        matrixEventId:
+          type: string
+          description: ID of the browser-encrypted Matrix event to finalize as the initial enquiry
 
     CreateEnquiryMessageResponseDTO:
       type: object

@@ -5,7 +5,6 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 import static org.apache.commons.lang3.Validate.notNull;
 
 import com.google.common.collect.Lists;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
@@ -20,6 +19,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.NotFoundException;
 import java.util.ArrayList;
@@ -94,7 +94,7 @@ public class CreateAdminService {
   }
 
   private Admin createNewAdmin(final CreateAdminDTO createAdminDTO, Admin.AdminType adminType) {
-    final String keycloakUserId = createKeycloakUser(createAdminDTO);
+    final String keycloakUserId = createUser(createAdminDTO);
     final String password =
         StringUtils.isNotBlank(createAdminDTO.getPassword())
             ? createAdminDTO.getPassword()
@@ -119,15 +119,14 @@ public class CreateAdminService {
     }
   }
 
-  private String createKeycloakUser(final CreateAdminDTO createAgencyAdminDTO) {
+  private String createUser(final CreateAdminDTO createAgencyAdminDTO) {
     final UserDTO userDto = buildValidatedUserDTO(createAgencyAdminDTO);
 
-    final KeycloakCreateUserResponseDTO response =
-        identityClient.createKeycloakUser(
+    final CreatedIdentity response =
+        identityClient.createUser(
             userDto, createAgencyAdminDTO.getFirstname(), createAgencyAdminDTO.getLastname());
-    this.userAccountInputValidator.validateKeycloakResponse(response);
 
-    return response.getUserId();
+    return CreatedIdentity.requireUserId(response);
   }
 
   private UserDTO buildValidatedUserDTO(final CreateAdminDTO createAdminDTO) {

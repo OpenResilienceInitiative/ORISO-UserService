@@ -8,7 +8,8 @@ import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminSe
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -17,7 +18,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class UpdateAdminService {
 
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityProfileUpdater identityProfileUpdater;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull RetrieveAdminService retrieveAdminService;
@@ -27,11 +28,10 @@ public class UpdateAdminService {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.AGENCY);
     assertAdminHasTenantIdNotNullAndNotZero(admin);
     final UserDTO userDTO = buildValidatedUserDTO(updateAgencyAdminDTO, admin);
-    this.identityClient.updateUserData(
+    this.identityProfileUpdater.updateProfile(
         admin.getId(),
-        userDTO,
-        updateAgencyAdminDTO.getFirstname(),
-        updateAgencyAdminDTO.getLastname());
+        profileUpdate(
+            userDTO, updateAgencyAdminDTO.getFirstname(), updateAgencyAdminDTO.getLastname()));
 
     return this.adminRepository.save(buildAdmin(updateAgencyAdminDTO, admin));
   }
@@ -51,6 +51,11 @@ public class UpdateAdminService {
 
     this.userAccountInputValidator.validateUserDTO(userDTO);
     return userDTO;
+  }
+
+  private IdentityProfileUpdate profileUpdate(UserDTO userDTO, String firstName, String lastName) {
+    return new IdentityProfileUpdate(
+        userDTO.getUsername(), userDTO.getEmail(), userDTO.getTenantId(), firstName, lastName);
   }
 
   private UserDTO buildValidatedUserDTO(
@@ -97,11 +102,10 @@ public class UpdateAdminService {
   public Admin updateTenantAdmin(String adminId, UpdateTenantAdminDTO updateTenantAdminDTO) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.TENANT);
     final UserDTO userDTO = buildValidatedUserDTO(updateTenantAdminDTO, admin);
-    this.identityClient.updateUserData(
+    this.identityProfileUpdater.updateProfile(
         admin.getId(),
-        userDTO,
-        updateTenantAdminDTO.getFirstname(),
-        updateTenantAdminDTO.getLastname());
+        profileUpdate(
+            userDTO, updateTenantAdminDTO.getFirstname(), updateTenantAdminDTO.getLastname()));
 
     return this.adminRepository.save(buildAdmin(updateTenantAdminDTO, admin));
   }
@@ -110,8 +114,9 @@ public class UpdateAdminService {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.AGENCY);
     assertAdminHasTenantIdNotNullAndNotZero(admin);
     final UserDTO userDTO = buildValidatedUserDTO(patchAdminDTO, admin);
-    this.identityClient.updateUserData(
-        admin.getId(), userDTO, patchAdminDTO.getFirstname(), patchAdminDTO.getLastname());
+    this.identityProfileUpdater.updateProfile(
+        admin.getId(),
+        profileUpdate(userDTO, patchAdminDTO.getFirstname(), patchAdminDTO.getLastname()));
 
     return this.adminRepository.save(patchAdminEntity(patchAdminDTO, admin));
   }
@@ -119,8 +124,9 @@ public class UpdateAdminService {
   public Admin patchTenantAdmin(String adminId, PatchAdminDTO patchAdminDTO) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.TENANT);
     final UserDTO userDTO = buildValidatedUserDTO(patchAdminDTO, admin);
-    this.identityClient.updateUserData(
-        admin.getId(), userDTO, patchAdminDTO.getFirstname(), patchAdminDTO.getLastname());
+    this.identityProfileUpdater.updateProfile(
+        admin.getId(),
+        profileUpdate(userDTO, patchAdminDTO.getFirstname(), patchAdminDTO.getLastname()));
 
     return this.adminRepository.save(patchAdminEntity(patchAdminDTO, admin));
   }

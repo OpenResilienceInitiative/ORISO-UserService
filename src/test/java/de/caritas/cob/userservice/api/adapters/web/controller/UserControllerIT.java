@@ -59,7 +59,10 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
@@ -295,7 +298,10 @@ class UserControllerIT {
         IdentityEmailOwnerLookup.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
+        IdentityProfileUpdater.class,
         IdentityRoleLookup.class,
+        IdentityRoleUpdater.class,
+        IdentitySecondFactor.class,
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;

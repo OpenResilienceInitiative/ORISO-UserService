@@ -16,6 +16,49 @@ WEB_MAPPINGS = (
 
 
 class ModuleBoundaryContractTest(unittest.TestCase):
+    def test_identity_port_does_not_export_keycloak_or_framework_models(self):
+        identity_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        )
+        identity_results = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/identity"
+        )
+        sources = [identity_port, *sorted(identity_results.glob("*.java"))]
+        forbidden_prefixes = (
+            "import de.caritas.cob.userservice.api.adapters.keycloak.",
+            "import org.keycloak.",
+            "import org.springframework.http.",
+        )
+        offenders = [
+            f"{source.relative_to(ROOT)}: {line}"
+            for source in sources
+            for line in source.read_text().splitlines()
+            if line.startswith(forbidden_prefixes)
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "The identity output port must expose application-owned results, not "
+            "Keycloak or framework transport models:\n" + "\n".join(offenders),
+        )
+
+    def test_identity_creation_validation_is_provider_neutral(self):
+        validator = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/"
+            "consultant/validation/UserAccountInputValidator.java"
+        )
+        source = validator.read_text()
+
+        self.assertNotIn(
+            "Keycloak",
+            source,
+            "Identity creation validation must use application-owned terminology "
+            "and exceptions.",
+        )
+
     def test_user_and_appointment_web_slices_depend_on_input_ports(self):
         sources = [
             CONTROLLERS / "AppointmentController.java",
@@ -233,6 +276,108 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             identity_manager,
             "Application code must not interpret Keycloak adapter map keys",
         )
+
+    def test_second_factor_verification_uses_typed_application_boundaries(self):
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+        second_factor_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentitySecondFactor.java"
+        )
+        identity_input = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/in/"
+            "IdentityManaging.java"
+        ).read_text()
+        identity_manager = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java"
+        ).read_text()
+        two_factor_delegate = (
+            CONTROLLERS / "UserTwoFactorAuthControllerDelegate.java"
+        ).read_text()
+        typed_values = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/identity/"
+            "IdentityOtpCredential.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/identity/"
+            "IdentityOtpType.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/identity/"
+            "IdentityEmailVerification.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/identity/"
+            "IdentityEmailVerificationStart.java",
+        )
+
+        self.assertTrue(
+            second_factor_port.exists(),
+            "A focused IdentitySecondFactor port must own OTP and email verification",
+        )
+        self.assertTrue(
+            all(value.exists() for value in typed_values),
+            "Second-factor boundaries must use typed provider-neutral application values",
+        )
+        for method in (
+            "getOtpCredential(",
+            "setUpOtpCredential(",
+            "deleteOtpCredential(",
+            "initiateEmailVerification(",
+            "finishEmailVerification(",
+        ):
+            self.assertNotIn(
+                method,
+                identity_client,
+                "The broad identity command port must not expose second-factor verification",
+            )
+        self.assertNotIn(
+            "OtpInfoDTO",
+            identity_client,
+            "The broad identity command port must not import a generated web DTO",
+        )
+        self.assertIn(
+            "IdentitySecondFactor",
+            identity_manager,
+            "IdentityManager must use the focused second-factor output port",
+        )
+        for source in (identity_input, identity_manager):
+            self.assertNotIn(
+                "OtpInfoDTO",
+                source,
+                "The application identity boundary must not expose the generated OTP DTO",
+            )
+            self.assertNotIn(
+                "Map<String, String>",
+                source,
+                "The application identity boundary must not expose stringly verification maps",
+            )
+        self.assertNotIn(
+            'validationResult.get("',
+            two_factor_delegate,
+            "The web delegate must consume a typed email-verification result",
+        )
+
+        keycloak_adapter = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/"
+            "KeycloakService.java"
+        ).read_text()
+        for operation in (
+            "otp-fetch",
+            "otp-setup",
+            "otp-delete",
+            "email-verification-start",
+            "email-verification-finish",
+        ):
+            self.assertIn(
+                f'"{operation}"',
+                keycloak_adapter,
+                "Second-factor retries must retain stable per-operation metric tags",
+            )
+
 
     def test_magic_link_application_and_web_boundaries_do_not_import_keycloak_transport(self):
         sources = (
@@ -910,6 +1055,147 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "findDistinctConsultingTypeIdsByAgencyId(",
             source,
             "Fallback consulting types must be loaded in one local batch query",
+        )
+
+    def test_role_write_consumers_use_the_focused_batch_identity_port(self):
+        port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/"
+            "IdentityRoleUpdater.java"
+        )
+        self.assertTrue(
+            port.exists(),
+            "Consultant role writes need a focused provider-neutral batch port",
+        )
+
+        focused_updater_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;"
+        )
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "create/GrantConsultantIdentityService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant"
+            / "create/agencyrelation/ConsultantAgencyRelationCreatorService.java",
+        )
+        missing_focused_port = [
+            str(source.relative_to(ROOT))
+            for source in consumers
+            if focused_updater_import not in source.read_text()
+        ]
+        identity_client = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        ).read_text()
+
+        self.assertEqual(
+            [],
+            missing_focused_port,
+            "Realm-role writers must depend on the focused batch role-write port:\n"
+            + "\n".join(missing_focused_port),
+        )
+        self.assertNotIn(
+            "ensureRole(",
+            identity_client,
+            "The broad identity command client must not own role ensuring",
+        )
+        for source in consumers:
+            self.assertNotIn(
+                "identityClient.ensureRole(",
+                source.read_text(),
+                f"{source.name} must batch role writes through IdentityRoleUpdater",
+            )
+
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityRoleUpdater" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must provide the focused role-write port:\n"
+            + "\n".join(missing_test_interface),
+        )
+
+    def test_profile_write_consumers_use_the_focused_identity_profile_port(self):
+        port_root = ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out"
+        updater = port_root / "IdentityProfileUpdater.java"
+        profile = port_root / "IdentityProfileUpdate.java"
+        self.assertTrue(updater.exists(), "Profile writes need a focused output port")
+        self.assertTrue(profile.exists(), "Profile writes need a provider-neutral value")
+
+        forbidden_model_imports = (
+            "de.caritas.cob.userservice.api.adapters.web.",
+            "org.keycloak.",
+        )
+        model_text = profile.read_text()
+        for forbidden_import in forbidden_model_imports:
+            self.assertNotIn(
+                forbidden_import,
+                model_text,
+                "The profile-write value must not expose web or Keycloak transport types",
+            )
+
+        focused_updater_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;"
+        )
+        consumers = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/admin/update/"
+            "UpdateAdminService.java",
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/consultant/update/"
+            "ConsultantUpdateService.java",
+        )
+        missing_focused_port = [
+            str(source.relative_to(ROOT))
+            for source in consumers
+            if focused_updater_import not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_focused_port,
+            "Profile writers must depend on IdentityProfileUpdater:\n"
+            + "\n".join(missing_focused_port),
+        )
+        for source in consumers:
+            self.assertNotIn(
+                "identityClient.updateUserData(",
+                source.read_text(),
+                f"{source.name} must write profiles through the focused port",
+            )
+
+        identity_client = (port_root / "IdentityClient.java").read_text()
+        self.assertNotIn(
+            "updateUserData(",
+            identity_client,
+            "The broad identity command client must not own profile updates",
+        )
+
+        spring_identity_mocks = [
+            source
+            for source in (ROOT / "src/test/java").rglob("*.java")
+            if "@MockitoBean" in source.read_text()
+            and "IdentityClient identityClient" in source.read_text()
+        ]
+        missing_test_interface = [
+            str(source.relative_to(ROOT))
+            for source in spring_identity_mocks
+            if "IdentityProfileUpdater" not in source.read_text()
+        ]
+        self.assertEqual(
+            [],
+            missing_test_interface,
+            "Shared Spring identity mocks must provide the focused profile-write port:\n"
+            + "\n".join(missing_test_interface),
         )
 
 

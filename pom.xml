@@ -45,7 +45,8 @@
 		<log4j.version>2.25.4</log4j.version> <!-- force safe version due to https://logging.apache.org/log4j/2.x/security.html -->
 		<commons-text.version>1.10.0</commons-text.version>
 		<commons-validator.version>1.10.1</commons-validator.version>
-		<liquibase-maven-plugin.version>4.8.0</liquibase-maven-plugin.version>
+		<liquibase.version>4.27.0</liquibase.version>
+		<snakeyaml.version>2.0</snakeyaml.version>
 		<jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
 		<javax.ws.rs-api.version>2.1.1</javax.ws.rs-api.version>
 		<json-smart.version>2.6.0</json-smart.version>
@@ -283,6 +284,7 @@
 		<dependency>
 			<groupId>org.liquibase</groupId>
 			<artifactId>liquibase-core</artifactId>
+			<version>${liquibase.version}</version>
 		</dependency>
 		<dependency>
 			<groupId>org.springframework.boot</groupId>
@@ -473,7 +475,7 @@
 		<dependency>
 			<groupId>org.yaml</groupId>
 			<artifactId>snakeyaml</artifactId>
-			<version>2.0</version>
+			<version>${snakeyaml.version}</version>
 		</dependency>
 	</dependencies>
 
@@ -1067,7 +1069,7 @@
 			<plugin>
 				<groupId>org.liquibase</groupId>
 				<artifactId>liquibase-maven-plugin</artifactId>
-				<version>${liquibase-maven-plugin.version}</version>
+				<version>${liquibase.version}</version>
 				<configuration>
 					<propertyFile>src/main/resources/liquibase.properties</propertyFile>
 				</configuration>

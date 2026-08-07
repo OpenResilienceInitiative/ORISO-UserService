@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+
+  <!--
+    Repair a non-linear PreDev migration history: the ADR-018 replacement
+    changeset removed support_room after 0079 had already been recorded. A
+    later pre-dev image therefore skipped 0079 and failed Hibernate validation.
+  -->
+  <changeSet id="0081-support-room-repair" author="frank">
+    <sqlFile
+      path="db/changelog/changeset/0081_support_room_repair/migrate.sql"
+      relativeToChangelogFile="false"
+      splitStatements="true"
+      stripComments="true"
+      endDelimiter=";"/>
+    <!-- 0079 owns the canonical table. Rolling back this repair must not
+         remove it and recreate the same recorded-but-missing schema drift. -->
+    <rollback>
+      <sql>SELECT 1;</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

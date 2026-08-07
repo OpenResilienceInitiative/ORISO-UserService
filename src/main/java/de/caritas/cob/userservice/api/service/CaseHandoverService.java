@@ -38,8 +38,11 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
 import java.util.stream.Collectors;
+import lombok.AccessLevel;
+import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
+import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -919,6 +922,8 @@ public class CaseHandoverService {
 
   @Data
   @Builder
+  @NoArgsConstructor
+  @AllArgsConstructor(access = AccessLevel.PRIVATE)
   public static class CaseHandoverReason {
     private String code;
     private String label;
