@@ -5,6 +5,9 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
+import java.nio.charset.StandardCharsets;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -14,6 +17,8 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 @Slf4j
 public class MatrixRtcCallPolicyService {
+
+  private static final int CORRELATION_ID_HEX_CHARS = 12;
 
   private final @NonNull MatrixRtcPolicyContextResolver contextResolver;
   private final @NonNull TenantService tenantService;
@@ -45,29 +50,36 @@ public class MatrixRtcCallPolicyService {
   }
 
   private CallMediaPolicy resolveCrossTenant(String sourceRoomId, String matrixUserId) {
+    // Denial logs below must never carry the raw Matrix room id / user id: those identify a
+    // conversation and its participant to anyone with log access. correlationId is a one-way
+    // hash of the pair, stable for this request, so denials for the same room+user can still be
+    // correlated across log lines without exposing either identifier.
+    var correlationId = correlationId(sourceRoomId, matrixUserId);
+
     var currentMembers = matrixSynapseService.getRoomMembers(sourceRoomId);
     if (currentMembers.isEmpty() || !currentMembers.get().contains(matrixUserId)) {
       log.info(
-          "Call policy denied for room {}: user {} is not a current room member",
-          sourceRoomId,
-          matrixUserId);
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.NOT_ROOM_MEMBER);
       return CallMediaPolicy.denied();
     }
 
     var context = contextResolver.resolve(sourceRoomId);
     if (context.isEmpty() || context.get().tenantId() == null) {
       log.info(
-          "Call policy denied for room {}: no session, chat, supervision or team discussion with"
-              + " a tenant id resolves to this room",
-          sourceRoomId);
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.NO_TENANT_CONTEXT);
       return CallMediaPolicy.denied();
     }
 
     var tenant = getTenant(context.get().tenantId());
     if (tenant == null || tenant.getSettings() == null) {
       log.info(
-          "Call policy denied for room {}: tenant {} settings could not be loaded",
-          sourceRoomId,
+          "Call policy denied [{}]: reason={}, tenant={}",
+          correlationId,
+          CallPolicyDenialReason.TENANT_SETTINGS_UNAVAILABLE,
           context.get().tenantId());
       return CallMediaPolicy.denied();
     }
@@ -75,8 +87,9 @@ public class MatrixRtcCallPolicyService {
     var settings = tenant.getSettings();
     if (!enabled(settings.getFeatureCallsEnabled())) {
       log.info(
-          "Call policy denied for room {}: featureCallsEnabled is off for tenant {}",
-          sourceRoomId,
+          "Call policy denied [{}]: reason={}, tenant={}",
+          correlationId,
+          CallPolicyDenialReason.CALLS_DISABLED_FOR_TENANT,
           context.get().tenantId());
       return CallMediaPolicy.denied();
     }
@@ -122,5 +135,25 @@ public class MatrixRtcCallPolicyService {
 
   private boolean enabled(Boolean value) {
     return !Boolean.FALSE.equals(value);
+  }
+
+  /**
+   * Derives a one-way, non-reversible correlation value for a (room id, user id) pair, safe to
+   * include in logs. Same pair always hashes to the same value, so repeated denials for the same
+   * room and user can be correlated without ever logging the raw Matrix identifiers.
+   */
+  private static String correlationId(String sourceRoomId, String matrixUserId) {
+    try {
+      var digest = MessageDigest.getInstance("SHA-256");
+      var hash =
+          digest.digest((sourceRoomId + ':' + matrixUserId).getBytes(StandardCharsets.UTF_8));
+      var hex = new StringBuilder(hash.length * 2);
+      for (byte value : hash) {
+        hex.append(String.format("%02x", value));
+      }
+      return hex.substring(0, CORRELATION_ID_HEX_CHARS);
+    } catch (NoSuchAlgorithmException e) {
+      throw new IllegalStateException("SHA-256 not available", e);
+    }
   }
 }
