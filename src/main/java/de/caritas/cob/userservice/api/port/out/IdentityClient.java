@@ -28,8 +28,6 @@ public interface IdentityClient {
 
   void updateRole(final String userId, final String roleName);
 
-  void updateUserData(final String userId, UserDTO userDTO, String firstName, String lastName);
-
   void updateEmail(String userId, String emailAddress);
 
   boolean userHasAuthority(String userId, String authority);

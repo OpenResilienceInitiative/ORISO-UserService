@@ -123,8 +123,8 @@ public class KeycloakTestConfig {
       public void updatePassword(String userId, String password) {}
 
       @Override
-      public void updateUserData(
-          String userId, UserDTO userDTO, String firstName, String lastName) {}
+      public void updateProfile(
+          String userId, de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate profile) {}
 
       @Override
       public void updateEmail(String userId, String emailAddress) {}

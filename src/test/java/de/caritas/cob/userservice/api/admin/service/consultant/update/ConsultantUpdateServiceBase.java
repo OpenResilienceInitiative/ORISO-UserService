@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -47,6 +48,7 @@ public class ConsultantUpdateServiceBase {
         IdentityEmailOwnerLookup.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
+        IdentityProfileUpdater.class,
         IdentityRoleLookup.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
