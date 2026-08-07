@@ -384,7 +384,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. `IdentityClient` returns application-owned `CreatedIdentity` for user creation. Magic-link exchange returns the separate provider-neutral `api.model.identity.IdentitySession`; only Keycloak adapters own grant fields and provider response parsing. Profile email propagation uses the `MessageClient` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role writers use the focused batch `IdentityRoleUpdater` port and the broad identity command client no longer owns role ensuring. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Password writers depend on `IdentityPasswordUpdater`. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`. | Identity creation still accepts the web-layer `UserDTO`, and other identity operations on the broad port remain to be narrowed further. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. `IdentityClient` returns application-owned `CreatedIdentity` for user creation. Magic-link exchange returns the separate provider-neutral `api.model.identity.IdentitySession`; only Keycloak adapters own grant fields and provider response parsing. Profile email propagation uses the `MessageClient` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role writers use the focused batch `IdentityRoleUpdater` port and the broad identity command client no longer owns role ensuring. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Password writers depend on `IdentityPasswordUpdater`. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. | Identity creation still accepts the web-layer `UserDTO`, and other identity operations on the broad port remain to be narrowed further. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; identity creation consumes the neutral `CreatedIdentity` result; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and identity creation still receives the web-layer `UserDTO`. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -437,6 +437,21 @@ performs at most one update, with no hidden or application retry. The anonymous
 deactivation action keeps its existing best-effort error handling; the account,
 asker and consultant deletion flows remain strict and preserve their existing
 ordering around lifecycle and persistence changes.
+
+A dedicated second-factor boundary contract keeps OTP and email-verification
+operations out of the broad `IdentityClient` contract. Each of the five
+operations performs exactly one provider request on its normal path. An initial
+unauthorized response can trigger at most one token refresh and one repeated
+provider request, for a maximum of two attempts. Retry measurements use five
+fixed low-cardinality operation tags (`otp-fetch`, `otp-setup`, `otp-delete`,
+`email-verification-start` and `email-verification-finish`) and contain no
+username or other user data. The application passes the encoded username
+through the focused port; the Keycloak adapter owns provider-specific decoding,
+while the verified email mutation continues to use the decoded username.
+External APIs, schemas and configuration remain unchanged, and this refactor
+does not reduce the number of second-factor provider calls. These are
+source-and-local-test guarantees until the branch is merged, deployed and
+verified on PreDev.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
