@@ -33,6 +33,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
@@ -93,6 +94,7 @@ public class KeycloakService
         IdentityClient,
         IdentityDeactivator,
         IdentityDummyEmailUpdater,
+        IdentityEmailAddressUpdater,
         IdentityEmailOwnerLookup,
         IdentityPasswordUpdater,
         IdentityProfileLookup,
@@ -201,14 +203,16 @@ public class KeycloakService
    *
    * @param emailAddress the email address to set
    */
-  public void changeEmailAddress(String emailAddress) {
+  @Override
+  public void updateCurrentUserEmail(String emailAddress) {
     this.userAccountInputValidator.validateEmailAddress(emailAddress);
     String userId = this.authenticatedUser.getUserId();
-    updateEmail(userId, emailAddress);
+    updateEmail(userId, emailAddress.toLowerCase(Locale.ROOT));
   }
 
-  public void changeEmailAddress(String username, String emailAddress) {
-    var lowerEmailAddress = emailAddress.toLowerCase();
+  @Override
+  public void updateEmailByUsername(String username, String emailAddress) {
+    var lowerEmailAddress = emailAddress.toLowerCase(Locale.ROOT);
     var usersResource = keycloakClient.getUsersResource();
     var userRepresentation = usersResource.search(username).get(0);
     if (!lowerEmailAddress.equals(userRepresentation.getEmail())) {
@@ -217,7 +221,8 @@ public class KeycloakService
     }
   }
 
-  public void deleteEmailAddress() {
+  @Override
+  public void deleteCurrentUserEmail() {
     var userId = authenticatedUser.getUserId();
     updateEmail(userId, userHelper.getDummyEmail(userId));
   }
@@ -829,18 +834,23 @@ public class KeycloakService
   @Override
   public void updateProfile(final String userId, final IdentityProfileUpdate profile) {
     var userResource = keycloakClient.getUsersResource().get(userId);
-    verifyEmail(userResource, profile.email());
+    verifyEmail(userResource.toRepresentation(), profile.email());
     userResource.update(getUserRepresentation(profile));
   }
 
-  private void verifyEmail(UserResource userResource, String email) {
-    if (hasEmailAddressChanged(userResource, email) && isEmailNotAvailable(email)) {
+  private void verifyEmail(UserRepresentation userRepresentation, String email) {
+    if (hasEmailAddressChanged(userRepresentation, email)) {
+      verifyEmailAvailable(email);
+    }
+  }
+
+  private void verifyEmailAvailable(String email) {
+    if (isEmailNotAvailable(email)) {
       throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
   }
 
-  private boolean hasEmailAddressChanged(UserResource userResource, String email) {
-    UserRepresentation userRepresentation = userResource.toRepresentation();
+  private boolean hasEmailAddressChanged(UserRepresentation userRepresentation, String email) {
     if (userRepresentation != null && userRepresentation.getEmail() != null) {
       return !userRepresentation.getEmail().equals(email);
     } else {
@@ -854,10 +864,13 @@ public class KeycloakService
    * @param userId Keycloak user ID
    * @param emailAddress the email address to set
    */
-  public void updateEmail(String userId, String emailAddress) {
+  private void updateEmail(String userId, String emailAddress) {
     var userResource = keycloakClient.getUsersResource().get(userId);
-    verifyEmail(userResource, emailAddress);
     UserRepresentation representation = userResource.toRepresentation();
+    if (!hasEmailAddressChanged(representation, emailAddress)) {
+      return;
+    }
+    verifyEmailAvailable(emailAddress);
     representation.setEmail(emailAddress);
     userResource.update(representation);
   }

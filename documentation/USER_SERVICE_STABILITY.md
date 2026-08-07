@@ -393,7 +393,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. `IdentityClient` returns application-owned `CreatedIdentity` for user creation. Magic-link exchange returns the separate provider-neutral `api.model.identity.IdentitySession`; only Keycloak adapters own grant fields and provider response parsing. Profile email propagation uses the `MessageClient` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role writers use the focused batch `IdentityRoleUpdater` port and the broad identity command client no longer owns role ensuring. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Password writers depend on `IdentityPasswordUpdater`. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`. Admin and consultant profile writes use `IdentityProfileUpdater` and a five-field provider-neutral `IdentityProfileUpdate`; the broad identity command client no longer accepts web-layer profile DTOs. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. | Identity creation still accepts the web-layer `UserDTO`, and other identity operations on the broad port remain to be narrowed further. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. `IdentityClient` returns application-owned `CreatedIdentity` for user creation. Magic-link exchange returns the separate provider-neutral `api.model.identity.IdentitySession`; only Keycloak adapters own grant fields and provider response parsing. Profile email propagation uses the `MessageClient` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role writers use the focused batch `IdentityRoleUpdater` port and the broad identity command client no longer owns role ensuring. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Password writers depend on `IdentityPasswordUpdater`. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`. Admin and consultant profile writes use `IdentityProfileUpdater` and a five-field provider-neutral `IdentityProfileUpdate`; the broad identity command client no longer accepts web-layer profile DTOs. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. | Identity creation still accepts the web-layer `UserDTO`, and other identity operations on the broad port remain to be narrowed further. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; identity creation consumes the neutral `CreatedIdentity` result; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and identity creation still receives the web-layer `UserDTO`. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -462,8 +462,19 @@ username or other user data. The application passes the encoded username
 through the focused port; the Keycloak adapter owns provider-specific decoding,
 while the verified email mutation continues to use the decoded username.
 External APIs, schemas and configuration remain unchanged, and this refactor
-does not reduce the number of second-factor provider calls. These are
-source-and-local-test guarantees until the branch is merged, deployed and
+does not reduce the number of second-factor provider calls.
+
+A dedicated email-mutation contract prevents `IdentityManager` and
+`UserAccountService` from returning to the broad `IdentityClient` for account
+email writes. A changed current-account email performs one representation read,
+one availability search with an exact email match and one provider update. An
+unchanged email stops after the representation read with no availability search
+or update. Current account deletion follows the same focused path with the
+adapter-owned dummy email. A completed email verification performs one username
+lookup and at most one provider update; an unchanged verified email remains a
+no-op after that lookup. Lowercase normalization uses the locale-independent
+root locale. External APIs, schemas and configuration remain unchanged. These
+are source-and-local-test guarantees until the branch is merged, deployed and
 verified on PreDev.
 
 This is a ratcheted incremental modularization, not a claim that all three

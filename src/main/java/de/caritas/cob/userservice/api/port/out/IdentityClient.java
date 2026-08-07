@@ -10,12 +10,6 @@ public interface IdentityClient {
 
   void changeLanguage(final String userId, final String language);
 
-  void changeEmailAddress(final String emailAddress);
-
-  void changeEmailAddress(final String username, final String emailAddress);
-
-  void deleteEmailAddress();
-
   CreatedIdentity createUser(final UserDTO user);
 
   CreatedIdentity createUser(final UserDTO user, final String firstName, final String lastName);
@@ -27,8 +21,6 @@ public interface IdentityClient {
   void removeRoleIfPresent(final String userId, final String roleName);
 
   void updateRole(final String userId, final String roleName);
-
-  void updateEmail(String userId, String emailAddress);
 
   boolean userHasAuthority(String userId, String authority);
 
