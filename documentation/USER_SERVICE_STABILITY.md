@@ -491,6 +491,12 @@ read of the winning active claim. The required MariaDB workflow runs this test
 together with schema drift, statistics projection and the other replica
 contracts.
 
+The anonymous-user deactivation scheduler uses the same lease primitive with
+the claim name `anonymous-user-deactivation` and a 30-minute duration below its
+hourly interval. A losing replica exits before setting the technical tenant
+context or invoking the lifecycle service. Its two-instance regression test
+first reproduced two workflow calls and now observes exactly one.
+
 ## Microservice decision
 
 Decision: keep UserService as a modular monolith for now.
