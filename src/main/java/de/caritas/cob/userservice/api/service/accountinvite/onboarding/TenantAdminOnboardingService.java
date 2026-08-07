@@ -183,8 +183,7 @@ public class TenantAdminOnboardingService {
           operatorDpa.version());
       Long tenantId =
           created != null && created.getId() != null ? created.getId() : invite.getTenantId();
-      return new TenantAdminRegistrationResult(
-          tenantId, otpInfo.secret(), otpInfo.secretQrCode());
+      return new TenantAdminRegistrationResult(tenantId, otpInfo.secret(), otpInfo.secretQrCode());
     } catch (RuntimeException exception) {
       // Every database change rolls back with the exception; the Keycloak account is external
       // state and must be compensated explicitly so a failed registration stays retryable.

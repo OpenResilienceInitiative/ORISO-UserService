@@ -41,8 +41,7 @@ class HandshakeServiceTest {
   @Mock private HandshakeCompletionHandler completionHandler;
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
 
-  @Mock
-  private de.caritas.cob.userservice.api.port.out.IdentitySecondFactor identitySecondFactor;
+  @Mock private de.caritas.cob.userservice.api.port.out.IdentitySecondFactor identitySecondFactor;
 
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityClientConfig;
 

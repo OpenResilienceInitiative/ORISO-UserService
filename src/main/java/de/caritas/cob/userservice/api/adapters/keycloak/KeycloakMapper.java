@@ -6,7 +6,6 @@ import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.OtpSetupDTO;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
-import java.util.Map;
 import java.util.Objects;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.http.HttpStatus;
