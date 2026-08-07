@@ -27,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixRtcCallPolicyServiceTest {
@@ -54,7 +55,8 @@ class MatrixRtcCallPolicyServiceTest {
                 sessionSupervisorRepository,
                 teamDiscussionRepository),
             tenantService,
-            matrixSynapseService);
+            matrixSynapseService,
+            correlationIdHasher());
     when(matrixSynapseService.getRoomMembers(ROOM_ID))
         .thenReturn(Optional.of(List.of(MATRIX_USER_ID)));
   }
@@ -272,6 +274,13 @@ class MatrixRtcCallPolicyServiceTest {
     } finally {
       TenantContext.clear();
     }
+  }
+
+  private MatrixRtcCorrelationIdHasher correlationIdHasher() {
+    var hasher = new MatrixRtcCorrelationIdHasher();
+    ReflectionTestUtils.setField(hasher, "secret", "test-hmac-secret");
+    ReflectionTestUtils.invokeMethod(hasher, "init");
+    return hasher;
   }
 
   private Session session(ConversationType conversationType) {

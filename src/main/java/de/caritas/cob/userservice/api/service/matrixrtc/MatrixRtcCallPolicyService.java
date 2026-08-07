@@ -5,9 +5,6 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -18,11 +15,10 @@ import org.springframework.stereotype.Service;
 @Slf4j
 public class MatrixRtcCallPolicyService {
 
-  private static final int CORRELATION_ID_HEX_CHARS = 12;
-
   private final @NonNull MatrixRtcPolicyContextResolver contextResolver;
   private final @NonNull TenantService tenantService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull MatrixRtcCorrelationIdHasher correlationIdHasher;
 
   public CallMediaPolicy resolve(String sourceRoomId, String matrixUserId) {
     if (sourceRoomId == null
@@ -51,10 +47,11 @@ public class MatrixRtcCallPolicyService {
 
   private CallMediaPolicy resolveCrossTenant(String sourceRoomId, String matrixUserId) {
     // Denial logs below must never carry the raw Matrix room id / user id: those identify a
-    // conversation and its participant to anyone with log access. correlationId is a one-way
-    // hash of the pair, stable for this request, so denials for the same room+user can still be
-    // correlated across log lines without exposing either identifier.
-    var correlationId = correlationId(sourceRoomId, matrixUserId);
+    // conversation and its participant to anyone with log access. correlationId is a keyed
+    // (HMAC) hash of the pair, stable for this request, so denials for the same room+user can
+    // still be correlated across log lines without exposing either identifier or letting a log
+    // consumer confirm a candidate pair by hashing it themselves.
+    var correlationId = correlationIdHasher.correlationId(sourceRoomId, matrixUserId);
 
     var currentMembers = matrixSynapseService.getRoomMembers(sourceRoomId);
     if (currentMembers.isEmpty()) {
@@ -142,25 +139,5 @@ public class MatrixRtcCallPolicyService {
 
   private boolean enabled(Boolean value) {
     return !Boolean.FALSE.equals(value);
-  }
-
-  /**
-   * Derives a one-way, non-reversible correlation value for a (room id, user id) pair, safe to
-   * include in logs. Same pair always hashes to the same value, so repeated denials for the same
-   * room and user can be correlated without ever logging the raw Matrix identifiers.
-   */
-  private static String correlationId(String sourceRoomId, String matrixUserId) {
-    try {
-      var digest = MessageDigest.getInstance("SHA-256");
-      var hash =
-          digest.digest((sourceRoomId + ':' + matrixUserId).getBytes(StandardCharsets.UTF_8));
-      var hex = new StringBuilder(hash.length * 2);
-      for (byte value : hash) {
-        hex.append(String.format("%02x", value));
-      }
-      return hex.substring(0, CORRELATION_ID_HEX_CHARS);
-    } catch (NoSuchAlgorithmException e) {
-      throw new IllegalStateException("SHA-256 not available", e);
-    }
   }
 }
