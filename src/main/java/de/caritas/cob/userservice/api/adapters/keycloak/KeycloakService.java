@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -45,12 +46,16 @@ import jakarta.ws.rs.NotAuthorizedException;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -86,6 +91,7 @@ public class KeycloakService
         IdentityPasswordUpdater,
         IdentityProfileLookup,
         IdentityRoleLookup,
+        IdentityRoleUpdater,
         IdentityUsernameAvailability {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
@@ -540,9 +546,37 @@ public class KeycloakService
     updateRole(userId, "user");
   }
 
-  public void ensureRole(final String userId, final String roleName) {
-    if (!userHasRole(userId, roleName)) {
-      updateRole(userId, roleName);
+  @Override
+  public void ensureRoles(final String userId, final Collection<String> roleNames) {
+    var requestedRoles = new LinkedHashSet<>(roleNames);
+    if (requestedRoles.isEmpty()) {
+      return;
+    }
+
+    try {
+      ensureRolesOnce(userId, requestedRoles);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized while ensuring {} roles for user {}, forcing"
+              + " token refresh and retrying once",
+          requestedRoles.size(),
+          userId);
+      recordRetry("admin-session-refresh");
+      keycloakClient.refreshAdminSession();
+      ensureRolesOnce(userId, requestedRoles);
+    }
+  }
+
+  private void ensureRolesOnce(final String userId, final Collection<String> requestedRoles) {
+    var assignedRoles =
+        getUserRoles(userId).stream()
+            .map(RoleRepresentation::getName)
+            .filter(roleName -> nonNull(roleName))
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+    var missingRoles = new LinkedHashSet<>(requestedRoles);
+    missingRoles.removeAll(assignedRoles);
+    if (!missingRoles.isEmpty()) {
+      updateRolesOnce(userId, missingRoles);
     }
   }
 
@@ -593,7 +627,7 @@ public class KeycloakService
    */
   public void updateRole(final String userId, final String roleName) {
     try {
-      updateRoleOnce(userId, roleName);
+      updateRolesOnce(userId, Collections.singletonList(roleName));
     } catch (NotAuthorizedException e) {
       log.warn(
           "Keycloak admin session was unauthorized while assigning role {} to user {}, forcing"
@@ -602,25 +636,30 @@ public class KeycloakService
           userId);
       recordRetry("admin-session-refresh");
       keycloakClient.refreshAdminSession();
-      updateRoleOnce(userId, roleName);
+      updateRolesOnce(userId, Collections.singletonList(roleName));
     }
   }
 
-  private void updateRoleOnce(final String userId, final String roleName) {
+  private void updateRolesOnce(final String userId, final Collection<String> roleNames) {
     // Get realm and user resources
     var realmResource = keycloakClient.getRealmResource();
     UsersResource userRessource = realmResource.users();
     UserResource user = userRessource.get(userId);
 
-    // Assign role
-    var roleRepresentation = realmResource.roles().get(roleName).toRepresentation();
-    if (isNull(roleRepresentation.getAttributes())) {
-      roleRepresentation.setAttributes(new LinkedHashMap<>());
-    }
-    user.roles().realmLevel().add(Collections.singletonList(roleRepresentation));
+    var roleRepresentations =
+        roleNames.stream()
+            .map(roleName -> realmResource.roles().get(roleName).toRepresentation())
+            .peek(
+                roleRepresentation -> {
+                  if (isNull(roleRepresentation.getAttributes())) {
+                    roleRepresentation.setAttributes(new LinkedHashMap<>());
+                  }
+                })
+            .toList();
+    user.roles().realmLevel().add(roleRepresentations);
 
-    if (isRoleAssigned(user, roleName)) {
-      log.debug("Added role \"{}\" to {}", roleName, userId);
+    if (areRolesAssigned(user, roleNames)) {
+      log.debug("Added {} roles to {}", roleNames.size(), userId);
       return;
     }
 
@@ -633,8 +672,8 @@ public class KeycloakService
         throw new KeycloakException(
             "Interrupted while verifying role assignment for user " + userId);
       }
-      if (isRoleAssigned(user, roleName)) {
-        log.debug("Added role \"{}\" to {} after retry {}", roleName, userId, attempt + 1);
+      if (areRolesAssigned(user, roleNames)) {
+        log.debug("Added {} roles to {} after retry {}", roleNames.size(), userId, attempt + 1);
         return;
       }
     }
@@ -648,14 +687,16 @@ public class KeycloakService
     }
   }
 
-  private boolean isRoleAssigned(UserResource user, String roleName) {
-    List<RoleRepresentation> userRoles = user.roles().realmLevel().listAll();
-    for (RoleRepresentation role : userRoles) {
-      if (role.getName() != null && role.getName().equalsIgnoreCase(roleName)) {
-        return true;
-      }
-    }
-    return false;
+  private boolean areRolesAssigned(UserResource user, Collection<String> roleNames) {
+    Set<String> assignedRoleNames =
+        user.roles().realmLevel().listAll().stream()
+            .map(RoleRepresentation::getName)
+            .filter(roleName -> nonNull(roleName))
+            .map(roleName -> roleName.toLowerCase(Locale.ROOT))
+            .collect(Collectors.toSet());
+    return roleNames.stream()
+        .map(roleName -> roleName.toLowerCase(Locale.ROOT))
+        .allMatch(assignedRoleNames::contains);
   }
 
   /**

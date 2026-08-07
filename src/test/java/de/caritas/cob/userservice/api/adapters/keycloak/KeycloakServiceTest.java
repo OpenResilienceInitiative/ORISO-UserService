@@ -1653,41 +1653,137 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void ensureRole_Should_SkipUpdate_When_UserAlreadyHasRole() {
-    UserResource userResource = givenUserResourceWithRealmRoles("consultant");
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+  public void ensureRoles_Should_NotCallKeycloak_When_NoRolesAreRequested() {
+    keycloakService.ensureRoles(USER_ID, List.of());
 
-    keycloakService.ensureRole(USER_ID, "consultant");
-
-    verify(usersResource, times(1)).get(USER_ID);
+    verifyNoInteractions(keycloakClient);
   }
 
   @Test
-  public void ensureRole_Should_UpdateRole_When_UserDoesNotHaveRole() {
-    // ensureRole's own userHasRole pre-check goes through keycloakClient.getUsersResource() —
-    // report no roles so the check fails and updateRole proceeds.
-    UserResource userResourceForCheck = givenUserResourceWithRealmRoles();
-    UsersResource usersResourceForCheck = givenUsersResourceWithAnyUserId(userResourceForCheck);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResourceForCheck);
+  public void ensureRoles_Should_DeduplicateAndAddOnlyMissingRolesInOneCall() {
+    UserResource userResource = givenUserResourceWithRealmRoles("consultant");
+    RoleScopeResource currentRoles = userResource.roles().realmLevel();
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    // updateRole goes through keycloakClient.getRealmResource().users() — report the role as
-    // already assigned so the post-add verification loop succeeds immediately.
     var realmResource = mock(RealmResource.class);
     var rolesResource = mock(RolesResource.class);
     var roleResource = mock(RoleResource.class);
     var roleRepresentation = new RoleRepresentation();
+    roleRepresentation.setName("group-chat-consultant");
     when(roleResource.toRepresentation()).thenReturn(roleRepresentation);
-    when(rolesResource.get("consultant")).thenReturn(roleResource);
+    when(rolesResource.get("group-chat-consultant")).thenReturn(roleResource);
     when(realmResource.roles()).thenReturn(rolesResource);
-    UserResource userResourceForUpdate = givenUserResourceWithRealmRoles("consultant");
+    UserResource userResourceForUpdate = givenUserResourceWithRealmRoles("group-chat-consultant");
+    RoleScopeResource updatedRoles = userResourceForUpdate.roles().realmLevel();
     UsersResource usersResourceForUpdate = givenUsersResourceWithAnyUserId(userResourceForUpdate);
     when(realmResource.users()).thenReturn(usersResourceForUpdate);
     when(keycloakClient.getRealmResource()).thenReturn(realmResource);
 
-    keycloakService.ensureRole(USER_ID, "consultant");
+    keycloakService.ensureRoles(
+        USER_ID, List.of("consultant", "group-chat-consultant", "group-chat-consultant"));
 
-    verify(userResourceForUpdate.roles().realmLevel()).add(singletonList(roleRepresentation));
+    verify(currentRoles, times(1)).listAll();
+    verify(rolesResource, never()).get("consultant");
+    verify(rolesResource, times(1)).get("group-chat-consultant");
+    verify(updatedRoles).add(singletonList(roleRepresentation));
+    verify(updatedRoles, times(1)).listAll();
+  }
+
+  @Test
+  public void ensureRoles_Should_VerifyAllMissingRolesWithOneReadPerAttempt() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    UserResource userResourceForCheck = givenUserResourceWithRealmRoles();
+    RoleScopeResource currentRoles = userResourceForCheck.roles().realmLevel();
+    UsersResource usersResourceForCheck = givenUsersResourceWithAnyUserId(userResourceForCheck);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResourceForCheck);
+
+    var realmResource = mock(RealmResource.class);
+    var rolesResource = mock(RolesResource.class);
+    var consultantRoleResource = mock(RoleResource.class);
+    var groupChatRoleResource = mock(RoleResource.class);
+    var consultantRole = new RoleRepresentation();
+    consultantRole.setName("consultant");
+    var groupChatRole = new RoleRepresentation();
+    groupChatRole.setName("group-chat-consultant");
+    when(consultantRoleResource.toRepresentation()).thenReturn(consultantRole);
+    when(groupChatRoleResource.toRepresentation()).thenReturn(groupChatRole);
+    when(rolesResource.get("consultant")).thenReturn(consultantRoleResource);
+    when(rolesResource.get("group-chat-consultant")).thenReturn(groupChatRoleResource);
+    when(realmResource.roles()).thenReturn(rolesResource);
+
+    RoleScopeResource updatedRoles = mock(RoleScopeResource.class);
+    when(updatedRoles.listAll())
+        .thenReturn(List.of())
+        .thenReturn(List.of(consultantRole, groupChatRole));
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(updatedRoles);
+    UserResource userResourceForUpdate = mock(UserResource.class);
+    when(userResourceForUpdate.roles()).thenReturn(roleMappingResource);
+    UsersResource usersResourceForUpdate = givenUsersResourceWithAnyUserId(userResourceForUpdate);
+    when(realmResource.users()).thenReturn(usersResourceForUpdate);
+    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+
+    keycloakService.ensureRoles(USER_ID, List.of("consultant", "group-chat-consultant"));
+
+    verify(currentRoles, times(1)).listAll();
+    verify(updatedRoles).add(List.of(consultantRole, groupChatRole));
+    verify(updatedRoles, times(2)).listAll();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "role-visibility");
+  }
+
+  @Test
+  public void ensureRoles_Should_RefreshAdminSessionAndRetryInitialRead_When_Unauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    UserResource userResource = givenUserResourceWithRealmRoles("consultant");
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource())
+        .thenThrow(new NotAuthorizedException("Bearer"))
+        .thenReturn(usersResource);
+
+    keycloakService.ensureRoles(USER_ID, List.of("consultant"));
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).getUsersResource();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
+    verify(keycloakClient, never()).getRealmResource();
+  }
+
+  @Test
+  public void ensureRoles_Should_RefreshAdminSessionAndRetryBatchOnce_When_AddIsUnauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    UserResource userResourceForCheck = givenUserResourceWithRealmRoles();
+    UsersResource usersResourceForCheck = givenUsersResourceWithAnyUserId(userResourceForCheck);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResourceForCheck);
+
+    var realmResource = mock(RealmResource.class);
+    var rolesResource = mock(RolesResource.class);
+    var roleResource = mock(RoleResource.class);
+    var roleRepresentation = new RoleRepresentation();
+    roleRepresentation.setName("consultant");
+    when(roleResource.toRepresentation()).thenReturn(roleRepresentation);
+    when(rolesResource.get("consultant")).thenReturn(roleResource);
+    when(realmResource.roles()).thenReturn(rolesResource);
+    RoleScopeResource updatedRoles = mock(RoleScopeResource.class);
+    doThrow(new NotAuthorizedException("Bearer")).doNothing().when(updatedRoles).add(any());
+    when(updatedRoles.listAll()).thenReturn(List.of(roleRepresentation));
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(updatedRoles);
+    UserResource userResourceForUpdate = mock(UserResource.class);
+    when(userResourceForUpdate.roles()).thenReturn(roleMappingResource);
+    UsersResource usersResourceForUpdate = givenUsersResourceWithAnyUserId(userResourceForUpdate);
+    when(realmResource.users()).thenReturn(usersResourceForUpdate);
+    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+
+    keycloakService.ensureRoles(USER_ID, List.of("consultant"));
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(keycloakClient, times(2)).getUsersResource();
+    verify(updatedRoles, times(2)).add(singletonList(roleRepresentation));
+    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
   }
 
   // ---------------------------------------------------------------------------

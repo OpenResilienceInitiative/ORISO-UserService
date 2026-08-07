@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -48,6 +49,7 @@ public class UpdateAdminServiceIT {
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
         IdentityRoleLookup.class,
+        IdentityRoleUpdater.class,
         IdentityUsernameAvailability.class
       })
   private IdentityClient identityClient;
