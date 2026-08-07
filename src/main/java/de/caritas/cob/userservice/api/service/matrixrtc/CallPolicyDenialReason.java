@@ -8,6 +8,7 @@ package de.caritas.cob.userservice.api.service.matrixrtc;
  */
 public enum CallPolicyDenialReason {
   NOT_ROOM_MEMBER,
+  ROOM_MEMBERS_UNAVAILABLE,
   NO_TENANT_CONTEXT,
   TENANT_SETTINGS_UNAVAILABLE,
   CALLS_DISABLED_FOR_TENANT

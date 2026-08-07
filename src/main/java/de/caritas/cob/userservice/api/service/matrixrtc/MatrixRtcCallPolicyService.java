@@ -57,7 +57,14 @@ public class MatrixRtcCallPolicyService {
     var correlationId = correlationId(sourceRoomId, matrixUserId);
 
     var currentMembers = matrixSynapseService.getRoomMembers(sourceRoomId);
-    if (currentMembers.isEmpty() || !currentMembers.get().contains(matrixUserId)) {
+    if (currentMembers.isEmpty()) {
+      log.info(
+          "Call policy denied [{}]: reason={}",
+          correlationId,
+          CallPolicyDenialReason.ROOM_MEMBERS_UNAVAILABLE);
+      return CallMediaPolicy.denied();
+    }
+    if (!currentMembers.get().contains(matrixUserId)) {
       log.info(
           "Call policy denied [{}]: reason={}",
           correlationId,
