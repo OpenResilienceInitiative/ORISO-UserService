@@ -183,6 +183,64 @@ public class EventNotificationService {
    * logged.
    */
   @Transactional
+  /**
+   * ADR-018 §11 / ORISO-UserService#926: <b>exactly one</b> Activity Timeline entry for the whole
+   * Erstantwort, targeting the chat.
+   *
+   * <p>One entry, not one per open action. A person who has just written a first message about
+   * something hard should not receive three to-do items in response — that was the explicit
+   * rejection recorded in ADR-018 §11.
+   *
+   * <p>This is also the "narrow exception" the issue asks for, and it is narrow by construction
+   * rather than by a flag: system notifications are filtered out of the timeline on the <b>Matrix
+   * ingestion</b> path ({@code isSystemNotificationMessage}), where an unfiltered system message
+   * would produce a timeline row for every internal event in every room. That filter stays exactly
+   * as strict as it is. The Erstantwort instead writes its own single row here, from the enquiry
+   * facade, so nothing else slips through with it.
+   *
+   * <p>Failures are swallowed: a missing timeline row must never fail the enquiry.
+   *
+   * @param session the session whose advice seeker received the Erstantwort
+   */
+  public void createFirstResponseNotification(Session session) {
+    if (session == null || session.getUser() == null) {
+      return;
+    }
+    var recipientUserId = session.getUser().getUserId();
+    if (recipientUserId == null || recipientUserId.isBlank()) {
+      return;
+    }
+    try {
+      createEvent(
+          recipientUserId,
+          "first_response.received",
+          CATEGORY_SYSTEM,
+          "Ihre ersten Schritte",
+          "Wir haben Ihnen im Chat die wichtigsten Informationen geschrieben.",
+          buildAskerSessionActionPath(session),
+          session.getId(),
+          session.getTenantId());
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not persist first_response.received notification for session {}",
+          session.getId(),
+          ex);
+    }
+  }
+
+  /** The advice seeker's own view of their conversation — never the consultant preview list. */
+  private String buildAskerSessionActionPath(Session session) {
+    String listPath = "/sessions/user/view";
+    if (session == null || session.getId() == null) {
+      return listPath;
+    }
+    var roomRef = session.getMatrixRoomId();
+    if (roomRef == null || roomRef.isBlank()) {
+      return listPath;
+    }
+    return listPath + "/" + roomRef + "/" + session.getId();
+  }
+
   public void createNewClientRequestNotifications(
       Session session, Collection<String> recipientConsultantIds) {
     if (session == null || recipientConsultantIds == null) {
