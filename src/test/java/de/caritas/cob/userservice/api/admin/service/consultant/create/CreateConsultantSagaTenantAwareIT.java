@@ -15,13 +15,13 @@ import static org.mockito.Mockito.when;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
@@ -94,8 +94,8 @@ public class CreateConsultantSagaTenantAwareIT {
     createConsultantForTenant("otherTenantUser1", 2L);
     createConsultantForTenant("otherTenantUser2", 2L);
 
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     var tenant =
         new TenantDTO()
             .licensing(new Licensing().allowedNumberOfUsers(2))
@@ -125,8 +125,8 @@ public class CreateConsultantSagaTenantAwareIT {
       createNewConsultant_Should_addConsultantAndGroupChatConsultantRole_When_isGroupChatConsultantFlagIsEnabled() {
     // given
     TenantContext.setCurrentTenant(1L);
-    when(keycloakService.createKeycloakUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(KeycloakCreateUserResponseDTO.class));
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     var tenant =
         new TenantDTO()
             .licensing(new Licensing().allowedNumberOfUsers(1))

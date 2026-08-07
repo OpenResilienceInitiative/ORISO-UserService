@@ -5,7 +5,7 @@ on:
 
 jobs:
   verify:
-    name: MariaDB schema, statistics and scheduler lease contract
+    name: MariaDB schema, statistics, scheduler lease and replica contracts
     runs-on: ubuntu-latest
     services:
       mariadb:
@@ -38,5 +38,11 @@ jobs:
     - name: Verify real MariaDB schema contracts
       run: >-
         ./mvnw -B -Dskip.unit-tests=true
-        -Dtest=DatabaseChangelogDriftIT,AdminStatisticsRepositoryMariaDbIT,ScheduledTaskClaimMariaDbIT
+        -Dtest=DatabaseChangelogDriftIT,AdminStatisticsRepositoryMariaDbIT,ProvisioningCompensationMariaDbIT,ScheduledTaskClaimMariaDbIT,TutorialProgressServiceMariaDbReplicaIT,OrganizerMariaDbReplicaIT,DeactivateGroupChatSchedulerMariaDbReplicaIT
         integration-test
+
+    - name: Prove authenticated writes across two replicas
+      env:
+        USERSERVICE_LOAD_REQUESTS: 80
+        USERSERVICE_LOAD_CONCURRENCY: 12
+      run: ./scripts/load/run-authenticated-write-replicas.sh

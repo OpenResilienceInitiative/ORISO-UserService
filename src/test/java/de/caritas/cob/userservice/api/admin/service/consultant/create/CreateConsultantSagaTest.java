@@ -17,7 +17,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
@@ -33,6 +32,8 @@ import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -67,6 +68,7 @@ class CreateConsultantSagaTest {
   @InjectMocks private CreateConsultantSaga createConsultantSaga;
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private ConsultantPublicSlugService consultantPublicSlugService;
   @Mock private ConsultantService consultantService;
   @Mock private UserHelper userHelper;
@@ -143,7 +145,7 @@ class CreateConsultantSagaTest {
 
     assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
 
-    verify(identityClient, never()).createKeycloakUser(any(), anyString(), anyString());
+    verify(identityClient, never()).createUser(any(), anyString(), anyString());
   }
 
   @Test
@@ -220,7 +222,7 @@ class CreateConsultantSagaTest {
   void createNewConsultant_Should_throwCustomValidation_When_passwordUpdateFails() {
     stubKeycloakUserCreation();
     doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
-        .when(identityClient)
+        .when(identityPasswordUpdater)
         .updatePassword(anyString(), anyString());
 
     assertThrows(
@@ -297,7 +299,7 @@ class CreateConsultantSagaTest {
             importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
 
     assertThat(consultant, notNullValue());
-    verify(identityClient).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
+    verify(identityPasswordUpdater).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
   }
 
   @Test
@@ -327,7 +329,7 @@ class CreateConsultantSagaTest {
 
     assertThat(
         ex.getCustomHttpHeaders().get("X-Reason").get(0), is(NUMBER_OF_LICENSES_EXCEEDED.name()));
-    verify(identityClient, never()).createKeycloakUser(any(), anyString(), anyString());
+    verify(identityClient, never()).createUser(any(), anyString(), anyString());
   }
 
   @Test
@@ -373,7 +375,7 @@ class CreateConsultantSagaTest {
       throws Exception {
     stubKeycloakUserCreation();
     doThrow(new RuntimeException("keycloak down"))
-        .when(identityClient)
+        .when(identityPasswordUpdater)
         .updatePassword(anyString(), anyString());
 
     var ex =
@@ -394,11 +396,11 @@ class CreateConsultantSagaTest {
   }
 
   private void stubKeycloakUserCreation() {
-    when(identityClient.createKeycloakUser(any(), anyString(), anyString()))
+    when(identityClient.createUser(any(), anyString(), anyString()))
         .thenAnswer(
             invocation -> {
               PlainCredentialsHolder.set(VALID_USERNAME, null);
-              KeycloakCreateUserResponseDTO response = new KeycloakCreateUserResponseDTO();
+              CreatedIdentity response = new CreatedIdentity();
               response.setUserId(KEYCLOAK_USER_ID);
               return response;
             });

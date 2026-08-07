@@ -26,8 +26,8 @@ import org.springframework.web.client.RestTemplate;
 
 /**
  * Keycloak OpenID Connect / session operations extracted from {@link KeycloakService} (issue #91
- * Keycloak refactor, PR1 auth slice). Keeps login/logout/OTP-verify/session close behind a focused
- * collaborator so {@link KeycloakService} can stay the {@code IdentityClient} facade.
+ * Keycloak refactor, PR1 auth slice). Keeps login, refresh-token logout and password verification
+ * behind a focused collaborator.
  */
 @Slf4j
 @Component
@@ -46,7 +46,6 @@ public class KeycloakAuthClient {
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull IdentityClientConfig identityClientConfig;
-  private final @NonNull KeycloakClient keycloakClient;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
@@ -76,6 +75,33 @@ public class KeycloakAuthClient {
     }
   }
 
+  /**
+   * Verifies password AND active second factor by performing a full direct-grant login including
+   * the {@code otp} form field (the vendored otp-config SPI validates it, ADR-013). Any obtained
+   * session is logged out immediately — this is a verification, not a login.
+   *
+   * @return true only if Keycloak accepted password and OTP together
+   */
+  public boolean verifyWithOtp(String username, String password, String otp) {
+    var entity = loginRequest(usernameTranscoder.decodeUsername(username), password);
+    entity.getBody().add("otp", otp);
+    var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGIN);
+
+    ResponseEntity<KeycloakLoginResponseDTO> loginResponse;
+    try {
+      loginResponse = restTemplate.postForEntity(url, entity, KeycloakLoginResponseDTO.class);
+    } catch (RestClientResponseException exception) {
+      return false;
+    }
+
+    var responsePayload = loginResponse.getBody();
+    if (nonNull(responsePayload) && nonNull(responsePayload.getRefreshToken())) {
+      logoutUser(responsePayload.getRefreshToken());
+    }
+
+    return loginResponse.getStatusCode().is2xxSuccessful();
+  }
+
   public boolean verifyIgnoringOtp(String username, String password) {
     var entity = loginRequest(usernameTranscoder.decodeUsername(username), password);
     var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGIN);
@@ -85,7 +111,7 @@ public class KeycloakAuthClient {
       loginResponse = restTemplate.postForEntity(url, entity, KeycloakLoginResponseDTO.class);
     } catch (HttpClientErrorException exception) {
       return exception.getStatusCode().equals(HttpStatus.BAD_REQUEST)
-          && exception.getResponseBodyAsString().contains("Missing totp"); // but password correct
+          && isMissingTotpContract(exception.getResponseBodyAsString()); // but password correct
     }
 
     var responsePayload = loginResponse.getBody();
@@ -126,13 +152,24 @@ public class KeycloakAuthClient {
   }
 
   /**
-   * Closes the provided session.
-   *
-   * @param sessionId Keycloak session ID
+   * Strict contract check against the vendored otp-config SPI (ADR-013): the SPI answers a
+   * password-correct-but-second-factor-absent direct grant with EXACTLY {@code error_description:
+   * "Missing totp"}. Only that exact JSON field counts — a body merely containing the phrase must
+   * never pass as password-verified. The SPI is vendored and version-pinned in ORISO-Helm, so this
+   * string is under ORISO control; re-verify on SPI bumps.
    */
-  public void closeSession(String sessionId) {
-    keycloakClient.getRealmResource().deleteSession(sessionId, false);
+  private boolean isMissingTotpContract(String responseBody) {
+    try {
+      var node = ERROR_BODY_READER.readTree(responseBody);
+      return node.hasNonNull("error_description")
+          && "Missing totp".equals(node.get("error_description").asText());
+    } catch (Exception e) {
+      return false;
+    }
   }
+
+  private static final com.fasterxml.jackson.databind.ObjectMapper ERROR_BODY_READER =
+      new com.fasterxml.jackson.databind.ObjectMapper();
 
   private HttpEntity<MultiValueMap<String, String>> loginRequest(String userName, String password) {
     MultiValueMap<String, String> map = new SensitiveKeycloakFormData();

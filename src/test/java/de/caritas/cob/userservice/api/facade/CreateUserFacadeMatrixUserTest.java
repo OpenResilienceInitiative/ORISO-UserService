@@ -1,6 +1,6 @@
 package de.caritas.cob.userservice.api.facade;
 
-import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID;
+import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.CREATED_IDENTITY_WITH_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
@@ -21,21 +21,25 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserRespon
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NewRegistrationResponseDto;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
-import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensator;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -43,6 +47,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -54,8 +59,10 @@ class CreateUserFacadeMatrixUserTest {
 
   @Mock private UserVerifier userVerifier;
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityAccountRemover identityAccountRemover;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
+  @Mock private IdentityDummyEmailUpdater identityDummyEmailUpdater;
   @Mock private UserService userService;
-  @Mock private RollbackFacade rollbackFacade;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private AgencyVerifier agencyVerifier;
   @Mock private CreateNewSessionFacade createNewSessionFacade;
@@ -67,6 +74,10 @@ class CreateUserFacadeMatrixUserTest {
   @Mock private AgencyService agencyService;
   @Mock private SessionService sessionService;
   @Mock private ApplicationSettingsService applicationSettingsService;
+
+  @Spy
+  private ProvisioningCompensator provisioningCompensator =
+      new ProvisioningCompensator(new SimpleMeterRegistry());
 
   @AfterEach
   void tearDown() {
@@ -83,8 +94,7 @@ class CreateUserFacadeMatrixUserTest {
 
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createKeycloakUser(any()))
-        .thenReturn(KEYCLOAK_CREATE_USER_RESPONSE_DTO_WITH_USER_ID);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
 
     var createdUser =
         new User(

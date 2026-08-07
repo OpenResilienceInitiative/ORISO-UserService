@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.admin.service.tenant;
 import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.ApiClient;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
@@ -32,5 +33,8 @@ public class TenantAdminService {
   private void addDefaultHeaders(ApiClient apiClient) {
     HttpHeaders headers = this.securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders();
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
+    if (TenantContext.getCurrentTenant() != null) {
+      apiClient.addDefaultHeader("tenantId", TenantContext.getCurrentTenant().toString());
+    }
   }
 }

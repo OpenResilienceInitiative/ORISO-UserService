@@ -81,11 +81,19 @@ class UserChatControllerDelegate {
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 
-  ResponseEntity<Void> assignChat(String matrixRoomId) {
-    if (!MatrixIds.isRoomId(matrixRoomId)) {
-      throw new BadRequestException("A valid Matrix room ID is required.");
+  ResponseEntity<Void> assignChat(String chatReference) {
+    if (chatReference.matches("\\d+")) {
+      try {
+        assignChatFacade.assignChat(Long.parseLong(chatReference), authenticatedUser);
+      } catch (NumberFormatException exception) {
+        throw new BadRequestException("Numeric chat id is outside the supported range.");
+      }
+    } else if (MatrixIds.isRoomId(chatReference)) {
+      assignChatFacade.assignChat(chatReference, authenticatedUser);
+    } else {
+      throw new BadRequestException(
+          "A valid Matrix room ID or numeric chat series ID is required.");
     }
-    assignChatFacade.assignChat(matrixRoomId, authenticatedUser);
 
     return new ResponseEntity<>(HttpStatus.OK);
   }

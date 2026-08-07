@@ -1,0 +1,1276 @@
+{
+  "info": {
+    "_postman_id": "0e66fa94-ff53-4333-995d-4a96e8e18722",
+    "name": "ORISO UserService - All In One Local API Test",
+    "description": "Standalone local Postman collection with collection variables, Keycloak auth, invite-link listing, create, redeem, and negative tests for a Java 21 hybrid setup.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [
+      {
+        "key": "token",
+        "value": "{{adminToken}}",
+        "type": "string"
+      }
+    ]
+  },
+  "event": [
+    {
+      "listen": "prerequest",
+      "script": {
+        "type": "text/javascript",
+        "exec": [
+          "const defaults = {",
+          "  baseUrl: 'http://localhost:8082',",
+          "  keycloakBaseUrl: 'https://auth.oriso-dev.site',",
+          "  realm: 'online-beratung',",
+          "  clientId: 'app',",
+          "  csrfToken: 'local-postman-csrf'",
+          "};",
+          "Object.keys(defaults).forEach(function (key) {",
+          "  if (!pm.variables.get(key)) {",
+          "    pm.collectionVariables.set(key, defaults[key]);",
+          "  }",
+          "});"
+        ]
+      }
+    }
+  ],
+  "item": [
+    {
+      "name": "Setup",
+      "item": [
+        {
+          "name": "Route Check - Redeem Fake Token Should Return 404",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/invitelinks/not-a-real-token/redeem",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "invitelinks",
+                "not-a-real-token",
+                "redeem"
+              ]
+            },
+            "description": "Confirms the local invite-link redeem route is reachable. A 404 means the endpoint exists and the fake token was not found."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Route is reachable and fake token is not found', function () {",
+                  "  pm.expect(pm.response.code).to.eql(404);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Unauthorized List Should Return 401",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ]
+            },
+            "description": "Negative auth check. Admin list endpoint must reject calls without a bearer token."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Missing bearer token is rejected', function () {",
+                  "  pm.expect(pm.response.code).to.eql(401);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Authentication",
+      "item": [
+        {
+          "name": "Get Admin Token - Password Grant",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "grant_type",
+                  "value": "password",
+                  "type": "text"
+                },
+                {
+                  "key": "client_id",
+                  "value": "{{clientId}}",
+                  "type": "text"
+                },
+                {
+                  "key": "username",
+                  "value": "{{username}}",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "{{password}}",
+                  "type": "text"
+                },
+                {
+                  "key": "scope",
+                  "value": "openid",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{keycloakBaseUrl}}/realms/{{realm}}/protocol/openid-connect/token",
+              "host": [
+                "{{keycloakBaseUrl}}"
+              ],
+              "path": [
+                "realms",
+                "{{realm}}",
+                "protocol",
+                "openid-connect",
+                "token"
+              ]
+            },
+            "description": "Gets a Keycloak access token and saves it into adminToken. Use credentials from the same Keycloak realm that local UserService validates against."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Token request succeeds', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Token response contains access_token', function () {",
+                  "  pm.expect(body).to.have.property('access_token');",
+                  "  pm.expect(body.access_token).to.be.a('string').and.not.empty;",
+                  "});",
+                  "if (body.access_token) {",
+                  "  pm.collectionVariables.set('adminToken', body.access_token);",
+                  "  try { pm.environment.set('adminToken', body.access_token); } catch (e) {}",
+                  "}",
+                  "if (body.refresh_token) {",
+                  "  pm.collectionVariables.set('refreshToken', body.refresh_token);",
+                  "  try { pm.environment.set('refreshToken', body.refresh_token); } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Verify Admin Token Against Local List Endpoint",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ]
+            },
+            "description": "Verifies that the saved adminToken is accepted by the local UserService. 200 means auth is correct; 403 means token is valid but missing required admin authority; 401 means token is missing/expired/wrong issuer."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Token is accepted or role failure is explicit', function () {",
+                  "  pm.expect([200, 403]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Listing Invite Links",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{adminToken}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "List All Links - Flat Array",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ]
+            },
+            "description": "Lists all invite links visible to the caller tenant. No page/size query means the response is a flat JSON array."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List all returns 200', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "pm.test('List all response is an array', function () {",
+                  "  pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Links - Paged",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks?page=0&size=20",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                }
+              ]
+            },
+            "description": "Lists invite links using the paged response shape."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Paged list returns 200', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "pm.test('Paged list response has content array', function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.property('content');",
+                  "  pm.expect(body.content).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Links - Active Only",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks?page=0&size=50&status=ACTIVE",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "50"
+                },
+                {
+                  "key": "status",
+                  "value": "ACTIVE"
+                }
+              ]
+            },
+            "description": "Lists only ACTIVE invite links."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Active list returns 200', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "pm.test('Returned rows are ACTIVE when present', function () {",
+                  "  const body = pm.response.json();",
+                  "  body.content.forEach(function (row) {",
+                  "    pm.expect(row.status).to.eql('ACTIVE');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Links - By Kind",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks?page=0&size=50&linkKind=EXTERNAL_INBOUND",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "50"
+                },
+                {
+                  "key": "linkKind",
+                  "value": "EXTERNAL_INBOUND"
+                }
+              ]
+            },
+            "description": "Lists invite links by linkKind. Valid values: TENANT, COUNSELLOR, EXTERNAL_INBOUND."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Kind-filtered list returns 200', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "pm.test('Returned rows match requested kind when present', function () {",
+                  "  const body = pm.response.json();",
+                  "  body.content.forEach(function (row) {",
+                  "    pm.expect(row.linkKind).to.eql('EXTERNAL_INBOUND');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Links - By Topic And Chat Type",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks?page=0&size=50&topicId={{topicId}}&chatType=LIVE_CHAT",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "50"
+                },
+                {
+                  "key": "topicId",
+                  "value": "{{topicId}}"
+                },
+                {
+                  "key": "chatType",
+                  "value": "LIVE_CHAT"
+                }
+              ]
+            },
+            "description": "Lists invite links for the configured topicId and LIVE_CHAT chatType."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Topic/chat filtered list returns 200', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "pm.test('Returned rows match topic/chat filters when present', function () {",
+                  "  const body = pm.response.json();",
+                  "  const topicId = Number(pm.variables.get('topicId'));",
+                  "  body.content.forEach(function (row) {",
+                  "    pm.expect(row.topicId).to.eql(topicId);",
+                  "    pm.expect(row.chatType).to.eql('LIVE_CHAT');",
+                  "  });",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Links - Confirm Saved Invite Token",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks?page=0&size=100&status=ACTIVE",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "100"
+                },
+                {
+                  "key": "status",
+                  "value": "ACTIVE"
+                }
+              ]
+            },
+            "description": "After a create request saves inviteToken, this request checks that the token appears in the active list."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Confirm-token list returns 200', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "pm.test('Saved inviteToken appears in active list', function () {",
+                  "  const token = pm.variables.get('inviteToken');",
+                  "  pm.expect(token, 'inviteToken must be set by a create request first').to.be.a('string').and.not.empty;",
+                  "  const body = pm.response.json();",
+                  "  const found = body.content.some(function (row) { return row.token === token; });",
+                  "  pm.expect(found).to.eql(true);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Invite Links",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{adminToken}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "List Invite Links - Flat Array",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ]
+            },
+            "description": "Lists invite links for the caller tenant. Without page/size, response is a flat JSON array."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('List returns 200', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "pm.test('Response is an array', function () {",
+                  "  pm.expect(pm.response.json()).to.be.an('array');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "List Invite Links - Paged Active",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks?page=0&size=20&status=ACTIVE",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ],
+              "query": [
+                {
+                  "key": "page",
+                  "value": "0"
+                },
+                {
+                  "key": "size",
+                  "value": "20"
+                },
+                {
+                  "key": "status",
+                  "value": "ACTIVE"
+                }
+              ]
+            },
+            "description": "Lists active invite links with pagination. Response is a paged wrapper."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Paged list returns 200', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "pm.test('Response has paged shape', function () {",
+                  "  const body = pm.response.json();",
+                  "  pm.expect(body).to.have.property('content');",
+                  "  pm.expect(body.content).to.be.an('array');",
+                  "  pm.expect(body).to.have.property('totalElements');",
+                  "  pm.expect(body).to.have.property('totalPages');",
+                  "  pm.expect(body).to.have.property('page');",
+                  "  pm.expect(body).to.have.property('size');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Invite Link - External Inbound",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "X-CSRF-Bypass",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Cookie",
+                "value": "CSRF-TOKEN={{csrfToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agencyId\": {{agencyId}},\n  \"topicId\": {{topicId}},\n  \"linkKind\": \"EXTERNAL_INBOUND\",\n  \"chatType\": \"LIVE_CHAT\",\n  \"anonymity\": \"FULL\",\n  \"notes\": \"Local Postman invite-link test\",\n  \"expiresInDays\": 7\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ]
+            },
+            "description": "Creates a normal external inbound invite link. Saves the returned token to inviteToken."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create returns 201', function () {",
+                  "  pm.expect(pm.response.code).to.eql(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Create response contains token and active status', function () {",
+                  "  pm.expect(body).to.have.property('token');",
+                  "  pm.expect(body.token).to.be.a('string').and.not.empty;",
+                  "  pm.expect(body.status).to.eql('ACTIVE');",
+                  "  pm.expect(body.linkKind).to.eql('EXTERNAL_INBOUND');",
+                  "  pm.expect(body.chatType).to.eql('LIVE_CHAT');",
+                  "  pm.expect(body.anonymity).to.eql('FULL');",
+                  "});",
+                  "if (body.token) {",
+                  "  pm.collectionVariables.set('inviteToken', body.token);",
+                  "  try { pm.environment.set('inviteToken', body.token); } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Invite Link - Defaults",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "X-CSRF-Bypass",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Cookie",
+                "value": "CSRF-TOKEN={{csrfToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agencyId\": {{agencyId}},\n  \"topicId\": {{topicId}},\n  \"notes\": \"Local Postman defaults test\",\n  \"expiresInDays\": 7\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ]
+            },
+            "description": "Creates a link while omitting linkKind/chatType/anonymity so service defaults can be verified."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Create defaults returns 201', function () {",
+                  "  pm.expect(pm.response.code).to.eql(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Defaults were applied', function () {",
+                  "  pm.expect(body.linkKind).to.eql('EXTERNAL_INBOUND');",
+                  "  pm.expect(body.chatType).to.eql('LIVE_CHAT');",
+                  "  pm.expect(body.anonymity).to.eql('FULL');",
+                  "});",
+                  "if (body.token) {",
+                  "  pm.collectionVariables.set('inviteToken', body.token);",
+                  "  try { pm.environment.set('inviteToken', body.token); } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Create Invite Link - Counsellor",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "X-CSRF-Bypass",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Cookie",
+                "value": "CSRF-TOKEN={{csrfToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agencyId\": {{agencyId}},\n  \"topicId\": {{topicId}},\n  \"linkKind\": \"COUNSELLOR\",\n  \"chatType\": \"LIVE_CHAT\",\n  \"anonymity\": \"FULL\",\n  \"consultantId\": \"{{consultantId}}\",\n  \"notes\": \"Local Postman counsellor invite-link test\",\n  \"expiresInDays\": 7\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ]
+            },
+            "description": "Creates a counsellor-routed invite link. Requires consultantId to be set to a valid consultant in the same tenant."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Counsellor create returns 201 when consultantId is valid', function () {",
+                  "  pm.expect(pm.response.code).to.eql(201);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "if (body.token) {",
+                  "  pm.collectionVariables.set('inviteToken', body.token);",
+                  "  try { pm.environment.set('inviteToken', body.token); } catch (e) {}",
+                  "}"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Redeem Invite Link",
+          "request": {
+            "auth": {
+              "type": "noauth"
+            },
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/users/invitelinks/{{inviteToken}}/redeem",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "users",
+                "invitelinks",
+                "{{inviteToken}}",
+                "redeem"
+              ]
+            },
+            "description": "Redeems the invite token saved by a create request. Public endpoint; no bearer token required."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Redeem returns 200', function () {",
+                  "  pm.expect(pm.response.code).to.eql(200);",
+                  "});",
+                  "const body = pm.response.json();",
+                  "pm.test('Redeem response contains routing metadata', function () {",
+                  "  pm.expect(body).to.have.property('tenantId');",
+                  "  pm.expect(body).to.have.property('agencyId');",
+                  "  pm.expect(body).to.have.property('consultingTypeId');",
+                  "  pm.expect(body).to.have.property('topicId');",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "name": "Negative Tests",
+      "auth": {
+        "type": "bearer",
+        "bearer": [
+          {
+            "key": "token",
+            "value": "{{adminToken}}",
+            "type": "string"
+          }
+        ]
+      },
+      "item": [
+        {
+          "name": "Invalid Status Filter Should Return 400",
+          "request": {
+            "method": "GET",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              }
+            ],
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks?status=INVALID",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ],
+              "query": [
+                {
+                  "key": "status",
+                  "value": "INVALID"
+                }
+              ]
+            },
+            "description": "Invalid status enum should be rejected."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Invalid status returns 400', function () {",
+                  "  pm.expect(pm.response.code).to.eql(400);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Counsellor Without Consultant Should Return 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "X-CSRF-Bypass",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Cookie",
+                "value": "CSRF-TOKEN={{csrfToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agencyId\": {{agencyId}},\n  \"topicId\": {{topicId}},\n  \"linkKind\": \"COUNSELLOR\",\n  \"chatType\": \"LIVE_CHAT\",\n  \"anonymity\": \"FULL\",\n  \"notes\": \"Negative test: missing consultantId\",\n  \"expiresInDays\": 7\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ]
+            },
+            "description": "COUNSELLOR links require consultantId."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Missing consultantId returns 400', function () {",
+                  "  pm.expect(pm.response.code).to.eql(400);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        },
+        {
+          "name": "Invalid Expiry Should Return 400",
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Accept",
+                "value": "application/json"
+              },
+              {
+                "key": "Content-Type",
+                "value": "application/json"
+              },
+              {
+                "key": "X-Tenant-Id",
+                "value": "{{tenantId}}"
+              },
+              {
+                "key": "X-CSRF-Token",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "X-CSRF-Bypass",
+                "value": "{{csrfToken}}"
+              },
+              {
+                "key": "Cookie",
+                "value": "CSRF-TOKEN={{csrfToken}}"
+              }
+            ],
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"agencyId\": {{agencyId}},\n  \"topicId\": {{topicId}},\n  \"linkKind\": \"EXTERNAL_INBOUND\",\n  \"chatType\": \"LIVE_CHAT\",\n  \"anonymity\": \"FULL\",\n  \"notes\": \"Negative test: invalid expiry\",\n  \"expiresInDays\": 366\n}",
+              "options": {
+                "raw": {
+                  "language": "json"
+                }
+              }
+            },
+            "url": {
+              "raw": "{{baseUrl}}/useradmin/invitelinks",
+              "host": [
+                "{{baseUrl}}"
+              ],
+              "path": [
+                "useradmin",
+                "invitelinks"
+              ]
+            },
+            "description": "expiresInDays must be between 1 and 365 or omitted/null."
+          },
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Invalid expiry returns 400', function () {",
+                  "  pm.expect(pm.response.code).to.eql(400);",
+                  "});"
+                ]
+              }
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "variable": [
+    {
+      "key": "baseUrl",
+      "value": "http://localhost:8082",
+      "type": "string"
+    },
+    {
+      "key": "keycloakBaseUrl",
+      "value": "https://auth.oriso-dev.site",
+      "type": "string"
+    },
+    {
+      "key": "realm",
+      "value": "online-beratung",
+      "type": "string"
+    },
+    {
+      "key": "clientId",
+      "value": "app",
+      "type": "string"
+    },
+    {
+      "key": "username",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "password",
+      "value": "",
+      "type": "secret"
+    },
+    {
+      "key": "adminToken",
+      "value": "",
+      "type": "secret"
+    },
+    {
+      "key": "refreshToken",
+      "value": "",
+      "type": "secret"
+    },
+    {
+      "key": "tenantId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "agencyId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "topicId",
+      "value": "1",
+      "type": "string"
+    },
+    {
+      "key": "consultantId",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "inviteToken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "csrfToken",
+      "value": "local-postman-csrf",
+      "type": "string"
+    }
+  ]
+}

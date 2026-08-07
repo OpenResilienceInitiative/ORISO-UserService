@@ -94,6 +94,13 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
     }
 
     private boolean isWhiteListUrl(HttpServletRequest request) {
+      // The MatrixRTC gateway is a cluster-internal machine client, not a browser session. It
+      // authenticates this one exact endpoint with its dedicated policy token, so it cannot
+      // provide the browser CSRF cookie/header pair. Keep the exemption exact: sibling internal
+      // endpoints must still pass the normal CSRF check.
+      if ("/internal/matrixrtc/call-policy".equals(request.getRequestURI())) {
+        return true;
+      }
       // Magic link endpoints are public login bootstrap endpoints and must work without a CSRF
       // token.
       if (request.getRequestURI() != null
@@ -107,6 +114,11 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
         String lowerUri = request.getRequestURI().toLowerCase();
         if (lowerUri.endsWith("/users/password-reset/request")
             || lowerUri.endsWith("/users/password-reset/confirm")) {
+          return true;
+        }
+        // Account-invite acceptance is another public bootstrap endpoint. The random invite token
+        // is the bearer secret; the recipient does not have a login session or CSRF cookie yet.
+        if (lowerUri.matches(".*/users/account-invites/[^/]+/accept$")) {
           return true;
         }
       }

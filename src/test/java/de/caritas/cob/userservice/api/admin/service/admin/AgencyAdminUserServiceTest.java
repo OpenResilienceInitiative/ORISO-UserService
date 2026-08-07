@@ -32,8 +32,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.http.HttpStatus;
-import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
 class AgencyAdminUserServiceTest {
@@ -164,16 +162,19 @@ class AgencyAdminUserServiceTest {
   }
 
   @Test
-  void findAgencyAdminsByInfix_Should_NotFail_WhenTenantServiceReturnsNotFound() {
+  void findAgencyAdminsByInfix_Should_NotUsePerTenantLookups() {
     // given
     PageRequest pageRequest = PageRequest.of(0, 10);
     Admin.AdminBase firstAdminBase = adminBase("agency-admin-1", 1L);
-    Admin.AdminBase secondAdminBase = adminBase("agency-admin-2", 2L);
+    Admin.AdminBase secondAdminBase = adminBase("agency-admin-2", 1L);
+    Admin.AdminBase thirdAdminBase = adminBase("agency-admin-3", 2L);
     Page<Admin.AdminBase> adminsPage =
-        new PageImpl<>(Arrays.asList(firstAdminBase, secondAdminBase), pageRequest, 2);
+        new PageImpl<>(
+            Arrays.asList(firstAdminBase, secondAdminBase, thirdAdminBase), pageRequest, 3);
     Admin firstAgencyAdmin = agencyAdmin("agency-admin-1", 1L);
-    Admin secondAgencyAdmin = agencyAdmin("agency-admin-2", 2L);
-    List<Admin> fullAdmins = Arrays.asList(firstAgencyAdmin, secondAgencyAdmin);
+    Admin secondAgencyAdmin = agencyAdmin("agency-admin-2", 1L);
+    Admin thirdAgencyAdmin = agencyAdmin("agency-admin-3", 2L);
+    List<Admin> fullAdmins = Arrays.asList(firstAgencyAdmin, secondAgencyAdmin, thirdAgencyAdmin);
     when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.AGENCY, pageRequest))
         .thenReturn(adminsPage);
     when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(fullAdmins);
@@ -181,10 +182,8 @@ class AgencyAdminUserServiceTest {
         .thenReturn(Collections.emptyList());
     when(agencyService.getAgenciesWithoutCaching(Collections.emptyList()))
         .thenReturn(Collections.emptyList());
-    when(tenantService.getRestrictedTenantData(1L))
-        .thenReturn(new RestrictedTenantDTO().name("Known tenant"));
-    when(tenantService.getRestrictedTenantData(2L))
-        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND));
+    when(tenantService.getRestrictedTenantData(Set.of(1L, 2L)))
+        .thenReturn(List.of(new RestrictedTenantDTO().id(1L).name("Known tenant")));
     when(userServiceMapper.mapOfAdmin(
             Mockito.any(),
             Mockito.anyList(),
@@ -209,6 +208,8 @@ class AgencyAdminUserServiceTest {
             Mockito.any());
     Assertions.assertEquals("Known tenant", tenantNameMapCaptor.getValue().get(1L));
     Assertions.assertFalse(tenantNameMapCaptor.getValue().containsKey(2L));
+    Mockito.verify(tenantService).getRestrictedTenantData(Set.of(1L, 2L));
+    Mockito.verify(tenantService, Mockito.never()).getRestrictedTenantData(Mockito.anyLong());
   }
 
   private Admin agencyAdmin(String id, Long tenantId) {

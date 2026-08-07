@@ -11,12 +11,15 @@ import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collections;
 import java.util.List;
+import java.util.Objects;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.cache.CacheManager;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
@@ -31,6 +34,7 @@ public class AgencyService {
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
   private final @NonNull AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
+  private final @NonNull CacheManager cacheManager;
 
   /**
    * Returns the {@link AgencyDTO} for the provided agencyId. Agency will be cached for further
@@ -39,7 +43,12 @@ public class AgencyService {
    * @param agencyId {@link AgencyDTO#getId()}
    * @return AgencyDTO {@link AgencyDTO}
    */
-  @Cacheable(value = CacheManagerConfig.AGENCY_CACHE, key = "#agencyId", unless = "#result == null")
+  @Cacheable(
+      value = CacheManagerConfig.AGENCY_CACHE,
+      key =
+          "T(de.caritas.cob.userservice.api.service.agency.AgencyService)"
+              + ".tenantScopedAgencyKey(#agencyId)",
+      unless = "#result == null")
   public AgencyDTO getAgency(Long agencyId) {
     return getAgenciesFromAgencyService(Collections.singletonList(agencyId)).stream()
         .findFirst()
@@ -66,9 +75,40 @@ public class AgencyService {
    * @param agencyIds List of {@link AgencyDTO#getId()}
    * @return List<AgencyDTO> List of {@link AgencyDTO}
    */
-  @Cacheable(value = CacheManagerConfig.AGENCY_CACHE, key = "#agencyIds")
+  @Cacheable(
+      value = CacheManagerConfig.AGENCY_CACHE,
+      key =
+          "T(de.caritas.cob.userservice.api.service.agency.AgencyService)"
+              + ".tenantScopedAgencyListKey(#agencyIds)")
   public List<AgencyDTO> getAgencies(List<Long> agencyIds) {
-    return getAgenciesFromAgencyService(agencyIds);
+    if (!isNotEmpty(agencyIds)) {
+      return emptyList();
+    }
+    var agencies = getAgenciesFromAgencyService(agencyIds);
+    cacheAgenciesById(agencies);
+    return agencies;
+  }
+
+  private void cacheAgenciesById(List<AgencyDTO> agencies) {
+    if (agencies == null) {
+      return;
+    }
+    var agencyCache =
+        Objects.requireNonNull(
+            cacheManager.getCache(CacheManagerConfig.AGENCY_CACHE),
+            "Agency cache must be configured");
+    agencies.stream()
+        .filter(Objects::nonNull)
+        .filter(agency -> agency.getId() != null)
+        .forEach(agency -> agencyCache.put(tenantScopedAgencyKey(agency.getId()), agency));
+  }
+
+  public static String tenantScopedAgencyKey(Long agencyId) {
+    return "tenant:" + TenantContext.getCurrentTenant() + ":id:" + agencyId;
+  }
+
+  public static String tenantScopedAgencyListKey(List<Long> agencyIds) {
+    return "tenant:" + TenantContext.getCurrentTenant() + ":ids:" + agencyIds;
   }
 
   public List<AgencyDTO> getAgenciesNotCached(List<Long> agencyIds) {

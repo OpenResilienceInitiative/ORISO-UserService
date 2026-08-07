@@ -1,19 +1,15 @@
 package de.caritas.cob.userservice.api.actions.session;
 
-import static de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource.FinishConversationPhaseEnum.IN_PROGRESS;
-import static de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource.FinishConversationPhaseEnum.NEW;
+import static de.caritas.cob.userservice.api.service.notification.EventNotificationService.CATEGORY_SYSTEM;
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
-import static org.apache.commons.collections.CollectionUtils.isNotEmpty;
-import static org.apache.commons.lang3.exception.ExceptionUtils.getStackTrace;
 
 import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
-import de.caritas.cob.userservice.liveservice.generated.web.model.StatusSource.FinishConversationPhaseEnum;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.util.List;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -22,32 +18,38 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
-/** Action to send a live finished anonymous conversation event. */
+/** Action to persist a finished anonymous conversation event for the other participants. */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class SendFinishedAnonymousConversationEventActionCommand implements ActionCommand<Session> {
 
-  private final @NonNull LiveEventNotificationService liveEventNotificationService;
+  private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull AuthenticatedUser authenticatedUser;
 
-  /**
-   * Sends a finished anonymous conversation event.
-   *
-   * @param session the session
-   */
+  /** Persists a finished anonymous conversation event. */
   @Override
   public void execute(Session session) {
-    List<String> userIdsToSendLiveEvent = collectNotInitiatingUser(session);
+    collectNotInitiatingUser(session)
+        .forEach(recipientId -> persistFinishedEvent(recipientId, session));
+  }
 
-    if (isNotEmpty(userIdsToSendLiveEvent)) {
-      try {
-        this.liveEventNotificationService.sendLiveFinishedAnonymousConversationToUsers(
-            userIdsToSendLiveEvent, forSession(session));
-      } catch (Exception e) {
-        log.error("Unable to send anonymous conversation finished live event");
-        log.error(getStackTrace(e));
-      }
+  private void persistFinishedEvent(String recipientId, Session session) {
+    try {
+      eventNotificationService.createEvent(
+          recipientId,
+          "conversation.finished",
+          CATEGORY_SYSTEM,
+          "Conversation finished",
+          "The anonymous conversation has ended.",
+          null,
+          session.getId(),
+          session.getTenantId());
+    } catch (RuntimeException exception) {
+      log.error(
+          "Unable to persist anonymous conversation finished event for session {}",
+          session.getId(),
+          exception);
     }
   }
 
@@ -81,9 +83,5 @@ public class SendFinishedAnonymousConversationEventActionCommand implements Acti
     } catch (Exception e) {
       return true;
     }
-  }
-
-  private FinishConversationPhaseEnum forSession(Session session) {
-    return isNull(session.getConsultant()) ? NEW : IN_PROGRESS;
   }
 }
