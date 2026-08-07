@@ -6,13 +6,14 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
-import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
@@ -51,6 +52,7 @@ public class TenantAdminOnboardingService {
   private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull CreateAdminService createAdminService;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentitySecondFactor identitySecondFactor;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
   private final @NonNull IdentityProfileLookup identityProfileLookup;
   private final @NonNull TenantCreationClient tenantCreationClient;
@@ -154,9 +156,10 @@ public class TenantAdminOnboardingService {
 
     var admin = createAdminService.createNewTenantAdmin(buildAdminDto(invite, command));
     try {
-      OtpInfoDTO otpInfo =
-          identityClient.getOtpCredential(usernameTranscoder.encodeUsername(admin.getUsername()));
-      if (otpInfo == null || isBlank(otpInfo.getOtpSecret())) {
+      IdentityOtpCredential otpInfo =
+          identitySecondFactor.getOtpCredential(
+              usernameTranscoder.encodeUsername(admin.getUsername()));
+      if (otpInfo == null || isBlank(otpInfo.secret())) {
         throw new InternalServerErrorException(
             "Keycloak issued no TOTP setup material for the onboarding account");
       }
@@ -166,7 +169,7 @@ public class TenantAdminOnboardingService {
               .findById(invite.getId())
               .orElseThrow(() -> new NotFoundException("Account invite not found"));
       claimedInvite.setAcceptedByUserId(admin.getId());
-      claimedInvite.setTotpPendingSecret(otpInfo.getOtpSecret());
+      claimedInvite.setTotpPendingSecret(otpInfo.secret());
       claimedInvite.setUpdateDate(now);
       accountInviteRepository.save(claimedInvite);
 
@@ -181,7 +184,7 @@ public class TenantAdminOnboardingService {
       Long tenantId =
           created != null && created.getId() != null ? created.getId() : invite.getTenantId();
       return new TenantAdminRegistrationResult(
-          tenantId, otpInfo.getOtpSecret(), otpInfo.getOtpSecretQrCode());
+          tenantId, otpInfo.secret(), otpInfo.secretQrCode());
     } catch (RuntimeException exception) {
       // Every database change rolls back with the exception; the Keycloak account is external
       // state and must be compensated explicitly so a failed registration stays retryable.
@@ -223,7 +226,7 @@ public class TenantAdminOnboardingService {
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
     boolean valid =
-        identityClient.setUpOtpCredential(
+        identitySecondFactor.setUpOtpCredential(
             profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
     if (!valid) {
       throw new BadRequestException("Invalid one-time password");

@@ -47,6 +47,9 @@ public class HandshakeService {
   private final @NonNull KeycloakAuthClient keycloakAuthClient;
   private final @NonNull de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
 
+  private final @NonNull de.caritas.cob.userservice.api.port.out.IdentitySecondFactor
+      identitySecondFactor;
+
   private final @NonNull de.caritas.cob.userservice.api.port.out.IdentityClientConfig
       identityClientConfig;
 
@@ -254,9 +257,9 @@ public class HandshakeService {
     boolean otpActive;
     try {
       var otpInfo =
-          identityClient.getOtpCredential(
+          identitySecondFactor.getOtpCredential(
               usernameTranscoder.encodeUsername(initiator.getUsername()));
-      otpActive = otpInfo != null && Boolean.TRUE.equals(otpInfo.getOtpSetup());
+      otpActive = otpInfo != null && Boolean.TRUE.equals(otpInfo.setup());
     } catch (Exception e) {
       log.warn(
           "Could not read OTP state for support admin {}; failing closed",

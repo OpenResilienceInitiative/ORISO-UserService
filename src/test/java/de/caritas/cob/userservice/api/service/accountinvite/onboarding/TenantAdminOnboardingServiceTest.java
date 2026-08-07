@@ -24,12 +24,13 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
-import de.caritas.cob.userservice.api.model.OtpInfoDTO;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
@@ -62,6 +63,7 @@ class TenantAdminOnboardingServiceTest {
   @Mock private AccountInviteService accountInviteService;
   @Mock private CreateAdminService createAdminService;
   @Mock private IdentityClient identityClient;
+  @Mock private IdentitySecondFactor identitySecondFactor;
   @Mock private IdentityAccountRemover identityAccountRemover;
   @Mock private IdentityProfileLookup identityProfileLookup;
   @Mock private TenantCreationClient tenantCreationClient;
@@ -77,6 +79,7 @@ class TenantAdminOnboardingServiceTest {
             accountInviteService,
             createAdminService,
             identityClient,
+            identitySecondFactor,
             identityAccountRemover,
             identityProfileLookup,
             tenantCreationClient,
@@ -254,8 +257,8 @@ class TenantAdminOnboardingServiceTest {
             .lastName("Beispiel")
             .build();
     when(createAdminService.createNewTenantAdmin(any())).thenReturn(admin);
-    when(identityClient.getOtpCredential(anyString()))
-        .thenReturn(new OtpInfoDTO().otpSecret("TOTPSECRET").otpSecretQrCode("QRBASE64"));
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
     when(tenantCreationClient.createTenant(any()))
         .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
 
@@ -300,8 +303,8 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
     when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
-    when(identityClient.getOtpCredential(anyString()))
-        .thenReturn(new OtpInfoDTO().otpSecret("TOTPSECRET"));
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
         .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
 
@@ -351,8 +354,8 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
     when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
-    when(identityClient.getOtpCredential(anyString()))
-        .thenReturn(new OtpInfoDTO().otpSecret("TOTPSECRET"));
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
         .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
     var command =
@@ -507,8 +510,8 @@ class TenantAdminOnboardingServiceTest {
             .lastName("Beispiel")
             .build();
     when(createAdminService.createNewTenantAdmin(any())).thenReturn(admin);
-    when(identityClient.getOtpCredential(anyString()))
-        .thenReturn(new OtpInfoDTO().otpSecret("TOTPSECRET"));
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
         .thenThrow(new ConflictException("reservation no longer consumable"));
 
@@ -533,7 +536,8 @@ class TenantAdminOnboardingServiceTest {
             .lastName("Beispiel")
             .build();
     when(createAdminService.createNewTenantAdmin(any())).thenReturn(admin);
-    when(identityClient.getOtpCredential(anyString())).thenReturn(new OtpInfoDTO());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(IdentityOtpCredential.empty());
 
     assertThrows(
         InternalServerErrorException.class,
@@ -555,7 +559,7 @@ class TenantAdminOnboardingServiceTest {
         .thenReturn(
             Optional.of(
                 new IdentityProfile("kc-user-1", "enc.keycloak-username", null, null, null)));
-    when(identityClient.setUpOtpCredential("enc.keycloak-username", "123456", "TOTPSECRET"))
+    when(identitySecondFactor.setUpOtpCredential("enc.keycloak-username", "123456", "TOTPSECRET"))
         .thenReturn(true);
 
     service.activateTwoFactor(RAW_TOKEN, "123456");
@@ -575,7 +579,7 @@ class TenantAdminOnboardingServiceTest {
         .thenReturn(
             Optional.of(
                 new IdentityProfile("kc-user-1", "enc.keycloak-username", null, null, null)));
-    when(identityClient.setUpOtpCredential(anyString(), anyString(), anyString()))
+    when(identitySecondFactor.setUpOtpCredential(anyString(), anyString(), anyString()))
         .thenReturn(false);
 
     assertThrows(BadRequestException.class, () -> service.activateTwoFactor(RAW_TOKEN, "000000"));

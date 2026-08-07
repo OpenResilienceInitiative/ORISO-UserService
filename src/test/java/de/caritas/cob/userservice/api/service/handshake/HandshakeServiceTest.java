@@ -40,6 +40,10 @@ class HandshakeServiceTest {
   @Mock private KeycloakAuthClient keycloakAuthClient;
   @Mock private HandshakeCompletionHandler completionHandler;
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.IdentitySecondFactor identitySecondFactor;
+
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityClientConfig;
 
   private HandshakeService handshakeService;
@@ -52,6 +56,7 @@ class HandshakeServiceTest {
             handshakeAuditEventRepository,
             keycloakAuthClient,
             identityClient,
+            identitySecondFactor,
             identityClientConfig,
             List.of(completionHandler));
     ReflectionTestUtils.setField(handshakeService, "ttlSeconds", 300L);
@@ -59,8 +64,10 @@ class HandshakeServiceTest {
     ReflectionTestUtils.setField(handshakeService, "sweepBatchSize", 200);
     org.mockito.Mockito.lenient().when(identityClientConfig.isOtpAllowed(any())).thenReturn(true);
     org.mockito.Mockito.lenient()
-        .when(identityClient.getOtpCredential(anyString()))
-        .thenReturn(new de.caritas.cob.userservice.api.model.OtpInfoDTO().otpSetup(true));
+        .when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityOtpCredential(
+                true, null, null, null));
   }
 
   private AuthenticatedUser supportAdmin() {
@@ -134,8 +141,10 @@ class HandshakeServiceTest {
   @Test
   void initiate_Should_Forbid_When_SupportAdminHasNoActiveSecondFactor() {
     // ADR-018: a Global Support Admin cannot become active without completed 2FA enrollment.
-    when(identityClient.getOtpCredential(anyString()))
-        .thenReturn(new de.caritas.cob.userservice.api.model.OtpInfoDTO().otpSetup(false));
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.identity.IdentityOtpCredential(
+                false, null, null, null));
 
     assertThatThrownBy(() -> handshakeService.initiate(supportAdmin(), supportRequest()))
         .isInstanceOf(ForbiddenException.class)
@@ -157,14 +166,15 @@ class HandshakeServiceTest {
         .isInstanceOf(ForbiddenException.class)
         .hasMessageContaining("OTP policy");
 
-    verify(identityClient, never()).getOtpCredential(anyString());
+    verify(identitySecondFactor, never()).getOtpCredential(anyString());
     verify(handshakeSessionRepository, never()).save(any());
   }
 
   @Test
   void initiate_Should_Forbid_When_SupportAdminOtpStateIsUnavailable() {
     // Fail closed: an unreachable OTP state never lets a support admin through.
-    when(identityClient.getOtpCredential(anyString())).thenThrow(new RuntimeException("SPI down"));
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenThrow(new RuntimeException("SPI down"));
 
     assertThatThrownBy(() -> handshakeService.initiate(supportAdmin(), supportRequest()))
         .isInstanceOf(ForbiddenException.class);
