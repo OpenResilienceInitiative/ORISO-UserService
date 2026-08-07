@@ -9,6 +9,7 @@ import static org.hibernate.search.util.impl.CollectionHelper.asSet;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -91,7 +92,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(0);
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
-    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     createSessionWithoutConsultant(agencyDTO.getId(), SessionStatus.NEW);
 
@@ -129,7 +130,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setTeamAgency(true);
     agencyDTO.setConsultingType(0);
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
-    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
     when(consultingTypeManager.getConsultingTypeSettings(0))
         .thenReturn(extendedConsultingTypeResponseDTO);
 
@@ -164,7 +165,7 @@ class ConsultantAgencyRelationCreatorServiceIT {
     agencyDTO.setTeamAgency(false);
     agencyDTO.setConsultingType(consultingType);
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
-    when(agencyService.getAgencies(List.of(15L))).thenReturn(List.of(agencyDTO));
+    when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));
 
     var consultant = createConsultantWithoutAgencyAndSession();
     when(keycloakService.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
@@ -173,7 +174,10 @@ class ConsultantAgencyRelationCreatorServiceIT {
     consultantAgencyRelationCreatorService.createNewConsultantAgency(
         consultant.getId(), createConsultantAgencyDTO);
 
-    roles.forEach(role -> verify(keycloakService).ensureRole(consultant.getId(), role));
+    verify(keycloakService)
+        .ensureRoles(
+            eq(consultant.getId()),
+            argThat(roleNames -> Set.copyOf(roleNames).equals(Set.copyOf(roles))));
     var result =
         consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId());
 

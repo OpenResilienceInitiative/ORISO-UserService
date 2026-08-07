@@ -11,7 +11,6 @@ import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
@@ -35,7 +34,9 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -61,6 +62,7 @@ public class CreateConsultantSaga {
 
   private static final String CREATE_CONSULTANT = "createConsultant";
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull ConsultantPublicSlugService consultantPublicSlugService;
   private final @NonNull UserHelper userHelper;
@@ -290,7 +292,7 @@ public class CreateConsultantSaga {
   private void updateKeycloakPasswordOrRollback(
       ConsultantCreationInput consultantCreationInput, String keycloakUserId, String password) {
     try {
-      identityClient.updatePassword(keycloakUserId, password);
+      identityPasswordUpdater.updatePassword(keycloakUserId, password);
     } catch (CustomValidationHttpStatusException e) {
       rollbackCreateNewConsultant(
           buildConsultantDataForRollback(consultantCreationInput, keycloakUserId));
@@ -398,13 +400,11 @@ public class CreateConsultantSaga {
 
     this.userAccountInputValidator.validateUserDTO(userDto);
 
-    KeycloakCreateUserResponseDTO response =
-        identityClient.createKeycloakUser(
+    CreatedIdentity response =
+        identityClient.createUser(
             userDto, consultantCreationInput.getFirstName(), consultantCreationInput.getLastName());
 
-    this.userAccountInputValidator.validateKeycloakResponse(response);
-
-    return response.getUserId();
+    return CreatedIdentity.requireUserId(response);
   }
 
   private static Consultant buildConsultantDataForRollback(

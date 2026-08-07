@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.port.in;
 
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
@@ -23,5 +24,9 @@ public interface IdentityManaging {
 
   IdentityOtpCredential getOtpCredential(String username);
 
+  boolean isUsernameAvailable(String username);
+
   boolean isEmailAvailableOrOwn(String username, String email);
+
+  boolean hasRole(String userId, UserRole role);
 }

@@ -1,12 +1,16 @@
 package de.caritas.cob.userservice.api;
 
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -17,7 +21,10 @@ import org.springframework.stereotype.Service;
 public class IdentityManager implements IdentityManaging {
 
   private final IdentityClient identityClient;
+  private final IdentityAuthentication identityAuthentication;
+  private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
   private final IdentitySecondFactor identitySecondFactor;
+  private final IdentityUsernameAvailability identityUsernameAvailability;
   private final UsernameTranscoder usernameTranscoder;
 
   @Override
@@ -43,7 +50,7 @@ public class IdentityManager implements IdentityManaging {
 
   @Override
   public boolean validatePasswordIgnoring2fa(String username, String password) {
-    return identityClient.verifyIgnoringOtp(username, password);
+    return identityAuthentication.verifyPasswordIgnoringSecondFactor(username, password);
   }
 
   @Override
@@ -67,11 +74,27 @@ public class IdentityManager implements IdentityManaging {
   }
 
   @Override
-  public boolean isEmailAvailableOrOwn(String username, String email) {
-    var user = identityClient.findUserByEmail(email);
+  public boolean isUsernameAvailable(String username) {
+    return identityUsernameAvailability.isUsernameAvailable(username);
+  }
 
-    return user.isEmpty()
-        || username.equals(user.get("encodedUsername"))
-        || usernameTranscoder.decodeUsername(username).equals(user.get("decodedUsername"));
+  @Override
+  public boolean isEmailAvailableOrOwn(String username, String email) {
+    var owner = identityEmailOwnerLookup.findByEmail(email);
+    if (owner.isEmpty()) {
+      return true;
+    }
+
+    var ownerUsername = owner.orElseThrow().username();
+    return ownerUsername != null
+        && (username.equals(ownerUsername)
+            || usernameTranscoder
+                .decodeUsername(username)
+                .equals(usernameTranscoder.decodeUsername(ownerUsername)));
+  }
+
+  @Override
+  public boolean hasRole(String userId, UserRole role) {
+    return identityClient.userHasRole(userId, role.getValue());
   }
 }

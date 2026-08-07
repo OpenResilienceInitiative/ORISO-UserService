@@ -49,9 +49,19 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
@@ -276,7 +286,20 @@ class UserControllerIT {
   @MockitoBean private AssignSessionFacade assignSessionFacade;
   @MockitoBean private AssignEnquiryFacade assignEnquiryFacade;
 
-  @MockitoBean(extraInterfaces = IdentitySecondFactor.class)
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class,
+        IdentityRoleUpdater.class,
+        IdentitySecondFactor.class,
+        IdentityUsernameAvailability.class
+      })
   private IdentityClient identityClient;
 
   @MockitoBean private DecryptionService encryptionService;
@@ -383,7 +406,7 @@ class UserControllerIT {
   void userExists_Should_Return404_When_UserDoesNotExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
     /* when */
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
         /* then */
@@ -394,7 +417,7 @@ class UserControllerIT {
   void userExists_Should_Return200_When_UserDoesExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
 
     /* when */
     mvc.perform(get("/users/{username}", username).accept(MediaType.APPLICATION_JSON))
@@ -406,7 +429,7 @@ class UserControllerIT {
   void usernameAvailability_Should_ReturnNoContent_When_UserDoesNotExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.TRUE);
 
     /* when */
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
@@ -448,7 +471,7 @@ class UserControllerIT {
   void usernameAvailability_Should_ReturnConflict_When_UserDoesExist() throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
+    when(identityManager.isUsernameAvailable(username)).thenReturn(Boolean.FALSE);
 
     /* when */
     mvc.perform(get("/users/availability/{username}", username).accept(MediaType.APPLICATION_JSON))
@@ -461,7 +484,7 @@ class UserControllerIT {
       throws Exception {
     /* given */
     var username = "john@doe.com";
-    when(identityClient.isUsernameAvailable(username))
+    when(identityManager.isUsernameAvailable(username))
         .thenThrow(new RuntimeException("Keycloak 401"));
 
     /* when */

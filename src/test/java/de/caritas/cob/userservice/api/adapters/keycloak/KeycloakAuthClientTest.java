@@ -10,7 +10,6 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
@@ -25,7 +24,6 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.keycloak.admin.client.resource.RealmResource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -54,8 +52,6 @@ class KeycloakAuthClientTest {
   @Mock private RestTemplate restTemplate;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private IdentityClientConfig identityClientConfig;
-  @Mock private KeycloakClient keycloakClient;
-
   private LogbackCaptor logCaptor;
 
   @BeforeEach
@@ -92,11 +88,25 @@ class KeycloakAuthClientTest {
   void verifyIgnoringOtp_Should_ReturnTrue_When_MissingTotpButPasswordCorrect() {
     var exception = mock(HttpClientErrorException.class);
     when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
-    when(exception.getResponseBodyAsString()).thenReturn("Missing totp");
+    when(exception.getResponseBodyAsString())
+        .thenReturn("{\"error\":\"invalid_grant\",\"error_description\":\"Missing totp\"}");
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenThrow(exception);
 
     assertTrue(keycloakAuthClient.verifyIgnoringOtp(USERNAME, PASSWORD));
+  }
+
+  @Test
+  void verifyIgnoringOtp_Should_ReturnFalse_When_MissingTotpAppearsOutsideTheJsonContract() {
+    var exception = mock(HttpClientErrorException.class);
+    when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
+    when(exception.getResponseBodyAsString())
+        .thenReturn(
+            "{\"error\":\"invalid_grant\",\"error_description\":\"Account disabled; Missing totp enrollment\"}");
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(exception);
+
+    assertThat(keycloakAuthClient.verifyIgnoringOtp(USERNAME, PASSWORD), is(false));
   }
 
   @Test
@@ -197,12 +207,36 @@ class KeycloakAuthClientTest {
   }
 
   @Test
-  void closeSession_Should_DeleteSession() {
-    var realmResource = mock(RealmResource.class);
-    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+  void verifyWithOtp_Should_ReturnTrueAndLogout_When_LoginWithOtpSucceeds() {
+    var loginResponse = new KeycloakLoginResponseDTO();
+    loginResponse.setRefreshToken(REFRESH_TOKEN);
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(loginResponse));
+    when(restTemplate.postForEntity(anyString(), any(), eq(Void.class)))
+        .thenReturn(ResponseEntity.noContent().build());
 
-    keycloakAuthClient.closeSession("sessionId");
+    assertTrue(keycloakAuthClient.verifyWithOtp(USERNAME, PASSWORD, "123456"));
+  }
 
-    verify(realmResource, times(1)).deleteSession(eq("sessionId"), eq(false));
+  @Test
+  void verifyWithOtp_Should_ReturnFalse_When_LoginIsRejected() {
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(new HttpClientErrorException(HttpStatus.UNAUTHORIZED));
+
+    assertThat(keycloakAuthClient.verifyWithOtp(USERNAME, PASSWORD, "123456"), is(false));
+  }
+
+  @Test
+  void verifyWithOtp_Should_ReturnFalse_When_OtpIsMissingOrWrong() {
+    when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                org.springframework.http.HttpHeaders.EMPTY,
+                "{\"error_description\":\"Missing totp\"}".getBytes(),
+                null));
+
+    assertThat(keycloakAuthClient.verifyWithOtp(USERNAME, PASSWORD, ""), is(false));
   }
 }

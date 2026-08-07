@@ -20,7 +20,6 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -44,7 +43,6 @@ public class CreateEnquiryMessageFacade {
   private final @NonNull EmailNotificationFacade emailNotificationFacade;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
-  private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
 
@@ -75,25 +73,8 @@ public class CreateEnquiryMessageFacade {
 
     String matrixMessageEventId = "";
     if (!isAppointmentEnquiryMessage(enquiryData)) {
-      String matrixAccessToken =
-          matrixSynapseService.loginAsUserAccessToken(enquiryData.getUser().getMatrixUserId());
-      if (isBlank(matrixAccessToken)) {
-        throw new InternalServerErrorException(
-            String.format(
-                "Could not create Matrix token for enquiry user %s",
-                enquiryData.getUser().getUserId()));
-      }
-
-      var matrixResponse =
-          matrixSynapseService.sendMessage(
-              matrixRoomId, enquiryData.getMessage(), matrixAccessToken);
-      if (matrixResponse == null || matrixResponse.containsKey("error")) {
-        throw new InternalServerErrorException(
-            String.format(
-                "Could not post Matrix enquiry message to room %s for session %s",
-                matrixRoomId, session.getId()));
-      }
-      matrixMessageEventId = String.valueOf(matrixResponse.getOrDefault("event_id", ""));
+      matrixMessageEventId =
+          validateEncryptedMatrixEvent(enquiryData, matrixRoomId, enquiryData.getMatrixEventId());
     }
 
     var exceptionInformation =
@@ -108,6 +89,49 @@ public class CreateEnquiryMessageFacade {
         .matrixRoomId(matrixRoomId)
         .sessionId(enquiryData.getSessionId())
         .t(matrixMessageEventId);
+  }
+
+  private String validateEncryptedMatrixEvent(
+      EnquiryData enquiryData, String matrixRoomId, String matrixEventId) {
+    if (isBlank(matrixEventId)) {
+      throw new InternalServerErrorException(
+          String.format(
+              "Initial enquiry for session %s requires an encrypted Matrix event",
+              enquiryData.getSessionId()));
+    }
+
+    String matrixUserId = enquiryData.getUser().getMatrixUserId();
+    String matrixAccessToken = matrixSynapseService.loginAsUserAccessToken(matrixUserId);
+    if (isBlank(matrixAccessToken)) {
+      throw new InternalServerErrorException(
+          String.format(
+              "Could not validate encrypted Matrix enquiry event for user %s",
+              enquiryData.getUser().getUserId()));
+    }
+
+    var event =
+        matrixSynapseService
+            .getRoomEvent(matrixRoomId, matrixEventId, matrixAccessToken)
+            .orElseThrow(
+                () ->
+                    new InternalServerErrorException(
+                        String.format(
+                            "Could not read Matrix enquiry event %s in room %s",
+                            matrixEventId, matrixRoomId)));
+
+    if (!matrixEventId.equals(event.get("event_id"))) {
+      throw new InternalServerErrorException(
+          String.format("Matrix enquiry event response did not match %s", matrixEventId));
+    }
+    if (!"m.room.encrypted".equals(event.get("type"))) {
+      throw new InternalServerErrorException(
+          String.format("Matrix enquiry event %s is not an encrypted Matrix event", matrixEventId));
+    }
+    if (!matrixUserId.equals(event.get("sender"))) {
+      throw new InternalServerErrorException(
+          String.format("Matrix enquiry event %s was not sent by enquiry user", matrixEventId));
+    }
+    return matrixEventId;
   }
 
   private String ensureMatrixRoomForEnquiry(Session session, User user) {
@@ -136,7 +160,6 @@ public class CreateEnquiryMessageFacade {
           session, TenantContext.getCurrentTenantData());
     }
 
-    notifyEligibleConsultantsAboutLiveChatEnquiry(session);
     persistNewClientRequestNotifications(session, agencyList);
   }
 
@@ -171,28 +194,6 @@ public class CreateEnquiryMessageFacade {
       eventNotificationService.createNewClientRequestNotifications(session, consultantIds);
     } catch (RuntimeException ex) {
       log.warn("Could not persist request.new notifications for session {}", session.getId(), ex);
-    }
-  }
-
-  private void notifyEligibleConsultantsAboutLiveChatEnquiry(Session session) {
-    if (!sessionService.isAnonymousStyleRegistration(session)) {
-      return;
-    }
-
-    List<String> consultantIds;
-    if (session.getMainTopicId() != null) {
-      consultantIds =
-          topicConsultantRoutingService.findEligibleConsultantIds(session.getMainTopicId());
-    } else {
-      consultantIds =
-          consultantAgencyService.findConsultantsByAgencyId(session.getAgencyId()).stream()
-              .map(agency -> agency.getConsultant().getId())
-              .collect(Collectors.toList());
-    }
-
-    if (!consultantIds.isEmpty()) {
-      liveEventNotificationService.sendLiveNewAnonymousEnquiryEventToUsers(
-          consultantIds, session.getId());
     }
   }
 

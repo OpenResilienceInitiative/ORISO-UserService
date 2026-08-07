@@ -15,11 +15,14 @@ import de.caritas.cob.userservice.api.model.ConsultantAgencyStatus;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.Collections;
+import java.util.LinkedHashSet;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Consumer;
@@ -36,6 +39,8 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull AgencyService agencyService;
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityRoleLookup identityRoleLookup;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull ConsultantAgencyRelationFinalizer consultantAgencyRelationFinalizer;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
@@ -141,11 +146,11 @@ public class ConsultantAgencyRelationCreatorService {
         consultingTypeManager.getConsultingTypeSettings(agency.getConsultingType()).getRoles();
     if (nonNull(roles) && nonNull(roles.getConsultant())) {
       var roleSets = roles.getConsultant().getRoleSets();
+      var requestedRoles = new LinkedHashSet<String>();
       for (var roleSetName : input.getRoleSetNames()) {
-        roleSets
-            .getOrDefault(roleSetName, Collections.emptyList())
-            .forEach(roleName -> identityClient.ensureRole(input.getConsultantId(), roleName));
+        requestedRoles.addAll(roleSets.getOrDefault(roleSetName, Collections.emptyList()));
       }
+      identityRoleUpdater.ensureRoles(input.getConsultantId(), requestedRoles);
     }
   }
 
@@ -159,15 +164,14 @@ public class ConsultantAgencyRelationCreatorService {
   }
 
   private void checkConsultantHasRoleSet(Set<String> roles, String consultantId) {
-    roles.stream()
-        .filter(role -> identityClient.userHasRole(consultantId, role))
-        .findAny()
-        .orElseThrow(
-            () ->
-                new BadRequestException(
-                    String.format(
-                        "Consultant with id %s does not have the role set %s",
-                        consultantId, roles)));
+    var hasRequestedRole =
+        !roles.isEmpty()
+            && identityRoleLookup.findAllByUserId(consultantId).stream().anyMatch(roles::contains);
+    if (!hasRequestedRole) {
+      throw new BadRequestException(
+          String.format(
+              "Consultant with id %s does not have the role set %s", consultantId, roles));
+    }
   }
 
   private AgencyDTO retrieveAgency(Long agencyId) {

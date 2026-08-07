@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.keycloak;
 
-import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
@@ -17,8 +16,6 @@ import org.springframework.web.client.HttpClientErrorException;
 
 @Service
 public class KeycloakMapper {
-
-  private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   public OtpSetupDTO otpSetupDtoOf(String initialCode, String secret, String email) {
     var otpSetupDTO = new OtpSetupDTO();
@@ -61,14 +58,5 @@ public class KeycloakMapper {
 
     return new IdentityEmailVerification(
         false, false, !status.equals(HttpStatus.TOO_MANY_REQUESTS), null);
-  }
-
-  public Map<String, String> mapOf(UserRepresentation userRepresentation) {
-    var username = userRepresentation.getUsername();
-
-    return Map.of(
-        "encodedUsername", username,
-        "decodedUsername", usernameTranscoder.decodeUsername(username),
-        "email", userRepresentation.getEmail());
   }
 }

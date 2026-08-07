@@ -11,8 +11,8 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Collection;
@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.Getter;
@@ -41,8 +42,12 @@ public class EventNotificationService {
   public static final String CATEGORY_SYSTEM = "system";
   public static final String CATEGORY_MESSAGE = "message";
 
+  /** Matches the {@code deduplication_key} column length (VARCHAR(191), changeset 0063). */
+  static final int MAX_DEDUPLICATION_KEY_LENGTH = 191;
+
   private static final String SYSTEM_NOTIFICATION_PREFIX = "[SYSTEM_NOTIFICATION]";
   private static final String REDACTED_PREVIEW = "[content hidden]";
+  private static final long ACTIVE_VIEW_TTL_NANOS = Duration.ofSeconds(30).toNanos();
 
   private final @NonNull EventNotificationRepository eventNotificationRepository;
   private final @NonNull SessionRepository sessionRepository;
@@ -50,9 +55,9 @@ public class EventNotificationService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
-  private final @NonNull LiveEventNotificationService liveEventNotificationService;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
+  private volatile LongSupplier monotonicNanos = System::nanoTime;
 
   @Value("${privacy.notificationPreviewMode:NONE}")
   private String notificationPreviewMode;
@@ -183,7 +188,7 @@ public class EventNotificationService {
     if (session == null || recipientConsultantIds == null) {
       return;
     }
-    String actionPath = buildSessionActionPath(session, null, true);
+    String actionPath = buildEnquiryActionPath(session);
     String params = buildNewClientRequestParams(session);
     recipientConsultantIds.stream()
         .filter(id -> id != null && !id.isBlank())
@@ -225,7 +230,7 @@ public class EventNotificationService {
     if (session == null || recipientConsultantIds == null) {
       return;
     }
-    String actionPath = buildSessionActionPath(session, null, true);
+    String actionPath = buildEnquiryActionPath(session);
     String params = buildNewClientRequestParams(session);
     recipientConsultantIds.stream()
         .filter(id -> id != null && !id.isBlank())
@@ -292,11 +297,20 @@ public class EventNotificationService {
     return serializeParams(params);
   }
 
-  /** Seed a params map with the session id every timeline event references. */
+  /**
+   * Seed a params map with the session id every timeline event references, plus the Matrix room
+   * reference when the session has one (#846) — the frontend resolves rooms from params instead of
+   * string-splitting actionPath.
+   */
   private Map<String, Object> baseParams(Session session) {
     Map<String, Object> params = new LinkedHashMap<>();
     if (session != null && session.getId() != null) {
       params.put("sessionId", session.getId());
+    }
+    if (session != null
+        && session.getMatrixRoomId() != null
+        && !session.getMatrixRoomId().isBlank()) {
+      params.put("roomRef", session.getMatrixRoomId());
     }
     return params;
   }
@@ -372,10 +386,10 @@ public class EventNotificationService {
         && session.getUser().getUserId() != null
         && !session.getUser().getUserId().equals(senderUserId)
         && !shouldSuppressNotification(session.getUser().getUserId(), roomId, null)) {
-      createEvent(
-          session.getUser().getUserId(),
+      createMessageEventDeduplicated(
           "message.new",
-          CATEGORY_MESSAGE,
+          envelope != null ? envelope.getMessageId() : null,
+          session.getUser().getUserId(),
           "New message",
           text,
           buildMessageParams(session, senderLabel, contentClass, "user"),
@@ -388,10 +402,10 @@ public class EventNotificationService {
         && session.getConsultant().getId() != null
         && !session.getConsultant().getId().equals(senderUserId)
         && !shouldSuppressNotification(session.getConsultant().getId(), roomId, null)) {
-      createEvent(
-          session.getConsultant().getId(),
+      createMessageEventDeduplicated(
           "message.new",
-          CATEGORY_MESSAGE,
+          envelope != null ? envelope.getMessageId() : null,
+          session.getConsultant().getId(),
           "New message",
           text,
           buildMessageParams(session, senderLabel, contentClass, "consultant"),
@@ -469,10 +483,10 @@ public class EventNotificationService {
         && session.getUser().getUserId() != null
         && !session.getUser().getUserId().equals(senderUserId)
         && !shouldSuppressNotification(session.getUser().getUserId(), roomId, threadRootId)) {
-      createEvent(
-          session.getUser().getUserId(),
+      createMessageEventDeduplicated(
           "thread.reply.new",
-          CATEGORY_MESSAGE,
+          envelope != null ? envelope.getMessageId() : null,
+          session.getUser().getUserId(),
           "New thread reply",
           text,
           buildThreadReplyParams(session, senderLabel, contentClass, threadRootId, "user"),
@@ -485,10 +499,10 @@ public class EventNotificationService {
         && session.getConsultant().getId() != null
         && !session.getConsultant().getId().equals(senderUserId)
         && !shouldSuppressNotification(session.getConsultant().getId(), roomId, threadRootId)) {
-      createEvent(
-          session.getConsultant().getId(),
+      createMessageEventDeduplicated(
           "thread.reply.new",
-          CATEGORY_MESSAGE,
+          envelope != null ? envelope.getMessageId() : null,
+          session.getConsultant().getId(),
           "New thread reply",
           text,
           buildThreadReplyParams(session, senderLabel, contentClass, threadRootId, "consultant"),
@@ -507,7 +521,7 @@ public class EventNotificationService {
     var pageable = PageRequest.of(safePage, safePerPage);
     List<NotificationItem> items =
         eventNotificationRepository
-            .findByRecipientUserIdOrderByCreateDateDesc(recipientUserId, pageable)
+            .findByRecipientUserIdOrderByCreateDateDescIdDesc(recipientUserId, pageable)
             .stream()
             .map(this::toItem)
             .collect(Collectors.toList());
@@ -564,7 +578,12 @@ public class EventNotificationService {
       activeViewByUserId.remove(userId);
       return;
     }
-    activeViewByUserId.put(userId, new ActiveViewState(roomId, threadRootId));
+    activeViewByUserId.put(
+        userId, new ActiveViewState(roomId, threadRootId, monotonicNanos.getAsLong()));
+  }
+
+  void setMonotonicNanosForTesting(LongSupplier monotonicNanos) {
+    this.monotonicNanos = monotonicNanos;
   }
 
   @Transactional
@@ -584,6 +603,57 @@ public class EventNotificationService {
         title,
         text,
         null,
+        actionPath,
+        sourceSessionId,
+        tenantId);
+  }
+
+  /**
+   * #942: message-type events carry a deterministic deduplication key derived from the Matrix event
+   * id, so the Matrix sync listener and the frontend's {@code POST /message-events} for the same
+   * message collapse into one row per recipient. Without an event id (legacy callers) the event
+   * persists unconditionally, as before.
+   */
+  private void createMessageEventDeduplicated(
+      String eventType,
+      String matrixEventId,
+      String recipientUserId,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId) {
+    if (matrixEventId != null && !matrixEventId.isBlank()) {
+      String deduplicationKey = eventType + ":" + matrixEventId;
+      if (deduplicationKey.length() <= MAX_DEDUPLICATION_KEY_LENGTH) {
+        createEventOnce(
+            deduplicationKey,
+            recipientUserId,
+            eventType,
+            CATEGORY_MESSAGE,
+            title,
+            text,
+            params,
+            actionPath,
+            sourceSessionId,
+            tenantId);
+        return;
+      }
+      // An oversized key would fail the insert with a truncation error that the
+      // dedup path misreads as "already persisted" — persist unconditionally instead.
+      log.warn(
+          "Deduplication key for event type {} exceeds {} chars; persisting without deduplication",
+          eventType,
+          MAX_DEDUPLICATION_KEY_LENGTH);
+    }
+    createEvent(
+        recipientUserId,
+        eventType,
+        CATEGORY_MESSAGE,
+        title,
+        text,
+        params,
         actionPath,
         sourceSessionId,
         tenantId);
@@ -620,9 +690,6 @@ public class EventNotificationService {
             sourceSessionId,
             tenantId,
             null));
-    // Real-time backbone: nudge the recipient's client to refresh the Activity Timeline now
-    // instead of on the next 15s poll. Best-effort; carries only the recipient id (no content).
-    liveEventNotificationService.sendEventNotificationCreatedEventToUser(recipientUserId);
   }
 
   /** Persists an event at most once for a producer-owned key and recipient. */
@@ -660,8 +727,6 @@ public class EventNotificationService {
               sourceSessionId,
               tenantId,
               deduplicationKey));
-      // Only nudge on a genuine first persist — a duplicate-key race (below) already delivered.
-      liveEventNotificationService.sendEventNotificationCreatedEventToUser(recipientUserId);
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
@@ -887,25 +952,56 @@ public class EventNotificationService {
 
   private boolean shouldSuppressNotification(
       String recipientUserId, String roomId, String threadRootId) {
-    ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
-    if (activeView == null || roomId == null || roomId.isBlank()) {
-      return false;
-    }
-    if (!roomId.equals(activeView.roomId)) {
-      return false;
-    }
+    while (true) {
+      ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
+      if (activeView == null || roomId == null || roomId.isBlank()) {
+        return false;
+      }
+      if (monotonicNanos.getAsLong() - activeView.lastHeartbeatNanos >= ACTIVE_VIEW_TTL_NANOS) {
+        if (activeViewByUserId.remove(recipientUserId, activeView)) {
+          return false;
+        }
+        // A concurrent heartbeat replaced the expired entry. Re-evaluate that
+        // fresh state so an active recipient remains correctly suppressed.
+        continue;
+      }
+      if (!roomId.equals(activeView.roomId)) {
+        return false;
+      }
 
-    // For room-level messages, suppress when recipient is on that room.
-    if (threadRootId == null || threadRootId.isBlank()) {
-      return true;
-    }
+      // For room-level messages, suppress when recipient is on that room.
+      if (threadRootId == null || threadRootId.isBlank()) {
+        return true;
+      }
 
-    // For thread replies, suppress only when recipient is actively inside same thread.
-    return threadRootId.equals(activeView.threadRootId);
+      // For thread replies, suppress only when recipient is actively inside same thread.
+      return threadRootId.equals(activeView.threadRootId);
+    }
   }
 
   private String buildSessionActionPath(Session session) {
     return buildSessionActionPath(session, null);
+  }
+
+  /**
+   * Deep link for enquiry-state events ({@code request.new}, {@code waiting_room.client.joined},
+   * #846): un-accepted enquiries render under the consultant's sessionPreview list, not
+   * sessionView. A waiting-room client has no Matrix room yet — link to the enquiry list itself
+   * instead of returning null (which the frontend turned into the bare sessions root).
+   */
+  private String buildEnquiryActionPath(Session session) {
+    String listPath = "/sessions/consultant/sessionPreview";
+    if (session == null || session.getId() == null) {
+      return listPath;
+    }
+    String roomRef =
+        session.getMatrixRoomId() != null && !session.getMatrixRoomId().isBlank()
+            ? session.getMatrixRoomId()
+            : null;
+    if (roomRef == null) {
+      return listPath;
+    }
+    return listPath + "/" + roomRef + "/" + session.getId();
   }
 
   private String buildSessionActionPathForRecipient(
@@ -981,10 +1077,12 @@ public class EventNotificationService {
   private static class ActiveViewState {
     private final String roomId;
     private final String threadRootId;
+    private final long lastHeartbeatNanos;
 
-    private ActiveViewState(String roomId, String threadRootId) {
+    private ActiveViewState(String roomId, String threadRootId, long lastHeartbeatNanos) {
       this.roomId = roomId;
       this.threadRootId = threadRootId;
+      this.lastHeartbeatNanos = lastHeartbeatNanos;
     }
   }
 

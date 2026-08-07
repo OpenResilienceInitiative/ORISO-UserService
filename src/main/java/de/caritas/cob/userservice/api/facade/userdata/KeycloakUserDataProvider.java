@@ -3,11 +3,12 @@ package de.caritas.cob.userservice.api.facade.userdata;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDataResponseDTO;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityProfile;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.stereotype.Component;
 import org.springframework.util.Assert;
 
@@ -18,27 +19,28 @@ import org.springframework.util.Assert;
 public class KeycloakUserDataProvider {
 
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityProfileLookup identityProfileLookup;
 
   public UserDataResponseDTO retrieveAuthenticatedUserData() {
     assertCalledInAuthenticatedUserContext();
-    UserRepresentation user;
+    var userId = authenticatedUser.getUserId();
+    var profile = Optional.<IdentityProfile>empty();
     try {
-      user = identityClient.getById(authenticatedUser.getUserId());
+      profile = identityProfileLookup.findById(userId);
     } catch (Exception ex) {
       log.warn(
-          "Could not retrieve Keycloak user data for authenticated user {}; returning token-based user data",
-          authenticatedUser.getUserId(),
+          "Could not retrieve identity profile for authenticated user {}; returning token-based user data",
+          userId,
           ex);
       return fallbackUserDataResponseDto();
     }
-    if (user == null) {
+    if (profile.isEmpty()) {
       log.warn(
-          "Keycloak user lookup returned no data for authenticated user {}; returning token-based user data",
-          authenticatedUser.getUserId());
+          "Identity profile lookup returned no data for authenticated user {}; returning token-based user data",
+          userId);
       return fallbackUserDataResponseDto();
     }
-    return userDataResponseDtoOf(user);
+    return userDataResponseDtoOf(profile.get());
   }
 
   private void assertCalledInAuthenticatedUserContext() {
@@ -46,14 +48,14 @@ public class KeycloakUserDataProvider {
         !authenticatedUser.isAnonymous(), "Cannot retrieve keycloak data for anonymous users");
   }
 
-  private UserDataResponseDTO userDataResponseDtoOf(UserRepresentation keycloakUser) {
+  private UserDataResponseDTO userDataResponseDtoOf(IdentityProfile profile) {
 
     return UserDataResponseDTO.builder()
-        .userId(keycloakUser.getId())
-        .userName(keycloakUser.getUsername())
-        .firstName(keycloakUser.getFirstName())
-        .lastName(keycloakUser.getLastName())
-        .email(keycloakUser.getEmail())
+        .userId(profile.id())
+        .userName(profile.username())
+        .firstName(profile.firstName())
+        .lastName(profile.lastName())
+        .email(profile.email())
         .encourage2fa(false)
         .absenceMessage("")
         .isInTeamAgency(false)
