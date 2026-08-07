@@ -133,8 +133,6 @@ public class KeycloakTestConfig {
           String userId, de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate profile) {}
 
       @Override
-
-      @Override
       public void rollbackUser(String userId) {}
 
       @Override
