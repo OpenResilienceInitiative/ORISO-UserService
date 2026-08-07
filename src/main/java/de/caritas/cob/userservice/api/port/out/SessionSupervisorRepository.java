@@ -10,6 +10,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface SessionSupervisorRepository extends JpaRepository<SessionSupervisor, Long> {
 
+  Optional<SessionSupervisor> findByMatrixRoomId(String matrixRoomId);
+
   /**
    * Find all active supervisors for a session.
    *
@@ -63,4 +65,20 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
   @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query("delete from SessionSupervisor supervisor where supervisor.session.id = :sessionId")
   int deleteAllBySessionId(@Param("sessionId") Long sessionId);
+
+  /**
+   * Deletes every supervision row that references the given consultant, through either the
+   * supervisor or the "added by" column.
+   *
+   * <p>Both columns are {@code NOT NULL} in the schema, so a row cannot outlive either consultant
+   * it points at. Deleting is therefore forced rather than chosen.
+   *
+   * @param consultantId the consultant ID
+   * @return number of deleted rows
+   */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "delete from SessionSupervisor supervisor where supervisor.supervisorConsultant.id ="
+          + " :consultantId or supervisor.addedByConsultant.id = :consultantId")
+  int deleteAllByConsultantId(@Param("consultantId") String consultantId);
 }

@@ -181,7 +181,8 @@ public class AppointmentController implements AppointmentsApi {
             null,
             null,
             enquiryAppointmentDTO.getT(),
-            enquiryAppointmentDTO.getCounselorEmail());
+            enquiryAppointmentDTO.getCounselorEmail(),
+            null);
 
     var response = createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 

@@ -6,6 +6,7 @@ import jakarta.persistence.GeneratedValue;
 import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
+import jakarta.persistence.UniqueConstraint;
 import java.time.LocalDateTime;
 import java.util.Objects;
 import lombok.AllArgsConstructor;
@@ -22,7 +23,12 @@ import org.hibernate.type.SqlTypes;
 
 /** Persistent in-app notification event for a concrete recipient user. */
 @Entity
-@Table(name = "event_notification")
+@Table(
+    name = "event_notification",
+    uniqueConstraints =
+        @UniqueConstraint(
+            name = "uk_event_notification_recipient_deduplication",
+            columnNames = {"recipient_user_id", "deduplication_key"}))
 @AllArgsConstructor
 @NoArgsConstructor
 @Getter
@@ -78,10 +84,10 @@ public class EventNotification implements TenantAware {
   @Column(name = "deduplication_key", length = 191)
   private String deduplicationKey;
 
-  @Column(name = "read_date", columnDefinition = "datetime")
+  @Column(name = "read_date", columnDefinition = "datetime(3)")
   private LocalDateTime readDate;
 
-  @Column(name = "create_date", nullable = false, columnDefinition = "datetime")
+  @Column(name = "create_date", nullable = false, columnDefinition = "datetime(3)")
   private LocalDateTime createDate;
 
   @Column(name = "tenant_id")

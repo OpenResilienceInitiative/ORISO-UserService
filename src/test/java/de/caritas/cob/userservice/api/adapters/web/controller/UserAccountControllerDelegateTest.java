@@ -37,8 +37,8 @@ import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
@@ -98,7 +98,7 @@ class UserAccountControllerDelegateTest {
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.getOtpCredential(USERNAME)).thenThrow(new RuntimeException("OTP down"));
     when(userDtoMapper.userDataOf(
-            eq(partialUserData), any(OtpInfoDTO.class), anyBoolean(), anyBoolean()))
+            eq(partialUserData), any(IdentityOtpCredential.class), anyBoolean(), anyBoolean()))
         .thenReturn(fullUserData);
 
     var response = delegate.getUserData();
@@ -106,7 +106,8 @@ class UserAccountControllerDelegateTest {
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(fullUserData);
     verify(userDtoMapper)
-        .userDataOf(eq(partialUserData), any(OtpInfoDTO.class), anyBoolean(), anyBoolean());
+        .userDataOf(
+            eq(partialUserData), any(IdentityOtpCredential.class), anyBoolean(), anyBoolean());
   }
 
   @Test
@@ -391,7 +392,7 @@ class UserAccountControllerDelegateTest {
     var roles = Set.of(UserRole.USER.getValue());
     var partialUserData = new UserDataResponseDTO();
     var fullUserData = new UserDataResponseDTO();
-    var otpInfo = new OtpInfoDTO().otpSecret("secret");
+    var otpInfo = new IdentityOtpCredential(false, "secret", null, null);
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(authenticatedUser.isAgencySuperAdmin()).thenReturn(false);
     when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(false);
@@ -684,12 +685,43 @@ class UserAccountControllerDelegateTest {
     var deleteUserAccountDTO = new DeleteUserAccountDTO();
     deleteUserAccountDTO.setPassword("correct");
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
-    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.validatePasswordIgnoring2fa(USERNAME, "correct")).thenReturn(true);
 
     var response = delegate.deactivateAndFlagUserAccountForDeletion(deleteUserAccountDTO);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(userAccountProvider).deactivateAndFlagUserAccountForDeletion();
+  }
+
+  @Test
+  void deactivateAndFlagUserAccountForDeletion_plainMatrixUsername_validatesPlainIdentity() {
+    var deleteUserAccountDTO = new DeleteUserAccountDTO();
+    deleteUserAccountDTO.setPassword("correct");
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(identityManager.validatePasswordIgnoring2fa(USERNAME, "correct")).thenReturn(true);
+
+    var response = delegate.deactivateAndFlagUserAccountForDeletion(deleteUserAccountDTO);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(identityManager).validatePasswordIgnoring2fa(USERNAME, "correct");
+    verify(usernameTranscoder, never()).encodeUsername(USERNAME);
+    verify(userAccountProvider).deactivateAndFlagUserAccountForDeletion();
+  }
+
+  @Test
+  void deactivateAndFlagUserAccountForDeletion_legacyEncodedUsername_fallsBackToEncodedIdentity() {
+    var deleteUserAccountDTO = new DeleteUserAccountDTO();
+    deleteUserAccountDTO.setPassword("correct");
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn("enc.username");
+    when(identityManager.validatePasswordIgnoring2fa(USERNAME, "correct")).thenReturn(false);
+    when(identityManager.validatePasswordIgnoring2fa("enc.username", "correct")).thenReturn(true);
+
+    var response = delegate.deactivateAndFlagUserAccountForDeletion(deleteUserAccountDTO);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(identityManager).validatePasswordIgnoring2fa(USERNAME, "correct");
+    verify(identityManager).validatePasswordIgnoring2fa("enc.username", "correct");
     verify(userAccountProvider).deactivateAndFlagUserAccountForDeletion();
   }
 }

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -39,6 +40,7 @@ class DirectSessionMatrixRoomServiceTest {
   @Mock private ConsultantRepository consultantRepository;
   @Mock private SessionService sessionService;
   @Mock private UserHelper userHelper;
+  @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   private Session session;
   private Consultant consultant;
@@ -122,7 +124,10 @@ class DirectSessionMatrixRoomServiceTest {
       throws Exception {
     consultant.setMatrixUserId(null);
     when(userHelper.getRandomPassword()).thenReturn("pw");
-    when(sessionRoomGateway.createUser("consultant", "pw", "First Last"))
+    // ADR-002 §2: provisioned with the pseudonym, never the real name.
+    when(consultantDisplayNameResolver.resolveMatrixDisplayName(consultant))
+        .thenReturn("pseudonym");
+    when(sessionRoomGateway.createUser("consultant", "pw", "pseudonym"))
         .thenReturn(CONSULTANT_MXID);
     when(sessionRoomGateway.createRoomAsUser(any(), any(), eq(CONSULTANT_MXID)))
         .thenReturn(ROOM_ID);

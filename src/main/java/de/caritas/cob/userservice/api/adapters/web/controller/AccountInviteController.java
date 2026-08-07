@@ -13,10 +13,17 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
+import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService.InviteEmailPreview;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService.PreviewCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService.TemplateCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.NonNull;
@@ -42,8 +49,10 @@ public class AccountInviteController {
           + " 'AUTHORIZATION_RESTRICTED_AGENCY_ADMIN')";
 
   private final @NonNull AccountInviteService accountInviteService;
+  private final @NonNull CounsellorInviteProvisioningService counsellorInviteProvisioningService;
   private final @NonNull InviteEmailTemplateService templateService;
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
+  private final @NonNull InviteEmailPreviewService previewService;
 
   @PreAuthorize(ADMIN_AUTH)
   @PostMapping("/useradmin/account-invites")
@@ -61,12 +70,17 @@ public class AccountInviteController {
                 safe.lastName,
                 safe.agencyId,
                 safe.departmentId,
-                safe.expiresInDays));
+                safe.expiresInDays,
+                parseOptionalEnum(
+                    IdAllocationMode.class, safe.tenantIdAllocationMode, "tenantIdAllocationMode"),
+                parseOptionalEnum(
+                    IdAllocationMode.class,
+                    safe.agencyIdAllocationMode,
+                    "agencyIdAllocationMode")));
 
     if (safe.templateId != null) {
       InviteSendResult result =
-          accountInviteService.sendInvite(
-              new SendInviteCommand(invite.getId(), safe.templateId, safe.acceptBaseUrl));
+          accountInviteService.sendInvite(new SendInviteCommand(invite.getId(), safe.templateId));
       return new ResponseEntity<>(AccountInviteResponseDTO.from(result), HttpStatus.CREATED);
     }
 
@@ -115,8 +129,7 @@ public class AccountInviteController {
       @PathVariable Long inviteId, @RequestBody SendInviteRequestDTO request) {
     SendInviteRequestDTO safe = request == null ? new SendInviteRequestDTO() : request;
     InviteSendResult result =
-        accountInviteService.sendInvite(
-            new SendInviteCommand(inviteId, safe.templateId, safe.acceptBaseUrl));
+        accountInviteService.sendInvite(new SendInviteCommand(inviteId, safe.templateId));
     return ResponseEntity.ok(AccountInviteResponseDTO.from(result));
   }
 
@@ -126,8 +139,7 @@ public class AccountInviteController {
       @PathVariable Long inviteId, @RequestBody SendInviteRequestDTO request) {
     SendInviteRequestDTO safe = request == null ? new SendInviteRequestDTO() : request;
     InviteSendResult result =
-        accountInviteService.resendInvite(
-            new SendInviteCommand(inviteId, safe.templateId, safe.acceptBaseUrl));
+        accountInviteService.resendInvite(new SendInviteCommand(inviteId, safe.templateId));
     return ResponseEntity.ok(AccountInviteResponseDTO.from(result));
   }
 
@@ -157,11 +169,41 @@ public class AccountInviteController {
             accountInviteService.calculateAccessGate(invite)));
   }
 
-  @PostMapping("/users/account-invites/{token}/accept")
+  /**
+   * Public accept endpoint. Resume contract (ORISO-Admin#569 hardening): while the accepted
+   * invite's mandatory 2FA activation is pending and the link is unexpired, repeated calls stay
+   * idempotent 200s carrying {@code phase = PENDING_2FA_ACTIVATION}; once the gate is satisfied the
+   * link is terminally consumed (410 {@code reason=CONSUMED}).
+   */
+  @PostMapping({
+    "/users/account-invites/{token}/accept",
+    "/service/users/account-invites/{token}/accept"
+  })
   public ResponseEntity<AccountInviteResponseDTO> acceptInvite(
       @PathVariable String token, @RequestBody(required = false) AcceptInviteRequestDTO request) {
-    String acceptedByUserId = request == null ? null : request.acceptedByUserId;
-    AccountInvite invite = accountInviteService.acceptInvite(token, acceptedByUserId);
+    AccountInvite invite =
+        counsellorInviteProvisioningService.acceptInvite(
+            token,
+            request == null
+                ? null
+                : new ProvisionCounsellorCommand(
+                    request.username,
+                    request.password,
+                    request.formalLanguage,
+                    request.acceptedByUserId));
+    AccountInviteResponseDTO response =
+        AccountInviteResponseDTO.from(
+            invite, latestDeliveryStatus(invite), accountInviteService.calculateAccessGate(invite));
+    response.phase =
+        invite.getTwoFactorStatus() == TwoFactorGateStatus.PENDING_SETUP
+            ? AcceptPhase.PENDING_2FA_ACTIVATION.name()
+            : AcceptPhase.COMPLETED.name();
+    return ResponseEntity.ok(response);
+  }
+
+  @GetMapping("/users/account-invites/{token}")
+  public ResponseEntity<AccountInviteResponseDTO> getInvite(@PathVariable String token) {
+    AccountInvite invite = accountInviteService.requireActiveInvite(token);
     return ResponseEntity.ok(
         AccountInviteResponseDTO.from(
             invite,
@@ -196,6 +238,53 @@ public class AccountInviteController {
             .map(InviteEmailTemplateResponseDTO::from)
             .toList();
     return ResponseEntity.ok(response);
+  }
+
+  /**
+   * Renders the canonical branded mail with the current branding (ORISO-UserService#914) so the
+   * Admin can show what is actually sent instead of re-implementing the markup. Same platform-admin
+   * authorisation as the other {@code /useradmin/invite-email-templates} endpoints.
+   *
+   * <p>Use {@code templateId} to preview a stored template, {@code kind} to pick the sample content
+   * for a template kind, and {@code tenant_id} to preview a specific tenant's branding. Without any
+   * parameter the endpoint renders the built-in sample invite with platform branding — that is the
+   * fixture the Admin Storybook stories are generated from.
+   */
+  @PreAuthorize(ADMIN_AUTH)
+  @GetMapping("/useradmin/invite-email-templates/preview")
+  public ResponseEntity<InviteEmailPreviewResponseDTO> previewTemplate(
+      @RequestParam(value = "templateId", required = false) Long templateId,
+      @RequestParam(value = "kind", required = false) String kind,
+      @RequestParam(value = "tenant_id", required = false) Long tenantId,
+      @RequestParam(value = "language", required = false) String language) {
+    return ResponseEntity.ok(
+        InviteEmailPreviewResponseDTO.from(
+            previewService.preview(
+                new PreviewCommand(
+                    templateId,
+                    parseOptionalEnum(InviteEmailTemplateKind.class, kind, "kind"),
+                    null,
+                    null,
+                    tenantId,
+                    language))));
+  }
+
+  /** Live preview of unsaved editor content — same renderer, same branding, same output shape. */
+  @PreAuthorize(ADMIN_AUTH)
+  @PostMapping("/useradmin/invite-email-templates/preview")
+  public ResponseEntity<InviteEmailPreviewResponseDTO> previewTemplateContent(
+      @RequestBody(required = false) PreviewRequestDTO request) {
+    PreviewRequestDTO safe = request == null ? new PreviewRequestDTO() : request;
+    return ResponseEntity.ok(
+        InviteEmailPreviewResponseDTO.from(
+            previewService.preview(
+                new PreviewCommand(
+                    safe.templateId,
+                    parseOptionalEnum(InviteEmailTemplateKind.class, safe.kind, "kind"),
+                    safe.subject,
+                    safe.body,
+                    safe.tenantId,
+                    safe.language))));
   }
 
   private InviteEmailDeliveryStatus latestDeliveryStatus(AccountInvite invite) {
@@ -249,11 +338,29 @@ public class AccountInviteController {
     public Long departmentId;
     public Long expiresInDays;
     public Long templateId;
+
+    /**
+     * Ignored since TEN-INV-U6 (#890): the accept link target is decided server-side from the
+     * invite's role and configuration. Kept only for wire compatibility with older clients.
+     */
     public String acceptBaseUrl;
+
+    /**
+     * TEN-INV-U3: AUTO = the owning service assigns the smallest free ID (the matching ID field
+     * must be omitted); MANUAL = the pinned ID is reserved or rejected with 409.
+     */
+    public String tenantIdAllocationMode;
+
+    public String agencyIdAllocationMode;
   }
 
   public static class SendInviteRequestDTO {
     public Long templateId;
+
+    /**
+     * Ignored since TEN-INV-U6 (#890): the accept link target is decided server-side from the
+     * invite's role and configuration. Kept only for wire compatibility with older clients.
+     */
     public String acceptBaseUrl;
   }
 
@@ -262,7 +369,52 @@ public class AccountInviteController {
   }
 
   public static class AcceptInviteRequestDTO {
+    public String username;
+    public String password;
+    public Boolean formalLanguage;
     public String acceptedByUserId;
+  }
+
+  /** Onboarding phase reported by the public accept endpoint (ORISO-Admin#569 resume contract). */
+  public enum AcceptPhase {
+    /** Invite consumed, but the mandatory 2FA activation is still open — the link is resumable. */
+    PENDING_2FA_ACTIVATION,
+    /** All account gates of the invite are satisfied. */
+    COMPLETED
+  }
+
+  public static class PreviewRequestDTO {
+    public Long templateId;
+    public String kind;
+    public String subject;
+    public String body;
+    public Long tenantId;
+    public String language;
+  }
+
+  /** Rendered branded mail — everything the Admin needs to display or snapshot the real output. */
+  public static class InviteEmailPreviewResponseDTO {
+    public Long templateId;
+    public String templateName;
+    public String kind;
+    public String language;
+    public String subject;
+    public String html;
+    public String plainText;
+    public String sampleAcceptUrl;
+
+    static InviteEmailPreviewResponseDTO from(InviteEmailPreview preview) {
+      InviteEmailPreviewResponseDTO dto = new InviteEmailPreviewResponseDTO();
+      dto.templateId = preview.templateId();
+      dto.templateName = preview.templateName();
+      dto.kind = preview.kind() == null ? null : preview.kind().name();
+      dto.language = preview.language();
+      dto.subject = preview.subject();
+      dto.html = preview.html();
+      dto.plainText = preview.plainText();
+      dto.sampleAcceptUrl = preview.sampleAcceptUrl();
+      return dto;
+    }
   }
 
   public static class TemplateRequestDTO {
@@ -284,6 +436,7 @@ public class AccountInviteController {
     public Long agencyId;
     public Long departmentId;
     public String provisioningStatus;
+    public String provisionedUserId;
     public String inviteStatus;
     public String emailVerificationStatus;
     public String emailDeliveryStatus;
@@ -299,6 +452,13 @@ public class AccountInviteController {
     public LocalDateTime createDate;
     public String rawToken;
     public String acceptUrl;
+
+    /**
+     * Only set by the public accept endpoint (ORISO-Admin#569 resume contract): {@code
+     * PENDING_2FA_ACTIVATION} while the mandatory 2FA activation is open (link resumable), {@code
+     * COMPLETED} once every account gate is satisfied. {@code null} on admin-facing endpoints.
+     */
+    public String phase;
 
     static AccountInviteResponseDTO from(InviteSendResult result) {
       AccountInviteResponseDTO dto =
@@ -324,7 +484,9 @@ public class AccountInviteController {
       dto.lastName = invite.getLastName();
       dto.agencyId = invite.getAgencyId();
       dto.departmentId = invite.getDepartmentId();
-      dto.provisioningStatus = null;
+      dto.provisioningStatus =
+          invite.getProvisioningStatus() == null ? null : invite.getProvisioningStatus().name();
+      dto.provisionedUserId = invite.getProvisionedUserId();
       dto.inviteStatus = invite.getStatus() == null ? null : invite.getStatus().name();
       dto.emailVerificationStatus =
           invite.getEmailVerificationStatus() == null

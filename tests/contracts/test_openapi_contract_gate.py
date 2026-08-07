@@ -90,15 +90,18 @@ class OpenApiContractGateTest(unittest.TestCase):
             "#/components/schemas/AgencyLinks",
             full_response["properties"]["_links"]["$ref"],
         )
+        # AgencyLinks is deliberately flattened (no allOf): oasdiff does not merge
+        # allOf, so `self` and friends must be direct properties for the consumer
+        # contracts in AgencyService (#232) and TenantService (#162) to hold.
         agency_links = provider["components"]["schemas"]["AgencyLinks"]
-        self.assertEqual(
-            "#/components/schemas/DefaultLinks",
-            agency_links["allOf"][0]["$ref"],
-        )
-        self.assertIn(
-            "postcodeRanges",
-            agency_links["allOf"][1]["properties"],
-        )
+        self.assertNotIn("allOf", agency_links)
+        self.assertEqual("object", agency_links["type"])
+        self.assertIn("self", agency_links["required"])
+        for link in ("self", "update", "delete", "postcodeRanges"):
+            self.assertEqual(
+                "#/components/schemas/HalLink",
+                agency_links["properties"][link]["$ref"],
+            )
 
         sort_field = agency_admin["components"]["schemas"]["Sort"]["properties"][
             "field"
@@ -131,7 +134,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-AgencyService.*"
-                r"299d4792820747ff8c5b387e421a6e971fb760d3",
+                r"11d1e2426593ffa0a550a64042ce97ca6e0a80cf",
                 re.DOTALL,
             ),
         )
@@ -147,7 +150,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                r"a213d5546e2cdbcbd1f641291661f11cbbca2cfc",
+                r"f7f1d8878e9d52cb0106549a10894ca5944a968e",
                 re.DOTALL,
             ),
         )

@@ -30,6 +30,8 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.google.common.collect.Maps;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
+import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailToggle;
@@ -48,6 +50,7 @@ import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiController
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -216,6 +219,8 @@ class UserControllerE2EIT {
 
   @MockitoBean private Keycloak keycloak;
 
+  @MockitoBean private MatrixSynapseService matrixSynapseService;
+
   private User user;
   private Consultant consultant;
   private UpdateConsultantDTO updateConsultantDTO;
@@ -274,7 +279,13 @@ class UserControllerE2EIT {
   }
 
   @BeforeEach
-  public void setUp() {
+  public void setUp() throws MatrixCreateUserException {
+    MatrixCreateUserResponseDTO matrixCreateUserResponse = new MatrixCreateUserResponseDTO();
+    matrixCreateUserResponse.setUserId("@test-user:matrix.oriso.org");
+    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(matrixCreateUserResponse));
+    when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
+
     when(consultingTypeControllerApi.getApiClient())
         .thenReturn(
             new de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient(restTemplate));

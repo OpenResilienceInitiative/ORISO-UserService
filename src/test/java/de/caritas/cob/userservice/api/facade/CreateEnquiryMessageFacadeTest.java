@@ -18,7 +18,6 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -49,7 +48,6 @@ class CreateEnquiryMessageFacadeTest {
   @Mock private EmailNotificationFacade emailNotificationFacade;
   @Mock private ConsultantAgencyService consultantAgencyService;
   @Mock private TopicConsultantRoutingService topicConsultantRoutingService;
-  @Mock private LiveEventNotificationService liveEventNotificationService;
   @Mock private EventNotificationService eventNotificationService;
   @Mock private AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
   @InjectMocks private CreateEnquiryMessageFacade facade;
@@ -76,11 +74,17 @@ class CreateEnquiryMessageFacadeTest {
   }
 
   @Test
-  void sendsEnquiryThroughExistingMatrixRoomAndUpdatesSession() {
+  void finalizesEncryptedEnquiryThroughExistingMatrixRoomAndUpdatesSession() {
     givenExistingSession();
+    enquiryData.setMatrixEventId(MATRIX_EVENT_ID);
     when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn(MATRIX_TOKEN);
-    when(matrixSynapseService.sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN))
-        .thenReturn(Map.of("event_id", MATRIX_EVENT_ID));
+    when(matrixSynapseService.getRoomEvent(MATRIX_ROOM_ID, MATRIX_EVENT_ID, MATRIX_TOKEN))
+        .thenReturn(
+            Optional.of(
+                Map.of(
+                    "event_id", MATRIX_EVENT_ID,
+                    "sender", MATRIX_USER_ID,
+                    "type", "m.room.encrypted")));
 
     var response = facade.createEnquiryMessage(enquiryData);
 
@@ -93,6 +97,7 @@ class CreateEnquiryMessageFacadeTest {
     assertThat(session.getLanguageCode()).isEqualTo(LanguageCode.de);
     verify(sessionService).saveSession(session);
     verify(agencyPreAssignmentRoomService, never()).ensureHoldingRoom(session, user);
+    verify(matrixSynapseService, never()).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);
   }
 
   @Test
@@ -142,27 +147,101 @@ class CreateEnquiryMessageFacadeTest {
   }
 
   @Test
-  void requiresMatrixAccessTokenBeforeSending() {
+  void requiresMatrixAccessTokenBeforeValidatingEncryptedEvent() {
     givenExistingSession();
+    enquiryData.setMatrixEventId(MATRIX_EVENT_ID);
     when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn("");
 
     assertThatThrownBy(() -> facade.createEnquiryMessage(enquiryData))
         .isInstanceOf(InternalServerErrorException.class)
-        .hasMessageContaining("Could not create Matrix token");
+        .hasMessageContaining("Could not validate encrypted Matrix enquiry event");
 
     verify(matrixSynapseService, never()).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);
   }
 
   @Test
-  void rejectsMatrixSendErrorResponse() {
+  void rejectsMissingEncryptedMatrixEventReference() {
     givenExistingSession();
-    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn(MATRIX_TOKEN);
-    when(matrixSynapseService.sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN))
-        .thenReturn(Map.of("error", "room unavailable"));
 
     assertThatThrownBy(() -> facade.createEnquiryMessage(enquiryData))
         .isInstanceOf(InternalServerErrorException.class)
-        .hasMessageContaining("Could not post Matrix enquiry message");
+        .hasMessageContaining("requires an encrypted Matrix event");
+
+    verify(sessionService, never()).saveSession(session);
+    verify(matrixSynapseService, never()).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);
+  }
+
+  @Test
+  void rejectsPlaintextMatrixEvent() {
+    givenExistingSession();
+    enquiryData.setMatrixEventId(MATRIX_EVENT_ID);
+    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn(MATRIX_TOKEN);
+    when(matrixSynapseService.getRoomEvent(MATRIX_ROOM_ID, MATRIX_EVENT_ID, MATRIX_TOKEN))
+        .thenReturn(
+            Optional.of(
+                Map.of(
+                    "event_id", MATRIX_EVENT_ID,
+                    "sender", MATRIX_USER_ID,
+                    "type", "m.room.message")));
+
+    assertThatThrownBy(() -> facade.createEnquiryMessage(enquiryData))
+        .isInstanceOf(InternalServerErrorException.class)
+        .hasMessageContaining("not an encrypted Matrix event");
+
+    verify(sessionService, never()).saveSession(session);
+  }
+
+  @Test
+  void rejectsEncryptedEventFromDifferentSender() {
+    givenExistingSession();
+    enquiryData.setMatrixEventId(MATRIX_EVENT_ID);
+    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn(MATRIX_TOKEN);
+    when(matrixSynapseService.getRoomEvent(MATRIX_ROOM_ID, MATRIX_EVENT_ID, MATRIX_TOKEN))
+        .thenReturn(
+            Optional.of(
+                Map.of(
+                    "event_id", MATRIX_EVENT_ID,
+                    "sender", "@attacker:oriso.test",
+                    "type", "m.room.encrypted")));
+
+    assertThatThrownBy(() -> facade.createEnquiryMessage(enquiryData))
+        .isInstanceOf(InternalServerErrorException.class)
+        .hasMessageContaining("was not sent by enquiry user");
+
+    verify(sessionService, never()).saveSession(session);
+  }
+
+  @Test
+  void rejectsUnknownMatrixEvent() {
+    givenExistingSession();
+    enquiryData.setMatrixEventId(MATRIX_EVENT_ID);
+    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn(MATRIX_TOKEN);
+    when(matrixSynapseService.getRoomEvent(MATRIX_ROOM_ID, MATRIX_EVENT_ID, MATRIX_TOKEN))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> facade.createEnquiryMessage(enquiryData))
+        .isInstanceOf(InternalServerErrorException.class)
+        .hasMessageContaining("Could not read Matrix enquiry event");
+
+    verify(sessionService, never()).saveSession(session);
+  }
+
+  @Test
+  void rejectsMatrixResponseWithDifferentEventId() {
+    givenExistingSession();
+    enquiryData.setMatrixEventId(MATRIX_EVENT_ID);
+    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn(MATRIX_TOKEN);
+    when(matrixSynapseService.getRoomEvent(MATRIX_ROOM_ID, MATRIX_EVENT_ID, MATRIX_TOKEN))
+        .thenReturn(
+            Optional.of(
+                Map.of(
+                    "event_id", "$different-event",
+                    "sender", MATRIX_USER_ID,
+                    "type", "m.room.encrypted")));
+
+    assertThatThrownBy(() -> facade.createEnquiryMessage(enquiryData))
+        .isInstanceOf(InternalServerErrorException.class)
+        .hasMessageContaining("did not match");
 
     verify(sessionService, never()).saveSession(session);
   }
@@ -171,9 +250,15 @@ class CreateEnquiryMessageFacadeTest {
   void provisionsMissingMatrixRoomBeforeSending() {
     session.setMatrixRoomId(null);
     givenExistingSession();
+    enquiryData.setMatrixEventId(MATRIX_EVENT_ID);
     when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn(MATRIX_TOKEN);
-    when(matrixSynapseService.sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN))
-        .thenReturn(Map.of("event_id", MATRIX_EVENT_ID));
+    when(matrixSynapseService.getRoomEvent(MATRIX_ROOM_ID, MATRIX_EVENT_ID, MATRIX_TOKEN))
+        .thenReturn(
+            Optional.of(
+                Map.of(
+                    "event_id", MATRIX_EVENT_ID,
+                    "sender", MATRIX_USER_ID,
+                    "type", "m.room.encrypted")));
     org.mockito.Mockito.doAnswer(
             invocation -> {
               session.setMatrixRoomId(MATRIX_ROOM_ID);
@@ -185,7 +270,7 @@ class CreateEnquiryMessageFacadeTest {
     facade.createEnquiryMessage(enquiryData);
 
     verify(agencyPreAssignmentRoomService).ensureHoldingRoom(session, user);
-    verify(matrixSynapseService).sendMessage(MATRIX_ROOM_ID, MESSAGE, MATRIX_TOKEN);
+    verify(matrixSynapseService).getRoomEvent(MATRIX_ROOM_ID, MATRIX_EVENT_ID, MATRIX_TOKEN);
   }
 
   @Test

@@ -11,8 +11,9 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -62,9 +63,10 @@ public class PasswordResetService {
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AdminRepository adminRepository;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull OneTimeTokenStore oneTimeTokenStore;
+  private final @NonNull ApplicationSettingsService applicationSettingsService;
 
   /**
    * Runs the (potentially slow) account lookup + mail dispatch off the request thread so the HTTP
@@ -109,6 +111,17 @@ public class PasswordResetService {
 
   @Value("${consulting.type.service.api.url:}")
   private String consultingTypeServiceApiUrl;
+
+  /**
+   * Operator-provided SMTP credentials. Password reset is unauthenticated and dispatched off the
+   * request thread, so there is no user token and the super-admin-guarded credentials endpoint is
+   * unreachable; these are the primary source.
+   */
+  @Value("${smtp.user:}")
+  private String configuredSmtpUsername;
+
+  @Value("${smtp.password:}")
+  private String configuredSmtpPassword;
 
   @PostConstruct
   void logFeatureAvailability() {
@@ -181,9 +194,9 @@ public class PasswordResetService {
   /**
    * Validates the one-time token and, if valid, sets the new password in Keycloak.
    *
-   * <p>The token is only consumed once {@link KeycloakService#updatePassword} succeeds — if
-   * Keycloak rejects the password (e.g. policy violation), the token stays valid so the user can
-   * retry with a different password using the same emailed link, mirroring how {@link
+   * <p>The token is only consumed once {@link IdentityPasswordUpdater#updatePassword} succeeds — if
+   * the identity provider rejects the password (e.g. policy violation), the token stays valid so
+   * the user can retry with a different password using the same emailed link, mirroring how {@link
    * MagicLinkLoginService} restores its token on a failed exchange.
    *
    * @return true if the password was updated, false if the token is missing/invalid/expired
@@ -208,7 +221,7 @@ public class PasswordResetService {
     }
 
     try {
-      identityClient.updatePassword(claim.get().subjectId(), newPassword);
+      identityPasswordUpdater.updatePassword(claim.get().subjectId(), newPassword);
     } catch (CustomValidationHttpStatusException ex) {
       // Definitive password-policy rejection: Keycloak did NOT apply the password, so the token
       // can safely be restored for a retry with a different password via the same emailed link
@@ -430,20 +443,30 @@ public class PasswordResetService {
       String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
       Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
       boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
-      String username = asStringSettingValue(settingsResponse.get("globalSmtpUsername"));
-      String password = asStringSettingValue(settingsResponse.get("globalSmtpPassword"));
       String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
       String emailThemeColor =
           asStringSettingValue(settingsResponse.get("globalSmtpEmailThemeColor"));
 
-      if (!systemEmailsEnabled
-          || !smtpEnabled
-          || isBlank(host)
-          || port == null
-          || isBlank(username)
-          || isBlank(password)
-          || isBlank(from)) {
+      if (!systemEmailsEnabled || !smtpEnabled || isBlank(host) || port == null || isBlank(from)) {
         return Optional.empty();
+      }
+
+      // The public /settings payload deliberately omits the SMTP username and password since the
+      // CTS-C01 credential-leak fix, so they can never be read from there.
+      String username = configuredSmtpUsername;
+      String password = configuredSmtpPassword;
+      if (isBlank(username) || isBlank(password)) {
+        // Fallback for callers that do run inside an authenticated super-admin request.
+        var credentials = applicationSettingsService.getGlobalSmtpCredentials();
+        if (credentials.isEmpty()) {
+          log.warn(
+              "Password reset email not sent: no SMTP credentials available. Set SMTP_USER and "
+                  + "SMTP_PASSWORD on UserService (the platform-settings credentials are only "
+                  + "readable by a super-admin token, which this unauthenticated flow never has).");
+          return Optional.empty();
+        }
+        username = credentials.get().getGlobalSmtpUsername();
+        password = credentials.get().getGlobalSmtpPassword();
       }
 
       return Optional.of(

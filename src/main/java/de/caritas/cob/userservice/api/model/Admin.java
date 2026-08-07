@@ -57,7 +57,9 @@ public class Admin implements TenantAware {
   public enum AdminType {
     AGENCY,
     TENANT,
-    SUPER
+    SUPER,
+    /** Global Support Admin (ADR-018) — additive support identity, separate from Platform Admin. */
+    SUPPORT
   }
 
   @Id

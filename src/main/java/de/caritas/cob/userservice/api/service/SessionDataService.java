@@ -11,6 +11,7 @@ import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Service for session data. */
 @Service
@@ -24,9 +25,16 @@ public class SessionDataService {
   /**
    * Saves additional registration information in session data for the given session ID.
    *
+   * <p>Runs in a transaction so the loaded {@link Session} stays managed while {@link
+   * SessionDataProvider} reads its lazily fetched {@code sessionData} collection. Without it the
+   * session is detached as soon as {@link SessionService#getSession(Long)} returns and the lazy
+   * access fails with a {@code LazyInitializationException} (the service runs with {@code
+   * spring.jpa.open-in-view=false}).
+   *
    * @param sessionId the session ID
    * @param sessionData {@link SessionData}
    */
+  @Transactional
   public void saveSessionData(Long sessionId, SessionDataDTO sessionData) {
     Session session =
         sessionService

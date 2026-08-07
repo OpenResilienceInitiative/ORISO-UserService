@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+
+  <!-- TEN-INV-U3 (ORISO-UserService#889): tenant-admin invites hold the TenantService
+       tenant-ID reservation token so tenant creation can consume the reserved ID and a
+       failed/abandoned invite can release it (no orphaned reservations). -->
+  <changeSet id="0076-account-invite-tenant-id-reservation-token" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="account_invite" columnName="tenant_id_reservation_token"/>
+      </not>
+    </preConditions>
+    <addColumn tableName="account_invite">
+      <column name="tenant_id_reservation_token" type="varchar(36)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="account_invite" columnName="tenant_id_reservation_token"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
