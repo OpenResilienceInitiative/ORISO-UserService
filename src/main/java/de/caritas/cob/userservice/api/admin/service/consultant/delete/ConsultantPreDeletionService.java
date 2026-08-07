@@ -10,7 +10,7 @@ import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyDeletionValidationService;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -26,7 +26,7 @@ public class ConsultantPreDeletionService {
 
   private final @NonNull ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityDeactivator identityDeactivator;
 
   /**
    * Validates if {@link Consultant} can be deleted and marks the account as inactive in keycloak.
@@ -44,7 +44,7 @@ public class ConsultantPreDeletionService {
           .getConsultantAgencies()
           .forEach(agencyDeletionValidationService::validateAndMarkForDeletion);
     }
-    this.identityClient.deactivateUser(consultant.getId());
+    this.identityDeactivator.deactivateUser(consultant.getId());
   }
 
   private boolean hasConsultantActiveSessions(Consultant consultant) {

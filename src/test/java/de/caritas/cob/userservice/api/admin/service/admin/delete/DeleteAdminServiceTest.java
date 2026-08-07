@@ -4,7 +4,7 @@ import static org.mockito.Mockito.verify;
 
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -19,7 +19,7 @@ public class DeleteAdminServiceTest {
   @InjectMocks private DeleteAdminService deleteAdminService;
   @Mock private AdminRepository adminRepository;
   @Mock private AdminAgencyRepository adminAgencyRepository;
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityAccountRemover identityAccountRemover;
 
   @Test
   public void deleteAgencyAdmin_Should_deleteAdminAndRelation_When_adminIdIsProvided() {
@@ -29,7 +29,7 @@ public class DeleteAdminServiceTest {
 
     // then
     verify(adminAgencyRepository).deleteByAdminId(VALID_ADMIN_ID);
-    verify(identityClient).deleteUser(VALID_ADMIN_ID);
+    verify(identityAccountRemover).deleteUser(VALID_ADMIN_ID);
     verify(adminRepository).deleteById(VALID_ADMIN_ID);
   }
 }

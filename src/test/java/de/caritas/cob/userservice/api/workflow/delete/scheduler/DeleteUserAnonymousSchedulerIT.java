@@ -3,12 +3,11 @@ package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_AIDS;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertFalse;
-import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.doAnswer;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -22,7 +21,9 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.testConfig.ApiControllerTestConfig;
@@ -32,9 +33,7 @@ import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
-import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import de.caritas.cob.userservice.api.workflow.delete.service.WorkflowErrorMailService;
-import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
@@ -51,7 +50,6 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
-import org.springframework.transaction.UnexpectedRollbackException;
 
 @SpringBootTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -82,9 +80,7 @@ class DeleteUserAnonymousSchedulerIT {
 
   @MockitoBean WorkflowErrorMailService workflowErrorMailService;
 
-  @MockitoSpyBean IdentityTombstoneService identityTombstoneService;
-
-  @Autowired private EntityManager entityManager;
+  @MockitoSpyBean UserAgencyRepository userAgencyRepository;
 
   private Session currentSession;
 
@@ -106,6 +102,14 @@ class DeleteUserAnonymousSchedulerIT {
 
     var sessionOptional = sessionRepository.findById(responseDTO.getSessionId());
     currentSession = sessionOptional.get();
+  }
+
+  private Session createAnotherAnonymousSession() {
+    var responseDTO =
+        createAnonymousEnquiryFacade.createAnonymousEnquiry(
+            new CreateAnonymousEnquiryDTO().consultingType(CONSULTING_TYPE_ID_AIDS));
+
+    return sessionRepository.findById(responseDTO.getSessionId()).orElseThrow();
   }
 
   @AfterEach
@@ -152,12 +156,35 @@ class DeleteUserAnonymousSchedulerIT {
         currentSession.getId(), currentSession.getUser().getUserId());
   }
 
+  /**
+   * The deletion transaction ends before notification starts, so a notification failure cannot
+   * reach it. #746 additionally made that failure non-fatal for the scheduler run, so it is logged
+   * rather than propagated; the deletion stays committed either way.
+   */
+  @Test
+  void performDeletionWorkflow_Should_commitDeletionBeforeErrorNotificationFails() {
+    prepareCurrentSessionForDeletion();
+    when(matrixSynapseService.deactivateUser(anyString())).thenReturn(false);
+    doThrow(new IllegalStateException("tenant unavailable"))
+        .when(workflowErrorMailService)
+        .buildAndSendErrorMail(anyList());
+
+    assertDoesNotThrow(deleteUserAnonymousScheduler::performDeletionWorkflow);
+
+    assertSessionAndUserDoNotExistInDatabase(
+        currentSession.getId(), currentSession.getUser().getUserId());
+  }
+
   private void prepareCurrentSessionForDeletion() {
-    currentSession.setStatus(SessionStatus.DONE);
+    prepareForDeletion(currentSession);
+  }
+
+  private void prepareForDeletion(Session session) {
+    session.setStatus(SessionStatus.DONE);
     var oneMinuteBeforeDeletionPeriodIsOver =
         LocalDateTime.now().minusMinutes(deletionPeriodInMinutes);
-    currentSession.setUpdateDate(oneMinuteBeforeDeletionPeriodIsOver);
-    sessionRepository.save(currentSession);
+    session.setUpdateDate(oneMinuteBeforeDeletionPeriodIsOver);
+    sessionRepository.save(session);
   }
 
   private void assertSessionAndUserDoNotExistInDatabase(Long sessionId, String userId) {
@@ -196,54 +223,60 @@ class DeleteUserAnonymousSchedulerIT {
   }
 
   /**
-   * Pins the PreDev failure mode behind #745, which this branch does <em>not</em> yet repair.
+   * Closes the PreDev failure mode behind #745: one user whose database delete fails must no longer
+   * take the rest of the batch down with it.
    *
-   * <p>The workflow error there originates in the database delete rather than in an external call:
-   * with the preceding session deletes flushed and the user detached, {@code
-   * DeleteDatabaseAskerAction} takes Hibernate's merge path and fails while re-resolving the
-   * sessions removed moments earlier in the same run. The exception is raised by Hibernate, not
-   * stubbed — stubbing the repository would reproduce the shape but not the consequence, because
-   * only a genuine failure marks the persistence context rollback-only.
+   * <p>The failure is provoked, not stubbed. With the preceding session deletes flushed and the
+   * user detached, {@code DeleteDatabaseAskerAction} takes Hibernate's merge path and fails while
+   * re-resolving the sessions removed moments earlier in the same run — the stack seen live.
+   * Stubbing the repository would reproduce the shape but not the consequence, because only a
+   * genuine failure marks the persistence context rollback-only.
    *
-   * <p>The consequence is that catching the notification failure is not sufficient on its own: the
-   * commit still fails, so nothing is retained and the next scheduler run repeats the irreversible
-   * Matrix and Keycloak calls. Giving the deletion its own transaction boundary is what closes
-   * this; when that lands, this test has to flip to asserting that the session deletion is
-   * retained.
+   * <p>Before the per-user transaction boundary, that rollback-only context discarded the whole
+   * batch even though the notification exception was caught, so the next hourly run repeated every
+   * user's irreversible Matrix and Keycloak calls. The poisoned user itself still cannot be
+   * retained — its own transaction is doomed — but it is now the only one lost, and it is reported.
    */
   @Test
-  void performDeletionWorkflow_Should_stillRollBack_When_databaseOriginFailurePoisonsTransaction() {
-    prepareCurrentSessionForDeletion();
-    var sessionId = currentSession.getId();
-    detachUserAfterFlushingSessionDeletes();
+  void performDeletionWorkflow_Should_isolateFailedUser_When_databaseOriginFailurePoisonsIt() {
+    var healthySession = createAnotherAnonymousSession();
+    prepareForDeletion(currentSession);
+    prepareForDeletion(healthySession);
+    var poisonedUserId = currentSession.getUser().getUserId();
+    var healthyUserId = healthySession.getUser().getUserId();
+    poisonDatabaseDeleteOf(currentSession.getUser());
     doThrow(new IllegalStateException("error notification failed"))
         .when(workflowErrorMailService)
         .buildAndSendErrorMail(anyList());
 
-    assertThrows(
-        UnexpectedRollbackException.class, deleteUserAnonymousScheduler::performDeletionWorkflow);
+    assertDoesNotThrow(deleteUserAnonymousScheduler::performDeletionWorkflow);
 
     assertDatabaseUserDeleteFailed();
+    assertFalse(
+        sessionRepository.findById(healthySession.getId()).isPresent(),
+        "an unaffected user must still be deleted when another user in the batch fails");
+    assertFalse(
+        userService.getUser(healthyUserId).isPresent(),
+        "an unaffected user must still be deleted when another user in the batch fails");
     assertTrue(
-        sessionRepository.findById(sessionId).isPresent(),
-        "session deletion is still lost to the rollback until the deletion owns its transaction");
+        sessionRepository.findById(currentSession.getId()).isPresent(),
+        "the poisoned user's own transaction is doomed and stays uncommitted");
+    assertTrue(userService.getUser(poisonedUserId).isPresent());
   }
 
   /**
-   * Recreates the PreDev persistence state: {@code DeleteDatabaseAskerAction} records the tombstone
-   * immediately before deleting the user, so flushing and detaching at that point leaves the
-   * already-initialized session collection behind for the following merge to trip over.
+   * Makes one user's database delete fail the way the database itself would.
+   *
+   * <p>A {@code user_agency} row is left behind by suppressing only that user's agency cleanup, so
+   * the following user delete violates the restricting foreign key. Hibernate raises the error at
+   * flush and marks the persistence context rollback-only, which is what a stubbed exception cannot
+   * do and what makes this user's commit fail for real.
    */
-  private void detachUserAfterFlushingSessionDeletes() {
-    doAnswer(
-            invocation -> {
-              var result = invocation.callRealMethod();
-              entityManager.flush();
-              entityManager.detach(invocation.getArgument(0));
-              return result;
-            })
-        .when(identityTombstoneService)
-        .recordDeletedUser(any(User.class));
+  private void poisonDatabaseDeleteOf(User user) {
+    userAgencyRepository.save(new UserAgency(user, 1L));
+    doReturn(List.of())
+        .when(userAgencyRepository)
+        .findByUser(argThat(candidate -> user.getUserId().equals(candidate.getUserId())));
   }
 
   /**

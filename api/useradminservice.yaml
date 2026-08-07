@@ -1866,12 +1866,21 @@ components:
           $ref: '#/components/schemas/HalLink'
 
     AgencyLinks:
-      allOf:
-        - $ref: '#/components/schemas/DefaultLinks'
-        - type: object
-          properties:
-            postcodeRanges:
-              $ref: '#/components/schemas/HalLink'
+      # Flattened (no allOf) so contract-diff tooling that does not merge allOf
+      # sees self/update/delete/postcodeRanges as direct properties. Mirrors
+      # ConsultantAgencyLinks and the shape every consumer expects.
+      type: object
+      required:
+        - self
+      properties:
+        self:
+          $ref: '#/components/schemas/HalLink'
+        update:
+          $ref: '#/components/schemas/HalLink'
+        delete:
+          $ref: '#/components/schemas/HalLink'
+        postcodeRanges:
+          $ref: '#/components/schemas/HalLink'
 
     ConsultantAgencyLinks:
       type: object

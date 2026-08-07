@@ -21,16 +21,14 @@ import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.EnquiryData;
+import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.service.archive.SessionDeleteService;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import jakarta.transaction.Transactional;
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -54,7 +52,7 @@ class UserRegistrationControllerDelegate {
   private final @NonNull Messaging messenger;
   private final @NonNull ConsultantDtoMapper consultantDtoMapper;
   private final @NonNull UserHelper userHelper;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityManaging identityManager;
   private final @NonNull MagicLinkLoginService magicLinkLoginService;
   private final @NonNull PasswordResetService passwordResetService;
   private final @NonNull SessionDeleteService sessionDeleteService;
@@ -63,7 +61,7 @@ class UserRegistrationControllerDelegate {
   private boolean featureTopicsEnabled;
 
   ResponseEntity<Void> userExists(String username) {
-    val usernameAvailable = identityClient.isUsernameAvailable(username);
+    val usernameAvailable = identityManager.isUsernameAvailable(username);
     val userExists = !usernameAvailable;
     if (userExists) {
       return ResponseEntity.ok().build();
@@ -72,7 +70,7 @@ class UserRegistrationControllerDelegate {
   }
 
   ResponseEntity<Void> usernameAvailability(String username) {
-    val usernameAvailable = identityClient.isUsernameAvailable(username);
+    val usernameAvailable = identityManager.isUsernameAvailable(username);
     return usernameAvailable
         ? ResponseEntity.noContent().build()
         : ResponseEntity.status(HttpStatus.CONFLICT).build();
@@ -112,7 +110,6 @@ class UserRegistrationControllerDelegate {
     if (!userHelper.isUsernameValid(user.getUsername())) {
       throw new BadRequestException("Username is invalid");
     }
-    decodePassword(user);
     user.setNewUserAccount(true);
     var sessionId = createUserFacade.createUserAccountWithInitializedConsultingType(user);
 
@@ -124,12 +121,6 @@ class UserRegistrationControllerDelegate {
     }
 
     return ResponseEntity.status(status).build();
-  }
-
-  private void decodePassword(UserDTO user) {
-    if (user.getPassword() != null) {
-      user.setPassword(URLDecoder.decode(user.getPassword(), StandardCharsets.UTF_8));
-    }
   }
 
   private void validateUserHasChosenTopicIfTopicsFeatureIsEnabled(UserDTO user) {
@@ -185,11 +176,24 @@ class UserRegistrationControllerDelegate {
 
   ResponseEntity<CreateEnquiryMessageResponseDTO> createEnquiryMessage(
       Long sessionId, EnquiryMessageDTO enquiryMessage) {
+    if (enquiryMessage.getMatrixEventId() != null
+        && !enquiryMessage.getMatrixEventId().isBlank()
+        && enquiryMessage.getMessage() != null
+        && !enquiryMessage.getMessage().isBlank()) {
+      throw new BadRequestException(
+          "Encrypted enquiry finalization must not include plaintext message content");
+    }
     var user = this.userAccountProvider.retrieveValidatedUser();
     var language = consultantDtoMapper.languageOf(enquiryMessage.getLanguage());
     var enquiryData =
         new EnquiryData(
-            user, sessionId, enquiryMessage.getMessage(), language, enquiryMessage.getT(), null);
+            user,
+            sessionId,
+            enquiryMessage.getMessage(),
+            language,
+            enquiryMessage.getT(),
+            null,
+            enquiryMessage.getMatrixEventId());
 
     var response = createEnquiryMessageFacade.createEnquiryMessage(enquiryData);
 

@@ -3,15 +3,12 @@ package de.caritas.cob.userservice.api.admin.service.consultant.validation;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.EMAIL_NOT_VALID;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.MISSING_ABSENCE_MESSAGE_FOR_ABSENT_USER;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USERNAME_NOT_VALID;
-import static java.util.Objects.isNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
-import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import jakarta.validation.Validator;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -69,16 +66,5 @@ public class UserAccountInputValidator {
             violation -> {
               throw new CustomValidationHttpStatusException(failReason);
             });
-  }
-
-  /**
-   * Validates the created keycloak object.
-   *
-   * @param keycloakResponse the keycloak response object to be validated
-   */
-  public void validateKeycloakResponse(KeycloakCreateUserResponseDTO keycloakResponse) {
-    if (isNull(keycloakResponse.getUserId())) {
-      throw new KeycloakException("ERROR: Keycloak user id is missing");
-    }
   }
 }
