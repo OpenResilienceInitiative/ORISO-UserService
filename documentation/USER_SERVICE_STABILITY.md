@@ -503,6 +503,12 @@ context or starting the irreversible deletion workflow. The red two-instance
 proof observed both replicas executing the workflow; the fixed regression
 observes one winner and no downstream work from the losing replica.
 
+The daily account-deletion scheduler claims `account-deletion` for 12 hours
+before establishing tenant context or starting database, Matrix and identity
+cleanup. This stays below the daily schedule interval. Its two-instance red
+proof observed duplicate workflow starts; the fixed regression observes one
+winner and no downstream work from the losing replica.
+
 ## Microservice decision
 
 Decision: keep UserService as a modular monolith for now.
