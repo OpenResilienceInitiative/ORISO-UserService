@@ -38,6 +38,7 @@ public class UpdateAdminServiceIT {
   private final String VALID_ADMIN_ID = "164be67d-4d1b-4d80-bb6b-0ee057a1c59e";
 
   @Autowired private UpdateAdminService updateAdminService;
+
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,

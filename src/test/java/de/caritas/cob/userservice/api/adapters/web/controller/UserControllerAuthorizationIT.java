@@ -165,6 +165,7 @@ class UserControllerAuthorizationIT {
   @MockitoBean private EmailNotificationFacade emailNotificationFacade;
   @MockitoBean private ConsultantImportService consultantImportService;
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
+
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,

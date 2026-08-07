@@ -284,6 +284,7 @@ class UserControllerIT {
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
   @MockitoBean private AssignSessionFacade assignSessionFacade;
   @MockitoBean private AssignEnquiryFacade assignEnquiryFacade;
+
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,

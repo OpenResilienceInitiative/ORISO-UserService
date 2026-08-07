@@ -58,6 +58,7 @@ class CreateAdminServiceIT {
   private static final String VALID_EMAIL_ADDRESS = "valid@emailaddress.de";
 
   @Autowired private CreateAdminService createAdminService;
+
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
