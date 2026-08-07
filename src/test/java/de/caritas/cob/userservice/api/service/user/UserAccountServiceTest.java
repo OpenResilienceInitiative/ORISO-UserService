@@ -252,9 +252,8 @@ public class UserAccountServiceTest {
 
     accountProvider.changeUserAccountEmailAddress(Optional.empty());
 
-  @Override
-  public void deleteCurrentUserEmail() {
-    verify(identityClient, never()).changeEmailAddress(anyString());
+    verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
+    verify(identityEmailAddressUpdater, never()).updateCurrentUserEmail(anyString());
     consultant.setEmail(dummyEmail);
     verify(consultantService).saveConsultant(consultant);
     verify(userService, times(2)).getUser(any());
@@ -275,9 +274,8 @@ public class UserAccountServiceTest {
 
     accountProvider.changeUserAccountEmailAddress(Optional.empty());
 
-  @Override
-  public void deleteCurrentUserEmail() {
-    verify(identityClient, never()).changeEmailAddress(anyString());
+    verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
+    verify(identityEmailAddressUpdater, never()).updateCurrentUserEmail(anyString());
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), dummyEmail);
     user.setEmail(dummyEmail);
     verify(userService).saveUser(user);

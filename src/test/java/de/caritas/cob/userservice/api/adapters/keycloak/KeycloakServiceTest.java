@@ -290,9 +290,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  @Override
-  public void deleteCurrentUserEmail() {
-  public void deleteEmailAddress_Should_useServicesCorrectly() {
+  public void deleteCurrentUserEmail_Should_useServicesCorrectly() {
     // Current-user email deletion remains an email-address operation and writes the configured
     // dummy address through the existing update path.
     var userId = random(16);
