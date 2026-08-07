@@ -509,6 +509,12 @@ cleanup. This stays below the daily schedule interval. Its two-instance red
 proof observed duplicate workflow starts; the fixed regression observes one
 winner and no downstream work from the losing replica.
 
+The daily registered-only-user deletion scheduler returns without even
+claiming when both deletion modes are disabled. When either mode is enabled,
+it claims `registered-only-user-deletion` for 12 hours before tenant context,
+database, Matrix or identity cleanup. Its real two-instance regression enables
+both modes and observes one execution of each mode and no work from the loser.
+
 ## Microservice decision
 
 Decision: keep UserService as a modular monolith for now.
