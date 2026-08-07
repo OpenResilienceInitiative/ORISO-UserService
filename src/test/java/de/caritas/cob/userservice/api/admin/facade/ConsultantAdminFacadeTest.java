@@ -2,10 +2,12 @@ package de.caritas.cob.userservice.api.admin.facade;
 
 import static de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO.AgencyTypeEnum.DEFAULT_AGENCY;
 import static de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO.AgencyTypeEnum.TEAM_AGENCY;
+import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
@@ -34,6 +36,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminFi
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -46,6 +49,7 @@ import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.annotation.Transactional;
 
 @ExtendWith(MockitoExtension.class)
 class ConsultantAdminFacadeTest {
@@ -478,6 +482,36 @@ class ConsultantAdminFacadeTest {
         () ->
             consultantAdminFacade.setConsultantAgencies(
                 "consultantId", Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(9L))));
+  }
+
+  @Test
+  void setConsultantAgencies_Should_notCreateAnything_When_ADeletionIsRejected() {
+    // Issue #939: the deletion leg runs first. When it is rejected (last consultant of a still
+    // active agency), no relation may be created either - a half-applied agency set makes the
+    // following consultant update validate topics against agencies the admin did not select.
+    when(consultantAgencyAdminService.findConsultantAgencyIds("consultantId"))
+        .thenReturn(Lists.newArrayList(1L, 2L));
+    doThrow(
+            new CustomValidationHttpStatusException(
+                CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE))
+        .when(consultantAgencyAdminService)
+        .markConsultantAgenciesForDeletion(eq("consultantId"), anyList());
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () ->
+            consultantAdminFacade.setConsultantAgencies(
+                "consultantId", Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(3L))));
+
+    verify(relationCreatorService, never()).createNewConsultantAgency(any(), any());
+  }
+
+  @Test
+  void setConsultantAgencies_Should_beTransactional_SoRejectedDeletionsRollBack() throws Exception {
+    var method =
+        ConsultantAdminFacade.class.getMethod("setConsultantAgencies", String.class, List.class);
+
+    assertThat(method.getAnnotation(Transactional.class), notNullValue());
   }
 
   @Test

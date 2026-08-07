@@ -11,7 +11,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -63,7 +63,7 @@ public class PasswordResetService {
   private final @NonNull UserService userService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AdminRepository adminRepository;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull OneTimeTokenStore oneTimeTokenStore;
   private final @NonNull ApplicationSettingsService applicationSettingsService;
@@ -194,9 +194,9 @@ public class PasswordResetService {
   /**
    * Validates the one-time token and, if valid, sets the new password in Keycloak.
    *
-   * <p>The token is only consumed once {@link KeycloakService#updatePassword} succeeds — if
-   * Keycloak rejects the password (e.g. policy violation), the token stays valid so the user can
-   * retry with a different password using the same emailed link, mirroring how {@link
+   * <p>The token is only consumed once {@link IdentityPasswordUpdater#updatePassword} succeeds — if
+   * the identity provider rejects the password (e.g. policy violation), the token stays valid so
+   * the user can retry with a different password using the same emailed link, mirroring how {@link
    * MagicLinkLoginService} restores its token on a failed exchange.
    *
    * @return true if the password was updated, false if the token is missing/invalid/expired
@@ -221,7 +221,7 @@ public class PasswordResetService {
     }
 
     try {
-      identityClient.updatePassword(claim.get().subjectId(), newPassword);
+      identityPasswordUpdater.updatePassword(claim.get().subjectId(), newPassword);
     } catch (CustomValidationHttpStatusException ex) {
       // Definitive password-policy rejection: Keycloak did NOT apply the password, so the token
       // can safely be restored for a retry with a different password via the same emailed link

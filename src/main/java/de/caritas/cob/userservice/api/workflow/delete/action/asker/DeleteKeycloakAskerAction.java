@@ -4,7 +4,7 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
 
 import de.caritas.cob.userservice.api.actions.ActionCommand;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.workflow.delete.action.DeleteKeycloakUserAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
@@ -19,8 +19,8 @@ import org.springframework.stereotype.Component;
 public class DeleteKeycloakAskerAction extends DeleteKeycloakUserAction
     implements ActionCommand<AskerDeletionWorkflowDTO> {
 
-  public DeleteKeycloakAskerAction(@NonNull IdentityClient identityClient) {
-    super(identityClient);
+  public DeleteKeycloakAskerAction(@NonNull IdentityAccountRemover identityAccountRemover) {
+    super(identityAccountRemover);
   }
 
   /**

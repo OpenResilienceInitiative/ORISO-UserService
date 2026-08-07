@@ -25,6 +25,7 @@ public class AgencyPreAssignmentRoomService {
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull SessionService sessionService;
+  private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
 
   public void ensureHoldingRoom(Session session, User user) {
     if (session == null || user == null) {
@@ -97,6 +98,13 @@ public class AgencyPreAssignmentRoomService {
         return;
       }
 
+      // Order is load-bearing (ADR-002 §1, #199): the department joins while the asker is not a
+      // member yet. The asker's Matrix client discovers the room via /sync the moment they are
+      // invited — independent of when this method returns — so inviting the asker first opens a
+      // window in which their client can snapshot the membership list and encrypt the first
+      // message for an audience that does not yet contain the department. Consultants-first makes
+      // every membership view the asker's client can ever observe already include the department.
+      joinAgencyConsultants(session, roomId, agencyToken);
       inviteUser(roomId, user, agencyToken);
 
       session.setMatrixRoomId(roomId);
@@ -111,6 +119,40 @@ public class AgencyPreAssignmentRoomService {
     } catch (MatrixCreateRoomException ex) {
       log.error(
           "Could not create agency holding room for session {}: {}",
+          session.getId(),
+          ex.getMessage());
+    }
+  }
+
+  /**
+   * FE#811 / ADR-002 §1: the agency's counsellors become real room members here, while the room is
+   * still empty, so an enquiry is readable to everyone entitled to pick it up and no one ever joins
+   * after a Megolm session was already handed out.
+   *
+   * <p>A directly addressed enquiry (public counsellor link, appointment booking) is deliberately
+   * excluded — the advice seeker chose one counsellor, and fanning that case out to the whole
+   * department would widen its audience beyond what they consented to.
+   *
+   * <p>Department membership is a best-effort side effect, never a precondition (see {@link
+   * AgencySilentMembershipService#joinAgencyConsultants}): since it now runs before the asker is
+   * invited, an unexpected failure here must not abort the asker's own invite/join or the room
+   * persist — otherwise a single consultant-lookup hiccup would kill the whole enquiry.
+   */
+  private void joinAgencyConsultants(Session session, String roomId, String agencyToken) {
+    if (Boolean.TRUE.equals(session.getIsConsultantDirectlySet())) {
+      log.debug(
+          "Session {} is directly assigned to a consultant, skipping department membership.",
+          session.getId());
+      return;
+    }
+
+    try {
+      agencySilentMembershipService.joinAgencyConsultants(
+          session.getAgencyId(), roomId, agencyToken);
+    } catch (RuntimeException ex) {
+      log.error(
+          "Department membership for room {} of session {} failed; continuing with asker-only room: {}",
+          roomId,
           session.getId(),
           ex.getMessage());
     }

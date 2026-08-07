@@ -123,6 +123,11 @@ public class SecurityConfig {
                     "/swagger-ui.html",
                     "/webjars/**")
                 .permitAll()
+                // This cluster-internal endpoint authenticates with its own dedicated shared
+                // secret because the MatrixRTC gateway is not a Keycloak user. The controller
+                // rejects a missing or invalid secret in constant time.
+                .requestMatchers(HttpMethod.POST, "/internal/matrixrtc/call-policy")
+                .permitAll()
                 .requestMatchers(
                     "/users/askers/new",
                     "/conversations/askers/anonymous/new",
@@ -137,6 +142,8 @@ public class SecurityConfig {
                     "/users/magic-link/consume",
                     "/users/password-reset/request",
                     "/users/password-reset/confirm",
+                    "/users/account-invites/*",
+                    "/service/users/account-invites/*",
                     "/users/invitelinks/*/redeem")
                 .permitAll()
                 .requestMatchers(
@@ -150,11 +157,33 @@ public class SecurityConfig {
                     "/users/password-reset/confirm",
                     "/service/users/password-reset/confirm")
                 .permitAll()
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/account-invites/*/accept",
+                    "/service/users/account-invites/*/accept")
+                .permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**")
                 .permitAll()
                 .requestMatchers(
                     RegexRequestMatcher.regexMatcher(
                         HttpMethod.POST, ".*/users/magic-link/(request|consume)$"))
+                .permitAll()
+                // PUBLIC account-invite endpoints (#569 chain fix): the invitee has no account
+                // yet, the raw invite token in the path is the only credential. Both prefix
+                // variants because the API gateway forwards /service unchanged.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/account-invites/{token}/onboarding",
+                    "/service/users/account-invites/{token}/onboarding")
+                .permitAll()
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/account-invites/{token}/accept",
+                    "/service/users/account-invites/{token}/accept",
+                    "/users/account-invites/{token}/onboarding/register",
+                    "/service/users/account-invites/{token}/onboarding/register",
+                    "/users/account-invites/{token}/onboarding/two-factor",
+                    "/service/users/account-invites/{token}/onboarding/two-factor")
                 .permitAll()
                 // Password-reset request/confirm are already permitted by the exact requestMatchers
                 // above (with and without the /service prefix); no broad regex needed.
@@ -191,6 +220,12 @@ public class SecurityConfig {
                     "/matrix/**",
                     "/service/matrix/**")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
+                // Live-Handshake (ADR-018): any authenticated professional may hit the endpoints;
+                // per-purpose role pairs + fresh-credential checks are enforced in the service.
+                .requestMatchers("/users/handshakes", "/users/handshakes/**")
+                .authenticated()
+                .requestMatchers("/users/support-rooms", "/users/support-rooms/**")
+                .authenticated()
                 .requestMatchers("/users/tutorials/progress", "/users/tutorials/progress/**")
                 .hasAnyAuthority(
                     USER_DEFAULT,
@@ -301,6 +336,8 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/update",
                     "/users/{matrixUserId}/chat/{chatId:[0-9]+}/ban")
                 .hasAuthority(UPDATE_CHAT)
+                .requestMatchers(HttpMethod.GET, "/useradmin/supportadmins/search")
+                .hasAnyAuthority(USER_ADMIN, GLOBAL_SUPPORT_ADMIN)
                 .requestMatchers(HttpMethod.GET, "/useradmin/tenantadmins/search")
                 .hasAnyAuthority(TENANT_ADMIN, USER_ADMIN)
                 .requestMatchers(

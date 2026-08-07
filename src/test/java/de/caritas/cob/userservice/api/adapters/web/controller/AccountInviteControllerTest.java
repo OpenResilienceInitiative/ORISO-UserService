@@ -20,9 +20,14 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
+import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
+import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -43,15 +48,22 @@ import org.springframework.security.access.prepost.PreAuthorize;
 class AccountInviteControllerTest {
 
   @Mock private AccountInviteService accountInviteService;
+  @Mock private CounsellorInviteProvisioningService counsellorInviteProvisioningService;
   @Mock private InviteEmailTemplateService templateService;
   @Mock private InviteEmailDeliveryRepository deliveryRepository;
+  @Mock private InviteEmailPreviewService previewService;
 
   private AccountInviteController controller;
 
   @BeforeEach
   void setUp() {
     controller =
-        new AccountInviteController(accountInviteService, templateService, deliveryRepository);
+        new AccountInviteController(
+            accountInviteService,
+            counsellorInviteProvisioningService,
+            templateService,
+            deliveryRepository,
+            previewService);
   }
 
   @Test
@@ -76,6 +88,40 @@ class AccountInviteControllerTest {
     verify(accountInviteService).createInvite(commandCaptor.capture());
     assertEquals(AccountInviteTargetRole.COUNSELLOR, commandCaptor.getValue().targetRole());
     assertEquals("invitee@example.org", commandCaptor.getValue().recipientEmail());
+  }
+
+  @Test
+  void createInvite_allocationModes_areParsedAndPassedToTheCommand() {
+    // TEN-INV-U3: the composer's AUTO/MANUAL allocation modes reach the orchestration untouched.
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.TENANT_ADMIN.name();
+    request.recipientEmail = "owner@example.org";
+    request.tenantIdAllocationMode = "AUTO";
+    request.agencyIdAllocationMode = "MANUAL";
+    request.agencyId = 9L;
+
+    var invite = sampleInvite();
+    when(accountInviteService.createInvite(any())).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
+
+    controller.createInvite(request);
+
+    var commandCaptor =
+        ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
+    verify(accountInviteService).createInvite(commandCaptor.capture());
+    assertEquals(IdAllocationMode.AUTO, commandCaptor.getValue().tenantIdAllocationMode());
+    assertEquals(IdAllocationMode.MANUAL, commandCaptor.getValue().agencyIdAllocationMode());
+  }
+
+  @Test
+  void createInvite_unknownAllocationMode_throwsBadRequest() {
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.TENANT_ADMIN.name();
+    request.recipientEmail = "owner@example.org";
+    request.tenantIdAllocationMode = "SOMETIMES";
+
+    assertThrows(BadRequestException.class, () -> controller.createInvite(request));
   }
 
   @Test
@@ -132,9 +178,14 @@ class AccountInviteControllerTest {
     // Business reason: valid invitation acceptance should transition invite state and return
     // confirmation data.
     var request = new AccountInviteController.AcceptInviteRequestDTO();
+    request.username = "invited-counsellor";
+    request.password = "test-password";
+    request.formalLanguage = true;
     request.acceptedByUserId = "user-1";
     var invite = sampleInvite();
-    when(accountInviteService.acceptInvite("token-1", "user-1")).thenReturn(invite);
+    var command =
+        new ProvisionCounsellorCommand("invited-counsellor", "test-password", true, "user-1");
+    when(counsellorInviteProvisioningService.acceptInvite("token-1", command)).thenReturn(invite);
     when(accountInviteService.calculateAccessGate(invite))
         .thenReturn(AccountAccessGateStatus.READY);
     when(deliveryRepository.findFirstByAccountInviteIdOrderByCreateDateDesc(10L))
@@ -145,7 +196,44 @@ class AccountInviteControllerTest {
     var response = controller.acceptInvite("token-1", request);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(accountInviteService).acceptInvite("token-1", "user-1");
+    verify(counsellorInviteProvisioningService).acceptInvite("token-1", command);
+    // No pending mandatory 2FA on this invite: the onboarding phase is terminal.
+    assertNotNull(response.getBody());
+    assertEquals("COMPLETED", response.getBody().phase);
+  }
+
+  @Test
+  void acceptInvite_pendingTwoFactor_reportsResumablePhase() {
+    // Resume contract (ORISO-Admin#569): while the mandatory 2FA activation is open, the accept
+    // response tells the client to continue at the 2FA step instead of a terminal state.
+    var invite = sampleInvite();
+    invite.setStatus(AccountInviteStatus.ACCEPTED);
+    invite.setTwoFactorStatus(TwoFactorGateStatus.PENDING_SETUP);
+    when(counsellorInviteProvisioningService.acceptInvite("token-3", null)).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_TWO_FACTOR);
+
+    var response = controller.acceptInvite("token-3", null);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertEquals("PENDING_2FA_ACTIVATION", response.getBody().phase);
+    assertEquals(
+        AccountAccessGateStatus.BLOCKED_TWO_FACTOR.name(), response.getBody().accessGateStatus);
+  }
+
+  @Test
+  void getInvite_validTokenReturnsRecipientDetailsWithoutAcceptingIt() {
+    var invite = sampleInvite();
+    when(accountInviteService.requireActiveInvite("token-details")).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
+
+    var response = controller.getInvite("token-details");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(invite.getRecipientEmail(), response.getBody().recipientEmail);
+    verify(accountInviteService).requireActiveInvite("token-details");
   }
 
   @Test
@@ -153,14 +241,14 @@ class AccountInviteControllerTest {
     // Business reason: anonymous acceptance flows must still work without explicit requester
     // payload.
     var invite = sampleInvite();
-    when(accountInviteService.acceptInvite("token-2", null)).thenReturn(invite);
+    when(counsellorInviteProvisioningService.acceptInvite("token-2", null)).thenReturn(invite);
     when(accountInviteService.calculateAccessGate(invite))
         .thenReturn(AccountAccessGateStatus.READY);
 
     var response = controller.acceptInvite("token-2", null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(accountInviteService).acceptInvite("token-2", null);
+    verify(counsellorInviteProvisioningService).acceptInvite("token-2", null);
   }
 
   @Test

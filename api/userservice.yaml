@@ -1657,26 +1657,26 @@ paths:
     post:
       tags:
         - liveproxy-controller
-      summary: 'Send a live notification event'
+      summary: 'Deprecated compatibility tombstone; LiveService delivery has been removed'
+      description: 'This endpoint no longer forwards events and always returns 410 Gone.'
+      deprecated: true
       operationId: sendLiveEvent
       parameters:
         - name: matrixRoomId
           in: query
-          description: Matrix room ID
+          description: Legacy Matrix room ID parameter; ignored
           required: true
           schema:
             type: string
       responses:
         200:
-          description: OK - successful operation
+          description: Legacy response retained for source compatibility during deprecation
         400:
-          description: BAD REQUEST - invalid/incomplete request or query object
+          description: BAD REQUEST - required query parameter is missing
         403:
-          description: FORBIDDEN - no/invalid CSRF token
-        409:
-          description: CONFLICT - group chat with same name already existing
-        500:
-          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+          description: FORBIDDEN - no/invalid role or authorization
+        410:
+          description: GONE - LiveService delivery has been permanently removed
       security:
         - Bearer: [ ]
   /users/chat-series/{seriesId}/occurrences:
@@ -2493,6 +2493,9 @@ components:
           $ref: '#/components/schemas/LanguageCode'
         t:
           type: string
+        matrixEventId:
+          type: string
+          description: ID of the browser-encrypted Matrix event to finalize as the initial enquiry
 
     CreateEnquiryMessageResponseDTO:
       type: object

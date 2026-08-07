@@ -6,7 +6,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
@@ -24,12 +27,16 @@ import jakarta.validation.constraints.NotNull;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.List;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 @ExtendWith(MockitoExtension.class)
 class CaseHandoverControllerTest {
@@ -38,6 +45,13 @@ class CaseHandoverControllerTest {
   @Mock private CaseHandoverLogsService caseHandoverLogsService;
 
   @InjectMocks private CaseHandoverController controller;
+
+  private MockMvc mockMvc;
+
+  @BeforeEach
+  void setUpMockMvc() {
+    mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+  }
 
   @Test
   void listReasons_happyPath_returnsReasonList() {
@@ -76,6 +90,64 @@ class CaseHandoverControllerTest {
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(output, response.getBody());
     verify(caseHandoverService).updateReasonPolicies(input);
+  }
+
+  @Test
+  void updateReasonPolicies_validJson_deserializesAndUpdatesPolicies() throws Exception {
+    var updated =
+        List.of(
+            CaseHandoverReason.builder()
+                .code("COUNSELLOR_IS_ILL")
+                .label("Illness")
+                .clientConsentRequired(true)
+                .accessAllowed(true)
+                .enabled(true)
+                .displayOrder(10)
+                .policyAuthority("TENANT")
+                .build());
+    when(caseHandoverService.updateReasonPolicies(org.mockito.ArgumentMatchers.anyList()))
+        .thenReturn(updated);
+
+    mockMvc
+        .perform(
+            put("/service/users/case-handover/reason-policies")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    [{
+                      "code": "COUNSELLOR_IS_ILL",
+                      "label": "Illness",
+                      "clientConsentRequired": true,
+                      "accessAllowed": true,
+                      "enabled": true,
+                      "displayOrder": 10,
+                      "policyAuthority": "TENANT",
+                      "clientNotificationTemplates": {"de": "Neue Beratung"}
+                    }]
+                    """))
+        .andExpect(status().isOk());
+
+    verify(caseHandoverService)
+        .updateReasonPolicies(
+            org.mockito.ArgumentMatchers.argThat(
+                policies ->
+                    policies.size() == 1
+                        && "COUNSELLOR_IS_ILL".equals(policies.get(0).getCode())
+                        && Boolean.TRUE.equals(policies.get(0).getAccessAllowed())
+                        && "Neue Beratung"
+                            .equals(policies.get(0).getClientNotificationTemplates().get("de"))));
+  }
+
+  @Test
+  void updateReasonPolicies_malformedJson_isRejectedBeforeServiceExecution() throws Exception {
+    mockMvc
+        .perform(
+            put("/service/users/case-handover/reason-policies")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("[{\"code\":]"))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(caseHandoverService);
   }
 
   @Test

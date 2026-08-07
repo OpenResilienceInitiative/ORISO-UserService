@@ -20,7 +20,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
-import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
@@ -36,8 +35,18 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.ApiClient;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
@@ -119,8 +128,20 @@ class UserAdminControllerE2EIT {
 
   @MockitoBean private Keycloak keycloak;
 
-  @MockitoBean IdentityClient identityClient;
-  @MockitoBean IdentityRoleUpdater identityRoleUpdater;
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityRoleLookup.class,
+        IdentityRoleUpdater.class,
+        IdentityUsernameAvailability.class
+      })
+  IdentityClient identityClient;
 
   @MockitoBean TenantService tenantService;
 
@@ -143,9 +164,9 @@ class UserAdminControllerE2EIT {
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
 
-    KeycloakCreateUserResponseDTO keycloakResponse = new KeycloakCreateUserResponseDTO();
+    CreatedIdentity keycloakResponse = new CreatedIdentity();
     keycloakResponse.setUserId(new EasyRandom().nextObject(String.class));
-    when(identityClient.createKeycloakUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
+    when(identityClient.createUser(Mockito.any(), Mockito.anyString(), Mockito.anyString()))
         .thenReturn(keycloakResponse);
   }
 
@@ -651,6 +672,26 @@ class UserAdminControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmin_Should_acceptPageSizesAboveTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/tenantadmins/search?query=*&page=1&perPage=101&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmin_Should_acceptPageSizeAtTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/tenantadmins/search?query=*&page=1&perPage=100&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void searchTenantAdmin_Should_returnOk_When_sortingByUpdateDate() throws Exception {
 
     when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
@@ -716,6 +757,26 @@ class UserAdminControllerE2EIT {
     JSONArray embedded = JsonPath.read(contentAsString, "_embedded");
 
     assertAllElementsAreOfAdminType(embedded, AdminType.AGENCY);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_acceptPageSizesAboveTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/agencyadmins/search?query=*&page=1&perPage=101&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_acceptPageSizeAtTenantBatchLimit() throws Exception {
+    this.mockMvc
+        .perform(
+            get(
+                "/useradmin/agencyadmins/search?query=*&page=1&perPage=100&order=ASC&field=FIRSTNAME"))
+        .andExpect(status().isOk());
   }
 
   @Test

@@ -36,6 +36,9 @@ public class TenantTemplateSupplier {
   private boolean multitenancyWithSingleDomain;
 
   public List<TemplateDataDTO> getTemplateAttributes() {
+    if (TenantContext.isTechnicalOrSuperAdminContext()) {
+      return List.of(new TemplateDataDTO().key("url").value(applicationBaseUrl));
+    }
 
     List<TemplateDataDTO> templateAttributes = new ArrayList<>();
     RestrictedTenantDTO tenantData = getRestrictedTenantDTO();
@@ -107,6 +110,17 @@ public class TenantTemplateSupplier {
     } else {
       return getTenantBaseUrlForStandardMultitenancyMode(subdomain);
     }
+  }
+
+  /**
+   * Resolves a tenant's own base URL from its own data, not from {@link TenantContext} — callers
+   * that already hold the {@link RestrictedTenantDTO} they care about (e.g. because it was loaded
+   * for an explicit tenant id) must use this instead of {@link #getTemplateAttributes()}, which
+   * derives everything from the ambient tenant context and silently ignores any tenant the caller
+   * actually asked for.
+   */
+  public String getTenantBaseUrl(RestrictedTenantDTO tenantData) {
+    return getTenantBaseUrl(tenantData == null ? null : tenantData.getSubdomain());
   }
 
   private String getTenantBaseUrlForStandardMultitenancyMode(String subdomain) {

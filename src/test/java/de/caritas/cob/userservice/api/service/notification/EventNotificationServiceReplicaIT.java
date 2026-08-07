@@ -1,14 +1,11 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.mockito.Mockito.times;
-import static org.mockito.Mockito.verify;
 
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.liveevents.LiveEventNotificationService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -21,7 +18,6 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 
 @SpringBootTest
 @ActiveProfiles("testing")
@@ -37,18 +33,17 @@ class EventNotificationServiceReplicaIT {
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private IdentityTombstoneService identityTombstoneService;
   @Autowired private EventNotificationDeduplicationWriter deduplicationWriter;
-  @MockitoBean private LiveEventNotificationService liveEventNotificationService;
 
   @AfterEach
   void deleteReplicaProofNotification() {
     var notifications =
-        eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDesc(
+        eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDescIdDesc(
             RECIPIENT, Pageable.unpaged());
     eventNotificationRepository.deleteAll(notifications);
   }
 
   @Test
-  void twoServiceInstancesPublishOneReminderAndOneLiveRefresh() throws Exception {
+  void twoServiceInstancesPublishOneReminder() throws Exception {
     var firstInstance = newServiceInstance();
     var secondInstance = newServiceInstance();
     var ready = new CountDownLatch(2);
@@ -68,14 +63,12 @@ class EventNotificationServiceReplicaIT {
     }
 
     var notifications =
-        eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDesc(
+        eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDescIdDesc(
             RECIPIENT, Pageable.unpaged());
     assertThat(notifications)
         .singleElement()
         .extracting(notification -> notification.getDeduplicationKey())
         .isEqualTo(DEDUPLICATION_KEY);
-    verify(liveEventNotificationService, times(1))
-        .sendEventNotificationCreatedEventToUser(RECIPIENT);
   }
 
   private EventNotificationService newServiceInstance() {
@@ -85,8 +78,7 @@ class EventNotificationServiceReplicaIT {
         userRepository,
         consultantRepository,
         identityTombstoneService,
-        deduplicationWriter,
-        liveEventNotificationService);
+        deduplicationWriter);
   }
 
   private void publishReminder(
