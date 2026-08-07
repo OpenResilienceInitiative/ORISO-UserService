@@ -20,9 +20,11 @@ import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.api.workflow.enquirynotification.model.EnquiriesNotificationMailContent;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
@@ -42,6 +44,7 @@ public class EnquiryNotificationService {
 
   private static final String MAIL_SUBJECT = "Online-Beratung | Unbeantwortete Erstanfragen";
   private static final String UNKNOWN_AGENCY = "Unbekannte Beratungsstelle";
+  private static final String TASK_NAME = "enquiry-notification";
 
   private final @NonNull MailService mailService;
   private final @NonNull SessionRepository sessionRepository;
@@ -49,6 +52,7 @@ public class EnquiryNotificationService {
   private final @NonNull AgencyService agencyService;
 
   private final @NonNull ReleaseToggleService releaseToggleService;
+  private final @NonNull ScheduledTaskClaimService taskClaimService;
 
   @Value("${enquiry.open.notification.check.hours}")
   private Long openEnquiryCheckHours;
@@ -56,8 +60,14 @@ public class EnquiryNotificationService {
   @Value("${app.base.url}")
   private String applicationBaseUrl;
 
+  @Value("${enquiry.open.notification.claim.duration:PT30M}")
+  private Duration claimDuration;
+
   /** Entry method to build and send email notifications. */
   public void sendEmailNotificationsForOpenEnquiries() {
+    if (!taskClaimService.tryClaim(TASK_NAME, claimDuration)) {
+      return;
+    }
     var agencyIdsWithOpenEnquiries = findAgencyIdsWithOpenEnquiries();
     var agenciesWithOpenEnquiries =
         agencyService.getAgencies(new ArrayList<>(agencyIdsWithOpenEnquiries.keySet()));

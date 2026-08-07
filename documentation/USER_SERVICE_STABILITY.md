@@ -473,6 +473,24 @@ is further non-authentication identity transport cleanup, then the Admin control
 composition boundary, then smaller Session orchestration boundaries. Each step
 must add a failing boundary contract before moving dependencies.
 
+## Scheduler replica safety
+
+The hourly enquiry-notification workflow acquires the global, durable
+`scheduled_task_claim` named `enquiry-notification` before it reads sessions,
+agencies or consultants and before it sends mail. The claim lasts 30 minutes,
+shorter than the hourly schedule. A losing replica exits without downstream
+work; an expired claim can be renewed.
+
+The regression proof starts with the unfixed behavior: two concurrent service
+instances produced two mail batches. The fixed focused suite verifies one
+batch. `ScheduledTaskClaimMariaDbIT` then executes both the concurrent initial
+insert and the concurrent expired-claim renewal against MariaDB 11.0.6 with two
+separate transactions. Each race has exactly one winner; MariaDB's initial
+insert race is handled as an InnoDB deadlock/constraint conflict followed by a
+read of the winning active claim. The required MariaDB workflow runs this test
+together with schema drift, statistics projection and the other replica
+contracts.
+
 ## Microservice decision
 
 Decision: keep UserService as a modular monolith for now.
