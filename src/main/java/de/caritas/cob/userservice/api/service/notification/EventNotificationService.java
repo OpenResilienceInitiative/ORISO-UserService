@@ -217,6 +217,11 @@ public class EventNotificationService {
           CATEGORY_SYSTEM,
           "Ihre ersten Schritte",
           "Wir haben Ihnen im Chat die wichtigsten Informationen geschrieben.",
+          /* The frontend resolves the room reference out of `params`. Without them
+          the entry still renders but has no chat to open, which for the single
+          timeline entry the Erstantwort is allowed to produce means the person is
+          told something happened and given no way back to it. */
+          serializeParams(baseParams(session)),
           buildAskerSessionActionPath(session),
           session.getId(),
           session.getTenantId());

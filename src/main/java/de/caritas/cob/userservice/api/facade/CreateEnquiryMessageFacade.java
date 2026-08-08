@@ -182,6 +182,15 @@ public class CreateEnquiryMessageFacade {
    * is already implemented in {@link ErstantwortPayloadBuilder}, so ORISO-Admin#601 adding the
    * Träger editor is a form, not a migration.
    */
+  /**
+   * The asker's own German variant. Defaults to formal when no user is resolvable — the safer
+   * error: addressing somebody formally who expected "Du" is a mismatch, while addressing somebody
+   * informally who expected "Sie" reads as a service that does not know who it is talking to.
+   */
+  private boolean isFormalLanguage(Session session) {
+    return session.getUser() == null || session.getUser().isLanguageFormal();
+  }
+
   private void postErstantwort(Session session) {
     try {
       var body =
@@ -193,6 +202,12 @@ public class CreateEnquiryMessageFacade {
                   groups never call it. Pinning the modality rather than deriving
                   it keeps the Live-Chat exclusions honest instead of accidental. */
                   .modality(ErstantwortModality.AGENCY_COUNSELLING)
+                  /* Without this every German wording defaulted to the formal
+                  variant, so an informal Träger's advice seekers were addressed
+                  with "Sie" throughout their own Erstantwort. `languageFormal` on
+                  the User is the same flag AskerDataProvider already uses to pick
+                  the German variant everywhere else. */
+                  .informal(!isFormalLanguage(session))
                   .build());
       if (body == null) {
         return;
