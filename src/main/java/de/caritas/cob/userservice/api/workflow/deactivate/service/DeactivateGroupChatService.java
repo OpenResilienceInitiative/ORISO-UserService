@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.workflow.deactivate.service;
 import de.caritas.cob.userservice.api.actions.chat.StopChatActionCommand;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import jakarta.transaction.Transactional;
 import java.time.LocalDateTime;
@@ -28,8 +29,22 @@ public class DeactivateGroupChatService {
   public void deactivateStaleGroupChats() {
     var deactivationTime = LocalDateTime.now().minusMinutes(deactivatePeriodMinutes);
     this.chatRepository.findAllByActiveIsTrue().stream()
+        .filter(isDeactivatable())
         .filter(isChatOutsideOfDeactivationTime(deactivationTime))
         .forEach(this::deactivateStaleActiveChat);
+  }
+
+  /**
+   * Internal team chats are persistent rooms for colleagues, not scheduled sessions that end.
+   *
+   * <p>They carry a duration like every other chat, so the sweep used to reach them once that
+   * duration had passed. For a non-repetitive chat {@link StopChatActionCommand} deletes the chat
+   * and shuts down its Matrix room, which destroyed the room and its history roughly an hour after
+   * a counsellor first opened it - without any user action and with no way back. See
+   * ORISO-UserService#984.
+   */
+  private Predicate<Chat> isDeactivatable() {
+    return chat -> chat.getConversationType() != ConversationType.INTERNAL_GROUP;
   }
 
   private Predicate<Chat> isChatOutsideOfDeactivationTime(LocalDateTime deactivationTime) {
