@@ -208,6 +208,40 @@ class ChatRepositoryIT {
     }
   }
 
+  /**
+   * The stale-chat sweep must never reach an internal team chat, and must still reach rows written
+   * before the modality column existed. The null branch is load-bearing: a plain {@code <>} would
+   * silently drop those legacy rows, because SQL comparison with NULL yields NULL. See
+   * ORISO-UserService#984.
+   */
+  @Test
+  @Transactional
+  void findAllActiveExcludingConversationTypeShouldDropInternalChatsButKeepUnsetOnes() {
+    givenAConsultant();
+
+    var internalChat = givenAnActiveChatWithConversationType(ConversationType.INTERNAL_GROUP);
+    var selfHelpChat = givenAnActiveChatWithConversationType(ConversationType.SELF_HELP);
+    var legacyChat = givenAnActiveChatWithConversationType(null);
+
+    var selected =
+        underTest.findAllActiveExcludingConversationType(ConversationType.INTERNAL_GROUP).stream()
+            .map(Chat::getId)
+            .collect(java.util.stream.Collectors.toSet());
+
+    assertTrue(selected.contains(selfHelpChat.getId()), "self-help chat must still be swept");
+    assertTrue(
+        selected.contains(legacyChat.getId()), "legacy chat without a modality must be kept");
+    org.junit.jupiter.api.Assertions.assertFalse(
+        selected.contains(internalChat.getId()), "internal team chat must be excluded");
+  }
+
+  private Chat givenAnActiveChatWithConversationType(ConversationType conversationType) {
+    givenAValidChat();
+    chat.setConversationType(conversationType);
+    chat.setActive(true);
+    return underTest.save(chat);
+  }
+
   private void givenAValidChat() {
     chat = new Chat();
     chat.setTopic(RandomStringUtils.randomAlphanumeric(1, 255));

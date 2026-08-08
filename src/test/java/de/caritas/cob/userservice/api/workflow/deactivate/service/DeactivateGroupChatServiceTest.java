@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.workflow.deactivate.service;
 
 import static java.util.Collections.emptyList;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -53,7 +54,9 @@ class DeactivateGroupChatServiceTest {
 
   @Test
   void deactivateStaleGroupChats_Should_notPerformAnyDeactivation_When_noChatIsActive() {
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(emptyList());
+    when(this.chatRepository.findAllActiveExcludingConversationType(
+            ConversationType.INTERNAL_GROUP))
+        .thenReturn(emptyList());
 
     this.deactivateGroupChatService.deactivateStaleGroupChats();
 
@@ -69,7 +72,9 @@ class DeactivateGroupChatServiceTest {
     chat.setDuration(120);
     chat.setActive(true);
     chat.setUpdateDate(updateDate);
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chat));
+    when(this.chatRepository.findAllActiveExcludingConversationType(
+            ConversationType.INTERNAL_GROUP))
+        .thenReturn(List.of(chat));
 
     this.deactivateGroupChatService.deactivateStaleGroupChats();
 
@@ -94,7 +99,9 @@ class DeactivateGroupChatServiceTest {
     chat.setDuration(120);
     chat.setActive(true);
     chat.setUpdateDate(overdueUpdateDate);
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chat));
+    when(this.chatRepository.findAllActiveExcludingConversationType(
+            ConversationType.INTERNAL_GROUP))
+        .thenReturn(List.of(chat));
     when(this.actionsRegistry.buildContainerForType(Chat.class))
         .thenReturn(commandMockProvider.getActionContainer(Chat.class));
 
@@ -113,7 +120,9 @@ class DeactivateGroupChatServiceTest {
     chat.setActive(true);
     chat.setStartDate(LocalDateTime.now().minusMinutes(61));
     chat.setUpdateDate(LocalDateTime.now());
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chat));
+    when(this.chatRepository.findAllActiveExcludingConversationType(
+            ConversationType.INTERNAL_GROUP))
+        .thenReturn(List.of(chat));
     when(this.actionsRegistry.buildContainerForType(Chat.class))
         .thenReturn(commandMockProvider.getActionContainer(Chat.class));
 
@@ -122,17 +131,23 @@ class DeactivateGroupChatServiceTest {
     verify(this.commandMockProvider.getActionMock(StopChatActionCommand.class)).execute(chat);
   }
 
+  /**
+   * Internal team chats are excluded in the query rather than afterwards, so that the pessimistic
+   * write lock never reaches rows this sweep will not act on. The unit test can only prove that the
+   * exclusion is asked for; that the SQL actually drops internal chats and keeps null conversation
+   * types is proven against a database in {@code ChatRepositoryIT}.
+   */
   @Test
-  void deactivateStaleGroupChats_Should_leaveInternalTeamChatsAlone_When_theyAreLongOverdue() {
-    var internalChat = new Chat();
-    internalChat.setDuration(60);
-    internalChat.setActive(true);
-    internalChat.setUpdateDate(LocalDateTime.now().minusDays(30));
-    internalChat.setConversationType(ConversationType.INTERNAL_GROUP);
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(internalChat));
+  void deactivateStaleGroupChats_Should_excludeInternalTeamChatsFromTheSelection() {
+    when(this.chatRepository.findAllActiveExcludingConversationType(
+            ConversationType.INTERNAL_GROUP))
+        .thenReturn(emptyList());
 
     this.deactivateGroupChatService.deactivateStaleGroupChats();
 
+    verify(this.chatRepository)
+        .findAllActiveExcludingConversationType(ConversationType.INTERNAL_GROUP);
+    verify(this.chatRepository, never()).findAllByActiveIsTrue();
     verifyNoMoreInteractions(
         this.actionsRegistry, this.commandMockProvider.getActionMock(StopChatActionCommand.class));
   }
@@ -149,7 +164,9 @@ class DeactivateGroupChatServiceTest {
     chat.setActive(true);
     chat.setUpdateDate(LocalDateTime.now().minusDays(30));
     chat.setConversationType(conversationType);
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chat));
+    when(this.chatRepository.findAllActiveExcludingConversationType(
+            ConversationType.INTERNAL_GROUP))
+        .thenReturn(List.of(chat));
     when(this.actionsRegistry.buildContainerForType(Chat.class))
         .thenReturn(commandMockProvider.getActionContainer(Chat.class));
 
@@ -168,7 +185,9 @@ class DeactivateGroupChatServiceTest {
     legacyChat.setDuration(60);
     legacyChat.setActive(true);
     legacyChat.setUpdateDate(LocalDateTime.now().minusDays(30));
-    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(legacyChat));
+    when(this.chatRepository.findAllActiveExcludingConversationType(
+            ConversationType.INTERNAL_GROUP))
+        .thenReturn(List.of(legacyChat));
     when(this.actionsRegistry.buildContainerForType(Chat.class))
         .thenReturn(commandMockProvider.getActionContainer(Chat.class));
 

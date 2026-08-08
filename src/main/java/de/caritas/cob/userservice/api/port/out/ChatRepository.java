@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -64,6 +65,25 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<Chat> findAllByActiveIsTrue();
+
+  /**
+   * Active chats the stale-chat sweep may act on, i.e. everything except internal team chats.
+   *
+   * <p>Selecting them here rather than filtering afterwards keeps the pessimistic write lock off
+   * rows the sweep will never touch - an internal team chat would otherwise be locked for the
+   * duration of every sweep transaction for no reason. See ORISO-UserService#984.
+   *
+   * <p>The null check is load-bearing: SQL comparison with NULL yields NULL, so a plain {@code <>}
+   * would silently drop every row written before the modality column existed, and those must keep
+   * their previous behaviour.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select c from Chat c "
+          + "where c.active = true "
+          + "and (c.conversationType is null or c.conversationType <> :excludedType)")
+  List<Chat> findAllActiveExcludingConversationType(
+      @Param(value = "excludedType") ConversationType excludedType);
 
   List<Chat> findAllByActiveIsFalseAndStartDateBetween(
       LocalDateTime startInclusive, LocalDateTime endInclusive);
