@@ -1534,4 +1534,39 @@ class EventNotificationServiceTest {
     String text = eventCaptor.getValue().getText();
     assertThat(text).contains("evt-123");
   }
+
+  @Test
+  void createFirstResponseNotification_persistsSessionIdAndRoomRefInParams() throws Exception {
+    /* ORISO-UserService#926: the frontend resolves the chat to open out of
+    `params`. Without them the Erstantwort's one timeline entry still renders
+    and leads nowhere — the person is told something happened and given no way
+    back to it. */
+    var user = new User();
+    user.setUserId("asker-1");
+    var session = new Session();
+    session.setId(4711L);
+    session.setUser(user);
+    session.setMatrixRoomId("!room:matrix.test");
+
+    eventNotificationService.createFirstResponseNotification(session);
+
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    var saved = eventCaptor.getValue();
+    assertThat(saved.getEventType()).isEqualTo("first_response.received");
+    assertThat(saved.getRecipientUserId()).isEqualTo("asker-1");
+
+    JsonNode params = new ObjectMapper().readTree(saved.getParams());
+    assertThat(params.get("sessionId").asLong()).isEqualTo(4711L);
+    assertThat(params.get("roomRef").asText()).isEqualTo("!room:matrix.test");
+  }
+
+  @Test
+  void createFirstResponseNotification_writesNothingWithoutAnAdviceSeeker() {
+    var session = new Session();
+    session.setId(4712L);
+
+    eventNotificationService.createFirstResponseNotification(session);
+
+    verify(eventNotificationRepository, never()).save(any());
+  }
 }

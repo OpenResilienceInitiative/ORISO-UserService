@@ -27,6 +27,7 @@ public class MatrixSessionSystemMessageService {
   public static final String SYSTEM_NOTIFICATION_PREFIX = "[SYSTEM_NOTIFICATION]";
   public static final String USER_LEFT_CHAT_TYPE = "USER_LEFT_CHAT";
   public static final String CASE_HANDOVER_GRANTED_TYPE = "CASE_HANDOVER_GRANTED";
+  public static final String FIRST_RESPONSE_TYPE = "FIRST_RESPONSE";
 
   private static final com.fasterxml.jackson.databind.ObjectMapper OBJECT_MAPPER =
       new com.fasterxml.jackson.databind.ObjectMapper();
@@ -98,6 +99,40 @@ public class MatrixSessionSystemMessageService {
     }
     var roomId = matrixRoomId;
     resolveMatrixCredentialsPreferConsultant(session)
+        .ifPresent(credentials -> sendSystemMessage(session.getId(), roomId, body, credentials));
+  }
+
+  /**
+   * Posts the Erstantwort — the whole Baustein sequence as <b>one</b> persisted event (ADR-018,
+   * ORISO-UserService#926).
+   *
+   * <p><b>No Carimat account is created.</b> Carimat is a rendering identity, not a Matrix account
+   * (ADR-018 §3): a bot in the room would be an additional Megolm key holder in a room carrying §11
+   * KDG special-category data, and a bot has no Schweigepflicht. The event goes out through the
+   * existing credential resolution, exactly like every other system message here, and adds no room
+   * member.
+   *
+   * <p>A failure is logged and swallowed. The Erstantwort is important, but it must never take the
+   * enquiry down with it — the person's message reaching a counsellor outranks the platform's own
+   * greeting, and a thrown exception here would roll the dispatch back.
+   *
+   * @param session the session whose room receives the Erstantwort
+   * @param body the full message body including the [SYSTEM_NOTIFICATION] prefix
+   */
+  public void postFirstResponseMessage(Session session, String body) {
+    if (session == null || session.getId() == null || isBlank(body)) {
+      return;
+    }
+    var matrixRoomId = session.getMatrixRoomId();
+    if (isBlank(matrixRoomId)) {
+      matrixRoomId =
+          sessionService.getSession(session.getId()).map(Session::getMatrixRoomId).orElse(null);
+    }
+    if (isBlank(matrixRoomId)) {
+      return;
+    }
+    var roomId = matrixRoomId;
+    resolveMatrixCredentials(session)
         .ifPresent(credentials -> sendSystemMessage(session.getId(), roomId, body, credentials));
   }
 
