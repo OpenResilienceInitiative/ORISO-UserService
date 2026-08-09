@@ -11,7 +11,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.facade.RocketChatFacade;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
@@ -34,8 +33,6 @@ class RocketChatRemoveFromGroupOperationServiceTest {
 
   @Mock private RocketChatFacade rocketChatFacade;
 
-  @Mock private KeycloakService keycloakService;
-
   @Mock private Session session;
 
   @Mock private Consultant consultant;
@@ -48,7 +45,7 @@ class RocketChatRemoveFromGroupOperationServiceTest {
     sessionConsultants.put(session, singletonList(consultant));
     this.removeService =
         RocketChatRemoveFromGroupOperationService.getInstance(
-                this.rocketChatFacade, this.keycloakService, consultingTypeManager)
+                this.rocketChatFacade, consultingTypeManager)
             .onSessionConsultants(sessionConsultants);
   }
 

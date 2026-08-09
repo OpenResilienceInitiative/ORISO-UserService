@@ -17,7 +17,6 @@ import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import java.util.List;
@@ -38,7 +37,6 @@ class RocketChatAsyncHelperTest {
 
   @Mock private RocketChatFacade rocketChatFacade;
   @Mock private SessionRepository sessionRepository;
-  @Mock private IdentityClient identityClient;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;

@@ -66,7 +66,6 @@ class SessionSupervisorFacadeTest {
   @Mock private ConsultantAgencyRepository consultantAgencyRepository;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private de.caritas.cob.userservice.api.service.user.UserAccountService userAccountService;
-  @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
   @Mock private de.caritas.cob.userservice.api.helper.AuthenticatedUser authenticatedUser;
 
   private Session session;

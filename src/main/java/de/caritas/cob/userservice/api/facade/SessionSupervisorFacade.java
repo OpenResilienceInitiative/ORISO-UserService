@@ -13,7 +13,6 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -46,7 +45,6 @@ public class SessionSupervisorFacade {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull UserAccountService userAccountService;
-  private final @NonNull IdentityClient identityClient;
 
   /**
    * ADR-008 item 4: the current request's authenticated user, used to check the Berater-Admin

@@ -6,7 +6,6 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 
@@ -14,7 +13,6 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 class RocketChatOperationConditionProvider {
 
-  private final @NonNull IdentityClient identityClient;
   private final @NonNull Session session;
   private final @NonNull Consultant consultant;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
