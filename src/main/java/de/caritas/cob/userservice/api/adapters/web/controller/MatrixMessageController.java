@@ -17,6 +17,7 @@ import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -72,9 +73,10 @@ public class MatrixMessageController {
       response.put("accessToken", tokenResponse.get("access_token"));
       response.put("userId", tokenResponse.getOrDefault("user_id", matrixUserId));
       response.put("deviceId", tokenResponse.getOrDefault("device_id", ""));
+      response.put("uiaPassword", tokenResponse.getOrDefault("interactive_auth_password", ""));
       response.put("expiresInMs", MATRIX_BROWSER_TOKEN_TTL_MS);
 
-      return ResponseEntity.ok(response);
+      return ResponseEntity.ok().cacheControl(CacheControl.noStore()).body(response);
     } catch (Exception ex) {
       log.error("Could not create Matrix token for current user", ex);
       return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)

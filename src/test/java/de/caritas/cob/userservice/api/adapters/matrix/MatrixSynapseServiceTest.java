@@ -777,6 +777,7 @@ class MatrixSynapseServiceTest {
     assertThat(browserLoginBody.getDeviceId()).isEqualTo("ORISO_WEB_DEVICE_ONE");
     assertThat(browserLoginBody.getInitialDeviceDisplayName()).isEqualTo("ORISO Web");
     assertThat(browserLoginBody.getPassword()).isEqualTo(updateBody.getPassword());
+    assertThat(result.get("interactive_auth_password")).isEqualTo(updateBody.getPassword());
   }
 
   @Test
