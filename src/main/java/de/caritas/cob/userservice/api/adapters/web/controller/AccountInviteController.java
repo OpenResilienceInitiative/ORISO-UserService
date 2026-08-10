@@ -13,6 +13,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
+import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService.InviteEmailPreview;
@@ -47,6 +49,7 @@ public class AccountInviteController {
           + " 'AUTHORIZATION_RESTRICTED_AGENCY_ADMIN')";
 
   private final @NonNull AccountInviteService accountInviteService;
+  private final @NonNull CounsellorInviteProvisioningService counsellorInviteProvisioningService;
   private final @NonNull InviteEmailTemplateService templateService;
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
   private final @NonNull InviteEmailPreviewService previewService;
@@ -178,8 +181,16 @@ public class AccountInviteController {
   })
   public ResponseEntity<AccountInviteResponseDTO> acceptInvite(
       @PathVariable String token, @RequestBody(required = false) AcceptInviteRequestDTO request) {
-    String acceptedByUserId = request == null ? null : request.acceptedByUserId;
-    AccountInvite invite = accountInviteService.acceptInvite(token, acceptedByUserId);
+    AccountInvite invite =
+        counsellorInviteProvisioningService.acceptInvite(
+            token,
+            request == null
+                ? null
+                : new ProvisionCounsellorCommand(
+                    request.username,
+                    request.password,
+                    request.formalLanguage,
+                    request.acceptedByUserId));
     AccountInviteResponseDTO response =
         AccountInviteResponseDTO.from(
             invite, latestDeliveryStatus(invite), accountInviteService.calculateAccessGate(invite));
@@ -188,6 +199,16 @@ public class AccountInviteController {
             ? AcceptPhase.PENDING_2FA_ACTIVATION.name()
             : AcceptPhase.COMPLETED.name();
     return ResponseEntity.ok(response);
+  }
+
+  @GetMapping("/users/account-invites/{token}")
+  public ResponseEntity<AccountInviteResponseDTO> getInvite(@PathVariable String token) {
+    AccountInvite invite = accountInviteService.requireActiveInvite(token);
+    return ResponseEntity.ok(
+        AccountInviteResponseDTO.from(
+            invite,
+            latestDeliveryStatus(invite),
+            accountInviteService.calculateAccessGate(invite)));
   }
 
   @PreAuthorize(ADMIN_AUTH)
@@ -348,6 +369,9 @@ public class AccountInviteController {
   }
 
   public static class AcceptInviteRequestDTO {
+    public String username;
+    public String password;
+    public Boolean formalLanguage;
     public String acceptedByUserId;
   }
 
@@ -412,6 +436,7 @@ public class AccountInviteController {
     public Long agencyId;
     public Long departmentId;
     public String provisioningStatus;
+    public String provisionedUserId;
     public String inviteStatus;
     public String emailVerificationStatus;
     public String emailDeliveryStatus;
@@ -459,7 +484,9 @@ public class AccountInviteController {
       dto.lastName = invite.getLastName();
       dto.agencyId = invite.getAgencyId();
       dto.departmentId = invite.getDepartmentId();
-      dto.provisioningStatus = null;
+      dto.provisioningStatus =
+          invite.getProvisioningStatus() == null ? null : invite.getProvisioningStatus().name();
+      dto.provisionedUserId = invite.getProvisionedUserId();
       dto.inviteStatus = invite.getStatus() == null ? null : invite.getStatus().name();
       dto.emailVerificationStatus =
           invite.getEmailVerificationStatus() == null

@@ -5,12 +5,16 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
+import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
-import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -27,8 +31,10 @@ class IdentityManagerTest {
   private static final String EMAIL = "consultant@example.org";
 
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Mock private IdentityAuthentication identityAuthentication;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @Mock private IdentitySecondFactor identitySecondFactor;
   @Mock private IdentityUsernameAvailability identityUsernameAvailability;
   @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
@@ -47,26 +53,63 @@ class IdentityManagerTest {
   @Test
   void validateOneTimePasswordShouldUseRawUsernameForKeycloakEmailUpdate() {
     var encodedUsername = usernameTranscoder.encodeUsername(RAW_USERNAME);
-    var validationResult = Map.of("created", "true", "email", EMAIL);
-    when(identityClient.finishEmailVerification(encodedUsername, "123456"))
+    var validationResult = new IdentityEmailVerification(true, false, false, EMAIL);
+    when(identitySecondFactor.finishEmailVerification(encodedUsername, "123456"))
         .thenReturn(validationResult);
 
     assertThat(identityManager.validateOneTimePassword(encodedUsername, "123456"))
         .isEqualTo(validationResult);
 
-    verify(identityClient).finishEmailVerification(encodedUsername, "123456");
-    verify(identityClient).changeEmailAddress(RAW_USERNAME, EMAIL);
+    verify(identitySecondFactor).finishEmailVerification(encodedUsername, "123456");
+    verify(identityEmailAddressUpdater).updateEmailByUsername(RAW_USERNAME, EMAIL);
   }
 
   @Test
   void validateOneTimePasswordShouldKeepAlreadyRawUsernameForKeycloakEmailUpdate() {
-    var validationResult = Map.of("created", "true", "email", EMAIL);
-    when(identityClient.finishEmailVerification(RAW_USERNAME, "123456"))
+    var validationResult = new IdentityEmailVerification(true, false, false, EMAIL);
+    when(identitySecondFactor.finishEmailVerification(RAW_USERNAME, "123456"))
         .thenReturn(validationResult);
 
     identityManager.validateOneTimePassword(RAW_USERNAME, "123456");
 
-    verify(identityClient).changeEmailAddress(RAW_USERNAME, EMAIL);
+    verify(identityEmailAddressUpdater).updateEmailByUsername(RAW_USERNAME, EMAIL);
+  }
+
+  @Test
+  void initiateEmailVerificationShouldPreserveEncodedUsernameForFocusedPort() {
+    var start = IdentityEmailVerificationStart.success();
+    when(identitySecondFactor.initiateEmailVerification(ENCODED_USERNAME, EMAIL)).thenReturn(start);
+
+    assertThat(identityManager.setUpOneTimePassword(ENCODED_USERNAME, EMAIL)).isSameAs(start);
+
+    verify(identitySecondFactor).initiateEmailVerification(ENCODED_USERNAME, EMAIL);
+  }
+
+  @Test
+  void setupOtpShouldPreserveEncodedUsernameForFocusedPort() {
+    when(identitySecondFactor.setUpOtpCredential(ENCODED_USERNAME, "123456", "secret"))
+        .thenReturn(true);
+
+    assertThat(identityManager.setUpOneTimePassword(ENCODED_USERNAME, "123456", "secret")).isTrue();
+
+    verify(identitySecondFactor).setUpOtpCredential(ENCODED_USERNAME, "123456", "secret");
+  }
+
+  @Test
+  void getOtpCredentialShouldPreserveEncodedUsernameForFocusedPort() {
+    var credential = IdentityOtpCredential.empty();
+    when(identitySecondFactor.getOtpCredential(ENCODED_USERNAME)).thenReturn(credential);
+
+    assertThat(identityManager.getOtpCredential(ENCODED_USERNAME)).isSameAs(credential);
+
+    verify(identitySecondFactor).getOtpCredential(ENCODED_USERNAME);
+  }
+
+  @Test
+  void deleteOtpCredentialShouldPreserveEncodedUsernameForFocusedPort() {
+    identityManager.deleteOneTimePassword(ENCODED_USERNAME);
+
+    verify(identitySecondFactor).deleteOtpCredential(ENCODED_USERNAME);
   }
 
   @Test
