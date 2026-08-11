@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -174,6 +175,33 @@ class MatrixRoomClientTest {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException.class)
         .hasMessageContaining("Could not invite user");
+  }
+
+  @Test
+  void inviteUserToRoom_ShouldRetry_WhenMatrixRateLimitsInvite() throws Exception {
+    var responseBody = new MatrixInviteUserResponseDTO();
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                null,
+                "{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":1}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .thenReturn(ResponseEntity.ok(responseBody));
+
+    var response = matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN);
+
+    assertThat(response.getBody()).isSameAs(responseBody);
+    verify(restTemplate, times(2))
+        .postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class));
   }
 
   @Test
