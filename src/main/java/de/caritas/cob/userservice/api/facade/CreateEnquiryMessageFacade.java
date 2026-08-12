@@ -20,6 +20,10 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
+import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortContext;
+import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortModality;
+import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPayloadBuilder;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -45,6 +49,8 @@ public class CreateEnquiryMessageFacade {
   private final @NonNull TopicConsultantRoutingService topicConsultantRoutingService;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
+  private final @NonNull ErstantwortPayloadBuilder erstantwortPayloadBuilder;
+  private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
   public CreateEnquiryMessageResponseDTO createEnquiryMessage(EnquiryData enquiryData) {
     try {
@@ -84,6 +90,7 @@ public class CreateEnquiryMessageFacade {
             .build();
     updateMatrixSession(session, enquiryData.getLanguage(), matrixRoomId, exceptionInformation);
     sendEnquiryNotifications(session, agencyList);
+    postErstantwort(session);
 
     return new CreateEnquiryMessageResponseDTO()
         .matrixRoomId(matrixRoomId)
@@ -161,6 +168,55 @@ public class CreateEnquiryMessageFacade {
     }
 
     persistNewClientRequestNotifications(session, agencyList);
+  }
+
+  /**
+   * ADR-018 / ORISO-UserService#926: the Erstantwort, posted once, right after the enquiry has been
+   * dispatched and the counsellors notified.
+   *
+   * <p><b>After the notifications on purpose.</b> The person's message reaching a counsellor is the
+   * thing that must happen; the platform's own greeting is second. Everything in here is wrapped so
+   * that no failure — serialisation, Matrix, the timeline row — can roll back a dispatched enquiry.
+   *
+   * <p>In this slice only the platform level of the resolution chain has content. The chain itself
+   * is already implemented in {@link ErstantwortPayloadBuilder}, so ORISO-Admin#601 adding the
+   * Träger editor is a form, not a migration.
+   */
+  /**
+   * The asker's own German variant. Defaults to formal when no user is resolvable — the safer
+   * error: addressing somebody formally who expected "Du" is a mismatch, while addressing somebody
+   * informally who expected "Sie" reads as a service that does not know who it is talking to.
+   */
+  private boolean isFormalLanguage(Session session) {
+    return session.getUser() == null || session.getUser().isLanguageFormal();
+  }
+
+  private void postErstantwort(Session session) {
+    try {
+      var body =
+          erstantwortPayloadBuilder.buildFirstResponseBody(
+              ErstantwortContext.builder()
+                  /* This facade only ever handles enquiries, and an enquiry exists
+                  only in Agency Counselling — checkIfNotAnonymousEnquiry rejects
+                  the anonymous Live Chat path before we get here, and Self-Help
+                  groups never call it. Pinning the modality rather than deriving
+                  it keeps the Live-Chat exclusions honest instead of accidental. */
+                  .modality(ErstantwortModality.AGENCY_COUNSELLING)
+                  /* Without this every German wording defaulted to the formal
+                  variant, so an informal Träger's advice seekers were addressed
+                  with "Sie" throughout their own Erstantwort. `languageFormal` on
+                  the User is the same flag AskerDataProvider already uses to pick
+                  the German variant everywhere else. */
+                  .informal(!isFormalLanguage(session))
+                  .build());
+      if (body == null) {
+        return;
+      }
+      matrixSessionSystemMessageService.postFirstResponseMessage(session, body);
+      eventNotificationService.createFirstResponseNotification(session);
+    } catch (RuntimeException exception) {
+      log.warn("Could not post the Erstantwort for session {}", session.getId(), exception);
+    }
   }
 
   private boolean isAppointmentEnquiryMessage(EnquiryData enquiryData) {

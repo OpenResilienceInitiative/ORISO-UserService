@@ -2,14 +2,16 @@ package de.caritas.cob.userservice.api;
 
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
-import de.caritas.cob.userservice.api.model.OtpInfoDTO;
+import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
+import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
-import java.util.Map;
-import java.util.Optional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -20,27 +22,30 @@ import org.springframework.stereotype.Service;
 public class IdentityManager implements IdentityManaging {
 
   private final IdentityClient identityClient;
+  private final IdentityEmailAddressUpdater identityEmailAddressUpdater;
   private final IdentityAuthentication identityAuthentication;
   private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  private final IdentitySecondFactor identitySecondFactor;
   private final IdentityUsernameAvailability identityUsernameAvailability;
   private final UsernameTranscoder usernameTranscoder;
 
   @Override
-  public Optional<String> setUpOneTimePassword(String username, String email) {
-    return identityClient.initiateEmailVerification(username, email);
+  public IdentityEmailVerificationStart setUpOneTimePassword(String username, String email) {
+    return identitySecondFactor.initiateEmailVerification(username, email);
   }
 
   @Override
   public boolean setUpOneTimePassword(String username, String initialCode, String secret) {
-    return identityClient.setUpOtpCredential(username, initialCode, secret);
+    return identitySecondFactor.setUpOtpCredential(username, initialCode, secret);
   }
 
   @Override
-  public Map<String, String> validateOneTimePassword(String username, String code) {
-    var validationResult = identityClient.finishEmailVerification(username, code);
-    if (validationResult.get("created").equals("true")) {
-      var email = validationResult.get("email");
-      identityClient.changeEmailAddress(usernameTranscoder.decodeUsername(username), email);
+  public IdentityEmailVerification validateOneTimePassword(String username, String code) {
+    var validationResult = identitySecondFactor.finishEmailVerification(username, code);
+    if (validationResult.created()) {
+      var email = validationResult.email();
+      identityEmailAddressUpdater.updateEmailByUsername(
+          usernameTranscoder.decodeUsername(username), email);
     }
 
     return validationResult;
@@ -63,12 +68,12 @@ public class IdentityManager implements IdentityManaging {
 
   @Override
   public void deleteOneTimePassword(String username) {
-    identityClient.deleteOtpCredential(username);
+    identitySecondFactor.deleteOtpCredential(username);
   }
 
   @Override
-  public OtpInfoDTO getOtpCredential(String username) {
-    return identityClient.getOtpCredential(username);
+  public IdentityOtpCredential getOtpCredential(String username) {
+    return identitySecondFactor.getOtpCredential(username);
   }
 
   @Override

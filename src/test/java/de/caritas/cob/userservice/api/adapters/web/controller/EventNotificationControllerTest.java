@@ -1,10 +1,10 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -20,7 +20,6 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -137,7 +136,8 @@ class EventNotificationControllerTest {
     var response = controllerWithMirror.createMessageEventNotification(request);
 
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
-    verifyNoInteractions(eventNotificationService);
+    verify(eventNotificationService, never())
+        .createMessageNotificationFromRoom(any(), any(), any(), anyBoolean(), any());
   }
 
   @Test
@@ -157,38 +157,6 @@ class EventNotificationControllerTest {
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
         .createMessageNotificationFromRoom("room-2", "u-1", "hello", false, "Sender", null);
-  }
-
-  @Test
-  void createMessageEventNotification_withMatrixEventIdPreservesOpaqueCorrelation() {
-    when(authenticatedUser.getUserId()).thenReturn("u-1");
-    var request = new EventNotificationController.MessageEventRequestDTO();
-    request.setRoomId("room-2");
-    request.setMatrixEventId("$event-2:matrix.example");
-
-    var response = controllerWithoutMirror.createMessageEventNotification(request);
-
-    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-    ArgumentCaptor<PrivacyEnvelope> envelopeCaptor = ArgumentCaptor.forClass(PrivacyEnvelope.class);
-    verify(eventNotificationService)
-        .createMessageNotificationFromRoom(
-            eq("room-2"), eq("u-1"), isNull(), eq(false), isNull(), envelopeCaptor.capture());
-    assertEquals("$event-2:matrix.example", envelopeCaptor.getValue().getMessageId());
-    assertEquals(null, envelopeCaptor.getValue().getContentClass());
-  }
-
-  @Test
-  void createMessageEventNotification_withBlankMatrixEventIdUsesLegacyNullEnvelope() {
-    when(authenticatedUser.getUserId()).thenReturn("u-1");
-    var request = new EventNotificationController.MessageEventRequestDTO();
-    request.setRoomId("room-2");
-    request.setMatrixEventId("   ");
-
-    var response = controllerWithoutMirror.createMessageEventNotification(request);
-
-    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-    verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-2", "u-1", null, false, null, null);
   }
 
   @Test
@@ -212,32 +180,6 @@ class EventNotificationControllerTest {
     verify(eventNotificationService)
         .createThreadReplyNotificationFromRoom(
             "room-3", "u-2", "reply", "thread-3", true, "Sender-3", "parent", null);
-  }
-
-  @Test
-  void createThreadEventNotification_withMatrixEventIdPreservesOpaqueCorrelation() {
-    when(authenticatedUser.getUserId()).thenReturn("u-2");
-    var request = new EventNotificationController.MessageEventRequestDTO();
-    request.setRoomId("room-3");
-    request.setThreadRootId("thread-3");
-    request.setMatrixEventId("$reply-3:matrix.example");
-
-    var response = controllerWithoutMirror.createMessageEventNotification(request);
-
-    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-    ArgumentCaptor<PrivacyEnvelope> envelopeCaptor = ArgumentCaptor.forClass(PrivacyEnvelope.class);
-    verify(eventNotificationService)
-        .createThreadReplyNotificationFromRoom(
-            eq("room-3"),
-            eq("u-2"),
-            isNull(),
-            eq("thread-3"),
-            eq(false),
-            isNull(),
-            isNull(),
-            envelopeCaptor.capture());
-    assertEquals("$reply-3:matrix.example", envelopeCaptor.getValue().getMessageId());
-    assertEquals(null, envelopeCaptor.getValue().getContentClass());
   }
 
   @Test
@@ -270,5 +212,127 @@ class EventNotificationControllerTest {
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
         .createMessageNotificationFromRoom("room-5", "u-4", "preview", false, null, null);
+  }
+
+  @Test
+  void createMessageEventNotification_withMatrixEventId_passesDedupEnvelope() {
+    // #942: the Matrix event id keys deduplication against the sync listener.
+    when(authenticatedUser.getUserId()).thenReturn("u-5");
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("room-6");
+    request.setMessagePreview("preview");
+    request.setMatrixEventId("$evt-42");
+
+    var response = controllerWithoutMirror.createMessageEventNotification(request);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    var envelopeCaptor = org.mockito.ArgumentCaptor.forClass(PrivacyEnvelope.class);
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            org.mockito.ArgumentMatchers.eq("room-6"),
+            org.mockito.ArgumentMatchers.eq("u-5"),
+            org.mockito.ArgumentMatchers.eq("preview"),
+            org.mockito.ArgumentMatchers.eq(false),
+            org.mockito.ArgumentMatchers.isNull(),
+            envelopeCaptor.capture());
+    assertEquals("$evt-42", envelopeCaptor.getValue().getMessageId());
+  }
+
+  @Test
+  void createMessageEventNotification_withContentMetadata_populatesEnvelope() {
+    // #942 review: the REST producer must carry contentClass/hasAttachment like the
+    // Matrix listener, or the persisted row loses them when this path wins the dedup race.
+    when(authenticatedUser.getUserId()).thenReturn("u-6");
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("room-7");
+    request.setMessagePreview("preview");
+    request.setMatrixEventId("$evt-43");
+    request.setContentClass("image");
+    request.setHasAttachment(true);
+
+    var response = controllerWithoutMirror.createMessageEventNotification(request);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    var envelopeCaptor = org.mockito.ArgumentCaptor.forClass(PrivacyEnvelope.class);
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            org.mockito.ArgumentMatchers.eq("room-7"),
+            org.mockito.ArgumentMatchers.eq("u-6"),
+            org.mockito.ArgumentMatchers.eq("preview"),
+            org.mockito.ArgumentMatchers.eq(false),
+            org.mockito.ArgumentMatchers.isNull(),
+            envelopeCaptor.capture());
+    assertEquals("IMAGE", envelopeCaptor.getValue().getContentClass());
+    assertEquals(true, envelopeCaptor.getValue().isHasAttachment());
+  }
+
+  @Test
+  void createMessageEventNotification_unknownContentClass_normalisedToOther() {
+    // contentClass feeds text rendered for other users — arbitrary client strings
+    // must collapse into the classifyContent vocabulary.
+    when(authenticatedUser.getUserId()).thenReturn("u-6");
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("room-7");
+    request.setMatrixEventId("$evt-43");
+    request.setContentClass("<script>alert(1)</script>");
+
+    controllerWithoutMirror.createMessageEventNotification(request);
+
+    var envelopeCaptor = org.mockito.ArgumentCaptor.forClass(PrivacyEnvelope.class);
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            org.mockito.ArgumentMatchers.eq("room-7"),
+            org.mockito.ArgumentMatchers.eq("u-6"),
+            org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.eq(false),
+            org.mockito.ArgumentMatchers.isNull(),
+            envelopeCaptor.capture());
+    assertEquals("OTHER", envelopeCaptor.getValue().getContentClass());
+  }
+
+  @Test
+  void createThreadReplyEventNotification_withMatrixEventId_passesDedupEnvelope() {
+    // #942 review: the thread-reply branch shares the envelope construction and
+    // must dedup by Matrix event id too.
+    when(authenticatedUser.getUserId()).thenReturn("u-7");
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("room-8");
+    request.setMessagePreview("reply");
+    request.setThreadRootId("$root-1");
+    request.setMatrixEventId("$evt-44");
+
+    var response = controllerWithoutMirror.createMessageEventNotification(request);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    var envelopeCaptor = org.mockito.ArgumentCaptor.forClass(PrivacyEnvelope.class);
+    verify(eventNotificationService)
+        .createThreadReplyNotificationFromRoom(
+            org.mockito.ArgumentMatchers.eq("room-8"),
+            org.mockito.ArgumentMatchers.eq("u-7"),
+            org.mockito.ArgumentMatchers.eq("reply"),
+            org.mockito.ArgumentMatchers.eq("$root-1"),
+            org.mockito.ArgumentMatchers.eq(false),
+            org.mockito.ArgumentMatchers.isNull(),
+            org.mockito.ArgumentMatchers.isNull(),
+            envelopeCaptor.capture());
+    assertEquals("$evt-44", envelopeCaptor.getValue().getMessageId());
+  }
+
+  @Test
+  void createMessageEventNotification_matrixEventIdBoundedAndBodyValidated() throws Exception {
+    // #942 review: oversized event ids must be rejected at the API boundary before
+    // they can poison the 191-char dedup column.
+    java.lang.reflect.Field field =
+        EventNotificationController.MessageEventRequestDTO.class.getDeclaredField("matrixEventId");
+    jakarta.validation.constraints.Size size =
+        field.getAnnotation(jakarta.validation.constraints.Size.class);
+    assertEquals(255, size.max());
+
+    Method endpoint =
+        EventNotificationController.class.getMethod(
+            "createMessageEventNotification",
+            EventNotificationController.MessageEventRequestDTO.class);
+    assertEquals(
+        true, endpoint.getParameters()[0].isAnnotationPresent(jakarta.validation.Valid.class));
   }
 }

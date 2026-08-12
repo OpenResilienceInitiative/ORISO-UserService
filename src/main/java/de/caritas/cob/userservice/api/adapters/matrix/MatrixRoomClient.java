@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException
 import java.net.URI;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.regex.Pattern;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpEntity;
@@ -40,6 +41,10 @@ public class MatrixRoomClient {
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.power_levels";
   private static final String ENDPOINT_MEMBERSHIP =
       "/_matrix/client/r0/rooms/{roomId}/state/m.room.member/{userId}";
+  private static final int INVITE_USER_MAX_ATTEMPTS = 3;
+  private static final long DEFAULT_INVITE_RETRY_DELAY_MS = 1000L;
+  private static final Pattern RETRY_AFTER_MS_PATTERN =
+      Pattern.compile("\"retry_after_ms\"\\s*:\\s*(\\d+)");
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
@@ -113,42 +118,88 @@ public class MatrixRoomClient {
   public ResponseEntity<MatrixInviteUserResponseDTO> inviteUserToRoom(
       String roomId, String userId, String accessToken) throws MatrixInviteUserException {
 
+    var headers = getClientHttpHeaders(accessToken);
+    headers.setContentType(MediaType.APPLICATION_JSON);
+
+    var inviteRequest = new MatrixInviteUserRequestDTO();
+    inviteRequest.setUserId(userId);
+
+    HttpEntity<MatrixInviteUserRequestDTO> request = new HttpEntity<>(inviteRequest, headers);
+
+    var url = buildUrl(ENDPOINT_INVITE_USER, Map.of("roomId", roomId));
+
+    for (int attempt = 1; attempt <= INVITE_USER_MAX_ATTEMPTS; attempt++) {
+      try {
+        log.info("Inviting Matrix user: {} to room: {} at URL: {}", userId, roomId, url);
+
+        var response = restTemplate.postForEntity(url, request, MatrixInviteUserResponseDTO.class);
+
+        log.info("Successfully invited Matrix user: {} to room: {}", userId, roomId);
+
+        return response;
+      } catch (HttpClientErrorException ex) {
+        if (isRateLimited(ex) && attempt < INVITE_USER_MAX_ATTEMPTS) {
+          waitBeforeInviteRetry(userId, roomId, attempt, retryAfterMs(ex));
+          continue;
+        }
+
+        log.error(
+            "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Status: {}, Response: {}",
+            userId,
+            roomId,
+            ex.getStatusCode(),
+            ex.getResponseBodyAsString());
+        throw new MatrixInviteUserException(
+            String.format(
+                "Could not invite user (%s) to room (%s) in Matrix: %s",
+                userId, roomId, ex.getResponseBodyAsString()));
+      } catch (Exception ex) {
+        log.error(
+            "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Reason",
+            userId,
+            roomId,
+            ex);
+        throw new MatrixInviteUserException(
+            String.format("Could not invite user (%s) to room (%s) in Matrix", userId, roomId));
+      }
+    }
+
+    throw new MatrixInviteUserException(
+        String.format("Could not invite user (%s) to room (%s) in Matrix", userId, roomId));
+  }
+
+  private boolean isRateLimited(HttpClientErrorException ex) {
+    return ex.getStatusCode().value() == 429
+        || ex.getResponseBodyAsString().contains("M_LIMIT_EXCEEDED");
+  }
+
+  private long retryAfterMs(HttpClientErrorException ex) {
+    var matcher = RETRY_AFTER_MS_PATTERN.matcher(ex.getResponseBodyAsString());
+    if (matcher.find()) {
+      try {
+        return Long.parseLong(matcher.group(1));
+      } catch (NumberFormatException ignored) {
+        return DEFAULT_INVITE_RETRY_DELAY_MS;
+      }
+    }
+    return DEFAULT_INVITE_RETRY_DELAY_MS;
+  }
+
+  private void waitBeforeInviteRetry(String userId, String roomId, int attempt, long retryAfterMs)
+      throws MatrixInviteUserException {
+    log.warn(
+        "Matrix invite for user {} to room {} was rate limited; retrying attempt {} of {} after {} ms",
+        userId,
+        roomId,
+        attempt + 1,
+        INVITE_USER_MAX_ATTEMPTS,
+        retryAfterMs);
     try {
-      var headers = getClientHttpHeaders(accessToken);
-      headers.setContentType(MediaType.APPLICATION_JSON);
-
-      var inviteRequest = new MatrixInviteUserRequestDTO();
-      inviteRequest.setUserId(userId);
-
-      HttpEntity<MatrixInviteUserRequestDTO> request = new HttpEntity<>(inviteRequest, headers);
-
-      var url = buildUrl(ENDPOINT_INVITE_USER, Map.of("roomId", roomId));
-      log.info("Inviting Matrix user: {} to room: {} at URL: {}", userId, roomId, url);
-
-      var response = restTemplate.postForEntity(url, request, MatrixInviteUserResponseDTO.class);
-
-      log.info("Successfully invited Matrix user: {} to room: {}", userId, roomId);
-
-      return response;
-    } catch (HttpClientErrorException ex) {
-      log.error(
-          "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Status: {}, Response: {}",
-          userId,
-          roomId,
-          ex.getStatusCode(),
-          ex.getResponseBodyAsString());
+      Thread.sleep(retryAfterMs);
+    } catch (InterruptedException ex) {
+      Thread.currentThread().interrupt();
       throw new MatrixInviteUserException(
-          String.format(
-              "Could not invite user (%s) to room (%s) in Matrix: %s",
-              userId, roomId, ex.getResponseBodyAsString()));
-    } catch (Exception ex) {
-      log.error(
-          "Matrix Error: Could not invite user ({}) to room ({}) in Matrix. Reason",
-          userId,
-          roomId,
-          ex);
-      throw new MatrixInviteUserException(
-          String.format("Could not invite user (%s) to room (%s) in Matrix", userId, roomId));
+          String.format("Interrupted while retrying Matrix invite for user (%s)", userId), ex);
     }
   }
 
