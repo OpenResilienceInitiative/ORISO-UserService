@@ -1,0 +1,5 @@
+ALTER TABLE consultant
+  ADD COLUMN salutation VARCHAR(64) NULL,
+  ADD COLUMN `position` VARCHAR(255) NULL,
+  ADD COLUMN title VARCHAR(255) NULL,
+  ADD COLUMN admin_remarks LONGTEXT NULL;

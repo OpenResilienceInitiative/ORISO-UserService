@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="0083-consultant-personal-info" author="frank">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="consultant" columnName="salutation"/>
+      </not>
+    </preConditions>
+    <sqlFile
+      path="db/changelog/changeset/0083_consultant_personal_info/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    <rollback>
+      <sqlFile
+        path="db/changelog/changeset/0083_consultant_personal_info/rollback.sql"
+        relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -148,6 +148,26 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Column(name = "display_name")
   private String displayName;
 
+  @Column(name = "salutation", length = 64)
+  private String salutation;
+
+  @Column(name = "position")
+  @Size(max = 255)
+  private String position;
+
+  @Column(name = "title")
+  @Size(max = 255)
+  private String title;
+
+  /**
+   * Free-text remarks about this consultant, visible to tenant-level admins (tenant admin /
+   * platform admin) only. Must never be exposed to restricted agency admins or app-layer endpoints.
+   */
+  @Lob
+  @Column(name = "admin_remarks", columnDefinition = "longtext")
+  @JdbcTypeCode(SqlTypes.LONGVARCHAR)
+  private String adminRemarks;
+
   @Column(name = "public_slug", length = 128)
   private String publicSlug;
 

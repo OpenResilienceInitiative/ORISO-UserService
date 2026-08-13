@@ -5,6 +5,7 @@ import static de.caritas.cob.userservice.api.exception.httpresponses.customheade
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.fail;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.when;
@@ -99,6 +100,63 @@ public class ConsultantUpdateServiceBase {
     assertThat(
         updatedConsultant.getDataPrivacyConfirmation().getDayOfMonth(),
         is(LocalDateTime.now().getDayOfMonth()));
+  }
+
+  public void updateConsultant_Should_persistPersonalInfo_With_nullUntouchedAndBlankClearing() {
+    var initial = new UpdateAdminConsultantDTO();
+    initial.setAbsent(false);
+    initial.setFirstname("first");
+    initial.setLastname("last");
+    initial.setEmail("personalinfo@address.de");
+    initial.formalLanguage(true);
+    initial.setSalutation("counsellor_female");
+    initial.setPosition("Head of counselling centre");
+    initial.setTitle("Dipl.-Soz.Päd.");
+    initial.setAdminRemarks("Initial internal note");
+
+    Consultant afterInitial =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), initial);
+
+    assertThat(afterInitial.getSalutation(), is("counsellor_female"));
+    assertThat(afterInitial.getPosition(), is("Head of counselling centre"));
+    assertThat(afterInitial.getTitle(), is("Dipl.-Soz.Päd."));
+    assertThat(afterInitial.getAdminRemarks(), is("Initial internal note"));
+
+    // Null values leave the stored personal info untouched (self-service path safety).
+    var untouched = new UpdateAdminConsultantDTO();
+    untouched.setAbsent(false);
+    untouched.setFirstname("first");
+    untouched.setLastname("last");
+    untouched.setEmail("personalinfo@address.de");
+    untouched.formalLanguage(true);
+
+    Consultant afterUntouched =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), untouched);
+
+    assertThat(afterUntouched.getSalutation(), is("counsellor_female"));
+    assertThat(afterUntouched.getPosition(), is("Head of counselling centre"));
+    assertThat(afterUntouched.getTitle(), is("Dipl.-Soz.Päd."));
+    assertThat(afterUntouched.getAdminRemarks(), is("Initial internal note"));
+
+    // Empty strings clear the stored values.
+    var clearing = new UpdateAdminConsultantDTO();
+    clearing.setAbsent(false);
+    clearing.setFirstname("first");
+    clearing.setLastname("last");
+    clearing.setEmail("personalinfo@address.de");
+    clearing.formalLanguage(true);
+    clearing.setSalutation("");
+    clearing.setPosition("");
+    clearing.setTitle("");
+    clearing.setAdminRemarks("");
+
+    Consultant afterClearing =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), clearing);
+
+    assertThat(afterClearing.getSalutation(), nullValue());
+    assertThat(afterClearing.getPosition(), nullValue());
+    assertThat(afterClearing.getTitle(), nullValue());
+    assertThat(afterClearing.getAdminRemarks(), nullValue());
   }
 
   public void updateConsultant_Should_throwCustomResponseException_When_absenceIsInvalid() {

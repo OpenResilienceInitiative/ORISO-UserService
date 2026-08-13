@@ -81,10 +81,21 @@ public class ConsultantAdminService {
                 () ->
                     new NoContentException(
                         String.format("Consultant with id %s not found", consultantId)));
-    var response = ConsultantResponseDTOBuilder.getInstance(consultant).buildResponseDTO();
+    var response =
+        ConsultantResponseDTOBuilder.getInstance(consultant)
+            .includeAdminRemarks(canAccessAdminRemarks())
+            .buildResponseDTO();
     enrichWithDisplayName(consultantId, response);
     enrichWithTopics(consultantId, response);
     return response;
+  }
+
+  /**
+   * Admin remarks (#994) are only readable and writable for tenant-level admins (tenant admin /
+   * platform admin) — never for restricted agency admins and never on app-layer endpoints.
+   */
+  private boolean canAccessAdminRemarks() {
+    return authenticatedUser.hasTenantLevelAdminRole();
   }
 
   private void enrichWithTopics(String consultantId, ConsultantAdminResponseDTO response) {
@@ -126,7 +137,13 @@ public class ConsultantAdminService {
    */
   public ConsultantAdminResponseDTO createNewConsultant(CreateConsultantDTO createConsultantDTO)
       throws DistributedTransactionException {
+    if (!canAccessAdminRemarks()) {
+      createConsultantDTO.setAdminRemarks(null);
+    }
     var response = createConsultantSaga.createNewConsultant(createConsultantDTO);
+    if (canAccessAdminRemarks()) {
+      response.getEmbedded().setAdminRemarks(createConsultantDTO.getAdminRemarks());
+    }
     enrichWithTopics(response.getEmbedded().getId(), response);
     return response;
   }
@@ -141,11 +158,16 @@ public class ConsultantAdminService {
    */
   public ConsultantAdminResponseDTO updateConsultant(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
+    if (!canAccessAdminRemarks()) {
+      updateConsultantDTO.setAdminRemarks(null);
+    }
     Consultant updatedConsultant =
         this.consultantUpdateService.updateConsultant(consultantId, updateConsultantDTO);
 
     ConsultantAdminResponseDTO consultantAdminResponseDTO =
-        ConsultantResponseDTOBuilder.getInstance(updatedConsultant).buildResponseDTO();
+        ConsultantResponseDTOBuilder.getInstance(updatedConsultant)
+            .includeAdminRemarks(canAccessAdminRemarks())
+            .buildResponseDTO();
 
     this.appointmentService.updateConsultant(consultantAdminResponseDTO);
     enrichWithTopics(consultantId, consultantAdminResponseDTO);
