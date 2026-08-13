@@ -347,8 +347,10 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       HttpHeaders headers,
       HttpStatusCode status,
       WebRequest request) {
-    // Compare numerically: status is an HttpStatusCode, which is only equal to the HttpStatus enum
-    // constant when the code resolves to one. A custom/unresolved 500 would otherwise slip through.
+    // Compare by status code rather than by enum identity, so this does not depend on the caller
+    // handing us the HttpStatus constant rather than some other HttpStatusCode carrying 500.
+    // Equivalent today: HttpStatusCode is sealed to HttpStatus and DefaultHttpStatusCode, and
+    // valueOf(500) always resolves to the enum constant.
     if (status.value() == HttpStatus.INTERNAL_SERVER_ERROR.value()) {
       request.setAttribute("jakarta.servlet.error.exception", ex, 0);
     }
