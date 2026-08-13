@@ -62,6 +62,7 @@ class ConsultantDtoMapperTest {
     // then
     assertThat(consultant.getDisplayName()).isEqualTo("Public Name");
     assertThat(consultant.getPublicName()).isEqualTo("Public Name");
+    assertThat(consultant.getInternalDisplayName()).isEqualTo("Internal Name");
     assertThat(consultant.getVacated()).isTrue();
     assertThat(consultant.getAdminRights()).isTrue();
     assertThat(consultant.getRoleInOrg()).isEqualTo("Counsellor Admin");
@@ -122,6 +123,7 @@ class ConsultantDtoMapperTest {
     consultantMap.put("updatedAt", "2026-06-08T10:00:00");
     consultantMap.put("deletedAt", "2026-06-09T10:00:00");
     consultantMap.put("displayName", "Public Name");
+    consultantMap.put("internalDisplayName", "Internal Name");
     consultantMap.put("tenantId", 1L);
     consultantMap.put("tenantName", "Tenant");
     consultantMap.put("agencies", new ArrayList<Map<String, Object>>());

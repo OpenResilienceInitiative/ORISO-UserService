@@ -147,6 +147,8 @@ public class ConsultantAdminServiceTest {
     var result = consultantAdminService.findConsultantById("c-1");
 
     assertThat(result.getEmbedded().getDisplayName()).isEqualTo("Test User");
+    // publicName is the alias of the public display name (#996), no longer null scaffolding.
+    assertThat(result.getEmbedded().getPublicName()).isEqualTo("Test User");
   }
 
   @Test

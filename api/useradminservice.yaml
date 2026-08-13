@@ -1266,6 +1266,16 @@ components:
           type: string
           example: nikunj-rohit
           description: Optional public slug. Admin-created values go live immediately.
+        displayName:
+          type: string
+          maxLength: 255
+          description: Optional PUBLIC display name shown to advice seekers.
+        internalDisplayName:
+          type: string
+          maxLength: 255
+          description: >-
+            Optional internal display name for internal surfaces; internal contexts fall back to
+            the public displayName when empty.
         salutation:
           type: string
           maxLength: 64
@@ -1376,6 +1386,19 @@ components:
           type: boolean
           example: false
           description: If true, rejects the currently pending public slug without changing the active slug.
+        displayName:
+          type: string
+          maxLength: 255
+          description: >-
+            The PUBLIC display name shown to advice seekers. Null leaves the stored value
+            untouched; an empty string clears it.
+        internalDisplayName:
+          type: string
+          maxLength: 255
+          description: >-
+            Optional internal display name for internal surfaces; internal contexts fall back to
+            the public displayName when empty. Null leaves the stored value untouched; an empty
+            string clears it.
         salutation:
           type: string
           maxLength: 64
@@ -1455,8 +1478,15 @@ components:
           type: string
         displayName:
           type: string
+          description: The PUBLIC display name — the name advice seekers see.
         publicName:
           type: string
+          description: Alias of displayName (the public name), kept for existing clients.
+        internalDisplayName:
+          type: string
+          description: >-
+            Optional internal display name for internal surfaces (team lists, internal group
+            chats, supervision). Internal contexts fall back to displayName when empty.
         salutation:
           type: string
           example: counsellor_female

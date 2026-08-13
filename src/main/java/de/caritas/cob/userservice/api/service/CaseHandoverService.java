@@ -501,7 +501,8 @@ public class CaseHandoverService {
               .firstName(consultant.getFirstName())
               .lastName(consultant.getLastName())
               .username(decodeUsername(consultant.getUsername()))
-              .displayName(decodeUsername(consultant.getDisplayName())));
+              // Handover candidates are shown to colleagues (internal surface, #996).
+              .displayName(decodeUsername(consultant.getInternalDisplayNameOrFallback())));
     }
 
     return dto;

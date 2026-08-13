@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="0084-consultant-internal-display-name" author="frank">
+    <preConditions onFail="MARK_RAN">
+      <not>
+        <columnExists tableName="consultant" columnName="internal_display_name"/>
+      </not>
+    </preConditions>
+    <sqlFile
+      path="db/changelog/changeset/0084_consultant_internal_display_name/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    <rollback>
+      <sql>ALTER TABLE consultant DROP COLUMN internal_display_name;</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

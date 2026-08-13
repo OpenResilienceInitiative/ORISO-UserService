@@ -121,7 +121,14 @@ public class ConsultantAdminService {
   private void enrichWithDisplayName(String consultantId, ConsultantAdminResponseDTO response) {
     accountManager
         .findConsultant(consultantId)
-        .ifPresent(map -> response.getEmbedded().setDisplayName(getDisplayNameFromUserMap(map)));
+        .ifPresent(
+            map -> {
+              var displayName = getDisplayNameFromUserMap(map);
+              response.getEmbedded().setDisplayName(displayName);
+              // publicName is an alias of the PUBLIC display name (#996) — it used to be
+              // dead scaffolding hardcoded to null.
+              response.getEmbedded().setPublicName(displayName);
+            });
   }
 
   private static String getDisplayNameFromUserMap(Map<String, Object> map) {

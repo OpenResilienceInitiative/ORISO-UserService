@@ -38,7 +38,8 @@ class AdminDtoMapperTest {
     assertThat(result.getEmbedded().get(0).getEmbedded().getTenantId()).isEqualTo("2");
     assertThat(result.getEmbedded().get(0).getEmbedded().getTenantName()).isNull();
     assertThat(result.getEmbedded().get(0).getEmbedded().getTenantSubdomain()).isNull();
-    assertThat(result.getEmbedded().get(0).getEmbedded().getPublicName()).isNull();
+    // publicName used to be dead scaffolding hardcoded to null (#996) — it is the full name now.
+    assertThat(result.getEmbedded().get(0).getEmbedded().getPublicName()).isEqualTo("First Last");
     assertThat(result.getEmbedded().get(0).getEmbedded().getRoleInOrg()).isEqualTo("Tenant Admin");
     assertThat(result.getEmbedded().get(0).getEmbedded().getVacated()).isFalse();
     assertThat(result.getEmbedded().get(0).getEmbedded().getAdminRights()).isTrue();

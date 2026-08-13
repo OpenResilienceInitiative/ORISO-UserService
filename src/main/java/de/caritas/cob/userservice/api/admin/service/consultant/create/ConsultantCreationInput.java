@@ -24,6 +24,14 @@ interface ConsultantCreationInput {
     return null;
   }
 
+  default String getDisplayName() {
+    return null;
+  }
+
+  default String getInternalDisplayName() {
+    return null;
+  }
+
   default String getSalutation() {
     return null;
   }

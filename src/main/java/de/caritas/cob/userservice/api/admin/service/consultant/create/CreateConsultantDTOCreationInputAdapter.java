@@ -83,6 +83,16 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   }
 
   @Override
+  public String getDisplayName() {
+    return this.createConsultantDTO.getDisplayName();
+  }
+
+  @Override
+  public String getInternalDisplayName() {
+    return this.createConsultantDTO.getInternalDisplayName();
+  }
+
+  @Override
   public String getSalutation() {
     return this.createConsultantDTO.getSalutation();
   }

@@ -145,8 +145,17 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Size(max = 36)
   private String assignedSupervisorId;
 
+  /** The PUBLIC display name — the name advice seekers see. */
   @Column(name = "display_name")
   private String displayName;
+
+  /**
+   * Optional internal display name shown on internal surfaces only (team lists, internal group
+   * chats, supervision). Advice-seeker surfaces must keep using {@link #getDisplayName()}.
+   */
+  @Column(name = "internal_display_name")
+  @Size(max = 255)
+  private String internalDisplayName;
 
   @Column(name = "salutation", length = 64)
   private String salutation;
@@ -297,6 +306,23 @@ public class Consultant implements TenantAware, NotificationsAware {
   @JsonIgnore
   public String getFullName() {
     return (this.firstName + " " + this.lastName).trim();
+  }
+
+  /**
+   * THE central fallback rule for the dual-name model (#996): internal contexts (team lists,
+   * internal group chats, supervision, case handover between colleagues) resolve {@code
+   * internalDisplayName ?? displayName}. A blank internal name counts as absent. Advice-seeker
+   * surfaces must never call this — they keep using {@link #getDisplayName()} (the public name).
+   *
+   * @return the internal display name, falling back to the public display name (may be null when
+   *     neither is set — callers keep their existing full-name/username fallbacks)
+   */
+  @JsonIgnore
+  public String getInternalDisplayNameOrFallback() {
+    if (internalDisplayName != null && !internalDisplayName.isBlank()) {
+      return internalDisplayName;
+    }
+    return displayName;
   }
 
   @JsonIgnore
