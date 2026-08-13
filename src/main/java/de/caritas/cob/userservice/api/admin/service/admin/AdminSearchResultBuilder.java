@@ -18,7 +18,9 @@ public class AdminSearchResultBuilder
   private final long totalCount;
 
   private AdminSearchResultBuilder(List<Admin> admins, long totalCount) {
-    super(null);
+    // Admin search paginates through Spring Data, not Hibernate Search, so there is no
+    // FullTextQuery to hand to the base class. hasNextPage() is overridden accordingly.
+    super();
     this.admins = admins;
     this.totalCount = totalCount;
   }
@@ -37,16 +39,26 @@ public class AdminSearchResultBuilder
     var paginationLinks =
         new PaginationLinks()
             .self(buildPageLink(page))
-            .next(hasNext() ? buildPageLink(page + 1) : null)
+            .next(hasNextPage() ? buildPageLink(page + 1) : null)
             .previous(page > 1 ? buildPageLink(page - 1) : null);
 
     return new AdminSearchResultDTO()
         .embedded(resultList)
         .links(paginationLinks)
-        .total((int) totalCount);
+        .total(toIntTotal(totalCount));
   }
 
-  private boolean hasNext() {
+  /**
+   * Narrows the repository's {@code long} count to the {@code int} the generated DTO exposes.
+   * Clamping instead of casting avoids the silent wraparound to a negative total that a plain
+   * {@code (int)} cast would produce beyond {@link Integer#MAX_VALUE}.
+   */
+  private static int toIntTotal(long totalCount) {
+    return (int) Math.min(totalCount, Integer.MAX_VALUE);
+  }
+
+  @Override
+  protected boolean hasNextPage() {
     return totalCount > (long) page * perPage;
   }
 

@@ -163,7 +163,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final HttpHeaders headers,
       final HttpStatusCode status,
       final WebRequest request) {
-    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status, ex);
+    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status, ex.getMessage(), ex);
 
     return handleExceptionInternal(null, null, headers, status, request);
   }
@@ -177,7 +177,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   @ExceptionHandler({InvalidDataAccessApiUsageException.class})
   protected ResponseEntity<Object> handleConflict(
       final RuntimeException ex, final WebRequest request) {
-    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, HttpStatus.CONFLICT, ex.getStackTrace());
+    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, HttpStatus.CONFLICT, ex.getMessage(), ex);
 
     return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.CONFLICT, request);
   }
@@ -347,7 +347,9 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       HttpHeaders headers,
       HttpStatusCode status,
       WebRequest request) {
-    if (HttpStatus.INTERNAL_SERVER_ERROR.equals(status)) {
+    // Compare numerically: status is an HttpStatusCode, which is only equal to the HttpStatus enum
+    // constant when the code resolves to one. A custom/unresolved 500 would otherwise slip through.
+    if (status.value() == HttpStatus.INTERNAL_SERVER_ERROR.value()) {
       request.setAttribute("jakarta.servlet.error.exception", ex, 0);
     }
 
