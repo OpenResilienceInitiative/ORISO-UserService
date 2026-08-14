@@ -196,19 +196,19 @@
       "primaryTotal": -509
     },
     "verifiedCurrent": {
-      "verifiedApplicationHead": "e9f0fca87f04d072fdd628e6d3953f0dac61b46e",
-      "unit": 3571,
-      "integration": 860,
-      "primaryTotal": 4431,
+      "verifiedApplicationHead": "8b4b463435463b41c5d0a16203fd7350034ab0a3",
+      "unit": 3859,
+      "integration": 873,
+      "primaryTotal": 4732,
       "localEvidence": [
         "JDK 21: ./mvnw -Dskip.integration-tests=true test plus exact inventory gate",
         "JDK 21: scripts/ci/run-required-integration-tests.sh plus exact inventory gate"
       ]
     },
     "sinceCutoverDelta": {
-      "unit": 198,
-      "integration": 20,
-      "primaryTotal": 218
+      "unit": 486,
+      "integration": 33,
+      "primaryTotal": 519
     },
     "sourceDiff": {
       "fromCommit": "dce9b2f4d89851d452135de6b0697d22413368c7",
@@ -221,15 +221,15 @@
   },
   "currentRequiredSuite": {
     "command": "scripts/ci/run-required-integration-tests.sh",
-    "unitTests": 3571,
-    "unitReports": 408,
+    "unitTests": 3859,
+    "unitReports": 440,
     "unitSkipped": 0,
-    "integrationReports": 84,
-    "integrationTests": 860,
-    "integrationSkipped": 9,
+    "integrationReports": 92,
+    "integrationTests": 873,
+    "integrationSkipped": 12,
     "failures": 0,
     "errors": 0,
-    "skipped": 9,
+    "skipped": 12,
     "quarantine": false,
     "environmentBoundSkippedTests": [
       {
@@ -243,6 +243,11 @@
         "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
       },
       {
+        "testId": "de.caritas.cob.userservice.api.SupportRoomMigrationConvergenceIT#canonicalChangelogRepairsSupportRoomRemovedByDivergentMigration",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
         "testId": "de.caritas.cob.userservice.api.port.out.AdminStatisticsRepositoryMariaDbIT#countDailyNewSessionsByTenantShouldProjectDayWithoutConversionError",
         "environmentVariable": "LIQUIBASE_IT_DB_URL",
         "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
@@ -251,6 +256,11 @@
         "testId": "de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistryRedisIT#availabilitySurvivesRegistryReconstructionExpiresAndHeartbeatCannotEnable",
         "environmentVariable": "ORISO_LOCAL_REDIS_IT",
         "requiredWorkflow": ".github/workflows/ci-pull-request.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensationMariaDbIT#incompleteProvisioningRemovesRelationSessionChildrenAndUserInReverseOrder",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
       },
       {
         "testId": "de.caritas.cob.userservice.api.service.tutorial.TutorialProgressServiceMariaDbReplicaIT#newScopeIsRejectedWhenTheRowCapIsReached",
@@ -274,6 +284,11 @@
       },
       {
         "testId": "de.caritas.cob.userservice.api.workflow.deactivate.scheduler.DeactivateGroupChatSchedulerMariaDbReplicaIT#twoSchedulerInstancesShutdownOneExpiredMatrixChatExactlyOnce",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimMariaDbIT#twoReplicaContendersProduceOneWinnerForInitialAndExpiredClaim",
         "environmentVariable": "LIQUIBASE_IT_DB_URL",
         "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
       }

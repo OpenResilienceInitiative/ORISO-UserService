@@ -112,7 +112,7 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
         self.assertEqual(required_suite["unitTests"], current["unit"])
         self.assertEqual(required_suite["integrationTests"], current["integration"])
         self.assertEqual(
-            "e9f0fca87f04d072fdd628e6d3953f0dac61b46e",
+            "8b4b463435463b41c5d0a16203fd7350034ab0a3",
             current["verifiedApplicationHead"],
         )
         self.assertEqual(2, len(current["localEvidence"]))
@@ -130,13 +130,13 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
             "scripts/ci/run-required-integration-tests.sh",
             current["command"],
         )
-        self.assertEqual(3571, current.get("unitTests"))
-        self.assertEqual(408, current["unitReports"])
-        self.assertEqual(84, current["integrationReports"])
-        self.assertEqual(860, current["integrationTests"])
+        self.assertEqual(3859, current.get("unitTests"))
+        self.assertEqual(440, current["unitReports"])
+        self.assertEqual(92, current["integrationReports"])
+        self.assertEqual(873, current["integrationTests"])
         self.assertEqual(0, current["failures"])
         self.assertEqual(0, current["errors"])
-        self.assertEqual(9, current["skipped"])
+        self.assertEqual(12, current["skipped"])
         self.assertFalse(current["quarantine"])
 
     def test_every_environment_bound_skip_has_a_required_execution_lane(self):
