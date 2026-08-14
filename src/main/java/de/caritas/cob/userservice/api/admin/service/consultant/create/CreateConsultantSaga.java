@@ -128,6 +128,9 @@ public class CreateConsultantSaga {
       throws DistributedTransactionException {
     Consultant newConsultant = this.createNewConsultantWithoutAppointment(createConsultantDTO);
 
+    // adminRemarks intentionally stays at the builder's fail-closed default (null) here: this
+    // DTO is also the appointment-service payload. ConsultantAdminService#createNewConsultant
+    // re-attaches the submitted remarks to the outgoing response for tenant-level admins.
     ConsultantAdminResponseDTO consultantAdminResponseDTO =
         ConsultantResponseDTOBuilder.getInstance(newConsultant).buildResponseDTO();
 
