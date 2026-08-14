@@ -135,8 +135,6 @@
   <include
     file="db/changelog/changeset/0079_support_room/0079_changeSet.xml" />
   <include
-    file="db/changelog/changeset/0081_support_room_repair/0081_changeSet.xml" />
-  <include
     file="db/changelog/changeset/0080_event_notification_millis/0080_changeSet.xml" />
   <include
     file="db/changelog/changeset/0081_account_invite_provisioning/0081_changeSet.xml" />
