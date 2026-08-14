@@ -159,6 +159,7 @@ public class ConsultantUpdateService {
     consultant.setLanguages(languagesOf(updateConsultantDTO, consultant));
     consultant.setAbsent(updateConsultantDTO.getAbsent());
     consultant.setAbsenceMessage(updateConsultantDTO.getAbsenceMessage());
+    applyPersonalInfo(updateConsultantDTO, consultant);
     consultant.replaceTopics(updateConsultantDTO.getTopicIds());
     // Always update supervisor field if provided (even if false)
     if (updateConsultantDTO.getIsSupervisor() != null) {
@@ -185,6 +186,28 @@ public class ConsultantUpdateService {
     }
 
     return this.consultantService.saveConsultant(consultant);
+  }
+
+  /**
+   * Personal-info fields (#994) follow the "null leaves untouched, empty string clears" convention
+   * so the consultant self-service path (which never sends them) cannot wipe admin-entered values.
+   * {@code adminRemarks} write access is enforced upstream in {@link
+   * de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminService}: for callers
+   * without tenant-level admin rights the field is nulled before it reaches this method.
+   */
+  private void applyPersonalInfo(
+      UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant) {
+    applyIfProvided(updateConsultantDTO.getSalutation(), consultant::setSalutation);
+    applyIfProvided(updateConsultantDTO.getPosition(), consultant::setPosition);
+    applyIfProvided(updateConsultantDTO.getTitle(), consultant::setTitle);
+    applyIfProvided(updateConsultantDTO.getAdminRemarks(), consultant::setAdminRemarks);
+  }
+
+  private void applyIfProvided(String value, java.util.function.Consumer<String> setter) {
+    if (value == null) {
+      return;
+    }
+    setter.accept(value.isBlank() ? null : value);
   }
 
   /**
