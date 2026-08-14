@@ -9,9 +9,15 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorOnboardingState;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorRegistrationResult;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.TopicOption;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.OnboardingInviteState;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
@@ -37,12 +43,21 @@ class TenantAdminOnboardingControllerTest {
       "{\"de\":\"<h2>Auftragsverarbeitung</h2>\",\"en\":\"<h2>Data processing</h2>\"}";
 
   @Mock private TenantAdminOnboardingService onboardingService;
+  @Mock private CounsellorOnboardingService counsellorOnboardingService;
+  @Mock private AccountInviteService accountInviteService;
 
   private TenantAdminOnboardingController controller;
 
   @BeforeEach
   void setUp() {
-    controller = new TenantAdminOnboardingController(onboardingService);
+    controller =
+        new TenantAdminOnboardingController(
+            onboardingService, counsellorOnboardingService, accountInviteService);
+    // Role probe of the shared endpoints (#997): the pre-existing tests exercise the
+    // tenant-admin dispatch; counsellor tests re-stub the probe with a COUNSELLOR invite.
+    org.mockito.Mockito.lenient()
+        .when(accountInviteService.findInviteByToken("tok"))
+        .thenReturn(invite());
   }
 
   private static AccountInvite invite() {
@@ -58,6 +73,26 @@ class TenantAdminOnboardingControllerTest {
         .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
         .expiresAt(LocalDateTime.of(2026, 8, 30, 12, 0))
         .build();
+  }
+
+  private static AccountInvite counsellorInvite() {
+    return AccountInvite.builder()
+        .id(8L)
+        .targetRole(AccountInviteTargetRole.COUNSELLOR)
+        .tenantId(21L)
+        .agencyId(5L)
+        .departmentId(12L)
+        .recipientEmail("counsellor@example.org")
+        .firstName("Lena")
+        .lastName("Beraterin")
+        .status(AccountInviteStatus.EMAIL_SENT)
+        .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+        .expiresAt(LocalDateTime.of(2026, 8, 30, 12, 0))
+        .build();
+  }
+
+  private void probeAnswersCounsellor() {
+    when(accountInviteService.findInviteByToken("tok")).thenReturn(counsellorInvite());
   }
 
   @Test
@@ -197,6 +232,122 @@ class TenantAdminOnboardingControllerTest {
     controller.activateTwoFactor("tok", null);
 
     verify(onboardingService).activateTwoFactor("tok", null);
+  }
+
+  @Test
+  void resolveOnboardingInvite_counsellorInvite_dispatchesToCounsellorFlowWithCoverage() {
+    probeAnswersCounsellor();
+    when(counsellorOnboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(
+            new CounsellorOnboardingState(
+                counsellorInvite(),
+                false,
+                java.util.List.of(new TopicOption(12L, "Family counselling"))));
+
+    var body = controller.resolveOnboardingInvite("tok").getBody();
+
+    assertNotNull(body);
+    assertEquals("COUNSELLOR", body.targetRole);
+    assertEquals("counsellor@example.org", body.recipientEmail);
+    assertEquals("Lena", body.firstName);
+    assertEquals(21L, body.tenantId);
+    assertEquals(5L, body.agencyId);
+    assertEquals(12L, body.departmentId);
+    assertNotNull(body.topics);
+    assertEquals(1, body.topics.size());
+    assertEquals(12L, body.topics.get(0).id);
+    assertEquals("Family counselling", body.topics.get(0).name);
+    assertNull(body.phase);
+    assertNull(body.reservedTenantId);
+  }
+
+  @Test
+  void resolveOnboardingInvite_counsellorResume_mapsPhaseAndStoredSecret() {
+    probeAnswersCounsellor();
+    AccountInvite resumable = counsellorInvite();
+    resumable.setStatus(AccountInviteStatus.ACCEPTED);
+    resumable.setTotpPendingSecret("STOREDSECRET");
+    when(counsellorOnboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new CounsellorOnboardingState(resumable, true, java.util.List.of()));
+
+    var body = controller.resolveOnboardingInvite("tok").getBody();
+
+    assertNotNull(body);
+    assertEquals("PENDING_2FA_ACTIVATION", body.phase);
+    assertNotNull(body.twoFactor);
+    assertEquals("STOREDSECRET", body.twoFactor.secret);
+  }
+
+  @Test
+  void registerTenantAdmin_counsellorInvite_dispatchesWizardFieldsToCounsellorFlow() {
+    probeAnswersCounsellor();
+    when(counsellorOnboardingService.registerCounsellor(
+            eq("tok"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new CounsellorRegistrationResult("consultant-1", "TOTPSECRET", "QR", true));
+
+    var request = new TenantAdminOnboardingController.TenantAdminRegistrationRequestDTO();
+    request.account = new TenantAdminOnboardingController.AccountDataDTO();
+    request.account.username = "lena.b";
+    request.account.password = "s3cretPassword";
+    request.person = new TenantAdminOnboardingController.PersonDataDTO();
+    request.person.salutation = "counsellor_female";
+    request.person.position = "Head of counselling centre";
+    request.person.title = "Dipl.-Soz.Päd.";
+    request.names = new TenantAdminOnboardingController.DisplayNamesDataDTO();
+    request.names.publicName = "Lena";
+    request.names.internalDisplayName = "Lena B. (Nord)";
+    request.topicIds = java.util.List.of(12L);
+
+    var response = controller.registerTenantAdmin("tok", request);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    var body = response.getBody();
+    assertNotNull(body);
+    assertEquals("consultant-1", body.consultantId);
+    assertEquals("PENDING_2FA_ACTIVATION", body.phase);
+    assertNull(body.tenantId);
+    assertNotNull(body.twoFactor);
+    assertEquals("TOTPSECRET", body.twoFactor.secret);
+
+    ArgumentCaptor<RegisterCounsellorCommand> captor =
+        ArgumentCaptor.forClass(RegisterCounsellorCommand.class);
+    verify(counsellorOnboardingService).registerCounsellor(eq("tok"), captor.capture());
+    RegisterCounsellorCommand command = captor.getValue();
+    assertEquals("lena.b", command.username());
+    assertEquals("s3cretPassword", command.password());
+    assertEquals("counsellor_female", command.salutation());
+    assertEquals("Head of counselling centre", command.position());
+    assertEquals("Dipl.-Soz.Päd.", command.title());
+    assertEquals("Lena", command.displayName());
+    assertEquals("Lena B. (Nord)", command.internalDisplayName());
+    assertEquals(java.util.List.of(12L), command.topicIds());
+  }
+
+  @Test
+  void registerTenantAdmin_counsellorWithWaivedGate_answersCompletedWithoutTwoFactor() {
+    probeAnswersCounsellor();
+    when(counsellorOnboardingService.registerCounsellor(
+            eq("tok"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new CounsellorRegistrationResult("consultant-1", null, null, false));
+
+    var body = controller.registerTenantAdmin("tok", null).getBody();
+
+    assertNotNull(body);
+    assertEquals("COMPLETED", body.phase);
+    assertNull(body.twoFactor);
+  }
+
+  @Test
+  void activateTwoFactor_counsellorInvite_dispatchesToCounsellorFlow() {
+    probeAnswersCounsellor();
+    var request = new TenantAdminOnboardingController.TwoFactorActivationRequestDTO();
+    request.otp = "654321";
+
+    var response = controller.activateTwoFactor("tok", request);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(counsellorOnboardingService).activateTwoFactor("tok", "654321");
+    org.mockito.Mockito.verifyNoInteractions(onboardingService);
   }
 
   @Test
