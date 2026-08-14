@@ -367,11 +367,12 @@ public class CounsellorOnboardingService {
     try {
       var profile = identityProfileLookup.findById(invite.getAcceptedByUserId()).orElse(null);
       if (profile == null) {
+        // The invite id identifies the record for support; the identity-provider user id is a
+        // direct user identifier and must not be written to the log (#1008 review).
         log.warn(
             "Cannot repair the missing TOTP setup material for invite {} — no identity profile"
-                + " exists for user {}",
-            invite.getId(),
-            invite.getAcceptedByUserId());
+                + " exists for its acceptor",
+            invite.getId());
         return;
       }
       IdentityOtpCredential otpInfo = identitySecondFactor.getOtpCredential(profile.username());
