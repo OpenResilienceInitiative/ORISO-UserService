@@ -322,8 +322,6 @@ public class SecurityConfig {
                 .hasAuthority(VIEW_AGENCY_CONSULTANTS)
                 .requestMatchers("/users/consultants/import")
                 .hasAuthority(TECHNICAL_DEFAULT)
-                .requestMatchers("/liveproxy/send")
-                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT, ANONYMOUS_DEFAULT)
                 .requestMatchers("/users/messages/key")
                 .hasAuthority(TECHNICAL_DEFAULT)
                 .requestMatchers("/users/chat/new", "/users/chat/v2/new")
