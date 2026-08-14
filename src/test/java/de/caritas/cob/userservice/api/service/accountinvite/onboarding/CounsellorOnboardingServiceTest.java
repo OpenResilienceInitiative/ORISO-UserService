@@ -46,6 +46,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @ExtendWith(MockitoExtension.class)
 class CounsellorOnboardingServiceTest {
@@ -66,6 +68,13 @@ class CounsellorOnboardingServiceTest {
   @Mock private TopicService topicService;
   @Mock private UsernameTranscoder usernameTranscoder;
 
+  /**
+   * The service drives its short database-only transactions through a {@link TransactionTemplate}
+   * (#1008 review) instead of {@code @Transactional}. A mocked manager hands out a null status,
+   * which the template treats as an ordinary transaction: the callback runs, exceptions propagate.
+   */
+  @Mock private PlatformTransactionManager transactionManager;
+
   private CounsellorOnboardingService service;
 
   @BeforeEach
@@ -79,7 +88,8 @@ class CounsellorOnboardingServiceTest {
             identityProfileLookup,
             agencyService,
             topicService,
-            usernameTranscoder);
+            usernameTranscoder,
+            transactionManager);
   }
 
   private static AccountInvite invite() {

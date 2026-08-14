@@ -26,11 +26,13 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Public counsellor onboarding behind an invite link (#997, Admin-panel wizard). Clone of the
@@ -65,28 +67,57 @@ public class CounsellorOnboardingService {
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
   /**
+   * Drives the SHORT database-only transactions of this flow explicitly instead of annotating the
+   * public entry points: the invite row is read under a PESSIMISTIC_WRITE lock, and every remote
+   * call of this service (AgencyService, TopicService, Keycloak) has to happen OUTSIDE that lock.
+   */
+  private final @NonNull PlatformTransactionManager transactionManager;
+
+  /**
    * Resolves the invite state for a raw link token. Mirrors the tenant-admin resolve state machine:
    * a deliverable ({@code EMAIL_SENT}) unexpired invite resolves plainly and carries the topic
    * coverage the wizard's topic step may offer; a consumed invite whose mandatory 2FA activation is
    * still open and whose link is unexpired resolves with a pending two-factor resume; every other
    * state maps to the distinct link-death reasons (410 body {@code reason}, unknown tokens 404).
+   *
+   * <p>Transaction shape (#1008 review): the locked load, the expiry transition and the state
+   * classification are ONE short database transaction ({@link #loadInviteForResolve}); the topic
+   * coverage (AgencyService + TopicService over HTTP) and the Keycloak repair of a lost TOTP secret
+   * run afterwards, outside it. A hanging upstream can therefore no longer hold the invite's
+   * PESSIMISTIC_WRITE lock — nor a database connection — for its whole timeout.
    */
-  // noRollbackFor: expireIfPastExpiry persists the EXPIRED transition and then throws the
-  // link-death exception — without it the rollback would keep the row EMAIL_SENT forever.
-  @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public CounsellorOnboardingState resolveOnboardingInvite(String rawToken) {
-    AccountInvite invite = findCounsellorInvite(rawToken);
-    LocalDateTime now = LocalDateTime.now();
+    ResolvedOnboardingInvite resolved = loadInviteForResolve(rawToken);
+    // Thrown only now, i.e. after the transaction committed, so a persisted EXPIRED transition
+    // survives the link-death answer (what noRollbackFor used to buy).
+    resolved.rethrowLinkDeath();
 
-    if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
-      expireIfPastExpiry(invite, now);
-      return new CounsellorOnboardingState(invite, false, resolveTopicCoverage(invite).topics());
-    }
-    if (isResumableAtTwoFactorStep(invite, now)) {
+    AccountInvite invite = resolved.invite();
+    if (resolved.pendingTwoFactorResume()) {
       repairMissingTotpSecret(invite);
       return new CounsellorOnboardingState(invite, true, List.of());
     }
-    throw linkDeathException(invite);
+    return new CounsellorOnboardingState(invite, false, resolveTopicCoverage(invite).topics());
+  }
+
+  /** The database-only part of {@link #resolveOnboardingInvite}: locked load and classification. */
+  private ResolvedOnboardingInvite loadInviteForResolve(String rawToken) {
+    return inTransaction(
+        () -> {
+          AccountInvite invite = findCounsellorInvite(rawToken);
+          LocalDateTime now = LocalDateTime.now();
+
+          if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
+            AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
+            return expired == null
+                ? ResolvedOnboardingInvite.open(invite)
+                : ResolvedOnboardingInvite.dead(expired);
+          }
+          if (isResumableAtTwoFactorStep(invite, now)) {
+            return ResolvedOnboardingInvite.pendingTwoFactorResume(invite);
+          }
+          return ResolvedOnboardingInvite.dead(linkDeathException(invite));
+        });
   }
 
   /**
@@ -108,7 +139,10 @@ public class CounsellorOnboardingService {
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
       throw linkDeathException(invite);
     }
-    expireIfPastExpiry(invite, now);
+    AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
+    if (expired != null) {
+      throw expired;
+    }
     validateTopicSelection(command.topicIds(), resolveTopicCoverage(invite));
 
     AccountInvite accepted =
@@ -144,28 +178,17 @@ public class CounsellorOnboardingService {
    * Confirms the pending TOTP setup with a first one-time password. Same contract as the
    * tenant-admin endpoint: an invalid or rejected code answers 400 (the wizard maps 400/422 to its
    * invalid-code state); once the gate is satisfied the link is terminally consumed.
+   *
+   * <p>Transaction shape (#1008 review): the state checks are one short transaction, the Keycloak
+   * round trips (profile lookup, OTP verification, secret repair) run outside it, and consuming the
+   * gate is a second short transaction. The invite's row lock is never held across a remote call.
    */
-  @Transactional
   public void activateTwoFactor(String rawToken, String oneTimePassword) {
     if (isBlank(oneTimePassword)) {
       throw new BadRequestException("otp is required");
     }
-    AccountInvite invite = findCounsellorInvite(rawToken);
-    LocalDateTime now = LocalDateTime.now();
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
 
-    if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
-      throw new BadRequestException("Registration has not happened yet for this invite");
-    }
-    if (invite.getStatus() != AccountInviteStatus.ACCEPTED) {
-      throw linkDeathException(invite);
-    }
-    if (!isResumableAtTwoFactorStep(invite, now)) {
-      // Gate already satisfied or resume window expired — terminally consumed.
-      throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
-    }
-    if (isBlank(invite.getAcceptedByUserId())) {
-      throw new BadRequestException("No pending TOTP setup exists for this invite");
-    }
     if (isBlank(invite.getTotpPendingSecret())) {
       // Registration may have received no setup material from Keycloak — re-request it instead
       // of rejecting the account forever (the wizard re-shows the repaired secret on resolve).
@@ -187,10 +210,55 @@ public class CounsellorOnboardingService {
       throw new BadRequestException("Invalid one-time password");
     }
 
-    accountInviteService.markTwoFactorActive(invite.getAcceptedByUserId());
-    invite.setTotpPendingSecret(null);
-    invite.setUpdateDate(now);
-    accountInviteRepository.save(invite);
+    consumeTwoFactorGate(invite);
+  }
+
+  /**
+   * The database-only precondition check of {@link #activateTwoFactor}. Every rejection here is
+   * thrown before anything is written, so an ordinary rollback loses nothing.
+   */
+  private AccountInvite loadInviteForTwoFactorActivation(String rawToken) {
+    return inTransaction(
+        () -> {
+          AccountInvite invite = findCounsellorInvite(rawToken);
+          LocalDateTime now = LocalDateTime.now();
+
+          if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
+            throw new BadRequestException("Registration has not happened yet for this invite");
+          }
+          if (invite.getStatus() != AccountInviteStatus.ACCEPTED) {
+            throw linkDeathException(invite);
+          }
+          if (!isResumableAtTwoFactorStep(invite, now)) {
+            // Gate already satisfied or resume window expired — terminally consumed.
+            throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
+          }
+          if (isBlank(invite.getAcceptedByUserId())) {
+            throw new BadRequestException("No pending TOTP setup exists for this invite");
+          }
+          return invite;
+        });
+  }
+
+  /**
+   * Terminal consumption of the link once Keycloak accepted the one-time password. The pending
+   * secret is cleared FIRST so the gate transition — which re-reads the invite by its acceptor —
+   * wins over the merge of the detached row loaded before the Keycloak round trip.
+   */
+  private void consumeTwoFactorGate(AccountInvite invite) {
+    inTransaction(
+        () -> {
+          invite.setTotpPendingSecret(null);
+          invite.setUpdateDate(LocalDateTime.now());
+          accountInviteRepository.save(invite);
+          accountInviteService.markTwoFactorActive(invite.getAcceptedByUserId());
+          return null;
+        });
+  }
+
+  /** Runs {@code action} in its own short database transaction (no remote call belongs inside). */
+  private <T> T inTransaction(Supplier<T> action) {
+    return new TransactionTemplate(transactionManager).execute(status -> action.get());
   }
 
   /**
@@ -287,6 +355,10 @@ public class CounsellorOnboardingService {
    * would be permanently blocked behind a consumed invite. Re-requests the setup material for the
    * provisioned user and persists it; best-effort — on continued failure the invite stays resumable
    * and the next resolve retries.
+   *
+   * <p>Called from OUTSIDE a transaction on every path (#1008 review): it talks to Keycloak, so the
+   * write it may do is a repository call of its own instead of work inside the caller's transaction
+   * — the invite's row lock is not held while Keycloak is asked.
    */
   private void repairMissingTotpSecret(AccountInvite invite) {
     if (!isBlank(invite.getTotpPendingSecret()) || isBlank(invite.getAcceptedByUserId())) {
@@ -326,6 +398,7 @@ public class CounsellorOnboardingService {
   private AccountInvite findCounsellorInvite(String rawToken) {
     // Delegates to the transactional lookup (the token-hash query carries a lock hint that
     // requires an active transaction; registerCounsellor itself deliberately runs without one).
+    // Inside one of this service's short transactions the lookup simply joins it.
     AccountInvite invite = accountInviteService.findInviteByToken(rawToken);
     if (invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR) {
       // Tokens of other roles must not resolve on the counsellor onboarding path.
@@ -334,13 +407,21 @@ public class CounsellorOnboardingService {
     return invite;
   }
 
-  private void expireIfPastExpiry(AccountInvite invite, LocalDateTime now) {
+  /**
+   * Persists the {@code EMAIL_SENT -> EXPIRED} transition of an overdue link and RETURNS the
+   * link-death answer instead of throwing it: inside a transaction the caller must let that write
+   * commit before the exception leaves the flow.
+   *
+   * @return the {@code EXPIRED} link-death exception, or {@code null} when the link is still live
+   */
+  private AccountInviteLinkException expireIfPastExpiry(AccountInvite invite, LocalDateTime now) {
     if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
       invite.setStatus(AccountInviteStatus.EXPIRED);
       invite.setUpdateDate(now);
       accountInviteRepository.save(invite);
-      throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
+      return new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
+    return null;
   }
 
   private static boolean isResumableAtTwoFactorStep(AccountInvite invite, LocalDateTime now) {
