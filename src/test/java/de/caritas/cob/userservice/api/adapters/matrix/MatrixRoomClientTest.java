@@ -143,6 +143,23 @@ class MatrixRoomClientTest {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException.class)
         .hasMessage("Could not create room (Room name) in Matrix");
+    verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.FAILURE);
+  }
+
+  @Test
+  void createRoom_ShouldRejectSuccessfulResponseWithoutRoomId() {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(new MatrixCreateRoomResponseDTO()));
+
+    assertThatThrownBy(
+            () -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN, true))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException.class)
+        .hasMessage("Could not create room (Room name) in Matrix");
+    verify(diagnosticMetrics).recordRoomCreation(true, LiveChatDiagnosticMetrics.Outcome.FAILURE);
   }
 
   @Test

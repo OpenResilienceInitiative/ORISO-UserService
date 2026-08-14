@@ -184,6 +184,8 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findEligibleConsultantIds(null);
 
     assertThat(result).isEmpty();
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.INVALID_TOPIC, 0);
     verify(consultantTopicRepository, never()).findConsultantIdsByTopicId(any());
   }
 
@@ -195,6 +197,8 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findEligibleConsultantIds(2L);
 
     assertThat(result).isEmpty();
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.NO_ASSIGNMENT, 0);
   }
 
   @Test
@@ -206,6 +210,8 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findEligibleConsultantIds(3L);
 
     assertThat(result).isEmpty();
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.NO_ELIGIBLE_CONSULTANT, 0);
     verify(matrixSynapseService, never()).findOnlineMatrixUserIds(any());
   }
 
@@ -222,6 +228,7 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findEligibleConsultantIds(4L);
 
     assertThat(result).containsExactly("c1");
+    verify(diagnosticMetrics).recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.AVAILABLE, 1);
   }
 
   @Test
@@ -248,6 +255,8 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findEligibleConsultantIds(5L);
 
     assertThat(result).containsExactly("c1");
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.PRESENCE_UNAVAILABLE, 1);
   }
 
   @Test

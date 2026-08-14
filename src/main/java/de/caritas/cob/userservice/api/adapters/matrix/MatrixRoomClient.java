@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.matrix;
 
-import static java.util.Objects.nonNull;
-
 import de.caritas.cob.userservice.api.adapters.matrix.config.MatrixConfig;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
@@ -80,14 +78,17 @@ public class MatrixRoomClient {
       log.info("Creating Matrix room: {} at URL: {}", roomName, url);
 
       var response = restTemplate.postForEntity(url, request, MatrixCreateRoomResponseDTO.class);
-      diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.SUCCESS);
-
-      if (nonNull(response.getBody()) && nonNull(response.getBody().getRoomId())) {
-        log.info(
-            "Successfully created Matrix room: {} with ID: {}",
-            roomName,
-            response.getBody().getRoomId());
+      if (response.getBody() == null
+          || response.getBody().getRoomId() == null
+          || response.getBody().getRoomId().isBlank()) {
+        throw new IllegalStateException("Matrix create-room response did not contain a room ID");
       }
+
+      diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.SUCCESS);
+      log.info(
+          "Successfully created Matrix room: {} with ID: {}",
+          roomName,
+          response.getBody().getRoomId());
 
       return response;
     } catch (HttpClientErrorException ex) {
