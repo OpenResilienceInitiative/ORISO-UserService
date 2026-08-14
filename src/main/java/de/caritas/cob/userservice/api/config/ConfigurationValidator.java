@@ -43,6 +43,19 @@ public class ConfigurationValidator {
   @Value("${tenant.service.api.url:}")
   private String tenantServiceApiUrl;
 
+  /**
+   * Both agency URLs used to fall back to this service's own base URL when the environment variable
+   * was absent. The service then called itself, and the misconfiguration only surfaced as a runtime
+   * 500 on every consultant-agency read (epic #351, workstream 3). They are required now, so a
+   * deployment that lacks them fails at startup instead — during a rolling update that leaves the
+   * previous, working replica set in place.
+   */
+  @Value("${agency.service.api.url:}")
+  private String agencyServiceApiUrl;
+
+  @Value("${agency.admin.service.api.url:}")
+  private String agencyAdminServiceApiUrl;
+
   @Value("${matrix.apiUrl:}")
   private String matrixApiUrl;
 
@@ -82,6 +95,12 @@ public class ConfigurationValidator {
     }
     if (isEmpty(tenantServiceApiUrl)) {
       missingConfigs.add("tenant.service.api.url (TENANT_SERVICE_API_URL)");
+    }
+    if (isEmpty(agencyServiceApiUrl)) {
+      missingConfigs.add("agency.service.api.url (AGENCY_SERVICE_API_URL)");
+    }
+    if (isEmpty(agencyAdminServiceApiUrl)) {
+      missingConfigs.add("agency.admin.service.api.url (AGENCY_ADMIN_SERVICE_API_URL)");
     }
     if (isEmpty(matrixApiUrl)) {
       missingConfigs.add("matrix.apiUrl (MATRIX_API_URL)");

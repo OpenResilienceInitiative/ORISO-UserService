@@ -472,7 +472,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void createKeycloakUser_Should_createExpectedUser_When_keycloakReturnsCreated() {
+  public void createUser_Should_createExpectedUser_When_keycloakReturnsCreated() {
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
     UsersResource usersResource = mock(UsersResource.class);
     Response response = mock(Response.class);
@@ -492,8 +492,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void
-      createKeycloakUser_Should_createExpectedTenantAwareUser_When_keycloakReturnsCreated() {
+  public void createUser_Should_createExpectedTenantAwareUser_When_keycloakReturnsCreated() {
     TenantContext.setCurrentTenant(1L);
     setField(keycloakService, "multiTenancyEnabled", true);
 
@@ -526,7 +525,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void createKeycloakUser_Should_updateIdentityAttributes_When_keycloakReturnsCreated() {
+  public void createUser_Should_updateIdentityAttributes_When_keycloakReturnsCreated() {
     TenantContext.setCurrentTenant(7L);
     setField(keycloakService, "multiTenancyEnabled", true);
 
@@ -564,7 +563,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void createKeycloakUser_Should_createUserWithDefaultLocale() {
+  public void createUser_Should_createUserWithDefaultLocale() {
     var userDTO = easyRandom.nextObject(UserDTO.class);
     userDTO.setPreferredLanguage(null);
     var usersResource = mock(UsersResource.class);
@@ -605,7 +604,7 @@ public class KeycloakServiceTest {
 
   @Test
   public void
-      createKeycloakUser_Should_throwExpectedStatusException_When_keycloakResponseHasEmailErrorMessage() {
+      createUser_Should_throwExpectedStatusException_When_keycloakResponseHasEmailErrorMessage() {
     var emailError = givenADuplicatedEmailErrorMessage();
     givenADuplicatedUserErrorMessage();
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
@@ -627,7 +626,7 @@ public class KeycloakServiceTest {
 
   @Test
   public void
-      createKeycloakUser_Should_throwExpectedStatusException_When_keycloakResponseHasUsernameErrorMessage() {
+      createUser_Should_throwExpectedStatusException_When_keycloakResponseHasUsernameErrorMessage() {
     givenADuplicatedEmailErrorMessage();
     var keycloakErrorUsername = givenADuplicatedUserErrorMessage();
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
@@ -650,8 +649,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void
-      createKeycloakUser_Should_throwExpectedResponseException_When_keycloakMailUpdateFails() {
+  public void createUser_Should_throwExpectedResponseException_When_keycloakMailUpdateFails() {
     givenADuplicatedEmailErrorMessage();
     var keycloakErrorUsername = givenADuplicatedUserErrorMessage();
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
@@ -674,7 +672,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void createKeycloakUser_Should_ThrowInternalServerException_When_errorIsUnknown() {
+  public void createUser_Should_ThrowInternalServerException_When_errorIsUnknown() {
     assertThrows(
         InternalServerErrorException.class,
         () -> {
@@ -697,8 +695,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void
-      createKeycloakUser_Should_notThrowNpe_When_duplicateMarkersAreNull_And_fallBackToStatus() {
+  public void createUser_Should_notThrowNpe_When_duplicateMarkersAreNull_And_fallBackToStatus() {
     // Guards the null-safe errorMatchesMarker(...): when the configured duplicate-email/username
     // markers are unset (null), production must NOT NPE while lower-casing them. Instead it falls
     // through to the status-based handling and still maps a 409 CONFLICT carrying "email" to a
@@ -723,7 +720,7 @@ public class KeycloakServiceTest {
 
   @Test
   public void
-      createKeycloakUser_Should_throwInternalServerError_When_duplicateMarkersAreNull_And_statusUnknown() {
+      createUser_Should_throwInternalServerError_When_duplicateMarkersAreNull_And_statusUnknown() {
     // Same null-marker guard, but with a non-conflict status and an unrelated error body: the
     // method must fall through to a generic InternalServerErrorException rather than NPE.
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
@@ -1403,7 +1400,8 @@ public class KeycloakServiceTest {
       verifyPasswordIgnoringSecondFactor_Should_ReturnTrue_When_MissingTotpButPasswordCorrect() {
     var exception = mock(org.springframework.web.client.HttpClientErrorException.class);
     when(exception.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
-    when(exception.getResponseBodyAsString()).thenReturn("Missing totp");
+    when(exception.getResponseBodyAsString())
+        .thenReturn("{\"error\":\"invalid_grant\",\"error_description\":\"Missing totp\"}");
     when(restTemplate.postForEntity(anyString(), any(), eq(KeycloakLoginResponseDTO.class)))
         .thenThrow(exception);
 
@@ -2049,8 +2047,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void
-      createKeycloakUser_Should_LeaveTenantIdAttributeUnset_When_TenantIdAndCurrentTenantAreNull() {
+  public void createUser_Should_LeaveTenantIdAttributeUnset_When_TenantIdAndCurrentTenantAreNull() {
     setField(keycloakService, "multiTenancyEnabled", true);
     TenantContext.clear();
     UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);

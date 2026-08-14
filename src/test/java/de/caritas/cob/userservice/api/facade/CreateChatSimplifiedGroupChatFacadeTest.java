@@ -198,11 +198,29 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         .thenReturn(matrixRoomResponse("!room:matrix.org"));
     when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("creator-token");
     Chat unsavedChat = mock(Chat.class);
+    when(unsavedChat.getConversationType()).thenReturn(ConversationType.SELF_HELP);
     doReturn(unsavedChat).when(chatConverter).convertToEntity(any(), any(), any());
 
     createChatFacade.createChatV1(chatDto, consultant);
 
     verify(unsavedChat).setActive(false);
+  }
+
+  @Test
+  void createSimplifiedGroupChatShouldOpenAnInternalTeamChatOnCreation() throws Exception {
+    // #979: a team chat has no occurrence to open, so leaving it inactive dropped colleagues
+    // into the askers' Waiting Area with a countdown to a start time nobody had chosen.
+    ChatDTO chatDto = chatDtoWithConsultantIds(List.of("dummy-participant"));
+    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!room:matrix.org"));
+    when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("creator-token");
+    Chat unsavedChat = mock(Chat.class);
+    when(unsavedChat.getConversationType()).thenReturn(ConversationType.INTERNAL_GROUP);
+    doReturn(unsavedChat).when(chatConverter).convertToEntity(any(), any(), any());
+
+    createChatFacade.createChatV1(chatDto, consultant);
+
+    verify(unsavedChat).setActive(true);
   }
 
   @Test

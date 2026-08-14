@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.facade;
 
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USERNAME_NOT_AVAILABLE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_KREUZBUND;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_SUCHT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.ERROR;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_SUCHT;
@@ -18,13 +19,14 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -36,24 +38,33 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
-import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensator;
+import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.RegistrationStatisticsEvent;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -61,6 +72,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -69,9 +81,12 @@ import org.springframework.http.ResponseEntity;
 public class CreateUserFacadeTest {
 
   @InjectMocks private CreateUserFacade createUserFacade;
-  @Mock private KeycloakService keycloakService;
+  @Mock private IdentityAccountCreator identityAccountCreator;
+  @Mock private IdentityAccountRemover identityAccountRemover;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
+  @Mock private IdentityDummyEmailUpdater identityDummyEmailUpdater;
   @Mock private UserService userService;
-  @Mock private RollbackFacade rollbackFacade;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private AgencyVerifier agencyVerifier;
   @Mock private CreateNewSessionFacade createNewSessionFacade;
@@ -85,7 +100,15 @@ public class CreateUserFacadeTest {
 
   @Mock private ApplicationSettingsService applicationSettingsService;
 
+  @Mock private CreateSessionFacade createSessionFacade;
+
+  @Mock private SessionService sessionService;
+
   @Mock private MatrixSynapseService matrixSynapseService;
+
+  @Spy
+  private ProvisioningCompensator provisioningCompensator =
+      new ProvisioningCompensator(new SimpleMeterRegistry());
 
   @Test
   public void
@@ -139,48 +162,90 @@ public class CreateUserFacadeTest {
 
   @Test
   public void
-      createUserAccountWithInitializedConsultingType_Should_StillCreateAccountAndNotRollback_When_CreateKeycloakUserReturnsNoUserId() {
-    // Matrix migration: a missing Keycloak user id no longer aborts registration for registered
-    // users; the Keycloak failure is swallowed and the database user account is still created.
-    when(keycloakService.createAccount(any())).thenReturn(new IdentityAccountCreated(null));
+      createUserAccountWithInitializedConsultingType_Should_AbortBeforeDependentWrites_When_IdentityProviderReturnsNoUserId() {
+    PlainCredentialsHolder.set("plain-user", null);
+    when(identityAccountCreator.createAccount(any())).thenReturn(new IdentityAccountCreated(null));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+
+    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any());
+    verify(createNewSessionFacade, never())
+        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+    assertThat(PlainCredentialsHolder.get(), nullValue());
+  }
+
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_CompensateIdentity_When_DatabaseUserCreationFails()
+          throws Exception {
+    PlainCredentialsHolder.set("plain-user", "plain-password");
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(USER_ID));
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(createNewSessionFacade.initializeNewSession(
-            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
-        .thenReturn(mock(NewRegistrationResponseDto.class));
+    when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any()))
+        .thenThrow(new IllegalArgumentException("database write failed"));
 
-    createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+    assertThrows(
+        IllegalArgumentException.class,
+        () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
     verify(userService, times(1)).createUser(any(), any(), any(), any(), anyBoolean(), any());
-    verify(rollbackFacade, times(0)).rollBackUserAccount(any());
+    verify(identityAccountRemover).rollbackUser(USER_ID);
+    verify(matrixSynapseService, never()).createUser(any(), any(), any());
+    verify(createNewSessionFacade, never())
+        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+    assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
   @Test
   public void
-      createUserAccountWithInitializedConsultingType_Should_Complete_When_ConsultingTypeIsKreuzbund() {
-
+      createUserAccountWithInitializedConsultingType_Should_ProvisionMatrixAndInitializeSession_When_ConsultingTypeIsKreuzbundAndNoTenantIsSet()
+          throws Exception {
+    // Was named "..._Should_LogOutFromRocketChat_When_...RocketChatLoginSucceeded"
+    // and asserted nothing at all — it only checked that the call did not throw,
+    // for a log-out that no longer exists. It covers the Kreuzbund path without a
+    // tenant context (the sibling test below covers it with one), so assert what
+    // that path is actually supposed to do.
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createAccount(any())).thenReturn(new IdentityAccountCreated(USER_ID));
-    doNothing().when(keycloakService).updatePassword(anyString(), anyString());
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(USER_ID));
+    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
 
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenReturn(mock(NewRegistrationResponseDto.class));
+    givenAFullyPersistedUser();
+    givenMatrixProvisioningSucceeds();
 
-    createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
+    PlainCredentialsHolder.set("plain-user", "plain-password");
+    try {
+      createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
 
-    verify(rollbackFacade, times(0)).rollBackUserAccount(any());
+      verify(identityAccountCreator).createAccount(any());
+      verify(matrixSynapseService).createUser(any(), any(), any());
+      verify(createNewSessionFacade)
+          .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+      // The plaintext password must not survive the registration.
+      assertThat(PlainCredentialsHolder.get(), nullValue());
+    } finally {
+      PlainCredentialsHolder.clear();
+    }
   }
 
   @Test
   public void
-      createUserAccountWithInitializedConsultingType_Should_CallNecessaryMethods_When_EverythingSucceeds() {
+      createUserAccountWithInitializedConsultingType_Should_CallNecessaryMethods_When_EverythingSucceeds()
+          throws Exception {
     TenantContext.setCurrentTenant(1L);
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createAccount(any())).thenReturn(new IdentityAccountCreated(USER_ID));
-    doNothing().when(keycloakService).updatePassword(anyString(), anyString());
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(USER_ID));
+    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
 
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
@@ -188,16 +253,21 @@ public class CreateUserFacadeTest {
     when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
         .thenReturn(new RestrictedTenantDTO());
     when(agencyService.getAgencyWithoutCaching(Mockito.anyLong())).thenReturn(new AgencyDTO());
+    givenAFullyPersistedUser();
+    givenMatrixProvisioningSucceeds();
 
     createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
     TenantContext.clear();
-    verify(keycloakService, times(1)).createAccount(any());
-    verify(keycloakService, times(1)).assignRoles(any(), any());
-    verify(keycloakService, times(1)).updatePassword(anyString(), anyString());
+    verify(identityAccountCreator, times(1)).createAccount(any());
+    verify(identityRoleUpdater, times(1)).assignRoles(any(), any());
+    verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
     verify(createNewSessionFacade, times(1))
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
-    verify(rollbackFacade, times(0)).rollBackUserAccount(any());
     verify(statisticsService, times(1)).fireEvent(any());
+    verify(matrixSynapseService, never()).deactivateUser(anyString());
+    verify(sessionService, never()).deleteSession(any(Session.class));
+    verify(userService, never()).deleteUser(any(User.class));
+    verify(identityAccountRemover, never()).rollbackUser(anyString());
   }
 
   @Test
@@ -205,43 +275,66 @@ public class CreateUserFacadeTest {
       updateKeycloakAccountAndCreateDatabaseUserAccount_Should_CallNecessaryMethods_When_EverythingSucceeds() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(keycloakService).updatePassword(anyString(), anyString());
+    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
 
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
 
-    verify(keycloakService, times(1)).assignRoles(any(), any());
-    verify(keycloakService, times(1)).updatePassword(anyString(), anyString());
-    verify(rollbackFacade, times(0)).rollBackUserAccount(any());
+    verify(identityRoleUpdater, times(1)).assignRoles(any(), any());
+    verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
   }
 
   @Test
   public void
-      updateKeycloakAccountAndCreateDatabaseUserAccount_Should_StillCreateDbUserAndNotRollback_When_UpdateKeycloakPwFailsForRegisteredUser() {
-    // Matrix migration: for registered (non-anonymous) users a failing Keycloak password update is
-    // logged and swallowed, and the database user account is still created.
-    when(consultingTypeManager.getConsultingTypeSettings(any()))
-        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doThrow(new RuntimeException()).when(keycloakService).updatePassword(anyString(), anyString());
+      updateIdentityAndCreateAccount_Should_AbortBeforeDatabaseWrite_When_PasswordUpdateFails() {
+    RuntimeException identityFailure = new RuntimeException("password update failed");
+    doThrow(identityFailure).when(identityPasswordUpdater).updatePassword(anyString(), anyString());
 
-    createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
+    RuntimeException propagated =
+        assertThrows(
+            RuntimeException.class,
+            () ->
+                createUserFacade.updateIdentityAndCreateAccount(
+                    USER_ID, USER_DTO_SUCHT, UserRole.USER));
 
-    verify(userService, times(1)).createUser(any(), any(), any(), any(), anyBoolean(), any());
-    verify(rollbackFacade, times(0)).rollBackUserAccount(any());
+    assertThat(propagated, is(identityFailure));
+    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any());
   }
 
   @Test
   public void
-      updateKeycloakAccountAndCreateDatabaseUserAccount_Should_StillCreateDbUserAndNotRollback_When_UpdateKeycloakRoleFailsForRegisteredUser() {
-    // Matrix migration: for registered (non-anonymous) users a failing Keycloak role update is
-    // logged and swallowed, and the database user account is still created.
-    when(consultingTypeManager.getConsultingTypeSettings(any()))
-        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doThrow(new RuntimeException()).when(keycloakService).assignRoles(anyString(), any());
+      updateIdentityAndCreateAccount_Should_AbortBeforeDatabaseWrite_When_RoleUpdateFails() {
+    RuntimeException identityFailure = new RuntimeException("role update failed");
+    doThrow(identityFailure).when(identityRoleUpdater).assignRoles(anyString(), any());
 
-    createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
+    RuntimeException propagated =
+        assertThrows(
+            RuntimeException.class,
+            () ->
+                createUserFacade.updateIdentityAndCreateAccount(
+                    USER_ID, USER_DTO_SUCHT, UserRole.USER));
 
-    verify(userService, times(1)).createUser(any(), any(), any(), any(), anyBoolean(), any());
-    verify(rollbackFacade, times(0)).rollBackUserAccount(any());
+    assertThat(propagated, is(identityFailure));
+    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any());
+  }
+
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_CompensateIdentity_When_RoleUpdateFails() {
+    PlainCredentialsHolder.set("plain-user", "plain-password");
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(USER_ID));
+    RuntimeException identityFailure = new RuntimeException("role update failed");
+    doThrow(identityFailure).when(identityRoleUpdater).assignRoles(anyString(), any());
+
+    RuntimeException propagated =
+        assertThrows(
+            RuntimeException.class,
+            () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+
+    assertThat(propagated, is(identityFailure));
+    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any());
+    verify(identityAccountRemover).rollbackUser(USER_ID);
+    assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
   @Test
@@ -254,13 +347,11 @@ public class CreateUserFacadeTest {
         () -> {
           when(consultingTypeManager.getConsultingTypeSettings(any()))
               .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-          doNothing().when(keycloakService).updatePassword(anyString(), anyString());
+          doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
           when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any()))
               .thenThrow(new IllegalArgumentException());
 
           createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
-
-          verify(rollbackFacade, times(0)).rollBackUserAccount(any());
         });
   }
 
@@ -278,14 +369,24 @@ public class CreateUserFacadeTest {
     return user;
   }
 
-  private void givenBasicRegistrationStubs() {
+  private void givenBasicRegistrationStubs() throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createAccount(any())).thenReturn(new IdentityAccountCreated(USER_ID));
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(USER_ID));
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenReturn(mock(NewRegistrationResponseDto.class));
     when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
+    givenMatrixProvisioningSucceeds();
+  }
+
+  private void givenMatrixProvisioningSucceeds() throws Exception {
+    var matrixResponseBody = new MatrixCreateUserResponseDTO();
+    matrixResponseBody.setUserId("@registered:matrix.oriso.org");
+    lenient()
+        .when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(ResponseEntity.ok(matrixResponseBody));
   }
 
   @Test
@@ -332,68 +433,196 @@ public class CreateUserFacadeTest {
 
   @Test
   void
-      createUserAccountWithInitializedConsultingType_Should_SkipMatrixUserCreation_When_PlainUsernameNotResolvable()
+      createUserAccountWithInitializedConsultingType_Should_CompensateAndAbort_When_PlainUsernameNotResolvable()
           throws Exception {
     PlainCredentialsHolder.clear();
-    givenBasicRegistrationStubs();
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(USER_ID));
+    when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     // userService.createUser/saveUser left unstubbed -> null user, no username to resolve
 
-    createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
     verify(matrixSynapseService, never()).createUser(any(), any(), any());
+    verify(createNewSessionFacade, never())
+        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+    verify(identityAccountRemover).rollbackUser(USER_ID);
+    assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
   @Test
   void
-      createUserAccountWithInitializedConsultingType_Should_ContinueRegistration_When_MatrixUserCreationThrows()
+      createUserAccountWithInitializedConsultingType_Should_CompensateAndAbort_When_MatrixUserCreationThrows()
           throws Exception {
     PlainCredentialsHolder.clear();
-    givenBasicRegistrationStubs();
-    givenAFullyPersistedUser();
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(USER_ID));
+    when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
+    User user = givenAFullyPersistedUser();
     when(matrixSynapseService.createUser(any(), any(), any()))
         .thenThrow(new MatrixCreateUserException("boom"));
 
-    createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
-    verify(createNewSessionFacade, times(1))
+    verify(createNewSessionFacade, never())
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+    verify(userService).deleteUser(user);
+    verify(identityAccountRemover).rollbackUser(USER_ID);
+    assertThat(PlainCredentialsHolder.get(), nullValue());
   }
 
   @Test
   void
-      createUserAccountWithInitializedConsultingType_Should_NotSetMatrixUserId_When_MatrixResponseBodyIsNull()
+      createUserAccountWithInitializedConsultingType_Should_CompensateAndAbort_When_MatrixResponseBodyIsNull()
           throws Exception {
     PlainCredentialsHolder.clear();
-    givenBasicRegistrationStubs();
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(USER_ID));
+    when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
     User user = givenAFullyPersistedUser();
     when(matrixSynapseService.createUser(any(), any(), any())).thenReturn(ResponseEntity.ok(null));
 
-    createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
 
     assertThat(user.getMatrixUserId(), nullValue());
+    verify(createNewSessionFacade, never())
+        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+    verify(userService).deleteUser(user);
+    verify(identityAccountRemover).rollbackUser(USER_ID);
     verify(userService, times(1)).saveUser(any());
   }
 
   @Test
   void
-      createUserAccountWithInitializedConsultingType_Should_PropagateSessionInitializationFailure() {
+      createUserAccountWithInitializedConsultingType_Should_Compensate_When_InitializeNewSessionThrows()
+          throws Exception {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(keycloakService.createAccount(any())).thenReturn(new IdentityAccountCreated(USER_ID));
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(USER_ID));
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenThrow(new RuntimeException("Matrix room initialization failed"));
+    User user = givenAFullyPersistedUser();
+    givenMatrixProvisioningSucceeds();
 
-    var exception =
+    RuntimeException exception =
         assertThrows(
             RuntimeException.class,
             () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+
     assertThat(exception.getMessage(), is("Matrix room initialization failed"));
+    verify(userService).deleteUser(user);
+    verify(identityAccountRemover).rollbackUser(USER_ID);
   }
 
   @Test
   void
-      createUserAccountWithInitializedConsultingType_Should_UseDefaultTenantName_When_NoCurrentTenantIsSet() {
+      createUserAccountWithInitializedConsultingType_Should_CompensateAllCreatedResources_When_AllSessionPathsFail()
+          throws Exception {
+    PlainCredentialsHolder.set("plainuser", "plainpw");
+    User user =
+        new User(USER_ID, null, USER_DTO_SUCHT.getUsername(), USER_DTO_SUCHT.getEmail(), false);
+    Session partialSession = new Session();
+    partialSession.setId(42L);
+    var matrixResponse = new MatrixCreateUserResponseDTO();
+    matrixResponse.setUserId("@plainuser:matrix.oriso.org");
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(USER_ID));
+    when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any())).thenReturn(user);
+    when(userService.saveUser(any(User.class))).thenReturn(user);
+    when(matrixSynapseService.createUser(eq("plainuser"), anyString(), eq("plainuser")))
+        .thenReturn(ResponseEntity.ok(matrixResponse));
+    when(matrixSynapseService.deactivateUser("@plainuser:matrix.oriso.org")).thenReturn(true);
+    when(createNewSessionFacade.initializeNewSession(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+        .thenThrow(new InternalServerErrorException("session initialization failed"));
+    when(sessionService.getSessionsForUser(user)).thenReturn(List.of(partialSession));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+
+    var compensationOrder =
+        inOrder(matrixSynapseService, sessionService, userService, identityAccountRemover);
+    compensationOrder.verify(sessionService).deleteSession(partialSession);
+    compensationOrder.verify(matrixSynapseService).deactivateUser("@plainuser:matrix.oriso.org");
+    compensationOrder.verify(userService).deleteUser(user);
+    compensationOrder.verify(identityAccountRemover).rollbackUser(USER_ID);
+    assertThat(PlainCredentialsHolder.get(), nullValue());
+  }
+
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_SucceedOnReplayAfterFirstAttemptWasCompensated()
+          throws Exception {
+    User firstUser = new User("first-id", null, "username", USER_DTO_SUCHT.getEmail(), false);
+    User replayUser = new User("replay-id", null, "username", USER_DTO_SUCHT.getEmail(), false);
+    Session partialSession = new Session();
+    partialSession.setId(42L);
+    var firstIdentity = new IdentityAccountCreated("first-id");
+    var replayIdentity = new IdentityAccountCreated("replay-id");
+    var firstMatrixResponse = new MatrixCreateUserResponseDTO();
+    firstMatrixResponse.setUserId("@first:matrix.oriso.org");
+    var replayMatrixResponse = new MatrixCreateUserResponseDTO();
+    replayMatrixResponse.setUserId("@replay:matrix.oriso.org");
+    var replayRegistration =
+        new NewRegistrationResponseDto().sessionId(99L).status(HttpStatus.CREATED);
+
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
+    when(identityAccountCreator.createAccount(any())).thenReturn(firstIdentity, replayIdentity);
+    when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any()))
+        .thenReturn(firstUser, replayUser);
+    when(userService.saveUser(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
+    when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
+        .thenReturn(
+            ResponseEntity.ok(firstMatrixResponse), ResponseEntity.ok(replayMatrixResponse));
+    when(matrixSynapseService.deactivateUser("@first:matrix.oriso.org")).thenReturn(true);
+    when(createNewSessionFacade.initializeNewSession(
+            any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
+        .thenThrow(new InternalServerErrorException("first attempt failed"))
+        .thenReturn(replayRegistration);
+    when(sessionService.getSessionsForUser(firstUser)).thenReturn(List.of(partialSession));
+
+    PlainCredentialsHolder.set("first", "password");
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+    PlainCredentialsHolder.set("replay", "password");
+    Long replaySessionId =
+        createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+
+    assertThat(replaySessionId, is(99L));
+    verify(sessionService).deleteSession(partialSession);
+    verify(matrixSynapseService).deactivateUser("@first:matrix.oriso.org");
+    verify(matrixSynapseService, never()).deactivateUser("@replay:matrix.oriso.org");
+    verify(userService).deleteUser(firstUser);
+    verify(userService, never()).deleteUser(replayUser);
+    verify(identityAccountRemover).rollbackUser("first-id");
+    verify(identityAccountRemover, never()).rollbackUser("replay-id");
+    verify(identityAccountCreator, times(2)).createAccount(any());
+    assertThat(PlainCredentialsHolder.get(), nullValue());
+  }
+
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_UseDefaultTenantName_When_NoCurrentTenantIsSet()
+          throws Exception {
     TenantContext.clear();
     givenBasicRegistrationStubs();
     givenAFullyPersistedUser();
@@ -411,7 +640,8 @@ public class CreateUserFacadeTest {
 
   @Test
   void
-      createUserAccountWithInitializedConsultingType_Should_UseDefaultTenantName_When_TenantServiceReturnsNull() {
+      createUserAccountWithInitializedConsultingType_Should_UseDefaultTenantName_When_TenantServiceReturnsNull()
+          throws Exception {
     TenantContext.setCurrentTenant(1L);
     try {
       givenBasicRegistrationStubs();
@@ -436,7 +666,7 @@ public class CreateUserFacadeTest {
   void updateIdentityAndCreateAccount_Should_ClearPrivacyConfirmations_When_RoleIsAnonymous() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(keycloakService).updatePassword(anyString(), anyString());
+    doNothing().when(identityPasswordUpdater).updatePassword(anyString(), anyString());
     User user = new User();
     user.setTermsAndConditionsConfirmation(LocalDateTime.now());
     user.setDataPrivacyConfirmation(LocalDateTime.now());
@@ -455,7 +685,9 @@ public class CreateUserFacadeTest {
   @Test
   void
       updateIdentityAndCreateAccount_Should_ThrowInternalServerError_When_KeycloakFailsForAnonymousUser() {
-    doThrow(new RuntimeException("kc down")).when(keycloakService).assignRoles(anyString(), any());
+    doThrow(new RuntimeException("kc down"))
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), any());
 
     assertThrows(
         InternalServerErrorException.class,
@@ -468,13 +700,13 @@ public class CreateUserFacadeTest {
 
   @Test
   void
-      updateIdentityAndCreateAccount_Should_ContinueAndCreateDbUser_When_UserIdIsNullAndRoleIsUser() {
-    when(consultingTypeManager.getConsultingTypeSettings(any()))
-        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+      updateIdentityAndCreateAccount_Should_AbortBeforeDatabaseWrite_When_UserIdIsNullAndRoleIsUser() {
 
-    createUserFacade.updateIdentityAndCreateAccount(null, USER_DTO_SUCHT, UserRole.USER);
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createUserFacade.updateIdentityAndCreateAccount(null, USER_DTO_SUCHT, UserRole.USER));
 
-    verify(userService, times(1)).createUser(any(), any(), any(), any(), anyBoolean(), any());
+    verify(userService, never()).createUser(any(), any(), any(), any(), anyBoolean(), any());
   }
 
   @Test
@@ -491,9 +723,15 @@ public class CreateUserFacadeTest {
   void updateIdentityAndCreateAccount_Should_CallUpdateDummyEmail_When_EmailIsBlank() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(keycloakService).updatePassword(anyString(), anyString());
-    when(keycloakService.updateDummyEmail(anyString(), any(IdentityDummyEmailUpdate.class)))
+    doNothing().when(identityRoleUpdater).assignRoles(anyString(), any());
+    doNothing()
+        .when(identityPasswordUpdater)
+        .updatePassword(anyString(), org.mockito.ArgumentMatchers.nullable(String.class));
+    when(identityDummyEmailUpdater.updateDummyEmail(
+            anyString(), any(IdentityDummyEmailUpdate.class)))
         .thenReturn("dummy@example.com");
+    when(userService.createUser(any(), any(), any(), any(), anyBoolean(), any()))
+        .thenReturn(new User());
     UserDTO userDtoWithBlankEmail =
         UserDTO.builder()
             .email("")
@@ -504,7 +742,7 @@ public class CreateUserFacadeTest {
 
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, userDtoWithBlankEmail, UserRole.USER);
 
-    verify(keycloakService, times(1))
+    verify(identityDummyEmailUpdater, times(1))
         .updateDummyEmail(eq(USER_ID), any(IdentityDummyEmailUpdate.class));
   }
 
@@ -513,7 +751,6 @@ public class CreateUserFacadeTest {
       updateIdentityAndCreateAccount_Should_ClearPrivacyConfirmations_When_PostcodeIsAnonymousPlaceholder() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(keycloakService).updatePassword(anyString(), anyString());
     User user = new User();
     user.setTermsAndConditionsConfirmation(LocalDateTime.now());
     user.setDataPrivacyConfirmation(LocalDateTime.now());
@@ -540,7 +777,6 @@ public class CreateUserFacadeTest {
       updateIdentityAndCreateAccount_Should_ClearPrivacyConfirmations_When_UsernameStartsWithAnonymousPrefix() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(keycloakService).updatePassword(anyString(), anyString());
     User user = new User();
     user.setTermsAndConditionsConfirmation(LocalDateTime.now());
     user.setDataPrivacyConfirmation(LocalDateTime.now());

@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -41,6 +42,7 @@ public class AgencySilentMembershipService {
   private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull UserHelper userHelper;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   /**
    * Invites and joins every active counsellor of the given agency into the room.
@@ -132,7 +134,7 @@ public class AgencySilentMembershipService {
     }
 
     var localpart = usernameTranscoder.decodeUsername(consultant.getUsername());
-    var displayName = consultant.getFirstName() + " " + consultant.getLastName();
+    var displayName = consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
 
     String matrixUserId;
     try {

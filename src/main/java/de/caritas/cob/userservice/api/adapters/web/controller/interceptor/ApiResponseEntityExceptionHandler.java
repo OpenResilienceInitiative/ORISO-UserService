@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.CustomHttpHeader;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
@@ -162,7 +163,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final HttpHeaders headers,
       final HttpStatusCode status,
       final WebRequest request) {
-    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status, ex);
+    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, status, ex.getMessage(), ex);
 
     return handleExceptionInternal(null, null, headers, status, request);
   }
@@ -176,7 +177,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   @ExceptionHandler({InvalidDataAccessApiUsageException.class})
   protected ResponseEntity<Object> handleConflict(
       final RuntimeException ex, final WebRequest request) {
-    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, HttpStatus.CONFLICT, ex.getStackTrace());
+    log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, HttpStatus.CONFLICT, ex.getMessage(), ex);
 
     return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.CONFLICT, request);
   }
@@ -297,6 +298,7 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     NullPointerException.class,
     IllegalArgumentException.class,
     IllegalStateException.class,
+    IdentityProvisioningException.class,
     KeycloakException.class,
     DataAccessException.class,
     UnknownHostException.class,
@@ -345,7 +347,11 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       HttpHeaders headers,
       HttpStatusCode status,
       WebRequest request) {
-    if (HttpStatus.INTERNAL_SERVER_ERROR.equals(status)) {
+    // Compare by status code rather than by enum identity, so this does not depend on the caller
+    // handing us the HttpStatus constant rather than some other HttpStatusCode carrying 500.
+    // Equivalent today: HttpStatusCode is sealed to HttpStatus and DefaultHttpStatusCode, and
+    // valueOf(500) always resolves to the enum constant.
+    if (status.value() == HttpStatus.INTERNAL_SERVER_ERROR.value()) {
       request.setAttribute("jakarta.servlet.error.exception", ex, 0);
     }
 

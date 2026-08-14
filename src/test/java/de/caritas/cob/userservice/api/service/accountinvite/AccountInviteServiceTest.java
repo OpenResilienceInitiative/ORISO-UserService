@@ -71,7 +71,7 @@ class AccountInviteServiceTest {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenAnswer(
             invocation -> "https://app.oriso.org/account-invite/" + invocation.getArgument(1));
-    when(inviteMailDispatchService.send(any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenAnswer(
             invocation ->
                 new InviteMailSendReceipt(
@@ -173,7 +173,7 @@ class AccountInviteServiceTest {
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://app.oriso.org/admin/tenant-onboarding/x");
-    when(inviteMailDispatchService.send(any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenThrow(new SmtpSendException("SMTP refused the message"));
 
     assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(10L, 20L)))
@@ -202,7 +202,7 @@ class AccountInviteServiceTest {
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any())).thenReturn("https://x/y");
-    when(inviteMailDispatchService.send(any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenThrow(new SmtpSendException("SMTP refused the message"));
     org.mockito.Mockito.doThrow(new IllegalStateException("audit down"))
         .when(deliveryFailureRecorder)
@@ -235,7 +235,9 @@ class AccountInviteServiceTest {
     var inOrder =
         org.mockito.Mockito.inOrder(
             inviteMailDispatchService, accountInviteRepository, deliveryRepository);
-    inOrder.verify(inviteMailDispatchService).send(eq("owner@example.org"), any(), any());
+    inOrder
+        .verify(inviteMailDispatchService)
+        .send(eq("owner@example.org"), any(), any(), any(), any(), any());
     inOrder.verify(accountInviteRepository).save(invite);
     inOrder.verify(deliveryRepository).save(any());
   }
@@ -284,7 +286,7 @@ class AccountInviteServiceTest {
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any())).thenReturn("https://x/y");
-    when(inviteMailDispatchService.send(any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenThrow(new SmtpSendException("SMTP refused the message"));
 
     assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(10L, 20L)))
@@ -1120,7 +1122,7 @@ class AccountInviteServiceTest {
         .thenAnswer(
             invocation ->
                 "https://app.oriso.org/admin/tenant-onboarding/" + invocation.getArgument(1));
-    when(inviteMailDispatchService.send(any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("a@example.org", Instant.now()));
 
     var result = service.sendInvite(new SendInviteCommand(1L, 20L));

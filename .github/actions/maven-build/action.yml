@@ -42,6 +42,19 @@ runs:
         --reports target/surefire-reports \
         --classification documentation/user-service-historical-failure-classification.json
 
+  # Also guards against a vacuously green run: the failure check above passes
+  # when no report exists at all, --require does not.
+  - name: Report unit inventory
+    if: ${{ always() }}
+    shell: bash
+    run: |
+      set -o pipefail
+      {
+        echo "### Unit test inventory"
+        echo
+        python3 scripts/ci/suite-inventory.py --require unit
+      } | tee -a "$GITHUB_STEP_SUMMARY"
+
   - name: Verify CI and load-test contracts
     shell: bash
     run: python3 -m unittest discover -s tests/ci -p 'test_*.py'

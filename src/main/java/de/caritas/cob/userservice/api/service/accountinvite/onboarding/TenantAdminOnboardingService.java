@@ -217,13 +217,14 @@ public class TenantAdminOnboardingService {
       throw new BadRequestException("No pending TOTP setup exists for this invite");
     }
 
-    var identityProfile =
+    var profile =
         identityProfileLookup
             .findById(invite.getAcceptedByUserId())
-            .orElseThrow(() -> new NotFoundException("Onboarding identity not found"));
+            .orElseThrow(
+                () -> new BadRequestException("No identity profile exists for this invite"));
     boolean valid =
         identitySecondFactor.setUpOtpCredential(
-            identityProfile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
+            profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
     if (!valid) {
       throw new BadRequestException("Invalid one-time password");
     }

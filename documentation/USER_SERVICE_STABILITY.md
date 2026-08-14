@@ -1,7 +1,11 @@
 # UserService stability, dependency measurements and module decision
 
-Last verified: 2026-07-29
 Target branch: `pre-dev`
+
+Suite counts in this record are generated, not written down — see
+[Reproducible stability result](#reproducible-stability-result). A date stamp
+here would have the same problem, so freshness comes from the CI run that
+produced the numbers.
 
 ## Reproducible stability result
 
@@ -23,60 +27,59 @@ and 45 initial Spring context-threshold cascades. The artifact preserves the
 15-suite breakdown behind those 45 errors and does not invent a more specific
 original exception where the retained report did not contain one.
 
-After repairing those clusters:
+After repairing those clusters the suite is green.
 
-| Suite | Tests | Failures | Errors | Skipped | Command |
-| --- | ---: | ---: | ---: | ---: | --- |
-| Unit | 3,564 | 0 | 0 | 0 | `./mvnw -Dskip.integration-tests=true test` |
-| Integration + contract + E2E | 860 | 0 | 0 | 9 | `scripts/ci/run-required-integration-tests.sh` |
-| MariaDB schema contracts | 2 | 0 | 0 | 0 | required fresh MariaDB job |
-| Redis availability contract | 1 | 0 | 0 | 0 | required Redis job |
+The current execution counts are deliberately not recorded here. They are a
+measurement, not a decision, and every branch that adds a test changes them —
+which made this file conflict on each merge and forced a hand reconciliation
+that is easy to get wrong. `scripts/ci/suite-inventory.py` derives them from
+the Surefire and Failsafe reports instead, and both test jobs publish the
+result to their CI run summary. For the combined view locally:
 
-The rows are not one additive total: the MariaDB and Redis rows are dedicated
-environment proofs for cases that belong to the integration inventory. The
-comparable primary current inventory is therefore 3,564 unit plus 860
-integration executions, or 4,424.
+```
+./mvnw verify
+python3 scripts/ci/suite-inventory.py
+```
+
+What is enforced rather than described:
+
+- `scripts/ci/run-required-integration-tests.sh` owns the complete `*IT` suite,
+  requires at least 75 reports and 830 executed tests, and fails on any failure
+  or error;
+- a required CI guard rejects newly disabled or ignored tests;
+- the MariaDB schema and statistics contracts and the Redis availability
+  contract run as their own required jobs, so they are dedicated environment
+  proofs rather than part of the primary inventory.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
 last pre-cutover inventory recorded 3,782 unit and 940 integration executions,
-or 4,722. The Matrix-only cutover then changed the executable product and test
-inventory to the current 4,424: 218 fewer unit and 80 fewer integration
-executions. The preserved cutover source-diff baseline deletes 40 obsolete test
-classes and adds 29 Matrix-only contract classes; later stability and invite
-work added further executable coverage.
-Thirty-three of the 40 deleted classes cover the removed Rocket.Chat, legacy
+or 4,722. Those figures are frozen reference points and do not move.
+
+The Matrix-only cutover then reduced both the executable product and its test
+inventory. The source diff for that pre-cutover-to-current interval deletes 40
+obsolete test classes and adds 29 Matrix-only contract classes. Thirty-three of
+the 40 deleted classes cover the removed Rocket.Chat, legacy
 chat/import/message, or obsolete session/conversation E2E paths. Because JUnit
 execution counts include parameterized and dynamic cases, class counts do not
-map one-to-one to the 298-execution net reduction. This is intentional scope
-removal plus replacement coverage, not unexplained test quarantine.
+map one-to-one to the execution delta. This is intentional scope removal plus
+replacement coverage, not unexplained test quarantine.
 
 Nineteen stale security tests were removed. They asserted that safe `GET`
 requests or the explicitly CSRF-exempt public registration endpoint require a
 CSRF token, which contradicts the service's security contract. No failing test
 is skipped or quarantined.
 
-`scripts/ci/run-required-integration-tests.sh` now owns the complete `*IT`
-suite, starts from a clean build, preserves the 830-test safety floor, checks
-for critical E2E reports and finally requires the exact versioned inventory of
-860 executions in 84 reports. The unit workflow applies the same exact-count
-gate to all 3,564 unit executions.
-The previous three-test required subset and the non-blocking legacy quarantine
-were removed. On the current Matrix-only `pre-dev` baseline, the four remaining
-`NewEnquiryEmailSupplierTest` log assertions run normally. The Matrix cutover
-deleted `NewMessageEmailSupplierTest`; this replay deliberately does not restore
-that legacy path. The current Matrix-only floor is 830 tests; the older 900-test
-floor included deleted Rocket.Chat-only tests. A required CI guard rejects newly
-disabled or ignored tests. The six environment-gated suites account for nine
-skipped executions in the generic integration job; they are not quarantined.
-The exact identity of all nine executions is versioned in the historical
-classification artifact and checked against Surefire XML. A new skip cannot
-hide behind the same aggregate count: the inventory gate reports both
-unexpected and missing test identities. Every listed execution also names its
-required Redis or MariaDB workflow, and a contract verifies that the workflow
-sets the required environment and selects the corresponding class.
-Redis and MariaDB have their own required service-container/fresh-database jobs
-on branch, pull-request and publish workflows.
+The integration contract starts from a clean build and additionally checks that
+the critical E2E reports are present, so a green run cannot mean a silently
+shrunken suite. The previous three-test required subset and the non-blocking
+legacy quarantine were removed. On the current Matrix-only `pre-dev` baseline,
+the four remaining `NewEnquiryEmailSupplierTest` log assertions run normally.
+The Matrix cutover deleted `NewMessageEmailSupplierTest`; this replay
+deliberately does not restore that legacy path. The 830-test floor is the
+Matrix-only figure; the older 900-test floor included deleted Rocket.Chat-only
+tests. The environment-gated Redis and MariaDB jobs run on the branch,
+pull-request and publish workflows.
 
 The first clean Ubuntu run exposed three portability defects that a warmed local
 workspace had hidden. Each Spring test context now owns a unique H2 database so
@@ -601,6 +604,39 @@ and prevents the deleted broad identity client from returning.
 The role-read contract keeps full realm-role reads behind the focused
 `IdentityRoleLookup` port and prevents per-candidate role checks from returning
 to consultant-agency validation.
+The role-write contract requires both active consultant role writers and shared
+Spring identity mocks to use the focused batch `IdentityRoleUpdater` port, and
+prevents singular role ensuring from returning to the broad identity client.
+The profile-write contract keeps web and Keycloak transport types out of the
+focused `IdentityProfileUpdate` value, requires both active application writers
+and shared Spring mocks to use the `IdentityProfileUpdater` port, and removes
+profile writes from the broad identity client.
+
+Registration-time dummy-email replacement now retains only username and tenant
+metadata in a provider-neutral value. The Keycloak adapter computes the dummy
+address, resolves the target identity once and performs one update. The former
+asker-import consumer no longer exists on the Matrix-only baseline; current-user
+email deletion remains on the existing email-address operation.
+
+Identity account removal now has explicit provider-call bounds. A normal
+removal resolves the target once and calls remove once. An unauthorized removal
+refreshes the admin session once and retries the complete lookup/remove
+operation at most once. Provider not-found handling remains idempotent,
+provisioning rollback remains best-effort and strict deletion sequencing is
+unchanged.
+
+The focused password-write boundary covers admin provisioning, consultant
+provisioning and imports, user registration and self-service password reset. A
+write resolves the target identity once, performs one provider reset and has no
+automatic retry. Password-reset token restoration and provisioning rollback
+remain application policies; provider credential DTOs and password-policy error
+translation remain adapter concerns.
+Identity deactivation now has an explicit one-user call bound: the Keycloak
+adapter resolves the users resource and user once, reads one representation and
+performs at most one update, with no hidden or application retry. The anonymous
+deactivation action keeps its existing best-effort error handling; the account,
+asker and consultant deletion flows remain strict and preserve their existing
+ordering around lifecycle and persistence changes.
 
 Email-ownership validation now uses the focused
 `IdentityEmailOwnerLookup` output port and the application-owned
@@ -643,21 +679,19 @@ username or other user data. The application passes the encoded username
 through the focused port; the Keycloak adapter owns provider-specific decoding,
 while the verified email mutation continues to use the decoded username.
 External APIs, schemas and configuration remain unchanged, and this refactor
-does not reduce the number of second-factor provider calls. These are
-source-and-local-test guarantees until the branch is merged, deployed and
-verified on PreDev.
+does not reduce the number of second-factor provider calls.
 
 A dedicated email-mutation contract prevents `IdentityManager` and
 `UserAccountService` from returning to the broad `IdentityClient` for account
 email writes. A changed current-account email performs one representation read,
 one availability search with an exact email match and one provider update. An
-unchanged email stops after the representation read with no availability search or update. Current
-account deletion follows the same focused path with the adapter-owned dummy
-email. A completed email verification performs one username lookup and at most
-one provider update; an unchanged verified email remains a no-op after that
-lookup. Lowercase normalization uses the locale-independent root locale.
-External APIs, schemas and configuration remain unchanged. These are
-source-and-local-test guarantees until the branch is merged, deployed and
+unchanged email stops after the representation read with no availability search
+or update. Current account deletion follows the same focused path with the
+adapter-owned dummy email. A completed email verification performs one username
+lookup and at most one provider update; an unchanged verified email remains a
+no-op after that lookup. Lowercase normalization uses the locale-independent
+root locale. External APIs, schemas and configuration remain unchanged. These
+are source-and-local-test guarantees until the branch is merged, deployed and
 verified on PreDev.
 The role-write contract requires all six active admin, consultant and user role
 writers plus shared Spring identity mocks to use the focused batch port, and

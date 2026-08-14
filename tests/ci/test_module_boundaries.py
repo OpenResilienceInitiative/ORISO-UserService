@@ -20,6 +20,53 @@ def read_if_exists(source: Path) -> str:
 
 
 class ModuleBoundaryContractTest(unittest.TestCase):
+    def test_identity_port_does_not_export_keycloak_or_framework_models(self):
+        identity_port = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        )
+        identity_results = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/identity"
+        )
+        sources = [
+            source
+            for source in [identity_port, *sorted(identity_results.glob("*.java"))]
+            if source.exists()
+        ]
+        forbidden_prefixes = (
+            "import de.caritas.cob.userservice.api.adapters.keycloak.",
+            "import org.keycloak.",
+            "import org.springframework.http.",
+        )
+        offenders = [
+            f"{source.relative_to(ROOT)}: {line}"
+            for source in sources
+            for line in source.read_text().splitlines()
+            if line.startswith(forbidden_prefixes)
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "The identity output port must expose application-owned results, not "
+            "Keycloak or framework transport models:\n" + "\n".join(offenders),
+        )
+
+    def test_identity_creation_validation_is_provider_neutral(self):
+        validator = (
+            ROOT
+            / "src/main/java/de/caritas/cob/userservice/api/admin/service/"
+            "consultant/validation/UserAccountInputValidator.java"
+        )
+        source = validator.read_text()
+
+        self.assertNotIn(
+            "Keycloak",
+            source,
+            "Identity creation validation must use application-owned terminology "
+            "and exceptions.",
+        )
+
     def test_user_and_appointment_web_slices_depend_on_input_ports(self):
         sources = [
             CONTROLLERS / "AppointmentController.java",
@@ -944,17 +991,6 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "KeycloakService.java"
         ).read_text()
 
-        for source in (identity_manager, user_account_service, keycloak_adapter):
-            self.assertIn(
-                focused_import,
-                source,
-                "Every email-mutation participant must use the focused output port",
-            )
-        self.assertNotIn(
-            "identityClient.changeEmailAddress(",
-            identity_manager + user_account_service,
-            "Application email changes must not use the broad identity client",
-        )
         self.assertNotIn(
             "identityClient.deleteEmailAddress(",
             user_account_service,

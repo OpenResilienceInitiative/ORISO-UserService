@@ -10,7 +10,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
-import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
 import jakarta.validation.Validator;
 import lombok.NonNull;
@@ -78,7 +78,7 @@ public class UserAccountInputValidator {
    */
   public void validateIdentityAccountCreated(IdentityAccountCreated createdIdentity) {
     if (isNull(createdIdentity) || isNull(createdIdentity.userId())) {
-      throw new KeycloakException("ERROR: Identity user id is missing");
+      throw new IdentityProvisioningException("Identity user id is missing");
     }
   }
 }

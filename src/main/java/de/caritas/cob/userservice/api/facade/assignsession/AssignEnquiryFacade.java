@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.facade.TeamDiscussionFacade;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -52,6 +53,7 @@ public class AssignEnquiryFacade {
   private final @NonNull UserRepository userRepository;
   private final @NonNull UserHelper userHelper;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   private final @NonNull EventNotificationService eventNotificationService;
 
@@ -64,6 +66,8 @@ public class AssignEnquiryFacade {
   private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
 
   private final @NonNull TeamDiscussionFacade teamDiscussionFacade;
+
+  private final @NonNull AnonymousEnquiryConsentGuard anonymousEnquiryConsentGuard;
 
   /**
    * Assigns the given {@link Session} to the given {@link Consultant} and removes consultants who
@@ -109,6 +113,11 @@ public class AssignEnquiryFacade {
    * @param consultant the consultant to assign
    */
   public void assignAnonymousEnquiry(Session session, Consultant consultant) {
+    /* ADR-018 §9 / ORISO-UserService#927: defence in depth for a bypassed client.
+    Anonymous entry paths only — in Agency Counselling consent is given at
+    registration (ADR-014) and assignRegisteredEnquiry deliberately does not
+    carry this check. */
+    anonymousEnquiryConsentGuard.verifyAnonymousConsent(session);
     assignEnquiry(session, consultant);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
   }
@@ -446,7 +455,7 @@ public class AssignEnquiryFacade {
     }
 
     var matrixLocalpart = usernameTranscoder.decodeUsername(consultant.getUsername());
-    var displayName = consultant.getFirstName() + " " + consultant.getLastName();
+    var displayName = consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
     var matrixUserId = createOrResolveMatrixUserId(matrixLocalpart, displayName);
     if (!isBlank(matrixUserId)) {
       consultant.setMatrixUserId(matrixUserId);

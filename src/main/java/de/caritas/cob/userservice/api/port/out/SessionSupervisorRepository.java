@@ -10,6 +10,8 @@ import org.springframework.data.repository.query.Param;
 
 public interface SessionSupervisorRepository extends JpaRepository<SessionSupervisor, Long> {
 
+  Optional<SessionSupervisor> findByMatrixRoomId(String matrixRoomId);
+
   /**
    * Find all active supervisors for a session.
    *

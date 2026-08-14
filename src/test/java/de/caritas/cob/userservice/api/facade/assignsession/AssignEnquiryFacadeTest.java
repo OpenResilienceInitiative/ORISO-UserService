@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -79,6 +80,11 @@ class AssignEnquiryFacadeTest {
   @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
   @Mock de.caritas.cob.userservice.api.facade.TeamDiscussionFacade teamDiscussionFacade;
 
+  /* ADR-018 §9: the anonymous consent guard. Mocked here — this test covers the
+  Matrix room mechanics of assignment, and the guard has its own tests. */
+  @Mock AnonymousEnquiryConsentGuard anonymousEnquiryConsentGuard;
+  @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
+
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
   private static final String MATRIX_ROOM_ID = "!createdRoom:matrix.example.com";
@@ -86,6 +92,10 @@ class AssignEnquiryFacadeTest {
 
   @BeforeEach
   public void setup() throws MatrixCreateRoomException {
+    // ADR-002 §2: the display name comes from the resolver, never from the real name.
+    lenient()
+        .when(consultantDisplayNameResolver.resolveMatrixDisplayName(any(Consultant.class)))
+        .thenReturn("pseudonym");
     // dev's Matrix migration: assignEnquiry now provisions a Matrix room and reads
     // session.getUser().getMatrixUserId() / consultant.getMatrixUserId(). The shared
     // TestConstants do not set these, so populate them here (reset in tearDown) and stub the

@@ -1,5 +1,9 @@
 package de.caritas.cob.userservice.api.facade;
 
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.CHAT_IDENTITY;
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.DATABASE_USER;
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.IDENTITY_USER;
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.SESSION;
 import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
@@ -12,15 +16,15 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
-import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
-import de.caritas.cob.userservice.api.facade.rollback.RollbackUserAccountInformation;
 import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
@@ -28,6 +32,11 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.provisioning.CompensationResult;
+import de.caritas.cob.userservice.api.service.provisioning.ProvisioningAttempt;
+import de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensator;
+import de.caritas.cob.userservice.api.service.provisioning.ProvisioningWorkflow;
+import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.RegistrationStatisticsEvent;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -37,6 +46,7 @@ import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -52,17 +62,19 @@ import org.springframework.web.client.RestClientException;
 public class CreateUserFacade {
   private final @NonNull UserVerifier userVerifier;
   private final @NonNull IdentityAccountCreator identityAccountCreator;
+  private final @NonNull IdentityAccountRemover identityAccountRemover;
   private final @NonNull IdentityDummyEmailUpdater identityDummyEmailUpdater;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull UserService userService;
-  private final @NonNull RollbackFacade rollbackFacade;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull AgencyVerifier agencyVerifier;
   private final @NonNull CreateNewSessionFacade createNewSessionFacade;
   private final @NonNull StatisticsService statisticsService;
   private final @NonNull TopicService topicService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull SessionService sessionService;
+  private final @NonNull ProvisioningCompensator provisioningCompensator;
 
   private final @NonNull TenantService tenantService;
 
@@ -87,85 +99,94 @@ public class CreateUserFacade {
     // deserialization)
     de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials plainCreds =
         de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
+    ProvisioningAttempt provisioningAttempt = null;
+    AtomicReference<User> provisionedUser = new AtomicReference<>();
 
-    log.info(
-        "MATRIX: Plain username from ThreadLocal is available={}",
-        plainCreds != null && plainCreds.getUsername() != null);
-
-    userVerifier.checkIfAllRequiredAttributesAreCorrectlyFilled(userDTO);
-    userVerifier.checkIfUsernameIsAvailable(userDTO);
-    agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
-
-    var createdIdentity =
-        identityAccountCreator.createAccount(
-            new IdentityAccountCreation(
-                userDTO.getUsername(),
-                userDTO.getEmail(),
-                userDTO.getTenantId(),
-                null,
-                null,
-                isNull(userDTO.getPreferredLanguage())
-                    ? null
-                    : userDTO.getPreferredLanguage().toString()));
-    var user = updateIdentityAndCreateAccount(createdIdentity.userId(), userDTO, UserRole.USER);
-
-    // Ensure user is fully persisted before creating session
-    User savedUser = userService.saveUser(user);
-    if (savedUser != null) {
-      user = savedUser;
-    }
-
-    // Create Matrix user with a random local Matrix password that is never persisted.
-    // The plain username is needed for the Matrix localpart. Prefer the value captured during
-    // request deserialization, but fall back to deriving it from the persisted username. The
-    // ThreadLocal is populated by a Jackson deserializer and is not always available by the time
-    // we get here; relying on it alone left some askers without a Matrix account, which later
-    // makes their first enquiry fail with "Could not create Matrix room".
-    String plainUsername;
-    if (plainCreds != null && plainCreds.getUsername() != null) {
-      plainUsername = plainCreds.getUsername();
-    } else if (user != null && user.getUsername() != null) {
-      plainUsername = new UsernameTranscoder().decodeUsername(user.getUsername());
-    } else {
-      plainUsername = null;
-    }
     try {
-      provisionMatrixUser(user, plainUsername);
-    } catch (InternalServerErrorException e) {
-      log.error(
-          "Matrix user creation failed for plain username: {}, but continuing with registration",
-          plainUsername,
-          e);
+      log.debug(
+          "Chat provisioning credentials available={}",
+          plainCreds != null && plainCreds.getUsername() != null);
+
+      userVerifier.checkIfAllRequiredAttributesAreCorrectlyFilled(userDTO);
+      userVerifier.checkIfUsernameIsAvailable(userDTO);
+      agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
+
+      var createdIdentity =
+          identityAccountCreator.createAccount(
+              new IdentityAccountCreation(
+                  userDTO.getUsername(),
+                  userDTO.getEmail(),
+                  userDTO.getTenantId(),
+                  null,
+                  null,
+                  isNull(userDTO.getPreferredLanguage())
+                      ? null
+                      : userDTO.getPreferredLanguage().toString()));
+      String identityUserId = isNull(createdIdentity) ? null : createdIdentity.userId();
+      checkIfUserIdNotNull(identityUserId);
+      provisioningAttempt = provisioningCompensator.begin(ProvisioningWorkflow.REGISTERED_USER);
+      ProvisioningAttempt activeAttempt = provisioningAttempt;
+      activeAttempt.register(
+          IDENTITY_USER, identityUserId, () -> identityAccountRemover.rollbackUser(identityUserId));
+      activeAttempt.register(
+          DATABASE_USER,
+          identityUserId,
+          () -> deleteDatabaseUser(identityUserId, provisionedUser.get()));
+
+      User user = updateIdentityAndCreateAccount(identityUserId, userDTO, UserRole.USER);
+      provisionedUser.set(user);
+      User savedUser = userService.saveUser(user);
+      if (savedUser != null) {
+        user = savedUser;
+        provisionedUser.set(savedUser);
+      }
+
+      String plainUsername;
+      if (plainCreds != null && plainCreds.getUsername() != null) {
+        plainUsername = plainCreds.getUsername();
+      } else if (user != null && user.getUsername() != null) {
+        plainUsername = new UsernameTranscoder().decodeUsername(user.getUsername());
+      } else {
+        plainUsername = null;
+      }
+      provisionMatrixUser(user, plainUsername, activeAttempt);
+
+      var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
+      activeAttempt.register(
+          SESSION, identityUserId, () -> deleteSessionsForUser(provisionedUser.get()));
+      NewRegistrationResponseDto registration =
+          createNewSessionFacade.initializeNewSession(userDTO, user, consultingTypeSettings);
+
+      try {
+        RegistrationStatisticsEvent registrationEvent =
+            new RegistrationStatisticsEvent(
+                userDTO,
+                user,
+                registration.getSessionId(),
+                topicService.findTopicInternalIdentifier(userDTO.getMainTopicId()),
+                topicService.findTopicsInternalAttributes(userDTO.getTopicIds()),
+                getTenantName(),
+                getAgencyName(userDTO));
+        statisticsService.fireEvent(registrationEvent);
+      } catch (Exception e) {
+        log.error("Could not create registration statistics event", e);
+      }
+
+      activeAttempt.complete();
+      return registration.getSessionId();
     } finally {
-      // Clean up ThreadLocal to prevent memory leaks
+      compensateProvisioning(provisioningAttempt);
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
     }
-
-    var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
-
-    NewRegistrationResponseDto registration =
-        createNewSessionFacade.initializeNewSession(userDTO, user, consultingTypeSettings);
-
-    try {
-      RegistrationStatisticsEvent registrationEvent =
-          new RegistrationStatisticsEvent(
-              userDTO,
-              user,
-              registration.getSessionId(),
-              topicService.findTopicInternalIdentifier(userDTO.getMainTopicId()),
-              topicService.findTopicsInternalAttributes(userDTO.getTopicIds()),
-              getTenantName(),
-              getAgencyName(userDTO));
-      statisticsService.fireEvent(registrationEvent);
-    } catch (Exception e) {
-      log.error("Could not create registration statistics event", e);
-    }
-
-    return registration.getSessionId();
   }
 
   /** Provisions and persists the Matrix identity needed by browser token bootstrap. */
   public void provisionMatrixUser(User user, String plainUsername) {
+    provisionMatrixUser(user, plainUsername, null);
+  }
+
+  private void provisionMatrixUser(
+      User user, String plainUsername, ProvisioningAttempt provisioningAttempt) {
     try {
       if (user == null || isBlank(plainUsername)) {
         throw new IllegalArgumentException("Plain username or user not resolvable");
@@ -175,24 +196,63 @@ public class CreateUserFacade {
       var matrixResponse =
           matrixSynapseService.createUser(plainUsername, matrixPassword, plainUsername);
 
-      log.info(
-          "Matrix user creation response for plain username '{}': statusCode={}, hasBody={}",
-          plainUsername,
+      log.debug(
+          "Chat identity provisioning response statusCode={} hasBody={}",
           matrixResponse.getStatusCode(),
           matrixResponse.getBody() != null);
 
       if (matrixResponse.getBody() != null && matrixResponse.getBody().getUserId() != null) {
-        user.setMatrixUserId(matrixResponse.getBody().getUserId());
+        String matrixUserId = matrixResponse.getBody().getUserId();
+        if (provisioningAttempt != null) {
+          provisioningAttempt.register(
+              CHAT_IDENTITY,
+              matrixUserId,
+              () -> {
+                if (!matrixSynapseService.deactivateUser(matrixUserId)) {
+                  throw new IllegalStateException(
+                      "Chat identity deactivation was not acknowledged");
+                }
+              });
+        }
+        user.setMatrixUserId(matrixUserId);
         userService.saveUser(user);
-        log.info(
-            "Successfully created Matrix user with plain username '{}' → Matrix ID: {}",
-            plainUsername,
-            matrixResponse.getBody().getUserId());
+        log.info("Chat identity provisioned successfully");
       } else {
         throw new IllegalStateException("Matrix user creation response is missing user_id");
       }
     } catch (Exception e) {
-      throw new InternalServerErrorException("Could not provision Matrix user " + plainUsername, e);
+      throw new InternalServerErrorException("Could not provision chat identity", e);
+    }
+  }
+
+  private void deleteSessionsForUser(User user) {
+    if (user == null) {
+      return;
+    }
+    List<Session> sessions = sessionService.getSessionsForUser(user);
+    if (sessions != null) {
+      sessions.forEach(sessionService::deleteSession);
+    }
+  }
+
+  private void deleteDatabaseUser(String identityUserId, User user) {
+    if (user != null) {
+      userService.deleteUser(user);
+      return;
+    }
+    userService.getUser(identityUserId).ifPresent(userService::deleteUser);
+  }
+
+  private void compensateProvisioning(ProvisioningAttempt provisioningAttempt) {
+    if (provisioningAttempt == null) {
+      return;
+    }
+    CompensationResult result = provisioningAttempt.compensateIfIncomplete();
+    if (!result.successful()) {
+      log.warn(
+          "Provisioning compensation incomplete operationId={} failedResources={}",
+          result.operationId(),
+          result.failedResources());
     }
   }
 
@@ -227,51 +287,30 @@ public class CreateUserFacade {
    */
   public User updateIdentityAndCreateAccount(String userId, UserDTO userDTO, UserRole role) {
 
-    User user = null;
     try {
       updateKeycloakRoleAndPassword(userId, userDTO, role);
-
-      var extendedConsultingTypeResponseDTO =
-          consultingTypeManager.getConsultingTypeSettings(userDTO.getConsultingType());
-      var language =
-          isNull(userDTO.getPreferredLanguage()) ? null : userDTO.getPreferredLanguage().toString();
-
-      user =
-          userService.createUser(
-              userId,
-              null,
-              userDTO.getUsername(),
-              returnDummyEmailIfNoneGiven(userDTO, userId),
-              isTrue(extendedConsultingTypeResponseDTO.getLanguageFormal()),
-              language);
-
-    } catch (Exception ex) {
+    } catch (RuntimeException ex) {
       if (role == UserRole.ANONYMOUS) {
         log.error(
-            "Keycloak operations failed for anonymous user {}, aborting account creation",
-            userDTO.getUsername(),
-            ex);
-        throw new InternalServerErrorException("Keycloak operations failed for anonymous user", ex);
+            "Identity operations failed for anonymous account; aborting account creation", ex);
+        throw new InternalServerErrorException("Identity operations failed for anonymous user", ex);
       }
-      log.error(
-          "Keycloak operations failed for user {}, but continuing with user creation",
-          userDTO.getUsername(),
-          ex);
-      // Continue with user creation even if Keycloak operations fail (registered askers / Matrix)
-      var extendedConsultingTypeResponseDTO =
-          consultingTypeManager.getConsultingTypeSettings(userDTO.getConsultingType());
-      var language =
-          isNull(userDTO.getPreferredLanguage()) ? null : userDTO.getPreferredLanguage().toString();
-
-      user =
-          userService.createUser(
-              userId,
-              null,
-              userDTO.getUsername(),
-              returnDummyEmailIfNoneGiven(userDTO, userId),
-              isTrue(extendedConsultingTypeResponseDTO.getLanguageFormal()),
-              language);
+      log.error("Identity operations failed; aborting database user creation", ex);
+      throw ex;
     }
+
+    var extendedConsultingTypeResponseDTO =
+        consultingTypeManager.getConsultingTypeSettings(userDTO.getConsultingType());
+    var language =
+        isNull(userDTO.getPreferredLanguage()) ? null : userDTO.getPreferredLanguage().toString();
+    User user =
+        userService.createUser(
+            userId,
+            null,
+            userDTO.getUsername(),
+            returnDummyEmailIfNoneGiven(userDTO, userId),
+            isTrue(extendedConsultingTypeResponseDTO.getLanguageFormal()),
+            language);
 
     if (shouldClearPrivacyConfirmations(role, userDTO) && nonNull(user)) {
       user.setTermsAndConditionsConfirmation(null);
@@ -299,15 +338,14 @@ public class CreateUserFacade {
   }
 
   private void updateKeycloakRoleAndPassword(String userId, UserDTO userDTO, UserRole role) {
-    checkIfUserIdNotNull(userId, userDTO);
+    checkIfUserIdNotNull(userId);
     identityRoleUpdater.assignRoles(userId, List.of(role.getValue()));
     identityPasswordUpdater.updatePassword(userId, userDTO.getPassword());
   }
 
-  private void checkIfUserIdNotNull(String userId, UserDTO userDTO) {
+  private void checkIfUserIdNotNull(String userId) {
     if (isNull(userId)) {
-      throw new InternalServerErrorException(
-          String.format("Could not create Keycloak account for: %s", userDTO.toString()));
+      throw new InternalServerErrorException("Could not create identity account");
     }
   }
 
@@ -367,15 +405,5 @@ public class CreateUserFacade {
         tenantService
             .getRestrictedTenantData(mainTenantSubdomainForSingleDomainMultitenancy.getValue())
             .getId());
-  }
-
-  private void rollBackAccountInitialization(String userId, UserDTO userDTO) {
-    rollbackFacade.rollBackUserAccount(
-        RollbackUserAccountInformation.builder()
-            .userId(userId)
-            .rollBackUserAccount(Boolean.parseBoolean(userDTO.getTermsAccepted()))
-            .build());
-    throw new InternalServerErrorException(
-        String.format("Could not update account data on registration for: %s", userDTO));
   }
 }

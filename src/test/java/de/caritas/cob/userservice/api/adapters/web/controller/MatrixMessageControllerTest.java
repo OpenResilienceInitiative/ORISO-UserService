@@ -158,7 +158,12 @@ class MatrixMessageControllerTest {
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId()));
     when(matrixSynapseService.loginBrowserDevice(MATRIX_USER_ID, "ORISO_WEB_DEVICE_ONE"))
-        .thenReturn(Map.of("access_token", "abc", "user_id", MATRIX_USER_ID, "device_id", "dev1"));
+        .thenReturn(
+            Map.of(
+                "access_token", "abc",
+                "user_id", MATRIX_USER_ID,
+                "device_id", "dev1",
+                "interactive_auth_password", "ephemeral-uia-password"));
 
     var response = controller.getCurrentUserMatrixToken("ORISO_WEB_DEVICE_ONE");
 
@@ -166,6 +171,8 @@ class MatrixMessageControllerTest {
     var body = assertInstanceOf(Map.class, response.getBody());
     assertEquals("abc", body.get("accessToken"));
     assertEquals("dev1", body.get("deviceId"));
+    assertEquals("ephemeral-uia-password", body.get("uiaPassword"));
+    assertEquals("no-store", response.getHeaders().getCacheControl());
   }
 
   @Test

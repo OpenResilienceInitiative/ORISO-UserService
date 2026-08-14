@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.Collection;
@@ -20,6 +21,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 import lombok.Builder;
 import lombok.Getter;
@@ -40,8 +42,12 @@ public class EventNotificationService {
   public static final String CATEGORY_SYSTEM = "system";
   public static final String CATEGORY_MESSAGE = "message";
 
+  /** Matches the {@code deduplication_key} column length (VARCHAR(191), changeset 0063). */
+  static final int MAX_DEDUPLICATION_KEY_LENGTH = 191;
+
   private static final String SYSTEM_NOTIFICATION_PREFIX = "[SYSTEM_NOTIFICATION]";
   private static final String REDACTED_PREVIEW = "[content hidden]";
+  private static final long ACTIVE_VIEW_TTL_NANOS = Duration.ofSeconds(30).toNanos();
 
   private final @NonNull EventNotificationRepository eventNotificationRepository;
   private final @NonNull SessionRepository sessionRepository;
@@ -51,6 +57,7 @@ public class EventNotificationService {
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
+  private volatile LongSupplier monotonicNanos = System::nanoTime;
 
   @Value("${privacy.notificationPreviewMode:NONE}")
   private String notificationPreviewMode;
@@ -176,12 +183,75 @@ public class EventNotificationService {
    * logged.
    */
   @Transactional
+  /**
+   * ADR-018 §11 / ORISO-UserService#926: <b>exactly one</b> Activity Timeline entry for the whole
+   * Erstantwort, targeting the chat.
+   *
+   * <p>One entry, not one per open action. A person who has just written a first message about
+   * something hard should not receive three to-do items in response — that was the explicit
+   * rejection recorded in ADR-018 §11.
+   *
+   * <p>This is also the "narrow exception" the issue asks for, and it is narrow by construction
+   * rather than by a flag: system notifications are filtered out of the timeline on the <b>Matrix
+   * ingestion</b> path ({@code isSystemNotificationMessage}), where an unfiltered system message
+   * would produce a timeline row for every internal event in every room. That filter stays exactly
+   * as strict as it is. The Erstantwort instead writes its own single row here, from the enquiry
+   * facade, so nothing else slips through with it.
+   *
+   * <p>Failures are swallowed: a missing timeline row must never fail the enquiry.
+   *
+   * @param session the session whose advice seeker received the Erstantwort
+   */
+  public void createFirstResponseNotification(Session session) {
+    if (session == null || session.getUser() == null) {
+      return;
+    }
+    var recipientUserId = session.getUser().getUserId();
+    if (recipientUserId == null || recipientUserId.isBlank()) {
+      return;
+    }
+    try {
+      createEvent(
+          recipientUserId,
+          "first_response.received",
+          CATEGORY_SYSTEM,
+          "Ihre ersten Schritte",
+          "Wir haben Ihnen im Chat die wichtigsten Informationen geschrieben.",
+          /* The frontend resolves the room reference out of `params`. Without them
+          the entry still renders but has no chat to open, which for the single
+          timeline entry the Erstantwort is allowed to produce means the person is
+          told something happened and given no way back to it. */
+          serializeParams(baseParams(session)),
+          buildAskerSessionActionPath(session),
+          session.getId(),
+          session.getTenantId());
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not persist first_response.received notification for session {}",
+          session.getId(),
+          ex);
+    }
+  }
+
+  /** The advice seeker's own view of their conversation — never the consultant preview list. */
+  private String buildAskerSessionActionPath(Session session) {
+    String listPath = "/sessions/user/view";
+    if (session == null || session.getId() == null) {
+      return listPath;
+    }
+    var roomRef = session.getMatrixRoomId();
+    if (roomRef == null || roomRef.isBlank()) {
+      return listPath;
+    }
+    return listPath + "/" + roomRef + "/" + session.getId();
+  }
+
   public void createNewClientRequestNotifications(
       Session session, Collection<String> recipientConsultantIds) {
     if (session == null || recipientConsultantIds == null) {
       return;
     }
-    String actionPath = buildSessionActionPath(session, null, true);
+    String actionPath = buildEnquiryActionPath(session);
     String params = buildNewClientRequestParams(session);
     recipientConsultantIds.stream()
         .filter(id -> id != null && !id.isBlank())
@@ -223,7 +293,7 @@ public class EventNotificationService {
     if (session == null || recipientConsultantIds == null) {
       return;
     }
-    String actionPath = buildSessionActionPath(session, null, true);
+    String actionPath = buildEnquiryActionPath(session);
     String params = buildNewClientRequestParams(session);
     recipientConsultantIds.stream()
         .filter(id -> id != null && !id.isBlank())
@@ -268,11 +338,16 @@ public class EventNotificationService {
   // non-content metadata (sender label, content class, recipient role, thread id) — NEVER the
   // message preview/body, which stays client-hydrated from the Matrix room.
   private String buildMessageParams(
-      Session session, String senderName, String contentClass, String recipientRole) {
+      Session session,
+      String senderName,
+      String contentClass,
+      String recipientRole,
+      String matrixEventId) {
     Map<String, Object> params = baseParams(session);
     putIfPresent(params, "senderName", senderName);
     putIfPresent(params, "contentClass", contentClass);
     putIfPresent(params, "recipientRole", recipientRole);
+    putIfPresent(params, "matrixEventId", matrixEventId);
     return serializeParams(params);
   }
 
@@ -281,20 +356,31 @@ public class EventNotificationService {
       String senderName,
       String contentClass,
       String threadRootId,
-      String recipientRole) {
+      String recipientRole,
+      String matrixEventId) {
     Map<String, Object> params = baseParams(session);
     putIfPresent(params, "senderName", senderName);
     putIfPresent(params, "contentClass", contentClass);
     putIfPresent(params, "threadRootId", threadRootId);
     putIfPresent(params, "recipientRole", recipientRole);
+    putIfPresent(params, "matrixEventId", matrixEventId);
     return serializeParams(params);
   }
 
-  /** Seed a params map with the session id every timeline event references. */
+  /**
+   * Seed a params map with the session id every timeline event references, plus the Matrix room
+   * reference when the session has one (#846) — the frontend resolves rooms from params instead of
+   * string-splitting actionPath.
+   */
   private Map<String, Object> baseParams(Session session) {
     Map<String, Object> params = new LinkedHashMap<>();
     if (session != null && session.getId() != null) {
       params.put("sessionId", session.getId());
+    }
+    if (session != null
+        && session.getMatrixRoomId() != null
+        && !session.getMatrixRoomId().isBlank()) {
+      params.put("roomRef", session.getMatrixRoomId());
     }
     return params;
   }
@@ -362,21 +448,22 @@ public class EventNotificationService {
 
     Session session = sessionOpt.get();
     String senderLabel = resolveSenderName(senderUserId, senderDisplayName);
-    String text = buildMessageNotificationText(senderLabel, messagePreview, envelope);
+    String text = buildMessageNotificationText(senderLabel, envelope);
     String contentClass = envelope != null ? envelope.getContentClass() : null;
+    String matrixEventId = envelope != null ? envelope.getMessageId() : null;
 
     if (!supervisorMessage
         && session.getUser() != null
         && session.getUser().getUserId() != null
         && !session.getUser().getUserId().equals(senderUserId)
         && !shouldSuppressNotification(session.getUser().getUserId(), roomId, null)) {
-      createEvent(
-          session.getUser().getUserId(),
+      createMessageEventDeduplicated(
           "message.new",
-          CATEGORY_MESSAGE,
+          matrixEventId,
+          session.getUser().getUserId(),
           "New message",
           text,
-          buildMessageParams(session, senderLabel, contentClass, "user"),
+          buildMessageParams(session, senderLabel, contentClass, "user", matrixEventId),
           buildSessionActionPathForRecipient(session, session.getUser().getUserId(), null),
           session.getId(),
           session.getTenantId());
@@ -386,13 +473,13 @@ public class EventNotificationService {
         && session.getConsultant().getId() != null
         && !session.getConsultant().getId().equals(senderUserId)
         && !shouldSuppressNotification(session.getConsultant().getId(), roomId, null)) {
-      createEvent(
-          session.getConsultant().getId(),
+      createMessageEventDeduplicated(
           "message.new",
-          CATEGORY_MESSAGE,
+          matrixEventId,
+          session.getConsultant().getId(),
           "New message",
           text,
-          buildMessageParams(session, senderLabel, contentClass, "consultant"),
+          buildMessageParams(session, senderLabel, contentClass, "consultant", matrixEventId),
           buildSessionActionPathForRecipient(session, session.getConsultant().getId(), null),
           session.getId(),
           session.getTenantId());
@@ -457,23 +544,23 @@ public class EventNotificationService {
 
     Session session = sessionOpt.get();
     String senderLabel = resolveSenderName(senderUserId, senderDisplayName);
-    String text =
-        buildThreadReplyNotificationText(
-            senderLabel, messagePreview, threadParentPreview, envelope);
+    String text = buildThreadReplyNotificationText(senderLabel, envelope);
     String contentClass = envelope != null ? envelope.getContentClass() : null;
+    String matrixEventId = envelope != null ? envelope.getMessageId() : null;
 
     if (!supervisorMessage
         && session.getUser() != null
         && session.getUser().getUserId() != null
         && !session.getUser().getUserId().equals(senderUserId)
         && !shouldSuppressNotification(session.getUser().getUserId(), roomId, threadRootId)) {
-      createEvent(
-          session.getUser().getUserId(),
+      createMessageEventDeduplicated(
           "thread.reply.new",
-          CATEGORY_MESSAGE,
+          matrixEventId,
+          session.getUser().getUserId(),
           "New thread reply",
           text,
-          buildThreadReplyParams(session, senderLabel, contentClass, threadRootId, "user"),
+          buildThreadReplyParams(
+              session, senderLabel, contentClass, threadRootId, "user", matrixEventId),
           buildSessionActionPathForRecipient(session, session.getUser().getUserId(), threadRootId),
           session.getId(),
           session.getTenantId());
@@ -483,13 +570,14 @@ public class EventNotificationService {
         && session.getConsultant().getId() != null
         && !session.getConsultant().getId().equals(senderUserId)
         && !shouldSuppressNotification(session.getConsultant().getId(), roomId, threadRootId)) {
-      createEvent(
-          session.getConsultant().getId(),
+      createMessageEventDeduplicated(
           "thread.reply.new",
-          CATEGORY_MESSAGE,
+          matrixEventId,
+          session.getConsultant().getId(),
           "New thread reply",
           text,
-          buildThreadReplyParams(session, senderLabel, contentClass, threadRootId, "consultant"),
+          buildThreadReplyParams(
+              session, senderLabel, contentClass, threadRootId, "consultant", matrixEventId),
           buildSessionActionPathForRecipient(
               session, session.getConsultant().getId(), threadRootId),
           session.getId(),
@@ -505,7 +593,7 @@ public class EventNotificationService {
     var pageable = PageRequest.of(safePage, safePerPage);
     List<NotificationItem> items =
         eventNotificationRepository
-            .findByRecipientUserIdOrderByCreateDateDesc(recipientUserId, pageable)
+            .findByRecipientUserIdOrderByCreateDateDescIdDesc(recipientUserId, pageable)
             .stream()
             .map(this::toItem)
             .collect(Collectors.toList());
@@ -562,7 +650,12 @@ public class EventNotificationService {
       activeViewByUserId.remove(userId);
       return;
     }
-    activeViewByUserId.put(userId, new ActiveViewState(roomId, threadRootId));
+    activeViewByUserId.put(
+        userId, new ActiveViewState(roomId, threadRootId, monotonicNanos.getAsLong()));
+  }
+
+  void setMonotonicNanosForTesting(LongSupplier monotonicNanos) {
+    this.monotonicNanos = monotonicNanos;
   }
 
   @Transactional
@@ -582,6 +675,57 @@ public class EventNotificationService {
         title,
         text,
         null,
+        actionPath,
+        sourceSessionId,
+        tenantId);
+  }
+
+  /**
+   * #942: message-type events carry a deterministic deduplication key derived from the Matrix event
+   * id, so the Matrix sync listener and the frontend's {@code POST /message-events} for the same
+   * message collapse into one row per recipient. Without an event id (legacy callers) the event
+   * persists unconditionally, as before.
+   */
+  private void createMessageEventDeduplicated(
+      String eventType,
+      String matrixEventId,
+      String recipientUserId,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId) {
+    if (matrixEventId != null && !matrixEventId.isBlank()) {
+      String deduplicationKey = eventType + ":" + matrixEventId;
+      if (deduplicationKey.length() <= MAX_DEDUPLICATION_KEY_LENGTH) {
+        createEventOnce(
+            deduplicationKey,
+            recipientUserId,
+            eventType,
+            CATEGORY_MESSAGE,
+            title,
+            text,
+            params,
+            actionPath,
+            sourceSessionId,
+            tenantId);
+        return;
+      }
+      // An oversized key would fail the insert with a truncation error that the
+      // dedup path misreads as "already persisted" — persist unconditionally instead.
+      log.warn(
+          "Deduplication key for event type {} exceeds {} chars; persisting without deduplication",
+          eventType,
+          MAX_DEDUPLICATION_KEY_LENGTH);
+    }
+    createEvent(
+        recipientUserId,
+        eventType,
+        CATEGORY_MESSAGE,
+        title,
+        text,
+        params,
         actionPath,
         sourceSessionId,
         tenantId);
@@ -764,59 +908,25 @@ public class EventNotificationService {
     return "Counselor";
   }
 
-  private String normalizePreview(String messagePreview) {
-    if (messagePreview == null) {
-      return "";
-    }
-    String normalized = messagePreview.replaceAll("\\s+", " ").trim();
-    return normalized.length() > 120 ? normalized.substring(0, 117) + "..." : normalized;
-  }
-
-  private String buildMessageNotificationText(
-      String senderLabel, String messagePreview, PrivacyEnvelope envelope) {
+  private String buildMessageNotificationText(String senderLabel, PrivacyEnvelope envelope) {
     NotificationPreviewMode mode = currentPreviewMode();
     String contentLabel = contentLabel(envelope);
-    if (mode == NotificationPreviewMode.NONE) {
-      return String.format("%s sent a new %s.", senderLabel, contentLabel);
-    }
     if (mode == NotificationPreviewMode.MASKED) {
       return String.format("%s sent a new %s: %s", senderLabel, contentLabel, REDACTED_PREVIEW);
     }
-    String preview = normalizePreview(cleanMessageBody(messagePreview));
-    if (!preview.isBlank()) {
-      return String.format("%s sent a new message: \"%s\"", senderLabel, preview);
-    }
-    return String.format(
-        "%s sent a new %s (messageId: %s).",
-        senderLabel,
-        contentLabel,
-        envelope != null ? safeValue(envelope.getMessageId(), "n/a") : "n/a");
+    // FULL is retained as a legacy configuration value but intentionally behaves like NONE.
+    // Persisted events never carry message plaintext; the browser hydrates it from Matrix.
+    return String.format("%s sent a new %s.", senderLabel, contentLabel);
   }
 
-  private String buildThreadReplyNotificationText(
-      String senderLabel,
-      String messagePreview,
-      String threadParentPreview,
-      PrivacyEnvelope envelope) {
+  private String buildThreadReplyNotificationText(String senderLabel, PrivacyEnvelope envelope) {
     NotificationPreviewMode mode = currentPreviewMode();
-    if (mode == NotificationPreviewMode.NONE) {
-      return String.format("%s replied in a thread.", senderLabel);
-    }
+    String contentLabel = contentLabel(envelope);
     if (mode == NotificationPreviewMode.MASKED) {
-      return String.format("%s replied in a thread: %s", senderLabel, REDACTED_PREVIEW);
-    }
-    String preview = normalizePreview(cleanMessageBody(messagePreview));
-    String parentPreview = normalizePreview(cleanMessageBody(threadParentPreview));
-    if (!preview.isBlank() || !parentPreview.isBlank()) {
       return String.format(
-          "%s replied under thread \"%s\"%s",
-          senderLabel,
-          parentPreview.isBlank() ? "message" : parentPreview,
-          preview.isBlank() ? "." : ": \"" + preview + "\"");
+          "%s replied in a thread with a new %s: %s", senderLabel, contentLabel, REDACTED_PREVIEW);
     }
-    return String.format(
-        "%s replied in a thread (messageId: %s).",
-        senderLabel, envelope != null ? safeValue(envelope.getMessageId(), "n/a") : "n/a");
+    return String.format("%s replied in a thread with a new %s.", senderLabel, contentLabel);
   }
 
   private String contentLabel(PrivacyEnvelope envelope) {
@@ -848,17 +958,6 @@ public class EventNotificationService {
     }
   }
 
-  private String cleanMessageBody(String messagePreview) {
-    if (messagePreview == null) {
-      return "";
-    }
-    String cleaned = messagePreview;
-    cleaned = cleaned.replaceFirst("^\\Q" + SYSTEM_NOTIFICATION_PREFIX + "\\E\\s*", "");
-    cleaned = cleaned.replaceFirst("^\\[THREAD:[^\\]]+\\]\\s*", "");
-    cleaned = cleaned.replaceFirst("^\\[SUPERVISOR_FEEDBACK\\]\\s*", "");
-    return cleaned;
-  }
-
   private boolean isSystemNotificationMessage(String messagePreview) {
     return messagePreview != null && messagePreview.startsWith(SYSTEM_NOTIFICATION_PREFIX);
   }
@@ -880,25 +979,56 @@ public class EventNotificationService {
 
   private boolean shouldSuppressNotification(
       String recipientUserId, String roomId, String threadRootId) {
-    ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
-    if (activeView == null || roomId == null || roomId.isBlank()) {
-      return false;
-    }
-    if (!roomId.equals(activeView.roomId)) {
-      return false;
-    }
+    while (true) {
+      ActiveViewState activeView = activeViewByUserId.get(recipientUserId);
+      if (activeView == null || roomId == null || roomId.isBlank()) {
+        return false;
+      }
+      if (monotonicNanos.getAsLong() - activeView.lastHeartbeatNanos >= ACTIVE_VIEW_TTL_NANOS) {
+        if (activeViewByUserId.remove(recipientUserId, activeView)) {
+          return false;
+        }
+        // A concurrent heartbeat replaced the expired entry. Re-evaluate that
+        // fresh state so an active recipient remains correctly suppressed.
+        continue;
+      }
+      if (!roomId.equals(activeView.roomId)) {
+        return false;
+      }
 
-    // For room-level messages, suppress when recipient is on that room.
-    if (threadRootId == null || threadRootId.isBlank()) {
-      return true;
-    }
+      // For room-level messages, suppress when recipient is on that room.
+      if (threadRootId == null || threadRootId.isBlank()) {
+        return true;
+      }
 
-    // For thread replies, suppress only when recipient is actively inside same thread.
-    return threadRootId.equals(activeView.threadRootId);
+      // For thread replies, suppress only when recipient is actively inside same thread.
+      return threadRootId.equals(activeView.threadRootId);
+    }
   }
 
   private String buildSessionActionPath(Session session) {
     return buildSessionActionPath(session, null);
+  }
+
+  /**
+   * Deep link for enquiry-state events ({@code request.new}, {@code waiting_room.client.joined},
+   * #846): un-accepted enquiries render under the consultant's sessionPreview list, not
+   * sessionView. A waiting-room client has no Matrix room yet — link to the enquiry list itself
+   * instead of returning null (which the frontend turned into the bare sessions root).
+   */
+  private String buildEnquiryActionPath(Session session) {
+    String listPath = "/sessions/consultant/sessionPreview";
+    if (session == null || session.getId() == null) {
+      return listPath;
+    }
+    String roomRef =
+        session.getMatrixRoomId() != null && !session.getMatrixRoomId().isBlank()
+            ? session.getMatrixRoomId()
+            : null;
+    if (roomRef == null) {
+      return listPath;
+    }
+    return listPath + "/" + roomRef + "/" + session.getId();
   }
 
   private String buildSessionActionPathForRecipient(
@@ -974,10 +1104,12 @@ public class EventNotificationService {
   private static class ActiveViewState {
     private final String roomId;
     private final String threadRootId;
+    private final long lastHeartbeatNanos;
 
-    private ActiveViewState(String roomId, String threadRootId) {
+    private ActiveViewState(String roomId, String threadRootId, long lastHeartbeatNanos) {
       this.roomId = roomId;
       this.threadRootId = threadRootId;
+      this.lastHeartbeatNanos = lastHeartbeatNanos;
     }
   }
 

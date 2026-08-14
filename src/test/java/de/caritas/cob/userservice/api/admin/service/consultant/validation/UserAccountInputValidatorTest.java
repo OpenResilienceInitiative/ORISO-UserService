@@ -14,7 +14,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
-import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
 import jakarta.validation.Path;
 import jakarta.validation.Validator;
@@ -89,9 +89,10 @@ public class UserAccountInputValidatorTest {
   }
 
   @Test
-  public void validateIdentityAccountCreated_Should_throwKeycloakException_When_userIdIsNull() {
+  public void
+      validateIdentityAccountCreated_Should_throwIdentityProvisioningException_When_userIdIsNull() {
     assertThrows(
-        KeycloakException.class,
+        IdentityProvisioningException.class,
         () ->
             this.userAccountInputValidator.validateIdentityAccountCreated(
                 new IdentityAccountCreated(null)));

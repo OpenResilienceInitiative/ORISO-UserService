@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUserCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
 import de.caritas.cob.userservice.api.facade.CreateUserFacade;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.model.User;
@@ -57,6 +58,17 @@ class AnonymousUserCreatorServiceTest {
     assertThat(credentials.getRefreshExpiresIn()).isEqualTo(600);
     verify(createUserFacade).provisionMatrixUser(user, USER_DTO_SUCHT.getUsername());
     verifyNoInteractions(rollbackFacade);
+  }
+
+  @Test
+  void createAnonymousUserRejectsMissingIdentityId() {
+    when(identityAccountCreator.createAccount(any())).thenReturn(new IdentityAccountCreated(" "));
+
+    assertThatThrownBy(() -> anonymousUserCreatorService.createAnonymousUser(USER_DTO_SUCHT))
+        .isInstanceOf(IdentityProvisioningException.class)
+        .hasMessageContaining("Identity user id");
+
+    verifyNoInteractions(createUserFacade, identityAuthentication, rollbackFacade);
   }
 
   @Test

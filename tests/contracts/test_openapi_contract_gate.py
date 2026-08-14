@@ -90,15 +90,18 @@ class OpenApiContractGateTest(unittest.TestCase):
             "#/components/schemas/AgencyLinks",
             full_response["properties"]["_links"]["$ref"],
         )
+        # AgencyLinks is deliberately flattened (no allOf): oasdiff does not merge
+        # allOf, so `self` and friends must be direct properties for the consumer
+        # contracts in AgencyService (#232) and TenantService (#162) to hold.
         agency_links = provider["components"]["schemas"]["AgencyLinks"]
-        self.assertEqual(
-            "#/components/schemas/DefaultLinks",
-            agency_links["allOf"][0]["$ref"],
-        )
-        self.assertIn(
-            "postcodeRanges",
-            agency_links["allOf"][1]["properties"],
-        )
+        self.assertNotIn("allOf", agency_links)
+        self.assertEqual("object", agency_links["type"])
+        self.assertIn("self", agency_links["required"])
+        for link in ("self", "update", "delete", "postcodeRanges"):
+            self.assertEqual(
+                "#/components/schemas/HalLink",
+                agency_links["properties"][link]["$ref"],
+            )
 
         sort_field = agency_admin["components"]["schemas"]["Sort"]["properties"][
             "field"
