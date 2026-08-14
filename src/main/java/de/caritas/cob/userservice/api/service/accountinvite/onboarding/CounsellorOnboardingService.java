@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
@@ -8,6 +9,7 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
@@ -69,16 +71,19 @@ public class CounsellorOnboardingService {
    * still open and whose link is unexpired resolves with a pending two-factor resume; every other
    * state maps to the distinct link-death reasons (410 body {@code reason}, unknown tokens 404).
    */
-  @Transactional
+  // noRollbackFor: expireIfPastExpiry persists the EXPIRED transition and then throws the
+  // link-death exception — without it the rollback would keep the row EMAIL_SENT forever.
+  @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public CounsellorOnboardingState resolveOnboardingInvite(String rawToken) {
     AccountInvite invite = findCounsellorInvite(rawToken);
     LocalDateTime now = LocalDateTime.now();
 
     if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
       expireIfPastExpiry(invite, now);
-      return new CounsellorOnboardingState(invite, false, resolveTopicCoverage(invite));
+      return new CounsellorOnboardingState(invite, false, resolveTopicCoverage(invite).topics());
     }
     if (isResumableAtTwoFactorStep(invite, now)) {
+      repairMissingTotpSecret(invite);
       return new CounsellorOnboardingState(invite, true, List.of());
     }
     throw linkDeathException(invite);
@@ -116,10 +121,12 @@ public class CounsellorOnboardingService {
               usernameTranscoder.encodeUsername(command.username().trim()));
       if (otpInfo == null || isBlank(otpInfo.secret())) {
         // The consultant exists and the invite is consumed — do NOT undo that here. The link
-        // stays resumable at the 2FA step (verify-only) and the failure is loud in the logs.
+        // stays resumable at the 2FA step, and both the resolve resume path and the two-factor
+        // activation re-request the setup material from Keycloak (repairMissingTotpSecret), so
+        // this degradation is retryable instead of a permanently blocked account.
         log.error(
             "Keycloak issued no TOTP setup material for counsellor onboarding invite {} — the"
-                + " 2FA step will resume verify-only",
+                + " 2FA step will re-request it on resume",
             accepted.getId());
         return new CounsellorRegistrationResult(consultantId, null, null, true);
       }
@@ -156,7 +163,15 @@ public class CounsellorOnboardingService {
       // Gate already satisfied or resume window expired — terminally consumed.
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
     }
-    if (isBlank(invite.getTotpPendingSecret()) || isBlank(invite.getAcceptedByUserId())) {
+    if (isBlank(invite.getAcceptedByUserId())) {
+      throw new BadRequestException("No pending TOTP setup exists for this invite");
+    }
+    if (isBlank(invite.getTotpPendingSecret())) {
+      // Registration may have received no setup material from Keycloak — re-request it instead
+      // of rejecting the account forever (the wizard re-shows the repaired secret on resolve).
+      repairMissingTotpSecret(invite);
+    }
+    if (isBlank(invite.getTotpPendingSecret())) {
       throw new BadRequestException("No pending TOTP setup exists for this invite");
     }
 
@@ -181,14 +196,16 @@ public class CounsellorOnboardingService {
   /**
    * The topics the wizard may offer: the invite's agency topic coverage plus the invite's routed
    * department topic (Admin PR #663 capture). Lookups run under the invite's tenant (the caller is
-   * anonymous — there is no request tenant). Both lookups are best-effort: an unreachable
-   * AgencyService or TopicService degrades to the routed department topic instead of blocking the
-   * public flow; names missing from the active-topics map stay {@code null} and the client falls
-   * back to a generic label.
+   * anonymous — there is no request tenant). Lookups are best-effort: an unreachable AgencyService
+   * or TopicService degrades to the routed department topic instead of blocking the public flow —
+   * but the resolution reports whether the agency lookup failed, because a DEGRADED set is a usable
+   * prefill yet not a validation baseline (see {@link #validateTopicSelection}). Names missing from
+   * the active-topics map stay {@code null} and the client falls back to a generic label.
    */
-  private List<TopicOption> resolveTopicCoverage(AccountInvite invite) {
+  private CoverageResolution resolveTopicCoverage(AccountInvite invite) {
     TenantData requestTenant = snapshotTenantContext();
     TenantContext.setCurrentTenant(invite.getTenantId());
+    boolean agencyLookupFailed = false;
     try {
       Set<Long> topicIds = new LinkedHashSet<>();
       if (invite.getAgencyId() != null) {
@@ -198,6 +215,7 @@ public class CounsellorOnboardingService {
             topicIds.addAll(agency.getTopicIds());
           }
         } catch (RuntimeException exception) {
+          agencyLookupFailed = true;
           log.warn(
               "Counsellor onboarding could not resolve the agency {} topic coverage — falling"
                   + " back to the invite's department topic",
@@ -209,13 +227,15 @@ public class CounsellorOnboardingService {
         topicIds.add(invite.getDepartmentId());
       }
       Map<Long, TopicDTO> namesById = safeActiveTopicsById();
-      return topicIds.stream()
-          .map(
-              id -> {
-                TopicDTO topic = namesById.get(id);
-                return new TopicOption(id, topic == null ? null : topic.getName());
-              })
-          .toList();
+      List<TopicOption> topics =
+          topicIds.stream()
+              .map(
+                  id -> {
+                    TopicDTO topic = namesById.get(id);
+                    return new TopicOption(id, topic == null ? null : topic.getName());
+                  })
+              .toList();
+      return new CoverageResolution(topics, agencyLookupFailed);
     } finally {
       restoreTenantContext(requestTenant);
     }
@@ -259,6 +279,48 @@ public class CounsellorOnboardingService {
         trimToNull(command.displayName()),
         trimToNull(command.internalDisplayName()),
         command.topicIds());
+  }
+
+  /**
+   * Compensation for a registration that received no TOTP setup material from Keycloak (#997
+   * review): without a stored pending secret the 2FA activation could never succeed and the account
+   * would be permanently blocked behind a consumed invite. Re-requests the setup material for the
+   * provisioned user and persists it; best-effort — on continued failure the invite stays resumable
+   * and the next resolve retries.
+   */
+  private void repairMissingTotpSecret(AccountInvite invite) {
+    if (!isBlank(invite.getTotpPendingSecret()) || isBlank(invite.getAcceptedByUserId())) {
+      return;
+    }
+    try {
+      var profile = identityProfileLookup.findById(invite.getAcceptedByUserId()).orElse(null);
+      if (profile == null) {
+        log.warn(
+            "Cannot repair the missing TOTP setup material for invite {} — no identity profile"
+                + " exists for user {}",
+            invite.getId(),
+            invite.getAcceptedByUserId());
+        return;
+      }
+      IdentityOtpCredential otpInfo = identitySecondFactor.getOtpCredential(profile.username());
+      if (otpInfo == null || isBlank(otpInfo.secret())) {
+        log.warn(
+            "Keycloak again issued no TOTP setup material for invite {} — the 2FA step stays"
+                + " resumable and the next resolve retries",
+            invite.getId());
+        return;
+      }
+      invite.setTotpPendingSecret(otpInfo.secret());
+      invite.setUpdateDate(LocalDateTime.now());
+      accountInviteRepository.save(invite);
+      log.info("Repaired the missing TOTP setup material for invite {}", invite.getId());
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Repairing the missing TOTP setup material for invite {} failed — the 2FA step stays"
+              + " resumable and the next resolve retries",
+          invite.getId(),
+          exception);
+    }
   }
 
   private AccountInvite findCounsellorInvite(String rawToken) {
@@ -321,16 +383,37 @@ public class CounsellorOnboardingService {
   /**
    * The invitee chooses topics only WITHIN the invite's department/agency coverage — the token
    * never grants a wider assignment than the inviting admin routed (#997 contract).
+   *
+   * <p>Dependency failure vs client error (#997 review): a selection inside the resolved set is
+   * provably valid even when the agency lookup failed (the set only ever shrinks on failure). But a
+   * selection OUTSIDE a degraded set is indeterminate — the topic may well be in the real agency
+   * coverage — so that answers 5xx (retry), never 400, to avoid misclassifying valid input as a
+   * client error during an AgencyService outage.
    */
-  private static void validateTopicSelection(List<Long> chosen, List<TopicOption> coverage) {
-    Set<Long> allowed = new LinkedHashSet<>(coverage.stream().map(TopicOption::id).toList());
+  private static void validateTopicSelection(List<Long> chosen, CoverageResolution coverage) {
+    Set<Long> allowed =
+        new LinkedHashSet<>(coverage.topics().stream().map(TopicOption::id).toList());
     for (Long topicId : chosen) {
-      if (topicId == null || !allowed.contains(topicId)) {
+      if (topicId == null) {
+        throw new BadRequestException("Topic null is outside the coverage of this invite");
+      }
+      if (!allowed.contains(topicId)) {
+        if (coverage.agencyLookupFailed()) {
+          throw new InternalServerErrorException(
+              "Topic "
+                  + topicId
+                  + " cannot be verified against the invite's agency coverage right now — the"
+                  + " agency lookup is unavailable, retry the registration",
+              LogService::logInternalServerError);
+        }
         throw new BadRequestException(
             "Topic " + topicId + " is outside the coverage of this invite");
       }
     }
   }
+
+  /** Resolved coverage plus whether the agency topic lookup failed (degraded set). */
+  private record CoverageResolution(List<TopicOption> topics, boolean agencyLookupFailed) {}
 
   private static boolean isBlank(String value) {
     return value == null || value.trim().isEmpty();

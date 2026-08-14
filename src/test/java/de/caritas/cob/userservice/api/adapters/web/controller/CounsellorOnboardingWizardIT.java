@@ -221,6 +221,10 @@ class CounsellorOnboardingWizardIT {
     String token = "outside-coverage-token-" + java.util.UUID.randomUUID();
     seedInvite(token);
 
+    // AgencyService is unreachable in the testing profile, so the coverage set is DEGRADED to
+    // the department topic. A topic outside a degraded set is indeterminate — the contract
+    // (#997 review) answers 5xx (retry), never 400, to avoid misclassifying potentially valid
+    // input as a client error during an outage. Either way the invite must stay untouched.
     mockMvc
         .perform(
             post("/users/account-invites/{token}/onboarding/register", token)
@@ -234,12 +238,45 @@ class CounsellorOnboardingWizardIT {
                       "topicIds": [999]
                     }
                     """))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isInternalServerError());
 
     mockMvc
         .perform(get("/users/account-invites/{token}/onboarding", token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.phase").doesNotExist());
+  }
+
+  @Test
+  void resolveExpiredInvite_persistsTheExpiredTransitionDespiteTheGoneAnswer() throws Exception {
+    String token = "expired-counsellor-token-" + java.util.UUID.randomUUID();
+    AccountInvite expired =
+        accountInviteRepository.save(
+            AccountInvite.builder()
+                .targetRole(AccountInviteTargetRole.COUNSELLOR)
+                .tenantId(79L)
+                .recipientEmail("lisa.simpson@oriso.org")
+                .firstName("Lisa")
+                .lastName("Simpson")
+                .agencyId(275L)
+                .departmentId(2L)
+                .tokenHash(sha256(token))
+                .expiresAt(LocalDateTime.now().minusDays(1))
+                .status(AccountInviteStatus.EMAIL_SENT)
+                .emailVerificationStatus(EmailVerificationStatus.PENDING)
+                .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+                .createDate(LocalDateTime.now().minusDays(8))
+                .build());
+
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isGone())
+        .andExpect(jsonPath("$.reason").value("EXPIRED"));
+
+    // The EXPIRED transition must survive the thrown link-death exception (noRollbackFor) —
+    // without it the row would stay EMAIL_SENT forever.
+    assertThat(accountInviteRepository.findById(expired.getId()))
+        .hasValueSatisfying(
+            persisted -> assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED));
   }
 
   private static String sha256(String value) throws Exception {

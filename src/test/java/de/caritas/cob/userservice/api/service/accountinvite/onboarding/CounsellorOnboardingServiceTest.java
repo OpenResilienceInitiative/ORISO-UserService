@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
@@ -430,5 +431,140 @@ class CounsellorOnboardingServiceTest {
   @Test
   void activateTwoFactor_blankOtp_answers400() {
     assertThrows(BadRequestException.class, () -> service.activateTwoFactor(RAW_TOKEN, "  "));
+  }
+
+  // --- review findings (#997): missing-secret repair, strict register coverage ---
+
+  private AccountInvite resumableWithoutStoredSecret() {
+    AccountInvite resumable = invite();
+    resumable.setStatus(AccountInviteStatus.ACCEPTED);
+    resumable.setAcceptedByUserId(CONSULTANT_ID);
+    resumable.setTotpPendingSecret(null);
+    return resumable;
+  }
+
+  private void profileResolves() {
+    when(identityProfileLookup.findById(CONSULTANT_ID))
+        .thenReturn(
+            Optional.of(
+                new IdentityProfile(CONSULTANT_ID, "enc.lena.b", "Lena", "Beraterin", "mail")));
+  }
+
+  @Test
+  void resolveOnboardingInvite_resumeWithoutStoredSecret_repairsSetupMaterialFromKeycloak() {
+    AccountInvite resumable = resumableWithoutStoredSecret();
+    inviteResolves(resumable);
+    profileResolves();
+    when(identitySecondFactor.getOtpCredential("enc.lena.b"))
+        .thenReturn(new IdentityOtpCredential(false, "REPAIREDSECRET", "QR", IdentityOtpType.APP));
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertTrue(state.pendingTwoFactorResume());
+    assertEquals("REPAIREDSECRET", resumable.getTotpPendingSecret());
+    verify(accountInviteRepository).save(resumable);
+  }
+
+  @Test
+  void resolveOnboardingInvite_resumeWithoutStoredSecret_staysResumableWhenKeycloakStillFails() {
+    AccountInvite resumable = resumableWithoutStoredSecret();
+    inviteResolves(resumable);
+    profileResolves();
+    when(identitySecondFactor.getOtpCredential("enc.lena.b")).thenReturn(null);
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertTrue(state.pendingTwoFactorResume());
+    assertNull(resumable.getTotpPendingSecret());
+    verify(accountInviteRepository, never()).save(resumable);
+  }
+
+  @Test
+  void activateTwoFactor_missingStoredSecret_repairsSetupMaterialAndActivates() {
+    AccountInvite resumable = resumableWithoutStoredSecret();
+    inviteResolves(resumable);
+    profileResolves();
+    when(identitySecondFactor.getOtpCredential("enc.lena.b"))
+        .thenReturn(new IdentityOtpCredential(false, "REPAIREDSECRET", "QR", IdentityOtpType.APP));
+    when(identitySecondFactor.setUpOtpCredential("enc.lena.b", "123456", "REPAIREDSECRET"))
+        .thenReturn(true);
+
+    service.activateTwoFactor(RAW_TOKEN, "123456");
+
+    verify(accountInviteService).markTwoFactorActive(CONSULTANT_ID);
+    assertNull(resumable.getTotpPendingSecret());
+  }
+
+  @Test
+  void activateTwoFactor_missingStoredSecret_answers400WhenRepairStillFails() {
+    AccountInvite resumable = resumableWithoutStoredSecret();
+    inviteResolves(resumable);
+    profileResolves();
+    when(identitySecondFactor.getOtpCredential("enc.lena.b")).thenReturn(null);
+
+    assertThrows(BadRequestException.class, () -> service.activateTwoFactor(RAW_TOKEN, "123456"));
+
+    verify(accountInviteService, never()).markTwoFactorActive(anyString());
+  }
+
+  @Test
+  void registerCounsellor_agencyDown_departmentTopicSelectionStillRegisters() {
+    // A selection inside the degraded set is provably valid — an outage must not block it.
+    inviteResolves(invite());
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenThrow(new IllegalStateException("agency service down"));
+    when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
+    AccountInvite accepted = invite();
+    accepted.setStatus(AccountInviteStatus.ACCEPTED);
+    accepted.setProvisionedUserId(CONSULTANT_ID);
+    accepted.setTwoFactorStatus(TwoFactorGateStatus.NOT_REQUIRED);
+    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any()))
+        .thenReturn(accepted);
+
+    var result = service.registerCounsellor(RAW_TOKEN, command());
+
+    assertEquals(CONSULTANT_ID, result.consultantId());
+    verify(counsellorInviteProvisioningService).acceptInvite(eq(RAW_TOKEN), any());
+  }
+
+  @Test
+  void registerCounsellor_agencyDown_unverifiableTopicAnswersServerErrorNot400() {
+    // Outside a DEGRADED set the selection is indeterminate — dependency failure must answer
+    // 5xx (retry), never misclassify potentially valid input as a 400 client error.
+    inviteResolves(invite());
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenThrow(new IllegalStateException("agency service down"));
+    when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
+    var commandWithAgencyTopic =
+        new RegisterCounsellorCommand(
+            "lena.b",
+            "s3cretPassword",
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of(EXTRA_AGENCY_TOPIC_ID));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.registerCounsellor(RAW_TOKEN, commandWithAgencyTopic));
+
+    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any());
+  }
+
+  @Test
+  void registerCounsellor_agencyUp_topicOutsideCoverageStaysA400() {
+    inviteResolves(invite());
+    agencyCoverageResolves();
+    var commandWithForeignTopic =
+        new RegisterCounsellorCommand(
+            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(999L));
+
+    assertThrows(
+        BadRequestException.class,
+        () -> service.registerCounsellor(RAW_TOKEN, commandWithForeignTopic));
+
+    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any());
   }
 }
