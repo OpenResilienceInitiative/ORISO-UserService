@@ -163,6 +163,23 @@ class CoverageSummaryTest(unittest.TestCase):
         self.assertIn("./mvnw -B jacoco:report", action)
         self.assertIn("target/jacoco.exec", action)
 
+    def test_standalone_report_generation_cannot_fail_the_build(self):
+        """Coverage is a diagnostic; being unable to produce it is not a build failure.
+
+        Run from the command line the goal resolves the plugin's reporting
+        dependencies, which the lifecycle-bound execution never needs and which do
+        not reliably resolve from a restored runner cache. A green suite skips the
+        invocation entirely, because the test phase has already written the report.
+        """
+        action = MAVEN_BUILD_ACTION.read_text()
+
+        invocation = action.index("./mvnw -B jacoco:report")
+        following = action[invocation : invocation + 200]
+        self.assertIn("||", following, "the standalone goal must tolerate its own failure")
+
+        guard = action.index("target/site/jacoco/jacoco.csv")
+        self.assertLess(guard, invocation, "an existing report must short-circuit the invocation")
+
     def test_does_not_suppress_test_failures_in_maven(self):
         """testFailureIgnore would hide a red suite from every consumer of the build."""
         action = MAVEN_BUILD_ACTION.read_text()
