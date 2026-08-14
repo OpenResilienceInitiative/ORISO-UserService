@@ -719,10 +719,12 @@ public class CaseHandoverService {
     Consultant requester = request.getRequesterConsultant();
     String requesterName = resolveConsultantName(requester);
     postGrantedChatSystemMessage(request, session, requesterName);
-    String text =
-        String.format(
-            "%s took over your case. Reason: %s. Explanation: %s",
-            requesterName, request.getReasonLabel(), request.getExplanation());
+    // #1010 task 1a: the explanation is counsellor-written free text that can reference case
+    // content. It is no longer copied into the notification, which kept it in plaintext for good;
+    // the handover-request API serves it on demand instead.
+    String params =
+        eventNotificationService.buildCaseHandoverParams(
+            session, requesterName, request.getReasonCode(), request.getReasonLabel(), null);
 
     if (session.getUser() != null && session.getUser().getUserId() != null) {
       eventNotificationService.createEvent(
@@ -730,7 +732,9 @@ public class CaseHandoverService {
           "case.handover.granted",
           EventNotificationService.CATEGORY_SYSTEM,
           "New counsellor took over your case",
-          text,
+          String.format(
+              "%s took over your case. Reason: %s", requesterName, request.getReasonLabel()),
+          params,
           buildAskerSessionActionPath(session),
           session.getId(),
           session.getTenantId());
@@ -746,6 +750,7 @@ public class CaseHandoverService {
           String.format(
               "%s took over case #%s. Reason: %s",
               requesterName, session.getId(), request.getReasonLabel()),
+          params,
           buildConsultantSessionActionPath(session),
           session.getId(),
           session.getTenantId());
@@ -803,16 +808,23 @@ public class CaseHandoverService {
     if (session.getUser() == null || session.getUser().getUserId() == null) {
       return;
     }
+    String requesterName = resolveConsultantName(request.getRequesterConsultant());
+    // #1010 task 1a: no explanation free text in the stored notification — the client reads it
+    // from the handover request itself, which the action path and params already point at.
     eventNotificationService.createEvent(
         session.getUser().getUserId(),
         "case.handover.consent.requested",
         EventNotificationService.CATEGORY_SYSTEM,
         "Counsellor access request",
         String.format(
-            "%s requested access to your case. Reason: %s. Explanation: %s",
-            resolveConsultantName(request.getRequesterConsultant()),
+            "%s requested access to your case. Reason: %s",
+            requesterName, request.getReasonLabel()),
+        eventNotificationService.buildCaseHandoverParams(
+            session,
+            requesterName,
+            request.getReasonCode(),
             request.getReasonLabel(),
-            request.getExplanation()),
+            request.getId()),
         buildAskerSessionActionPath(session) + "?caseHandoverRequestId=" + request.getId(),
         session.getId(),
         session.getTenantId());
@@ -832,6 +844,12 @@ public class CaseHandoverService {
         String.format(
             "Client consent was declined for case #%s. Reason: %s",
             session.getId(), request.getReasonLabel()),
+        eventNotificationService.buildCaseHandoverParams(
+            session,
+            resolveConsultantName(requester),
+            request.getReasonCode(),
+            request.getReasonLabel(),
+            request.getId()),
         buildConsultantSessionActionPath(session),
         session.getId(),
         session.getTenantId());
