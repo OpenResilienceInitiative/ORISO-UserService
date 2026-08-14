@@ -20,6 +20,9 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.Outcome;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.SideEffect;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -78,6 +81,7 @@ class MatrixEventListenerServiceTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
   @Mock private ConsultantMessageStatService consultantMessageStatService;
+  @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
 
   private Logger logger;
   private ListAppender<ILoggingEvent> logAppender;
@@ -107,16 +111,19 @@ class MatrixEventListenerServiceTest {
   }
 
   private MatrixEventListenerService newService(Optional<RedisMessageMirrorService> mirror) {
-    return new MatrixEventListenerService(
-        matrixSynapseService,
-        sessionService,
-        mobilePushNotificationService,
-        eventNotificationService,
-        mirror,
-        userRepository,
-        consultantRepository,
-        sessionRepository,
-        consultantMessageStatService);
+    var service =
+        new MatrixEventListenerService(
+            matrixSynapseService,
+            sessionService,
+            mobilePushNotificationService,
+            eventNotificationService,
+            mirror,
+            userRepository,
+            consultantRepository,
+            sessionRepository,
+            consultantMessageStatService);
+    service.setDiagnosticMetrics(diagnosticMetrics);
+    return service;
   }
 
   private MatrixEventListenerService newServiceWithSyncExecutor() {
@@ -1187,11 +1194,13 @@ class MatrixEventListenerServiceTest {
 
     assertThatCode(() -> invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event))
         .doesNotThrowAnyException();
+    verify(diagnosticMetrics).recordMatrixEvent("m.room.member", Outcome.SKIPPED);
   }
 
   @Test
   void processMatrixEvent_shouldReturnEarly_whenEventTypeNull() {
     invokeProcessMatrixEvent(newService(), MATRIX_ROOM_ID, new HashMap<>());
+    verify(diagnosticMetrics).recordMatrixEvent(null, Outcome.SKIPPED);
   }
 
   @Test
@@ -1284,6 +1293,8 @@ class MatrixEventListenerServiceTest {
             e ->
                 e.getLevel().toString().equals("ERROR")
                     && e.getFormattedMessage().contains("Failed to send mobile push notification"));
+    verify(diagnosticMetrics).recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.FAILURE);
+    verify(diagnosticMetrics).recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
   }
 
   @Test
@@ -1428,6 +1439,9 @@ class MatrixEventListenerServiceTest {
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
             eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), any(PrivacyEnvelope.class));
+    verify(diagnosticMetrics).recordMatrixEvent("m.room.encrypted", Outcome.SUCCESS);
+    verify(diagnosticMetrics).recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.SUCCESS);
+    verify(diagnosticMetrics).recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
   }
 
   @Test

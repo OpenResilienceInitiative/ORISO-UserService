@@ -7,6 +7,8 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomReques
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.Outcome;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import java.net.URI;
@@ -48,6 +50,7 @@ public class MatrixRoomClient {
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
+  private final LiveChatDiagnosticMetrics diagnosticMetrics;
 
   public ResponseEntity<MatrixCreateRoomResponseDTO> createRoom(
       String roomName, String roomAlias, String accessToken) throws MatrixCreateRoomException {
@@ -77,6 +80,7 @@ public class MatrixRoomClient {
       log.info("Creating Matrix room: {} at URL: {}", roomName, url);
 
       var response = restTemplate.postForEntity(url, request, MatrixCreateRoomResponseDTO.class);
+      diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.SUCCESS);
 
       if (nonNull(response.getBody()) && nonNull(response.getBody().getRoomId())) {
         log.info(
@@ -87,6 +91,7 @@ public class MatrixRoomClient {
 
       return response;
     } catch (HttpClientErrorException ex) {
+      diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.FAILURE);
       log.error(
           "Matrix Error: Could not create room ({}) in Matrix. Status: {}, Response: {}",
           roomName,
@@ -96,6 +101,7 @@ public class MatrixRoomClient {
           String.format(
               "Could not create room (%s) in Matrix: %s", roomName, ex.getResponseBodyAsString()));
     } catch (Exception ex) {
+      diagnosticMetrics.recordRoomCreation(encryptionEnabled, Outcome.FAILURE);
       log.error("Matrix Error: Could not create room ({}) in Matrix. Reason", roomName, ex);
       throw new MatrixCreateRoomException(
           String.format("Could not create room (%s) in Matrix", roomName));
