@@ -1,6 +1,9 @@
 package de.caritas.cob.userservice.api.service.matrix;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.Outcome;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.SideEffect;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -44,6 +47,7 @@ public class MatrixEventListenerService {
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
 
   private OutboundHttpMetrics outboundHttpMetrics;
+  private LiveChatDiagnosticMetrics diagnosticMetrics;
   private ObservationRegistry observationRegistry = ObservationRegistry.NOOP;
 
   // Maps Matrix room ID to session ID for quick lookup
@@ -75,6 +79,11 @@ public class MatrixEventListenerService {
   @Autowired(required = false)
   void setObservationRegistry(ObservationRegistry observationRegistry) {
     this.observationRegistry = observationRegistry;
+  }
+
+  @Autowired(required = false)
+  void setDiagnosticMetrics(LiveChatDiagnosticMetrics diagnosticMetrics) {
+    this.diagnosticMetrics = diagnosticMetrics;
   }
 
   // Backoff bounds (milliseconds) for both the token bootstrap and the sync error path.
@@ -421,37 +430,45 @@ public class MatrixEventListenerService {
     String senderId = (String) event.get("sender");
 
     if (eventType == null) {
+      recordMatrixEvent(null, Outcome.SKIPPED);
       return;
     }
 
     log.debug("🔷 Matrix event: {} in room {} from {}", eventType, roomId, senderId);
 
     // Handle different event types
-    switch (eventType) {
-      case "m.room.message":
-        // E2EE rooms deliver messages as m.room.encrypted — the payload is opaque
-        // (no msgtype/body), but sender + event id are cleartext, which is all the
-        // metadata-only notification pipeline needs (preview mode NONE).
-      case "m.room.encrypted":
-        handleRoomMessage(roomId, event);
-        break;
+    Outcome outcome = Outcome.SUCCESS;
+    try {
+      switch (eventType) {
+        case "m.room.message":
+          // E2EE rooms deliver messages as m.room.encrypted — the payload is opaque
+          // (no msgtype/body), but sender + event id are cleartext, which is all the
+          // metadata-only notification pipeline needs (preview mode NONE).
+        case "m.room.encrypted":
+          outcome = handleRoomMessage(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
+          break;
 
-      case "m.call.invite":
-        handleCallInvite(roomId, event);
-        break;
+        case "m.call.invite":
+          outcome = handleCallInvite(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
+          break;
 
-      case "m.call.answer":
-        handleCallAnswer(roomId, event);
-        break;
+        case "m.call.answer":
+          outcome = handleCallAnswer(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
+          break;
 
-      case "m.call.hangup":
-        handleCallHangup(roomId, event);
-        break;
+        case "m.call.hangup":
+          outcome = handleCallHangup(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
+          break;
 
-      default:
-        // Ignore other event types
-        break;
+        default:
+          outcome = Outcome.SKIPPED;
+          break;
+      }
+    } catch (RuntimeException | Error failure) {
+      recordMatrixEvent(eventType, Outcome.FAILURE);
+      throw failure;
     }
+    recordMatrixEvent(eventType, outcome);
   }
 
   /**
@@ -461,12 +478,12 @@ public class MatrixEventListenerService {
    * @param event the message event
    */
   @SuppressWarnings("unchecked")
-  private void handleRoomMessage(String roomId, Map<String, Object> event) {
+  private boolean handleRoomMessage(String roomId, Map<String, Object> event) {
     String senderId = (String) event.get("sender");
     Map<String, Object> content = (Map<String, Object>) event.get("content");
 
     if (content == null) {
-      return;
+      return false;
     }
 
     String msgtype = (String) content.get("msgtype");
@@ -494,7 +511,7 @@ public class MatrixEventListenerService {
     // Get users who should receive notification (exclude sender)
     Set<String> userIds = getRecipientCandidatesForRoom(roomId);
     if (userIds == null || userIds.isEmpty()) {
-      return;
+      return false;
     }
 
     // Notify all room participants except the sender.
@@ -503,44 +520,70 @@ public class MatrixEventListenerService {
             .filter(userId -> senderDomainUserId == null || !userId.equals(senderDomainUserId))
             .collect(java.util.stream.Collectors.toList());
 
-    if (!recipientIds.isEmpty()) {
-      log.info("🔔 Triggering direct-message notification for {} users", recipientIds.size());
+    if (recipientIds.isEmpty()) {
+      return false;
+    }
 
-      Long mappedSessionId = roomToSessionMap.get(roomId);
-      if (mappedSessionId == null) {
-        log.warn(
-            "No session mapping for Matrix room {}; continuing notification delivery for {} users",
-            roomId,
-            recipientIds.size());
-      }
+    log.info("🔔 Triggering direct-message notification for {} users", recipientIds.size());
 
-      // Notify asynchronously so the Matrix sync loop is not blocked.
-      executorService.submit(
-          () -> {
-            try {
-              mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
-            } catch (Exception e) {
-              log.error("❌ Failed to send mobile push notification", e);
+    Long mappedSessionId = roomToSessionMap.get(roomId);
+    if (mappedSessionId == null) {
+      log.warn(
+          "No session mapping for Matrix room {}; continuing notification delivery for {} users",
+          roomId,
+          recipientIds.size());
+    }
+
+    // Notify asynchronously so the Matrix sync loop is not blocked.
+    executorService.submit(
+        () -> {
+          try {
+            mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
+            recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.SUCCESS);
+          } catch (Exception e) {
+            recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.FAILURE);
+            log.error("❌ Failed to send mobile push notification", e);
+          }
+          // The persisted feed entry is the source of truth for the notification timeline.
+          // Isolate the failure domains so a push failure cannot swallow the notification row.
+          try {
+            if (threadRootId != null && !threadRootId.isBlank()) {
+              eventNotificationService.createThreadReplyNotificationFromRoom(
+                  roomId, senderDomainUserId, threadRootId, privacyEnvelope);
+            } else {
+              eventNotificationService.createMessageNotificationFromRoom(
+                  roomId, senderDomainUserId, privacyEnvelope);
             }
-            // The persisted feed entry is the source of truth for the notification timeline.
-            // Isolate the failure domains so a push failure cannot swallow the notification row.
+            recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
+          } catch (Exception e) {
+            recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
+            log.error("❌ Failed to create event notification from room", e);
+            return;
+          }
+
+          if (mappedSessionId != null
+              && senderDomainUserId != null
+              && isConsultantMatrixUser(senderId)) {
             try {
-              if (threadRootId != null && !threadRootId.isBlank()) {
-                eventNotificationService.createThreadReplyNotificationFromRoom(
-                    roomId, senderDomainUserId, threadRootId, privacyEnvelope);
-              } else {
-                eventNotificationService.createMessageNotificationFromRoom(
-                    roomId, senderDomainUserId, privacyEnvelope);
-              }
-              if (mappedSessionId != null
-                  && senderDomainUserId != null
-                  && isConsultantMatrixUser(senderId)) {
-                consultantMessageStatService.recordMessageSent(senderDomainUserId, mappedSessionId);
-              }
+              consultantMessageStatService.recordMessageSent(senderDomainUserId, mappedSessionId);
             } catch (Exception e) {
-              log.error("❌ Failed to create event notification from room", e);
+              log.error("Failed to record consultant message statistic", e);
             }
-          });
+          }
+        });
+
+    return true;
+  }
+
+  private void recordMatrixEvent(String eventType, Outcome outcome) {
+    if (diagnosticMetrics != null) {
+      diagnosticMetrics.recordMatrixEvent(eventType, outcome);
+    }
+  }
+
+  private void recordSideEffect(SideEffect sideEffect, Outcome outcome) {
+    if (diagnosticMetrics != null) {
+      diagnosticMetrics.recordSideEffect(sideEffect, outcome);
     }
   }
 
@@ -735,12 +778,12 @@ public class MatrixEventListenerService {
    * @param event the call invite event
    */
   @SuppressWarnings("unchecked")
-  private void handleCallInvite(String roomId, Map<String, Object> event) {
+  private boolean handleCallInvite(String roomId, Map<String, Object> event) {
     String senderId = (String) event.get("sender");
     Map<String, Object> content = (Map<String, Object>) event.get("content");
 
     if (content == null) {
-      return;
+      return false;
     }
 
     String callId = (String) content.get("call_id");
@@ -756,7 +799,7 @@ public class MatrixEventListenerService {
     // Get users who should receive notification (exclude sender)
     Set<String> userIds = roomToUsersMap.get(roomId);
     if (userIds == null || userIds.isEmpty()) {
-      return;
+      return false;
     }
 
     List<String> recipientIds =
@@ -764,9 +807,12 @@ public class MatrixEventListenerService {
             .filter(userId -> !userId.equals(senderId))
             .collect(java.util.stream.Collectors.toList());
 
-    if (!recipientIds.isEmpty()) {
-      log.info("🔔 Matrix call invite received for {} users", recipientIds.size());
+    if (recipientIds.isEmpty()) {
+      return false;
     }
+
+    log.info("🔔 Matrix call invite received for {} users", recipientIds.size());
+    return true;
   }
 
   /**
@@ -775,10 +821,11 @@ public class MatrixEventListenerService {
    * @param roomId the Matrix room ID
    * @param event the call answer event
    */
-  private void handleCallAnswer(String roomId, Map<String, Object> event) {
+  private boolean handleCallAnswer(String roomId, Map<String, Object> event) {
     String senderId = (String) event.get("sender");
     log.info("📞 Call answered in room {} by {}", roomId, senderId);
     // Additional call-state handling can be added here if needed.
+    return true;
   }
 
   /**
@@ -787,9 +834,10 @@ public class MatrixEventListenerService {
    * @param roomId the Matrix room ID
    * @param event the call hangup event
    */
-  private void handleCallHangup(String roomId, Map<String, Object> event) {
+  private boolean handleCallHangup(String roomId, Map<String, Object> event) {
     String senderId = (String) event.get("sender");
     log.info("📞 Call ended in room {} by {}", roomId, senderId);
     // Additional call-state handling can be added here if needed.
+    return true;
   }
 }
