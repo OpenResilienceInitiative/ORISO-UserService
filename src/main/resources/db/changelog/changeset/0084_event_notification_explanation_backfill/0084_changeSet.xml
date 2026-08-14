@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="0084-event-notification-explanation-backfill" author="frank">
+    <comment>#1010 task 1d: strip the counsellor-written handover explanation out of stored
+      event_notification text. The explanation stays available via the handover-request API.</comment>
+    <sqlFile
+      path="db/changelog/changeset/0084_event_notification_explanation_backfill/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="false" stripComments="true"
+      encoding="UTF-8"/>
+    <rollback>
+      <comment>Plaintext removed on purpose — restoring it would reintroduce the finding.</comment>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
