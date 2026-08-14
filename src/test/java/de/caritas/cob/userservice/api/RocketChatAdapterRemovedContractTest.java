@@ -11,6 +11,7 @@ class RocketChatAdapterRemovedContractTest {
 
   private static final Path MAIN_JAVA = Path.of("src/main/java");
   private static final Path USER_SERVICE_API = Path.of("api/userservice.yaml");
+  private static final Path INVITE_LINKS_API = Path.of("INVITE_LINKS_API.md");
   private static final Path MASTER_CHANGELOG =
       Path.of("src/main/resources/db/changelog/userservice-master.xml");
 
@@ -81,6 +82,12 @@ class RocketChatAdapterRemovedContractTest {
                     + "RocketChatUnauthorizedException.java"))
         .doesNotExist();
     assertThat(Files.readString(Path.of("config.env.example"))).doesNotContain("ROCKET_");
+  }
+
+  @Test
+  void currentInviteLinkDocumentationMustNotAdvertiseRocketChatCredentials() throws IOException {
+    assertThat(Files.readString(INVITE_LINKS_API))
+        .doesNotContain("rcUserId", "rcToken", "rcGroupId", "Rocket.Chat");
   }
 
   @Test
