@@ -20,8 +20,14 @@ public final class DraftContent {
 
   private static final Pattern MARKUP_TAG = Pattern.compile("<[^>]*>");
 
+  /**
+   * HTML entity spellings of the two invisible characters: non-breaking space (U+00A0) as {@code
+   * &nbsp;}, {@code &#160;} or {@code &#xA0;}, and zero-width space (U+200B) as {@code &#8203;} or
+   * {@code &#x200B;}. Editors and pasted markup pick any of them, so all have to be stripped —
+   * missing one would let a visually empty draft count as content again.
+   */
   private static final Pattern WHITESPACE_ENTITY =
-      Pattern.compile("&nbsp;|&#160;", Pattern.CASE_INSENSITIVE);
+      Pattern.compile("&(nbsp|#0*160|#x0*a0|#0*8203|#x0*200b);", Pattern.CASE_INSENSITIVE);
 
   /** Non-breaking space and zero-width space — invisible, and therefore not content. */
   private static final Pattern INVISIBLE_WHITESPACE = Pattern.compile("[ ​]");

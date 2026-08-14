@@ -58,6 +58,11 @@ class EmptyDraftRowsMigrationTest {
           "&nbsp;",
           "&#160;",
           "&NBSP;",
+          "&#xA0;",
+          "&#X00a0;",
+          "&#8203;",
+          "&#x200B;",
+          "<p>&#xA0;</p><p>&#x200b;</p>",
           "<p>&nbsp;</p>",
           "<p> </p>",
           "<div><span> </span></div>");

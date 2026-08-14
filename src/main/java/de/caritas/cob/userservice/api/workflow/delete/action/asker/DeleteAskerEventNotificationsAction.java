@@ -46,7 +46,7 @@ public class DeleteAskerEventNotificationsAction
           .add(
               DeletionWorkflowError.builder()
                   .deletionSourceType(ASKER)
-                  .deletionTargetType(DeletionTargetType.DATABASE)
+                  .deletionTargetType(DeletionTargetType.USER_CONTENT)
                   .identifier(actionTarget.getUser().getUserId())
                   .reason("Could not delete event notifications")
                   .timestamp(nowInUtc())

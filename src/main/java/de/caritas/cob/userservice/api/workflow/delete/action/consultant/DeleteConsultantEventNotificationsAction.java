@@ -47,7 +47,7 @@ public class DeleteConsultantEventNotificationsAction
           .add(
               DeletionWorkflowError.builder()
                   .deletionSourceType(CONSULTANT)
-                  .deletionTargetType(DeletionTargetType.DATABASE)
+                  .deletionTargetType(DeletionTargetType.USER_CONTENT)
                   .identifier(actionTarget.getConsultant().getId())
                   .reason("Could not delete event notifications")
                   .timestamp(nowInUtc())

@@ -16,6 +16,6 @@ DELETE FROM draft_message
 WHERE TRIM(
         REGEXP_REPLACE(
           REGEXP_REPLACE(COALESCE(text, ''), '<[^>]*>', ' '),
-          '&([nN][bB][sS][pP]|#160);', ' '
+          '&([nN][bB][sS][pP]|#0*160|#[xX]0*[aA]0|#0*8203|#[xX]0*200[bB]);', ' '
         )
       ) = ''

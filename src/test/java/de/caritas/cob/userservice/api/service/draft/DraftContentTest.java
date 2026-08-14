@@ -27,6 +27,13 @@ class DraftContentTest {
         "&nbsp;",
         "&#160;",
         "&NBSP;",
+        // Same two characters, hexadecimal and decimal numeric forms — an editor or a paste picks
+        // whichever it likes, so none of them may slip through as content.
+        "&#xA0;",
+        "&#X00a0;",
+        "&#8203;",
+        "&#x200B;",
+        "<p>&#xA0;</p><p>&#x200b;</p>",
         "<p>&nbsp;</p>",
         "<p> </p>",
         " ",

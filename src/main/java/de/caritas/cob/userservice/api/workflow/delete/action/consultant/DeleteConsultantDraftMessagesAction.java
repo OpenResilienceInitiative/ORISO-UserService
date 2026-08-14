@@ -45,7 +45,7 @@ public class DeleteConsultantDraftMessagesAction
           .add(
               DeletionWorkflowError.builder()
                   .deletionSourceType(CONSULTANT)
-                  .deletionTargetType(DeletionTargetType.DATABASE)
+                  .deletionTargetType(DeletionTargetType.USER_CONTENT)
                   .identifier(actionTarget.getConsultant().getId())
                   .reason("Could not delete draft messages")
                   .timestamp(nowInUtc())

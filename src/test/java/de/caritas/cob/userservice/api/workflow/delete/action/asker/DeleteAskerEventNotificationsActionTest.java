@@ -1,7 +1,7 @@
 package de.caritas.cob.userservice.api.workflow.delete.action.asker;
 
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
-import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.DATABASE;
+import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.USER_CONTENT;
 import static java.util.Collections.emptyList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
@@ -55,7 +55,7 @@ class DeleteAskerEventNotificationsActionTest {
     assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(1));
     DeletionWorkflowError error = workflowDTO.getDeletionWorkflowErrors().get(0);
     assertThat(error.getDeletionSourceType(), is(ASKER));
-    assertThat(error.getDeletionTargetType(), is(DATABASE));
+    assertThat(error.getDeletionTargetType(), is(USER_CONTENT));
     assertThat(error.getIdentifier(), is("asker-id"));
     assertThat(error.getTimestamp(), notNullValue());
   }

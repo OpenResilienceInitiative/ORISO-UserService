@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.workflow.delete.action.asker;
 
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.ASKER;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.DATABASE;
+import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.USER_CONTENT;
 import static java.util.Collections.emptyList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
@@ -10,6 +11,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -132,5 +134,33 @@ public class DeleteDatabaseAskerActionTest {
     assertThat(workflowErrors.get(0).getReason(), is("Could not delete user chat memberships"));
     assertThat(workflowErrors.get(0).getDeletionSourceType(), is(ASKER));
     assertThat(workflowErrors.get(0).getDeletionTargetType(), is(DATABASE));
+  }
+
+  /**
+   * Drafts and the notification feed are keyed by the user and hold counselling content that is not
+   * end-to-end encrypted. Deleting the account row while they are still there would orphan them
+   * beyond any retry, so the row has to survive a failed cleanup (#983, KDG epic #1010).
+   */
+  @Test
+  public void execute_Should_keepUserRow_When_unencryptedContentCleanupFailed() {
+    var user = new User();
+    user.setUserId("user id");
+    var workflowDTO =
+        new AskerDeletionWorkflowDTO(
+            user,
+            new ArrayList<>(
+                List.of(
+                    DeletionWorkflowError.builder()
+                        .deletionSourceType(ASKER)
+                        .deletionTargetType(USER_CONTENT)
+                        .identifier("user id")
+                        .reason("Could not delete draft messages")
+                        .build())));
+
+    this.deleteDatabaseAskerAction.execute(workflowDTO);
+
+    verify(this.userRepository, never()).delete(any());
+    verify(this.identityTombstoneService, never()).recordDeletedUser(any());
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(1));
   }
 }

@@ -44,7 +44,7 @@ public class DeleteAskerDraftMessagesAction implements ActionCommand<AskerDeleti
           .add(
               DeletionWorkflowError.builder()
                   .deletionSourceType(ASKER)
-                  .deletionTargetType(DeletionTargetType.DATABASE)
+                  .deletionTargetType(DeletionTargetType.USER_CONTENT)
                   .identifier(actionTarget.getUser().getUserId())
                   .reason("Could not delete draft messages")
                   .timestamp(nowInUtc())
