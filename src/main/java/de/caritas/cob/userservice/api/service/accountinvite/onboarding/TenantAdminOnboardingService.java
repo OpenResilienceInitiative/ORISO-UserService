@@ -71,7 +71,9 @@ public class TenantAdminOnboardingService {
    * must be on screen and navigable (anchor/TOC) rather than replaced by a placeholder hint. The
    * resume path skips the lookup — it re-enters at the 2FA step, which shows no contract.
    */
-  @Transactional
+  // noRollbackFor: expireIfPastExpiry persists the EXPIRED transition and then throws the
+  // link-death exception — without it the rollback would keep the row EMAIL_SENT forever.
+  @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public OnboardingInviteState resolveOnboardingInvite(String rawToken) {
     AccountInvite invite = findTenantAdminInvite(rawToken);
     LocalDateTime now = LocalDateTime.now();
@@ -107,7 +109,10 @@ public class TenantAdminOnboardingService {
    * registration is refused up front — before the invite is claimed, so the link stays usable once
    * the operator publishes.
    */
-  @Transactional
+  // noRollbackFor mirrors resolveOnboardingInvite: the expiry transition must survive the
+  // link-death exception. Every other AccountInviteLinkException in this method is thrown
+  // before any write (the lost claim race writes nothing), so nothing partial can commit.
+  @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public TenantAdminRegistrationResult registerTenantAdmin(
       String rawToken, RegisterTenantAdminCommand command) {
     validateRegistration(command);

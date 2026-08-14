@@ -119,9 +119,11 @@ class InviteEmailPreviewServiceTest {
         .isEqualTo(
             "https://admin.oriso.org/admin/tenant-onboarding/"
                 + InviteEmailPreviewService.SAMPLE_TOKEN);
+    // #997: counsellor invites land on the PUBLIC ADMIN wizard, not the app acceptance page.
     assertThat(counsellorPreview.sampleAcceptUrl())
         .isEqualTo(
-            "https://app.oriso.org/account-invite/" + InviteEmailPreviewService.SAMPLE_TOKEN);
+            "https://admin.oriso.org/admin/counsellor-onboarding/"
+                + InviteEmailPreviewService.SAMPLE_TOKEN);
   }
 
   /** A preview must never mint something that looks like a usable invite token. */
