@@ -5,6 +5,7 @@ import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface EventNotificationRepository extends JpaRepository<EventNotification, Long> {
 
@@ -20,5 +21,10 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
   boolean existsByRecipientUserIdAndDeduplicationKey(
       String recipientUserId, String deduplicationKey);
 
+  /**
+   * Removes a recipient's whole notification feed. Used by the user-facing "clear feed" action and
+   * by account deletion, which must not leave notification rows behind (KDG epic #1010, task 2b).
+   */
+  @Transactional
   void deleteByRecipientUserId(String recipientUserId);
 }
