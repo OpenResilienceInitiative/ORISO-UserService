@@ -141,6 +141,8 @@
   <include
     file="db/changelog/changeset/0082_scheduled_task_claim/0082_changeSet.xml" />
   <include
+    file="db/changelog/changeset/0083_empty_draft_rows/0083_changeSet.xml" />
+  <include
     file="db/changelog/changeset/0084_event_notification_explanation_backfill/0084_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
