@@ -12,6 +12,9 @@ class RocketChatAdapterRemovedContractTest {
   private static final Path MAIN_JAVA = Path.of("src/main/java");
   private static final Path USER_SERVICE_API = Path.of("api/userservice.yaml");
   private static final Path INVITE_LINKS_API = Path.of("INVITE_LINKS_API.md");
+  private static final Path LOCAL_INVITE_LINKS_API =
+      Path.of("documentation/local-invite-link-api-testing.md");
+  private static final Path LOCAL_DEVELOPMENT = Path.of("documentation/local-development.md");
   private static final Path MASTER_CHANGELOG =
       Path.of("src/main/resources/db/changelog/userservice-master.xml");
 
@@ -86,8 +89,31 @@ class RocketChatAdapterRemovedContractTest {
 
   @Test
   void currentInviteLinkDocumentationMustNotAdvertiseRocketChatCredentials() throws IOException {
-    assertThat(Files.readString(INVITE_LINKS_API))
-        .doesNotContain("rcUserId", "rcToken", "rcGroupId", "Rocket.Chat");
+    for (var documentation : new Path[] {INVITE_LINKS_API, LOCAL_INVITE_LINKS_API}) {
+      assertThat(Files.readString(documentation))
+          .as(documentation.toString())
+          .doesNotContain("rcUserId", "rcToken", "rcGroupId", "Rocket.Chat");
+    }
+  }
+
+  @Test
+  void localDevelopmentDocumentationMustUseCurrentJavaAndMatrixConfiguration() throws IOException {
+    assertThat(Files.readString(LOCAL_DEVELOPMENT)).doesNotContain("Java 17", "ROCKET_SYSTEMUSER_");
+    assertThat(Files.readString(Path.of("run-local-remote-db.sh.example")))
+        .contains("java_home -v 21")
+        .doesNotContain("java_home -v 17");
+  }
+
+  @Test
+  void inviteLinkCommentsMustDescribeTheReusableCurrentFlow() throws IOException {
+    var service =
+        Files.readString(
+            Path.of(
+                "src/main/java/de/caritas/cob/userservice/api/service/agencyinvitelink/"
+                    + "AgencyInviteLinkService.java"));
+    assertThat(service)
+        .doesNotContain("Manages one-time invite links", "validate, mark USED")
+        .contains("reusable until expiry");
   }
 
   @Test

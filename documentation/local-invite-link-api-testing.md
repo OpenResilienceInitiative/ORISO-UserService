@@ -397,9 +397,6 @@ Example shape:
   "expiresIn": null,
   "refreshToken": null,
   "refreshExpiresIn": null,
-  "rcUserId": null,
-  "rcToken": null,
-  "rcGroupId": null,
   "tenantId": 1,
   "agencyId": 1,
   "consultingTypeId": 1,
@@ -409,9 +406,12 @@ Example shape:
 
 Current branch behavior:
 
-- Redeem returns metadata for frontend registration.
-- It does not create a Keycloak, Rocket.Chat, or Matrix user in this service path.
-- It does not mark the link as `USED`; links remain reusable until expiry unless stored status is changed elsewhere.
+- A `LIVE_CHAT` redeem creates an anonymous counselling session and returns its authentication
+  fields together with the route metadata.
+- Other supported invite types return route metadata without creating a session.
+- The response contains no chat-provider identifier or Matrix access token. The frontend starts
+  Matrix through its normal host-owned bootstrap.
+- Redeem does not mark an active link as `USED`; published links are reusable until expiry.
 
 ## Negative Tests
 

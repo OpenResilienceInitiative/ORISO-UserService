@@ -164,11 +164,12 @@ opening the chat; no second registration call is required.
 
 | Code | Reason |
 |---|---|
-| 400 | link already used / expired / never had a topic |
+| 400 | link inactive / expired / missing required routing metadata |
 | 404 | token doesn't exist |
 
-The token lookup uses a pessimistic lock; double-clicks and parallel calls cannot redeem the same
-link twice.
+The token lookup uses a pessimistic lock, but a successful redeem deliberately leaves the link
+`ACTIVE`. Published links are reusable until expiry so multiple visitors can enter through the
+same link. A `LIVE_CHAT` request creates a new anonymous session for each successful redeem.
 
 ---
 
