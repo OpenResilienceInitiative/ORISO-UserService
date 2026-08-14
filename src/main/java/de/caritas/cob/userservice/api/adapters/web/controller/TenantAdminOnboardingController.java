@@ -98,11 +98,14 @@ public class TenantAdminOnboardingController {
   }
 
   /**
-   * Role probe deciding which onboarding flow answers (unknown tokens 404 here already). The
-   * role-specific services re-validate the role themselves, so a mismatch can never slip through.
+   * Role probe deciding which onboarding flow answers (unknown tokens 404 here already). It reads
+   * the role alone and takes no row lock — the selected flow loads the same invite under its own
+   * PESSIMISTIC_WRITE lock immediately afterwards, and loading the entity here as well would
+   * request that lock twice per request (#1008 review). The role-specific services re-validate the
+   * role against the row they locked, so a mismatch can never slip through.
    */
   private AccountInviteTargetRole targetRoleOf(String token) {
-    return accountInviteService.findInviteByToken(token).getTargetRole();
+    return accountInviteService.findTargetRoleByToken(token);
   }
 
   private static RegisterCounsellorCommand toCounsellorCommand(

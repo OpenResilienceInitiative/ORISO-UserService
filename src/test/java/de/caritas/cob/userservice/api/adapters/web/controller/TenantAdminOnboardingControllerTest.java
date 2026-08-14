@@ -54,10 +54,11 @@ class TenantAdminOnboardingControllerTest {
         new TenantAdminOnboardingController(
             onboardingService, counsellorOnboardingService, accountInviteService);
     // Role probe of the shared endpoints (#997): the pre-existing tests exercise the
-    // tenant-admin dispatch; counsellor tests re-stub the probe with a COUNSELLOR invite.
+    // tenant-admin dispatch; counsellor tests re-stub the probe with the COUNSELLOR role. The
+    // probe reads the role alone and takes no row lock (#1008 review).
     org.mockito.Mockito.lenient()
-        .when(accountInviteService.findInviteByToken("tok"))
-        .thenReturn(invite());
+        .when(accountInviteService.findTargetRoleByToken("tok"))
+        .thenReturn(AccountInviteTargetRole.TENANT_ADMIN);
   }
 
   private static AccountInvite invite() {
@@ -92,7 +93,8 @@ class TenantAdminOnboardingControllerTest {
   }
 
   private void probeAnswersCounsellor() {
-    when(accountInviteService.findInviteByToken("tok")).thenReturn(counsellorInvite());
+    when(accountInviteService.findTargetRoleByToken("tok"))
+        .thenReturn(AccountInviteTargetRole.COUNSELLOR);
   }
 
   @Test
