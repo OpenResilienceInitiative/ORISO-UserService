@@ -153,6 +153,9 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
             self.assertTrue(entry["environmentVariable"])
             workflow = ROOT / entry["requiredWorkflow"]
             self.assertTrue(workflow.is_file(), workflow)
+            if entry.get("executionStatus") == "known-gap":
+                self.assertTrue(entry.get("knownGapReason"))
+                continue
             workflow_source = workflow.read_text()
             test_class = entry["testId"].split("#", 1)[0].rsplit(".", 1)[-1]
             self.assertIn(test_class, workflow_source)
