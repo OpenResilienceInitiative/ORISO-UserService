@@ -391,6 +391,49 @@ public class EventNotificationService {
     }
   }
 
+  /**
+   * Structured params for a session-scoped event whose card needs nothing beyond the session itself
+   * (#1010, task 1a).
+   *
+   * @param session the session the event belongs to
+   * @return serialized params, or {@code null} if the session carries nothing to reference
+   */
+  public String buildSessionScopedParams(Session session) {
+    return serializeParams(baseParams(session));
+  }
+
+  /**
+   * Structured params for the case-handover events (#1010, task 1a).
+   *
+   * <p>Deliberately carries no free text. The counsellor-written explanation used to be formatted
+   * into the notification's {@code text} column and kept there indefinitely, which made {@code
+   * event_notification} the one place where counselling content sat in plaintext. It stays
+   * available on demand through the handover-request API — {@code caseHandoverRequestId} is part of
+   * the params and of the action path — so nothing is lost by not storing a copy here.
+   *
+   * @param session the session being handed over
+   * @param requesterName display name of the requesting counsellor
+   * @param reasonCode machine-readable reason, for client-side i18n
+   * @param reasonLabel human-readable reason drawn from the configured reason policy
+   * @param caseHandoverRequestId the handover request, or {@code null} when not applicable
+   * @return serialized params
+   */
+  public String buildCaseHandoverParams(
+      Session session,
+      String requesterName,
+      String reasonCode,
+      String reasonLabel,
+      Long caseHandoverRequestId) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "requesterName", requesterName);
+    putIfPresent(params, "reasonCode", reasonCode);
+    putIfPresent(params, "reasonLabel", reasonLabel);
+    if (caseHandoverRequestId != null) {
+      params.put("caseHandoverRequestId", caseHandoverRequestId);
+    }
+    return serializeParams(params);
+  }
+
   private String serializeParams(Map<String, Object> params) {
     if (params == null || params.isEmpty()) {
       return null;

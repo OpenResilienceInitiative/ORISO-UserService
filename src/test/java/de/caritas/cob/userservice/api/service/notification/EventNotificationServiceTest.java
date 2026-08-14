@@ -75,6 +75,70 @@ class EventNotificationServiceTest {
   }
 
   // ---------------------------------------------------------------------------
+  // buildCaseHandoverParams (#1010 task 1a)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void buildCaseHandoverParams_carriesTheFieldsTheClientNeedsToRenderTheCard() throws Exception {
+    Session session = sessionMock();
+
+    String params =
+        eventNotificationService.buildCaseHandoverParams(
+            session, "Dr. Muster", "COUNSELLOR_IS_ILL", "Counsellor is ill", 88L);
+
+    JsonNode parsed = objectMapper.readTree(params);
+    assertThat(parsed.get("sessionId").asLong()).isEqualTo(100L);
+    assertThat(parsed.get("roomRef").asText()).isEqualTo("!room-1:matrix.example");
+    assertThat(parsed.get("requesterName").asText()).isEqualTo("Dr. Muster");
+    assertThat(parsed.get("reasonCode").asText()).isEqualTo("COUNSELLOR_IS_ILL");
+    assertThat(parsed.get("reasonLabel").asText()).isEqualTo("Counsellor is ill");
+    assertThat(parsed.get("caseHandoverRequestId").asLong()).isEqualTo(88L);
+  }
+
+  /**
+   * The params object is the replacement for the stored English sentence, so it must stay a set of
+   * known keys. Nothing here may become a channel for the free text task 1a removed.
+   */
+  @Test
+  void buildCaseHandoverParams_carriesNothingBeyondTheKnownKeys() throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverParams(
+                sessionMock(), "Dr. Muster", "COUNSELLOR_IS_ILL", "Counsellor is ill", 88L));
+
+    assertThat(parsed.fieldNames())
+        .toIterable()
+        .containsExactlyInAnyOrder(
+            "sessionId",
+            "roomRef",
+            "requesterName",
+            "reasonCode",
+            "reasonLabel",
+            "caseHandoverRequestId");
+  }
+
+  @Test
+  void buildCaseHandoverParams_omitsAbsentValuesRatherThanWritingNulls() throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverParams(
+                sessionMock(), "Dr. Muster", null, null, null));
+
+    assertThat(parsed.has("reasonCode")).isFalse();
+    assertThat(parsed.has("reasonLabel")).isFalse();
+    assertThat(parsed.has("caseHandoverRequestId")).isFalse();
+  }
+
+  @Test
+  void buildSessionScopedParams_carriesTheSessionReference() throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(eventNotificationService.buildSessionScopedParams(sessionMock()));
+
+    assertThat(parsed.get("sessionId").asLong()).isEqualTo(100L);
+    assertThat(parsed.get("roomRef").asText()).isEqualTo("!room-1:matrix.example");
+  }
+
+  // ---------------------------------------------------------------------------
   // createNewClientRequestNotifications
   // ---------------------------------------------------------------------------
 
