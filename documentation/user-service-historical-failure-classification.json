@@ -196,7 +196,7 @@
       "primaryTotal": -509
     },
     "verifiedCurrent": {
-      "verifiedApplicationHead": "1b1b42b695d92d652bd2e06c73a60bf4a03b260f",
+      "verifiedApplicationHead": "3bfa3d06a2d77e396e8a8712829164a74dc39344",
       "unit": 3859,
       "integration": 873,
       "primaryTotal": 4732,
@@ -239,11 +239,6 @@
       },
       {
         "testId": "de.caritas.cob.userservice.api.OrganizerMariaDbReplicaIT#concurrentCleanupTransactionsAreIdempotent",
-        "environmentVariable": "LIQUIBASE_IT_DB_URL",
-        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
-      },
-      {
-        "testId": "de.caritas.cob.userservice.api.SupportRoomMigrationConvergenceIT#canonicalChangelogRepairsSupportRoomRemovedByDivergentMigration",
         "environmentVariable": "LIQUIBASE_IT_DB_URL",
         "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
       },
