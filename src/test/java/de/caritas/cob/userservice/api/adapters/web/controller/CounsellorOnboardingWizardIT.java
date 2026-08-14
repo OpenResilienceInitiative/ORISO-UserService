@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -12,6 +13,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -27,11 +29,13 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
 import java.util.HexFormat;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,6 +49,7 @@ import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
  * End-to-end wiring of the public counsellor onboarding wizard endpoints (#997) through the real
@@ -60,6 +65,11 @@ import org.springframework.test.web.servlet.MockMvc;
 class CounsellorOnboardingWizardIT {
 
   private static final String CONSULTANT_ID = "wizard-counsellor-id";
+
+  private static final Long AGENCY_ID = 275L;
+
+  /** The invite's routed department topic — always part of the coverage, agency up or down. */
+  private static final Long DEPARTMENT_TOPIC_ID = 2L;
 
   /**
    * The public onboarding POSTs are protected by the stateless double-submit CSRF filter (the SPA
@@ -83,8 +93,17 @@ class CounsellorOnboardingWizardIT {
    */
   @MockitoBean private KeycloakService keycloakService;
 
+  /**
+   * The invite's topic coverage comes from AgencyService (#1008 review). Without a stub the
+   * unreachable upstream of the {@code testing} profile would silently decide the coverage — and
+   * with it the HTTP answers — so every test here states the upstream behaviour it relies on:
+   * {@link #agencyIsHealthy()} for the documented contract, {@link #agencyIsDown()} for the outage.
+   */
+  @MockitoBean private AgencyService agencyService;
+
   @BeforeEach
   void configureProvisioning() {
+    agencyIsHealthy();
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
         .thenReturn(
             new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id(CONSULTANT_ID)));
@@ -102,6 +121,18 @@ class CounsellorOnboardingWizardIT {
                     CONSULTANT_ID, "codex_wizard_counsellor", "Lisa", "Simpson", "l@oriso.org")));
   }
 
+  /** AgencyService answers: the invite's agency covers the topics 2 (department) and 7. */
+  private void agencyIsHealthy() {
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(DEPARTMENT_TOPIC_ID, 7L)));
+  }
+
+  /** AgencyService is unreachable — the coverage degrades to the invite's department topic. */
+  private void agencyIsDown() {
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenThrow(new IllegalStateException("agency service unreachable"));
+  }
+
   private void seedInvite(String rawToken) throws Exception {
     accountInviteRepository.save(
         AccountInvite.builder()
@@ -110,8 +141,8 @@ class CounsellorOnboardingWizardIT {
             .recipientEmail("lisa.simpson@oriso.org")
             .firstName("Lisa")
             .lastName("Simpson")
-            .agencyId(275L)
-            .departmentId(2L)
+            .agencyId(AGENCY_ID)
+            .departmentId(DEPARTMENT_TOPIC_ID)
             .tokenHash(sha256(rawToken))
             .expiresAt(LocalDateTime.now().plusDays(1))
             .status(AccountInviteStatus.EMAIL_SENT)
@@ -127,8 +158,8 @@ class CounsellorOnboardingWizardIT {
     String token = "emailed-counsellor-wizard-token-" + java.util.UUID.randomUUID();
     seedInvite(token);
 
-    // 1) Resolve: prefill data + the invite's topic coverage (department routing fallback —
-    // AgencyService is unreachable in the testing profile, which must NOT break the flow).
+    // 1) Resolve: prefill data + the invite's topic coverage as AgencyService reports it
+    // (department topic 2 plus the agency's topic 7 — see agencyIsHealthy()).
     mockMvc
         .perform(get("/users/account-invites/{token}/onboarding", token))
         .andExpect(status().isOk())
@@ -140,6 +171,8 @@ class CounsellorOnboardingWizardIT {
         .andExpect(jsonPath("$.agencyId").value(275))
         .andExpect(jsonPath("$.departmentId").value(2))
         .andExpect(jsonPath("$.topics[0].id").value(2))
+        .andExpect(jsonPath("$.topics[1].id").value(7))
+        .andExpect(jsonPath("$.topics.length()").value(2))
         .andExpect(jsonPath("$.phase").doesNotExist());
 
     // 2) Register with the wizard fields.
@@ -183,7 +216,7 @@ class CounsellorOnboardingWizardIT {
         ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
     verify(consultantAdminFacade)
         .createNewConsultantAgency(eq(CONSULTANT_ID), agencyCaptor.capture());
-    assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(275L);
+    assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
     assertThat(agencyCaptor.getValue().getRoleSetKey()).isEqualTo("CONSULTANT_DEFAULT");
 
     // 3) Resume: reopening the link continues at the 2FA step with the stored secret.
@@ -217,29 +250,52 @@ class CounsellorOnboardingWizardIT {
   }
 
   @Test
-  void registerWithTopicOutsideCoverage_isRejectedWithoutTouchingTheInvite() throws Exception {
+  void registerWithTopicOutsideHealthyCoverage_answers400WithoutTouchingTheInvite()
+      throws Exception {
     String token = "outside-coverage-token-" + java.util.UUID.randomUUID();
     seedInvite(token);
 
-    // AgencyService is unreachable in the testing profile, so the coverage set is DEGRADED to
-    // the department topic. A topic outside a degraded set is indeterminate — the contract
-    // (#997 review) answers 5xx (retry), never 400, to avoid misclassifying potentially valid
-    // input as a client error during an outage. Either way the invite must stay untouched.
+    // The main contract (#997): AgencyService answers, so the coverage set is authoritative and
+    // a topic outside it IS a client error. The invite must stay untouched.
     mockMvc
-        .perform(
-            post("/users/account-invites/{token}/onboarding/register", token)
-                .header("X-CSRF-Token", CSRF)
-                .cookie(CSRF_COOKIE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    """
-                    {
-                      "account": { "username": "codex_wizard_counsellor", "password": "Valid-Test-Password-2026!" },
-                      "topicIds": [999]
-                    }
-                    """))
-        .andExpect(status().isInternalServerError());
+        .perform(registerWithTopic(token, 999L))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(containsString("outside the coverage")));
 
+    assertInviteStillResolvesUnconsumed(token);
+  }
+
+  @Test
+  void registerWithUnverifiableTopicWhileAgencyIsDown_answers500WithoutTouchingTheInvite()
+      throws Exception {
+    String token = "degraded-coverage-token-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    agencyIsDown();
+
+    // With a DEGRADED coverage set the same selection is indeterminate — the topic may well be
+    // in the real agency coverage — so the contract (#997 review) answers 5xx (retry), never
+    // 400, to avoid misclassifying potentially valid input as a client error during an outage.
+    mockMvc.perform(registerWithTopic(token, 999L)).andExpect(status().isInternalServerError());
+
+    assertInviteStillResolvesUnconsumed(token);
+  }
+
+  private MockHttpServletRequestBuilder registerWithTopic(String token, Long topicId) {
+    return post("/users/account-invites/{token}/onboarding/register", token)
+        .header("X-CSRF-Token", CSRF)
+        .cookie(CSRF_COOKIE)
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(
+            """
+            {
+              "account": { "username": "codex_wizard_counsellor", "password": "Valid-Test-Password-2026!" },
+              "topicIds": [%d]
+            }
+            """
+                .formatted(topicId));
+  }
+
+  private void assertInviteStillResolvesUnconsumed(String token) throws Exception {
     mockMvc
         .perform(get("/users/account-invites/{token}/onboarding", token))
         .andExpect(status().isOk())
@@ -257,8 +313,8 @@ class CounsellorOnboardingWizardIT {
                 .recipientEmail("lisa.simpson@oriso.org")
                 .firstName("Lisa")
                 .lastName("Simpson")
-                .agencyId(275L)
-                .departmentId(2L)
+                .agencyId(AGENCY_ID)
+                .departmentId(DEPARTMENT_TOPIC_ID)
                 .tokenHash(sha256(token))
                 .expiresAt(LocalDateTime.now().minusDays(1))
                 .status(AccountInviteStatus.EMAIL_SENT)
