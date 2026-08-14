@@ -243,6 +243,13 @@
         "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
       },
       {
+        "testId": "de.caritas.cob.userservice.api.SupportRoomMigrationConvergenceIT#canonicalChangelogRepairsSupportRoomRemovedByDivergentMigration",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml",
+        "executionStatus": "known-gap",
+        "knownGapReason": "The test currently fails after another Spring Liquibase test initializes the shared MariaDB schema."
+      },
+      {
         "testId": "de.caritas.cob.userservice.api.port.out.AdminStatisticsRepositoryMariaDbIT#countDailyNewSessionsByTenantShouldProjectDayWithoutConversionError",
         "environmentVariable": "LIQUIBASE_IT_DB_URL",
         "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
