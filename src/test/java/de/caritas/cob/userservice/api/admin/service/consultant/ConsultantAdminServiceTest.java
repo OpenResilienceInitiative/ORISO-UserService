@@ -180,6 +180,42 @@ public class ConsultantAdminServiceTest {
   }
 
   // ---------------------------------------------------------------------------
+  // #996 review — every consultant admin response carries displayName + publicName
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createNewConsultant_Should_populateDisplayAndPublicName() {
+    var embedded = new ConsultantDTO().id("c1");
+    var response = new ConsultantAdminResponseDTO().embedded(embedded);
+    when(this.createConsultantSaga.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(response);
+    when(this.consultantTopicRepository.findTopicIdsByConsultantId("c1")).thenReturn(List.of());
+    when(accountManager.findConsultant("c1"))
+        .thenReturn(Optional.of(Map.of("displayName", "Anna B.")));
+
+    var result = this.consultantAdminService.createNewConsultant(mock(CreateConsultantDTO.class));
+
+    assertThat(result.getEmbedded().getDisplayName()).isEqualTo("Anna B.");
+    assertThat(result.getEmbedded().getPublicName()).isEqualTo("Anna B.");
+  }
+
+  @Test
+  void updateConsultant_Should_populateDisplayAndPublicName() {
+    var updated = new Consultant();
+    updated.setId("c-1");
+    var dto = new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO();
+    when(consultantUpdateService.updateConsultant("c-1", dto)).thenReturn(updated);
+    when(consultantTopicRepository.findTopicIdsByConsultantId("c-1")).thenReturn(List.of());
+    when(accountManager.findConsultant("c-1"))
+        .thenReturn(Optional.of(Map.of("displayName", "Anna B.")));
+
+    var result = consultantAdminService.updateConsultant("c-1", dto);
+
+    assertThat(result.getEmbedded().getDisplayName()).isEqualTo("Anna B.");
+    assertThat(result.getEmbedded().getPublicName()).isEqualTo("Anna B.");
+  }
+
+  // ---------------------------------------------------------------------------
   // #994 — personal-info fields and the adminRemarks tenant-level-admin gate
   // ---------------------------------------------------------------------------
 
