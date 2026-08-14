@@ -14,14 +14,31 @@ runs:
       distribution: 'temurin'
       cache: maven
 
-  # failure.ignore keeps a red suite from halting the build at surefire. Surefire
-  # and jacoco:report share the `test` phase and surefire runs first, so without
-  # it the report goal never runs and coverage is missing from precisely the runs
-  # worth inspecting. The job outcome is unaffected: `Report unit inventory`
-  # below fails on any failure or error, and on an empty inventory.
+  # `shell: bash` runs with errexit, so a red suite would abort this step before
+  # any failure detail is written. Capture the status instead and let the
+  # reporting steps below run first; `Fail on the Maven test status` re-raises it
+  # once the summary is complete. Maven itself keeps its usual behaviour, so a
+  # failure that is not a test failure (a compile error, say) still surfaces.
   - name: Run Maven tests
     shell: bash
-    run: ./mvnw -B test -Dmaven.test.failure.ignore=true
+    run: |
+      test_status=0
+      ./mvnw -B test || test_status=$?
+      echo "MAVEN_TEST_STATUS=${test_status}" >> "$GITHUB_ENV"
+
+  # jacoco:report is bound to the `test` phase behind surefire, so a red suite
+  # halts the build before it runs and leaves no report. The execution data is
+  # already on disk by then, written by the prepare-agent JVM as it exits, so the
+  # goal is invoked directly here rather than relying on the phase.
+  - name: Generate coverage report
+    if: ${{ always() }}
+    shell: bash
+    run: |
+      if [ -f target/jacoco.exec ]; then
+        ./mvnw -B jacoco:report
+      else
+        echo "No target/jacoco.exec: the run did not reach the test phase."
+      fi
 
   - name: Report failed tests
     if: ${{ always() }}
@@ -68,6 +85,19 @@ runs:
         echo
         python3 scripts/ci/suite-inventory.py --require unit
       } | tee -a "$GITHUB_STEP_SUMMARY"
+
+  # Re-raises the status held back above, now that the failing tests, the
+  # coverage and the inventory have all been written to the summary. Kept
+  # separate from the inventory gate so that a Maven failure which produced no
+  # usable reports at all still fails the job.
+  - name: Fail on the Maven test status
+    if: ${{ always() }}
+    shell: bash
+    run: |
+      if [ "${MAVEN_TEST_STATUS:-0}" -ne 0 ]; then
+        echo "Maven test run exited ${MAVEN_TEST_STATUS}; see the failed tests section." >&2
+        exit "${MAVEN_TEST_STATUS}"
+      fi
 
   - name: Verify CI and load-test contracts
     shell: bash

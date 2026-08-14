@@ -133,16 +133,42 @@ class CoverageSummaryTest(unittest.TestCase):
             "no command may follow the inventory gate inside its pipeline group",
         )
 
-    def test_maven_test_step_lets_the_build_reach_the_jacoco_report_goal(self):
-        """Surefire and jacoco:report share the `test` phase, and surefire runs first.
+    def test_maven_status_is_held_back_until_the_summary_is_written(self):
+        """errexit would abort the step on a red suite before any detail is reported.
 
-        Without failure.ignore a red suite halts the build at surefire, the report
-        goal never runs, and coverage is missing from exactly the runs that need
-        looking at. `suite-inventory.py --require unit` still fails the job.
+        The status is captured, the reporting steps run, and it is re-raised
+        afterwards, so a failing run still fails the job but names its tests first.
         """
         action = MAVEN_BUILD_ACTION.read_text()
 
-        self.assertIn("-Dmaven.test.failure.ignore=true", action)
+        self.assertIn("./mvnw -B test || test_status=$?", action)
+        self.assertIn('MAVEN_TEST_STATUS=${test_status}', action)
+        self.assertIn('exit "${MAVEN_TEST_STATUS}"', action)
+
+        captured = action.index("MAVEN_TEST_STATUS=${test_status}")
+        reraised = action.index('exit "${MAVEN_TEST_STATUS}"')
+        for section in ("failed-tests.py", "coverage-summary.py", "suite-inventory.py"):
+            reported = action.index(section)
+            self.assertLess(captured, reported, f"{section} must run after the capture")
+            self.assertLess(reported, reraised, f"{section} must run before the re-raise")
+
+    def test_coverage_report_is_generated_outside_the_test_phase(self):
+        """jacoco:report sits behind surefire in the `test` phase.
+
+        A red suite halts the build before it, so the goal is invoked directly
+        against the execution data the agent already wrote.
+        """
+        action = MAVEN_BUILD_ACTION.read_text()
+
+        self.assertIn("./mvnw -B jacoco:report", action)
+        self.assertIn("target/jacoco.exec", action)
+
+    def test_does_not_suppress_test_failures_in_maven(self):
+        """testFailureIgnore would hide a red suite from every consumer of the build."""
+        action = MAVEN_BUILD_ACTION.read_text()
+
+        self.assertNotIn("maven.test.failure.ignore", action)
+        self.assertNotIn("testFailureIgnore", action)
         self.assertIn("--require unit", action)
 
 
