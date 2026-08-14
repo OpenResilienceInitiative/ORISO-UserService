@@ -40,6 +40,16 @@ class ConsultantResponseDTOBuilderTest {
   }
 
   @Test
+  void buildResponseDTO_Should_mapInternalDisplayName() {
+    var consultant = consultantWithPersonalInfo();
+    consultant.setInternalDisplayName("Anna Beispiel (Standort Nord)");
+
+    var dto = ConsultantResponseDTOBuilder.getInstance(consultant).buildResponseDTO().getEmbedded();
+
+    assertThat(dto.getInternalDisplayName()).isEqualTo("Anna Beispiel (Standort Nord)");
+  }
+
+  @Test
   void buildResponseDTO_Should_includeAdminRemarks_When_OptedIn() {
     var dto =
         ConsultantResponseDTOBuilder.getInstance(consultantWithPersonalInfo())

@@ -436,6 +436,8 @@ public class CreateConsultantSaga {
             .email(consultantCreationInput.getEmail())
             .absent(isTrue(consultantCreationInput.isAbsent()))
             .absenceMessage(consultantCreationInput.getAbsenceMessage())
+            .displayName(consultantCreationInput.getDisplayName())
+            .internalDisplayName(consultantCreationInput.getInternalDisplayName())
             .salutation(consultantCreationInput.getSalutation())
             .position(consultantCreationInput.getPosition())
             .title(consultantCreationInput.getTitle())

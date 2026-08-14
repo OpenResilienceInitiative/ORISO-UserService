@@ -197,6 +197,9 @@ public class ConsultantUpdateService {
    */
   private void applyPersonalInfo(
       UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant) {
+    applyIfProvided(updateConsultantDTO.getDisplayName(), consultant::setDisplayName);
+    applyIfProvided(
+        updateConsultantDTO.getInternalDisplayName(), consultant::setInternalDisplayName);
     applyIfProvided(updateConsultantDTO.getSalutation(), consultant::setSalutation);
     applyIfProvided(updateConsultantDTO.getPosition(), consultant::setPosition);
     applyIfProvided(updateConsultantDTO.getTitle(), consultant::setTitle);

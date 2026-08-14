@@ -159,6 +159,55 @@ public class ConsultantUpdateServiceBase {
     assertThat(afterClearing.getAdminRemarks(), nullValue());
   }
 
+  public void updateConsultant_Should_persistBothDisplayNames_With_nullUntouchedAndBlankClearing() {
+    var initial = new UpdateAdminConsultantDTO();
+    initial.setAbsent(false);
+    initial.setFirstname("first");
+    initial.setLastname("last");
+    initial.setEmail("dualnames@address.de");
+    initial.formalLanguage(true);
+    initial.setDisplayName("Anna B.");
+    initial.setInternalDisplayName("Anna Beispiel (Standort Nord)");
+
+    Consultant afterInitial =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), initial);
+
+    assertThat(afterInitial.getDisplayName(), is("Anna B."));
+    assertThat(afterInitial.getInternalDisplayName(), is("Anna Beispiel (Standort Nord)"));
+    assertThat(
+        afterInitial.getInternalDisplayNameOrFallback(), is("Anna Beispiel (Standort Nord)"));
+
+    // Null values leave both names untouched.
+    var untouched = new UpdateAdminConsultantDTO();
+    untouched.setAbsent(false);
+    untouched.setFirstname("first");
+    untouched.setLastname("last");
+    untouched.setEmail("dualnames@address.de");
+    untouched.formalLanguage(true);
+
+    Consultant afterUntouched =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), untouched);
+
+    assertThat(afterUntouched.getDisplayName(), is("Anna B."));
+    assertThat(afterUntouched.getInternalDisplayName(), is("Anna Beispiel (Standort Nord)"));
+
+    // Clearing the internal name makes internal contexts fall back to the public name.
+    var clearing = new UpdateAdminConsultantDTO();
+    clearing.setAbsent(false);
+    clearing.setFirstname("first");
+    clearing.setLastname("last");
+    clearing.setEmail("dualnames@address.de");
+    clearing.formalLanguage(true);
+    clearing.setInternalDisplayName("");
+
+    Consultant afterClearing =
+        this.consultantUpdateService.updateConsultant(getValidConsultantId(), clearing);
+
+    assertThat(afterClearing.getInternalDisplayName(), nullValue());
+    assertThat(afterClearing.getDisplayName(), is("Anna B."));
+    assertThat(afterClearing.getInternalDisplayNameOrFallback(), is("Anna B."));
+  }
+
   public void updateConsultant_Should_throwCustomResponseException_When_absenceIsInvalid() {
     UpdateAdminConsultantDTO updateConsultantDTO = new UpdateAdminConsultantDTO();
     updateConsultantDTO.setAbsent(true);

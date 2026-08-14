@@ -38,10 +38,26 @@ class AdminDtoMapperTest {
     assertThat(result.getEmbedded().get(0).getEmbedded().getTenantId()).isEqualTo("2");
     assertThat(result.getEmbedded().get(0).getEmbedded().getTenantName()).isNull();
     assertThat(result.getEmbedded().get(0).getEmbedded().getTenantSubdomain()).isNull();
-    assertThat(result.getEmbedded().get(0).getEmbedded().getPublicName()).isNull();
+    // publicName used to be dead scaffolding hardcoded to null (#996) — it is the full name now.
+    assertThat(result.getEmbedded().get(0).getEmbedded().getPublicName()).isEqualTo("First Last");
     assertThat(result.getEmbedded().get(0).getEmbedded().getRoleInOrg()).isEqualTo("Tenant Admin");
     assertThat(result.getEmbedded().get(0).getEmbedded().getVacated()).isFalse();
     assertThat(result.getEmbedded().get(0).getEmbedded().getAdminRights()).isTrue();
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void adminSearchResultOf_Should_FallBackToUsernameForPublicName_When_NamesAreBlank() {
+    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService);
+    ReflectionTestUtils.setField(adminDtoMapper, "multiTenancyEnabled", false);
+    var resultMap = resultMap();
+    var adminMap = (Map<String, Object>) ((List<?>) resultMap.get("admins")).get(0);
+    adminMap.put("firstName", "  ");
+    adminMap.put("lastName", null);
+
+    var result = adminDtoMapper.adminSearchResultOf(resultMap, "*", 1, 10, "FIRSTNAME", "ASC");
+
+    assertThat(result.getEmbedded().get(0).getEmbedded().getPublicName()).isEqualTo("admin");
   }
 
   @Test

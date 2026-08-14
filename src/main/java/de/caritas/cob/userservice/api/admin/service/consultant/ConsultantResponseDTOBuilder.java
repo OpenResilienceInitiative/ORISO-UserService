@@ -88,6 +88,7 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
         .deleteDate(String.valueOf(consultant.getDeleteDate()))
         .status(String.valueOf(consultant.getStatus()))
         .tenantId(consultant.getTenantId() != null ? consultant.getTenantId().intValue() : null)
+        .internalDisplayName(consultant.getInternalDisplayName())
         .salutation(consultant.getSalutation())
         .position(consultant.getPosition())
         .title(consultant.getTitle())

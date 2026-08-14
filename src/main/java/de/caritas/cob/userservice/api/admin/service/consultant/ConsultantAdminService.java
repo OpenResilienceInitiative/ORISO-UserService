@@ -121,7 +121,14 @@ public class ConsultantAdminService {
   private void enrichWithDisplayName(String consultantId, ConsultantAdminResponseDTO response) {
     accountManager
         .findConsultant(consultantId)
-        .ifPresent(map -> response.getEmbedded().setDisplayName(getDisplayNameFromUserMap(map)));
+        .ifPresent(
+            map -> {
+              var displayName = getDisplayNameFromUserMap(map);
+              response.getEmbedded().setDisplayName(displayName);
+              // publicName is an alias of the PUBLIC display name (#996) — it used to be
+              // dead scaffolding hardcoded to null.
+              response.getEmbedded().setPublicName(displayName);
+            });
   }
 
   private static String getDisplayNameFromUserMap(Map<String, Object> map) {
@@ -144,6 +151,9 @@ public class ConsultantAdminService {
     if (canAccessAdminRemarks()) {
       response.getEmbedded().setAdminRemarks(createConsultantDTO.getAdminRemarks());
     }
+    // Same public-name contract as findConsultantById: every consultant admin response carries
+    // displayName + publicName (#996 review).
+    enrichWithDisplayName(response.getEmbedded().getId(), response);
     enrichWithTopics(response.getEmbedded().getId(), response);
     return response;
   }
@@ -170,6 +180,10 @@ public class ConsultantAdminService {
             .buildResponseDTO();
 
     this.appointmentService.updateConsultant(consultantAdminResponseDTO);
+    // Same public-name contract as findConsultantById: every consultant admin response carries
+    // displayName + publicName (#996 review). After the appointment sync on purpose — the
+    // appointment payload never carried the names before.
+    enrichWithDisplayName(consultantId, consultantAdminResponseDTO);
     enrichWithTopics(consultantId, consultantAdminResponseDTO);
     return consultantAdminResponseDTO;
   }
