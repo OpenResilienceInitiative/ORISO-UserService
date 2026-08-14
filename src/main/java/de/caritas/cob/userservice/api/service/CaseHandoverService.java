@@ -461,6 +461,13 @@ public class CaseHandoverService {
                 session.getConsultant() != null
                     ? decodeUsername(session.getConsultant().getDisplayName())
                     : null),
+            // The candidate list renders the internal name with fallback (#996), so the search
+            // must cover it too — otherwise an internal-name-only query filters the session out
+            // before it is rendered. The public display name above stays a valid search term.
+            nullable(
+                session.getConsultant() != null
+                    ? decodeUsername(session.getConsultant().getInternalDisplayNameOrFallback())
+                    : null),
             nullable(
                 session.getConsultant() != null ? session.getConsultant().getFirstName() : null),
             nullable(

@@ -46,6 +46,21 @@ class AdminDtoMapperTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void adminSearchResultOf_Should_FallBackToUsernameForPublicName_When_NamesAreBlank() {
+    AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService);
+    ReflectionTestUtils.setField(adminDtoMapper, "multiTenancyEnabled", false);
+    var resultMap = resultMap();
+    var adminMap = (Map<String, Object>) ((List<?>) resultMap.get("admins")).get(0);
+    adminMap.put("firstName", "  ");
+    adminMap.put("lastName", null);
+
+    var result = adminDtoMapper.adminSearchResultOf(resultMap, "*", 1, 10, "FIRSTNAME", "ASC");
+
+    assertThat(result.getEmbedded().get(0).getEmbedded().getPublicName()).isEqualTo("admin");
+  }
+
+  @Test
   void adminSearchResultOf_Should_MapSupportAdminRoleInOrg() {
     // given
     AdminDtoMapper adminDtoMapper = new AdminDtoMapper(tenantService);

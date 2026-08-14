@@ -69,6 +69,24 @@ class ConsultantDtoMapperTest {
   }
 
   @Test
+  void consultantDtoOf_Should_KeepInternalDisplayNameNull_When_AbsentFromMap() {
+    ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
+    when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
+        .thenReturn(false);
+    var map = consultantMap();
+    map.remove("internalDisplayName");
+
+    var consultant = consultantDtoMapper.consultantDtoOf(map);
+
+    // No internal name set: the DTO keeps it null while displayName/publicName stay the
+    // PUBLIC name — the fallback is the reader's concern, not the mapper's.
+    assertThat(consultant.getInternalDisplayName()).isNull();
+    assertThat(consultant.getDisplayName()).isEqualTo("Public Name");
+    assertThat(consultant.getPublicName()).isEqualTo("Public Name");
+  }
+
+  @Test
   void consultantDtoOf_Should_MapOtherIdentityFields_WhenPresentInMap() {
     // given
     ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
