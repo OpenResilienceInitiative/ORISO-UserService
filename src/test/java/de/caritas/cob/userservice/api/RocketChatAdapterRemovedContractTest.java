@@ -114,6 +114,12 @@ class RocketChatAdapterRemovedContractTest {
     assertThat(service)
         .doesNotContain("Manages one-time invite links", "validate, mark USED")
         .contains("reusable until expiry");
+
+    assertThat(
+            Files.readString(
+                Path.of(
+                    "src/test/java/de/caritas/cob/userservice/api/facade/CreateUserFacadeTest.java")))
+        .doesNotContain("LogOutFromRocketChat");
   }
 
   @Test

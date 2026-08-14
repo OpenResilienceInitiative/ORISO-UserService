@@ -203,11 +203,9 @@ public class CreateUserFacadeTest {
   public void
       createUserAccountWithInitializedConsultingType_Should_ProvisionMatrixAndInitializeSession_When_ConsultingTypeIsKreuzbundAndNoTenantIsSet()
           throws Exception {
-    // Was named "..._Should_LogOutFromRocketChat_When_...RocketChatLoginSucceeded"
-    // and asserted nothing at all — it only checked that the call did not throw,
-    // for a log-out that no longer exists. It covers the Kreuzbund path without a
-    // tenant context (the sibling test below covers it with one), so assert what
-    // that path is actually supposed to do.
+    // Covers the Kreuzbund path without a tenant context; the sibling test below covers the
+    // tenant-specific path. The assertions verify Matrix provisioning, session initialization,
+    // and credential cleanup.
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
