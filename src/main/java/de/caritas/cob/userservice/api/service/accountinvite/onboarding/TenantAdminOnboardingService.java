@@ -170,6 +170,12 @@ public class TenantAdminOnboardingService {
   // noRollbackFor mirrors resolveOnboardingInvite: the expiry transition must survive the
   // link-death exception. Every other AccountInviteLinkException in this method is thrown
   // before any write (the lost claim race writes nothing), so nothing partial can commit.
+  //
+  // This method deliberately KEEPS its single atomic transaction (#1008 review): the tenant, the
+  // Keycloak account and the irreversible reservation consumption only stay compensable together,
+  // and the explicit Keycloak rollback below is built on exactly that. Every invite it writes is
+  // therefore a MANAGED entity — re-read by id inside this very transaction after the atomic
+  // claim — so it never merges a detached snapshot and needs no targeted-field treatment.
   @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public TenantAdminRegistrationResult registerTenantAdmin(
       String rawToken, RegisterTenantAdminCommand command) {
@@ -317,17 +323,27 @@ public class TenantAdminOnboardingService {
   }
 
   /**
-   * Terminal consumption of the link once Keycloak accepted the one-time password. The pending
-   * secret is cleared FIRST so the gate transition — which re-reads the invite by its acceptor —
-   * wins over the merge of the detached row loaded before the Keycloak round trip.
+   * Terminal consumption of the link once Keycloak accepted the one-time password.
+   *
+   * <p>The instance held here was detached across the Keycloak round trip, so the row is re-read
+   * under its PESSIMISTIC_WRITE lock and only the field this write owns — the pending secret — is
+   * touched (#1008 review). Saving the detached snapshot instead would merge every column as it
+   * looked before the round trip and silently revert a concurrent update; {@link AccountInvite}
+   * carries neither {@code @Version} nor {@code @DynamicUpdate} to catch that. Clearing the secret
+   * stays FIRST so the gate transition, which re-reads the invite by its acceptor and therefore
+   * works on the very same managed row, is not undone by this write.
    */
   private void consumeTwoFactorGate(AccountInvite invite) {
     inTransaction(
         () -> {
-          invite.setTotpPendingSecret(null);
-          invite.setUpdateDate(LocalDateTime.now());
-          accountInviteRepository.save(invite);
-          accountInviteService.markTwoFactorActive(invite.getAcceptedByUserId());
+          AccountInvite locked =
+              accountInviteRepository
+                  .findByIdForUpdate(invite.getId())
+                  .orElseThrow(() -> new NotFoundException("Account invite not found"));
+          locked.setTotpPendingSecret(null);
+          locked.setUpdateDate(LocalDateTime.now());
+          accountInviteRepository.save(locked);
+          accountInviteService.markTwoFactorActive(locked.getAcceptedByUserId());
           return null;
         });
   }

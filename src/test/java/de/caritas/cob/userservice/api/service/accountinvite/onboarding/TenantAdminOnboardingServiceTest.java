@@ -572,12 +572,20 @@ class TenantAdminOnboardingServiceTest {
                 new IdentityProfile("kc-user-1", "enc.keycloak-username", null, null, null)));
     when(identitySecondFactor.setUpOtpCredential("enc.keycloak-username", "123456", "TOTPSECRET"))
         .thenReturn(true);
+    // Consuming the gate re-reads the row under its lock instead of merging the snapshot held
+    // across the Keycloak round trip (#1008 review), so the stub hands out a DISTINCT instance.
+    AccountInvite lockedRow = tenantAdminInvite(AccountInviteStatus.ACCEPTED);
+    lockedRow.setAcceptedByUserId("kc-user-1");
+    lockedRow.setTotpPendingSecret("TOTPSECRET");
+    when(accountInviteRepository.findByIdForUpdate(lockedRow.getId()))
+        .thenReturn(Optional.of(lockedRow));
 
     service.activateTwoFactor(RAW_TOKEN, "123456");
 
     verify(accountInviteService).markTwoFactorActive("kc-user-1");
-    assertNull(invite.getTotpPendingSecret());
-    verify(accountInviteRepository).save(invite);
+    assertNull(lockedRow.getTotpPendingSecret());
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(invite);
   }
 
   @Test

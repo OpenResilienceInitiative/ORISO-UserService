@@ -26,6 +26,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -152,20 +153,16 @@ public class CounsellorOnboardingService {
    * state) and its own external-state compensation. This method only validates the wizard input up
    * front (before the invite is touched) and persists the pending TOTP secret afterwards so the
    * resume path can re-show it (#569 resume contract).
+   *
+   * <p>Both of its own database writes are targeted-field updates on a freshly locked row (#1008
+   * review): the precondition check including the expiry transition is ONE short transaction, and
+   * the pending secret is written into a re-read row after the Keycloak round trip instead of
+   * merging the detached snapshot the provisioning returned.
    */
   public CounsellorRegistrationResult registerCounsellor(
       String rawToken, RegisterCounsellorCommand command) {
     validateRegistration(command);
-    AccountInvite invite = findCounsellorInvite(rawToken);
-    LocalDateTime now = LocalDateTime.now();
-
-    if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
-      throw linkDeathException(invite);
-    }
-    AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
-    if (expired != null) {
-      throw expired;
-    }
+    AccountInvite invite = loadInviteForRegistration(rawToken);
     validateTopicSelection(command.topicIds(), resolveTopicCoverage(invite));
 
     AccountInvite accepted =
@@ -187,14 +184,39 @@ public class CounsellorOnboardingService {
             accepted.getId());
         return new CounsellorRegistrationResult(consultantId, null, null, true);
       }
-      accepted.setTotpPendingSecret(otpInfo.secret());
-      accepted.setUpdateDate(LocalDateTime.now());
-      accountInviteRepository.save(accepted);
+      // Only the pending secret is this write's business — the row is re-read under its lock so a
+      // concurrent change (e.g. an admin revoking the invite) is not merged away (#1008 review).
+      updateLockedInvite(accepted.getId(), row -> row.setTotpPendingSecret(otpInfo.secret()));
       return new CounsellorRegistrationResult(
           consultantId, otpInfo.secret(), otpInfo.secretQrCode(), true);
     }
     // 2FA waived/not required for this invite — the wizard skips the 2FA step.
     return new CounsellorRegistrationResult(consultantId, null, null, false);
+  }
+
+  /**
+   * The database-only precondition check of {@link #registerCounsellor}: the invite is loaded under
+   * its lock, an overdue link is flipped to {@code EXPIRED} and the link-death answer is RETURNED
+   * so that transition commits before the exception leaves the flow (same structure as {@link
+   * #loadInviteForResolve}).
+   */
+  private AccountInvite loadInviteForRegistration(String rawToken) {
+    ResolvedOnboardingInvite resolved =
+        inTransaction(
+            () -> {
+              AccountInvite invite = findCounsellorInvite(rawToken);
+              if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
+                return ResolvedOnboardingInvite.dead(linkDeathException(invite));
+              }
+              AccountInviteLinkException expired = expireIfPastExpiry(invite, LocalDateTime.now());
+              return expired == null
+                  ? ResolvedOnboardingInvite.open(invite)
+                  : ResolvedOnboardingInvite.dead(expired);
+            });
+    // Thrown only now, i.e. after the transaction committed, so a persisted EXPIRED transition
+    // survives the link-death answer.
+    resolved.rethrowLinkDeath();
+    return resolved.invite();
   }
 
   /**
@@ -264,17 +286,20 @@ public class CounsellorOnboardingService {
   }
 
   /**
-   * Terminal consumption of the link once Keycloak accepted the one-time password. The pending
-   * secret is cleared FIRST so the gate transition — which re-reads the invite by its acceptor —
-   * wins over the merge of the detached row loaded before the Keycloak round trip.
+   * Terminal consumption of the link once Keycloak accepted the one-time password. The row is
+   * re-read under its lock (the instance held here was detached across the Keycloak round trip),
+   * and only the pending secret is cleared — that happens FIRST so the gate transition, which
+   * re-reads the invite by its acceptor and therefore works on the very same managed row, is not
+   * undone by this write.
    */
   private void consumeTwoFactorGate(AccountInvite invite) {
     inTransaction(
         () -> {
-          invite.setTotpPendingSecret(null);
-          invite.setUpdateDate(LocalDateTime.now());
-          accountInviteRepository.save(invite);
-          accountInviteService.markTwoFactorActive(invite.getAcceptedByUserId());
+          AccountInvite locked = lockedInvite(invite.getId());
+          locked.setTotpPendingSecret(null);
+          locked.setUpdateDate(LocalDateTime.now());
+          accountInviteRepository.save(locked);
+          accountInviteService.markTwoFactorActive(locked.getAcceptedByUserId());
           return null;
         });
   }
@@ -282,6 +307,36 @@ public class CounsellorOnboardingService {
   /** Runs {@code action} in its own short database transaction (no remote call belongs inside). */
   private <T> T inTransaction(Supplier<T> action) {
     return transactionTemplate.execute(status -> action.get());
+  }
+
+  /**
+   * Re-reads the invite row under its PESSIMISTIC_WRITE lock — call only from inside one of this
+   * service's short transactions.
+   *
+   * <p>Every write of this flow follows a remote call, so the invite instance the flow carries is a
+   * DETACHED snapshot taken before that call. Saving it back would merge all of its columns and
+   * silently revert whatever another writer changed in the meantime — the entity has neither {@code
+   * &#64;Version} nor {@code &#64;DynamicUpdate} to catch that (#1008 review). Re-reading here and
+   * setting only the fields the write owns keeps the concurrent change intact.
+   */
+  private AccountInvite lockedInvite(Long inviteId) {
+    return accountInviteRepository
+        .findByIdForUpdate(inviteId)
+        .orElseThrow(() -> new NotFoundException("Account invite not found"));
+  }
+
+  /**
+   * Targeted-field update in its own short transaction: re-reads the row under the lock (see {@link
+   * #lockedInvite}), lets {@code update} set the fields this write owns and stamps the update date.
+   */
+  private void updateLockedInvite(Long inviteId, Consumer<AccountInvite> update) {
+    inTransaction(
+        () -> {
+          AccountInvite locked = lockedInvite(inviteId);
+          update.accept(locked);
+          locked.setUpdateDate(LocalDateTime.now());
+          return accountInviteRepository.save(locked);
+        });
   }
 
   /**
@@ -406,9 +461,10 @@ public class CounsellorOnboardingService {
             invite.getId());
         return;
       }
+      // Targeted-field update on a re-read row (#1008 review); the in-memory instance is updated
+      // as well because the caller answers the resume response from it.
+      updateLockedInvite(invite.getId(), row -> row.setTotpPendingSecret(otpInfo.secret()));
       invite.setTotpPendingSecret(otpInfo.secret());
-      invite.setUpdateDate(LocalDateTime.now());
-      accountInviteRepository.save(invite);
       log.info("Repaired the missing TOTP setup material for invite {}", invite.getId());
     } catch (RuntimeException exception) {
       log.warn(
