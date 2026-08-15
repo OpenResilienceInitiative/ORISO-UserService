@@ -1,5 +1,9 @@
 package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.isResumableAtTwoFactorStep;
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.linkDeathException;
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.revalidateTwoFactorGate;
+
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -23,7 +27,6 @@ import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Multili
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.OnboardingDpaAcceptanceDTO;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Objects;
 import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -337,9 +340,10 @@ public class TenantAdminOnboardingService {
    * touched (#1008 review). Saving the detached snapshot instead would merge every column as it
    * looked before the round trip and silently revert a concurrent update; {@link AccountInvite}
    * carries neither {@code @Version} nor {@code @DynamicUpdate} to catch that. That freshly locked
-   * row is re-checked for eligibility (see {@link #revalidateTwoFactorGate}) before anything is
-   * written. Clearing the secret stays FIRST so the gate transition, which re-reads the invite by
-   * its acceptor and therefore works on the very same managed row, is not undone by this write.
+   * row is re-checked for eligibility (see {@link
+   * OnboardingTwoFactorGuard#revalidateTwoFactorGate}) before anything is written. Clearing the
+   * secret stays FIRST so the gate transition, which re-reads the invite by its acceptor and
+   * therefore works on the very same managed row, is not undone by this write.
    */
   private void consumeTwoFactorGate(
       AccountInvite invite, String verifiedAcceptorId, String verifiedPendingSecret) {
@@ -356,41 +360,6 @@ public class TenantAdminOnboardingService {
           accountInviteService.markTwoFactorActive(locked.getAcceptedByUserId());
           return null;
         });
-  }
-
-  /**
-   * Closes the time-of-check/time-of-use window of the 2FA gate (#1030 review). The eligibility
-   * check of {@link #loadInviteForTwoFactorActivation} and the write that activates the gate are
-   * separated by the Keycloak round trip, which deliberately runs with no lock held — so in between
-   * the invite may have been revoked or superseded, may have passed its expiry, may already have
-   * had its gate activated, may have been re-accepted by a different acceptor, or may have had its
-   * pending secret rotated. Activating the gate on such a row would honour a one-time password that
-   * was verified against state which no longer exists.
-   *
-   * <p>Runs on the freshly locked row inside the writing transaction and rejects with EXACTLY the
-   * answers {@link #loadInviteForTwoFactorActivation} gives for the same row states — a link that
-   * dies mid-flow is indistinguishable from a link that was already dead when the request arrived.
-   * No new status code or reason is introduced. Nothing has been written when this throws, and no
-   * expiry transition applies here (that transition only exists for {@code EMAIL_SENT} rows), so
-   * the rollback of the surrounding transaction loses nothing.
-   */
-  private static void revalidateTwoFactorGate(
-      AccountInvite locked, String verifiedAcceptorId, String verifiedPendingSecret) {
-    if (locked.getStatus() != AccountInviteStatus.ACCEPTED) {
-      // Revoked, superseded or expired in the meantime — the link's own death reason.
-      throw linkDeathException(locked);
-    }
-    if (!isResumableAtTwoFactorStep(locked, LocalDateTime.now())) {
-      // Gate satisfied in the meantime or the resume window closed — terminally consumed.
-      throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
-    }
-    if (!Objects.equals(locked.getAcceptedByUserId(), verifiedAcceptorId)
-        || !Objects.equals(locked.getTotpPendingSecret(), verifiedPendingSecret)) {
-      // A different acceptor now owns the invite, or the pending secret was rotated: the setup
-      // this code was verified against is gone — same answer the precondition check gives for a
-      // row without usable setup material.
-      throw new BadRequestException("No pending TOTP setup exists for this invite");
-    }
   }
 
   /** Runs {@code action} in its own short database transaction (no remote call belongs inside). */
@@ -428,27 +397,6 @@ public class TenantAdminOnboardingService {
       return new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
     return null;
-  }
-
-  private static boolean isResumableAtTwoFactorStep(AccountInvite invite, LocalDateTime now) {
-    boolean twoFactorStillPending =
-        !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());
-    boolean withinExpiryWindow =
-        invite.getExpiresAt() == null || !invite.getExpiresAt().isBefore(now);
-    return invite.getStatus() == AccountInviteStatus.ACCEPTED
-        && twoFactorStillPending
-        && withinExpiryWindow;
-  }
-
-  private static AccountInviteLinkException linkDeathException(AccountInvite invite) {
-    return switch (invite.getStatus()) {
-      case ACCEPTED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
-      case REVOKED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.REVOKED);
-      case SUPERSEDED ->
-          new AccountInviteLinkException(AccountInviteLinkException.Reason.SUPERSEDED);
-      case EXPIRED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
-      default -> new AccountInviteLinkException(AccountInviteLinkException.Reason.NOT_ACTIVE);
-    };
   }
 
   private static void validateRegistration(RegisterTenantAdminCommand command) {
