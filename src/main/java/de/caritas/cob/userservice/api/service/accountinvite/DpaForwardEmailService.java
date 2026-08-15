@@ -43,11 +43,22 @@ public class DpaForwardEmailService {
       throw new BadRequestException("signLink must use the configured ORISO App origin");
     }
 
-    var tenant = tenantService.getRestrictedTenantData(command.tenantId());
-    String tenantName =
-        tenant == null || isBlank(tenant.getName()) ? "Ihrer Organisation" : tenant.getName();
+    var tenantName = resolveTenantName(command.tenantId());
     dpaSigningEmailDispatchService.send(
         command.recipientEmail().trim(), tenantName, signLink.toString(), command.expiresAt());
+  }
+
+  /**
+   * The tenant of a pre-account onboarding forward does not exist yet (only its ID is reserved,
+   * ORISO-Admin#722) — the mail then falls back to the generic wording instead of failing.
+   */
+  private String resolveTenantName(Long tenantId) {
+    try {
+      var tenant = tenantService.getRestrictedTenantData(tenantId);
+      return tenant == null || isBlank(tenant.getName()) ? "Ihrer Organisation" : tenant.getName();
+    } catch (org.springframework.web.client.HttpClientErrorException.NotFound exception) {
+      return "Ihrer Organisation";
+    }
   }
 
   private static URI parseUri(String value, String field) {

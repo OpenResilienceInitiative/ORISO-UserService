@@ -66,6 +66,43 @@ public class TenantAdminOnboardingController {
     return ResponseEntity.ok().build();
   }
 
+  /**
+   * Wizard step 1 "I am not authorised to sign" (ORISO-Admin#722): creates a DPA sign link for the
+   * invite's reserved tenant and — when a recipient address is given — delivers it by mail. The
+   * invite token in the path is the credential, exactly like the other onboarding endpoints.
+   */
+  @PostMapping({
+    "/users/account-invites/{token}/onboarding/dpa-forward",
+    "/service/users/account-invites/{token}/onboarding/dpa-forward"
+  })
+  public ResponseEntity<DpaForwardResponseDTO> forwardDpa(
+      @PathVariable String token,
+      @jakarta.validation.Valid @RequestBody(required = false) DpaForwardRequestDTO request) {
+    TenantAdminOnboardingService.DpaForwardResult result =
+        onboardingService.forwardDpa(token, request == null ? null : request.recipientEmail);
+    return ResponseEntity.ok(DpaForwardResponseDTO.from(result));
+  }
+
+  public static class DpaForwardRequestDTO {
+    /** Optional: address of the authorised signer; without it only the link is returned. */
+    @jakarta.validation.constraints.Email public String recipientEmail;
+  }
+
+  public static class DpaForwardResponseDTO {
+    /** Public standalone signing page URL carrying the raw single-use sign token. */
+    public String signUrl;
+
+    /** Link expiry as ISO local date-time string (14-day validity window). */
+    public String expiresAt;
+
+    static DpaForwardResponseDTO from(TenantAdminOnboardingService.DpaForwardResult result) {
+      DpaForwardResponseDTO dto = new DpaForwardResponseDTO();
+      dto.signUrl = result.signUrl();
+      dto.expiresAt = result.expiresAt();
+      return dto;
+    }
+  }
+
   private static RegisterTenantAdminCommand toCommand(TenantAdminRegistrationRequestDTO request) {
     TenantAdminRegistrationRequestDTO safe =
         request == null ? new TenantAdminRegistrationRequestDTO() : request;

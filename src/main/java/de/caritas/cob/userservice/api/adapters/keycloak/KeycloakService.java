@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
@@ -70,6 +71,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.Synchronized;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.representations.idm.CredentialRepresentation;
@@ -96,6 +98,7 @@ public class KeycloakService
         IdentityDummyEmailUpdater,
         IdentityEmailAddressUpdater,
         IdentityEmailOwnerLookup,
+        IdentityLocaleLookup,
         IdentityPasswordUpdater,
         IdentityProfileLookup,
         IdentityProfileUpdater,
@@ -1025,6 +1028,30 @@ public class KeycloakService
               user.getFirstName(),
               user.getLastName(),
               user.getEmail()));
+    } catch (NotFoundException ex) {
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * The user's account language ({@code locale} attribute, the one {@link #changeLanguage} writes).
+   * Empty when the user or the attribute does not exist (callers fall back to the default).
+   */
+  @Override
+  public Optional<String> findLocaleById(String userId) {
+    try {
+      UserResource userResource = keycloakClient.getUsersResource().get(userId);
+      if (userResource == null) {
+        return Optional.empty();
+      }
+      var user = userResource.toRepresentation();
+      if (user == null || user.getAttributes() == null) {
+        return Optional.empty();
+      }
+      return Optional.ofNullable(user.getAttributes().get(LOCALE)).stream()
+          .flatMap(List::stream)
+          .filter(StringUtils::isNotBlank)
+          .findFirst();
     } catch (NotFoundException ex) {
       return Optional.empty();
     }

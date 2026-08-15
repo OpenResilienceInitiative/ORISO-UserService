@@ -18,6 +18,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkExc
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService;
+import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService.DpaForwardEmailCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.OnboardingDpaAcceptanceDTO;
@@ -57,6 +59,8 @@ public class TenantAdminOnboardingService {
   private final @NonNull IdentityProfileLookup identityProfileLookup;
   private final @NonNull TenantCreationClient tenantCreationClient;
   private final @NonNull OperatorDpaContentClient operatorDpaContentClient;
+  private final @NonNull PublicDpaForwardClient publicDpaForwardClient;
+  private final @NonNull DpaForwardEmailService dpaForwardEmailService;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
   /**
@@ -131,17 +135,31 @@ public class TenantAdminOnboardingService {
       throw new NotFoundException("Reservation does not match this invite");
     }
 
-    OperatorDpa operatorDpa = operatorDpaContentClient.fetchPublishedDpa();
-    if (operatorDpa == null) {
-      // Nothing to accept: the acceptance would be unrecordable and the tenant would be created
-      // straight into the non-actionable DPA blocker. Refuse before touching the invite.
-      log.error(
-          "Tenant-admin onboarding registration refused for invite {}: the platform operator has"
-              + " published no data processing agreement, so the acceptance cannot be recorded",
-          invite.getId());
-      throw new InternalServerErrorException(
-          "No data processing agreement is published by the platform operator — publish it before"
-              + " tenant admins can complete the onboarding");
+    // ORISO-Admin#722: an admin who is not authorised to sign forwards the DPA instead of
+    // accepting it. The forward is recorded server-side on the invite (dpaForwardedAt via
+    // forwardDpa), so registration without an own acceptance is only possible when a forward
+    // genuinely happened — never on the client's say-so. The backend legal gate stays in force
+    // until the forwarded signature lands.
+    boolean dpaForwarded = invite.getDpaForwardedAt() != null;
+    if (!command.dpaAccepted() && !dpaForwarded) {
+      throw new BadRequestException(
+          "The data processing agreement must be accepted or forwarded to an authorised signer");
+    }
+
+    OperatorDpa operatorDpa = null;
+    if (command.dpaAccepted()) {
+      operatorDpa = operatorDpaContentClient.fetchPublishedDpa();
+      if (operatorDpa == null) {
+        // Nothing to accept: the acceptance would be unrecordable and the tenant would be created
+        // straight into the non-actionable DPA blocker. Refuse before touching the invite.
+        log.error(
+            "Tenant-admin onboarding registration refused for invite {}: the platform operator has"
+                + " published no data processing agreement, so the acceptance cannot be recorded",
+            invite.getId());
+        throw new InternalServerErrorException(
+            "No data processing agreement is published by the platform operator — publish it"
+                + " before tenant admins can complete the onboarding");
+      }
     }
 
     int claimed = accountInviteRepository.claimForAcceptance(invite.getId(), null, now);
@@ -175,12 +193,22 @@ public class TenantAdminOnboardingService {
 
       MultilingualTenantDTO created =
           tenantCreationClient.createTenant(
-              buildTenantDto(invite, command, buildDpaAcceptance(command, admin, operatorDpa)));
-      log.info(
-          "Tenant-admin onboarding recorded the DPA acceptance of invite {} against operator DPA"
-              + " version {}",
-          invite.getId(),
-          operatorDpa.version());
+              buildTenantDto(
+                  invite,
+                  command,
+                  command.dpaAccepted() ? buildDpaAcceptance(command, admin, operatorDpa) : null));
+      if (command.dpaAccepted()) {
+        log.info(
+            "Tenant-admin onboarding recorded the DPA acceptance of invite {} against operator DPA"
+                + " version {}",
+            invite.getId(),
+            operatorDpa.version());
+      } else {
+        log.info(
+            "Tenant-admin onboarding of invite {} completed without an own DPA acceptance — the"
+                + " agreement was forwarded to an authorised signer and stays pending",
+            invite.getId());
+      }
       Long tenantId =
           created != null && created.getId() != null ? created.getId() : invite.getTenantId();
       return new TenantAdminRegistrationResult(tenantId, otpInfo.secret(), otpInfo.secretQrCode());
@@ -189,6 +217,72 @@ public class TenantAdminOnboardingService {
       // state and must be compensated explicitly so a failed registration stays retryable.
       identityAccountRemover.rollbackUser(admin.getId());
       throw exception;
+    }
+  }
+
+  /**
+   * Creates a DPA sign link for the invite's reserved tenant because the onboarding administrator
+   * declared they are not authorised to sign (ORISO-Admin#722, wizard step 1). The invite token is
+   * the credential; the actual link creation is delegated to the TenantService's public forward
+   * endpoint, which validates the invite's tenant-ID reservation pair fail-closed
+   * (ORISO-TenantService#179).
+   *
+   * <p>The forward is recorded on the invite ({@code dpaForwardedAt}): it is the server-side proof
+   * that lets {@link #registerTenantAdmin} accept a registration without an own DPA acceptance, and
+   * the anchor for resolving the DPA_SIGNED_NOTICE recipient of a pre-account forward
+   * (ORISO-UserService#1005). With a recipient address the sign link is also delivered by mail via
+   * the same {@code DPA_FORWARD} path the authenticated forward uses; without one the wizard gets
+   * the link back to share manually. Only an EMAIL_SENT, unexpired invite may forward — the DPA
+   * step is only reachable in that state.
+   */
+  @Transactional
+  public DpaForwardResult forwardDpa(String rawToken, String recipientEmail) {
+    AccountInvite invite = findTenantAdminInvite(rawToken);
+    LocalDateTime now = LocalDateTime.now();
+
+    if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
+      throw linkDeathException(invite);
+    }
+    expireIfPastExpiry(invite, now);
+    if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
+      throw new InternalServerErrorException(
+          "Invite holds no authoritative tenant-ID reservation — re-issue the invite after"
+              + " deploying the TenantService allocation endpoints (TEN-INV-U1)");
+    }
+
+    var signInvite =
+        publicDpaForwardClient.createForwardSignLink(
+            invite.getTenantId(), invite.getTenantIdReservationToken());
+
+    invite.setDpaForwardedAt(now);
+    invite.setUpdateDate(now);
+    accountInviteRepository.save(invite);
+
+    if (!isBlank(recipientEmail)) {
+      dpaForwardEmailService.sendSigningLink(
+          new DpaForwardEmailCommand(
+              invite.getTenantId(),
+              recipientEmail,
+              signInvite.getSignLink(),
+              parseExpiry(signInvite.getExpiresAt())));
+    }
+    log.info(
+        "DPA forwarded from the onboarding wizard for invite {} (reserved tenant {}); mail sent:"
+            + " {}",
+        invite.getId(),
+        invite.getTenantId(),
+        !isBlank(recipientEmail));
+    return new DpaForwardResult(signInvite.getSignLink(), signInvite.getExpiresAt());
+  }
+
+  private static LocalDateTime parseExpiry(String expiresAt) {
+    if (isBlank(expiresAt)) {
+      return LocalDateTime.now().plusDays(14);
+    }
+    try {
+      return LocalDateTime.parse(expiresAt);
+    } catch (java.time.format.DateTimeParseException exception) {
+      return LocalDateTime.now().plusDays(14);
     }
   }
 
@@ -293,9 +387,8 @@ public class TenantAdminOnboardingService {
       throw new BadRequestException(
           "account.password must be at least " + MIN_PASSWORD_LENGTH + " characters long");
     }
-    if (!command.dpaAccepted()) {
-      throw new BadRequestException("The data processing agreement must be accepted");
-    }
+    // dpaAccepted is validated against the invite's forward state in registerTenantAdmin: a
+    // missing acceptance is only acceptable when the DPA was forwarded to an authorised signer.
   }
 
   private CreateAdminDTO buildAdminDto(AccountInvite invite, RegisterTenantAdminCommand command) {
@@ -388,4 +481,10 @@ public class TenantAdminOnboardingService {
   /** The created (inactive) tenant plus the TOTP setup material for the 2FA step. */
   public record TenantAdminRegistrationResult(
       Long tenantId, String totpSecret, String totpQrCodeBase64) {}
+
+  /**
+   * The sign link created for the authorised signer (raw token embedded — show/copy, never log)
+   * plus its expiry as reported by TenantService (ISO local date-time string).
+   */
+  public record DpaForwardResult(String signUrl, String expiresAt) {}
 }
