@@ -56,6 +56,11 @@ class DpaSignedNoticeServiceTest {
   @Mock private AdminRepository adminRepository;
   @Mock private AccountInviteRepository accountInviteRepository;
   @Mock private IdentityLocaleLookup identityLocaleLookup;
+
+  @Mock
+  private org.springframework.beans.factory.ObjectProvider<IdentityLocaleLookup>
+      localeLookupProvider;
+
   @Mock private InviteEmailTemplateRepository templateRepository;
   @Mock private InviteMailDispatchService inviteMailDispatchService;
   @Mock private TenantService tenantService;
@@ -72,6 +77,7 @@ class DpaSignedNoticeServiceTest {
     when(templateRepository.findByKindAndActiveTrueOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
+    when(identityLocaleLookup.findLocaleById(anyString())).thenReturn(Optional.empty());
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().name("Träger Nord e.V."));
     service =

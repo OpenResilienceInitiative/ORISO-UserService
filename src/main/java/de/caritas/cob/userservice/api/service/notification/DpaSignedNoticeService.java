@@ -96,7 +96,9 @@ public class DpaSignedNoticeService {
   private final DpaSignedNoticeRepository noticeRepository;
   private final AdminRepository adminRepository;
   private final AccountInviteRepository accountInviteRepository;
+
   private final IdentityLocaleLookup identityLocaleLookup;
+
   private final InviteEmailTemplateRepository templateRepository;
   private final InviteMailDispatchService inviteMailDispatchService;
   private final TenantService tenantService;
@@ -172,13 +174,7 @@ public class DpaSignedNoticeService {
           .findById(signature.getForwardedByUserId())
           .map(Admin::getEmail)
           .filter(email -> !isBlank(email))
-          .map(
-              email ->
-                  new Recipient(
-                      email,
-                      identityLocaleLookup
-                          .findLocaleById(signature.getForwardedByUserId())
-                          .orElse(FALLBACK_LANGUAGE)));
+          .map(email -> new Recipient(email, resolveLanguage(signature.getForwardedByUserId())));
     }
     // Pre-account wizard forward: the onboarding invite that declared the forward is the anchor.
     return accountInviteRepository
@@ -187,6 +183,14 @@ public class DpaSignedNoticeService {
         .map(invite -> invite.getRecipientEmail())
         .filter(email -> !isBlank(email))
         .map(email -> new Recipient(email, FALLBACK_LANGUAGE));
+  }
+
+  /** Account language of the forwarding admin; the fallback when it cannot be determined. */
+  private String resolveLanguage(String userId) {
+    return identityLocaleLookup
+        .findLocaleById(userId)
+        .filter(locale -> !isBlank(locale))
+        .orElse(FALLBACK_LANGUAGE);
   }
 
   /** Claims the exactly-once ledger row; empty when another hint already claimed it. */
