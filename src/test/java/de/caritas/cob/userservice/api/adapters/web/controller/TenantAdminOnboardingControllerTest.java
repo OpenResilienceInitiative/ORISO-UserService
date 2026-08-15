@@ -237,4 +237,51 @@ class TenantAdminOnboardingControllerTest {
                     "/users/account-invites/{token}/onboarding/two-factor",
                     "/service/users/account-invites/{token}/onboarding/two-factor")));
   }
+
+  // --- DPA forward from the wizard (ORISO-Admin#722) ---
+
+  @Test
+  void forwardDpa_passesTheRecipientAndReturnsTheSignLink() {
+    when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
+        .thenReturn(
+            new TenantAdminOnboardingService.DpaForwardResult(
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07"));
+    var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
+    request.recipientEmail = "legal@example.org";
+
+    var response = controller.forwardDpa("raw-token", request);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
+  }
+
+  @Test
+  void forwardDpa_toleratesAnAbsentBody() {
+    when(onboardingService.forwardDpa(eq("raw-token"), eq(null)))
+        .thenReturn(
+            new TenantAdminOnboardingService.DpaForwardResult(
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07"));
+
+    var response = controller.forwardDpa("raw-token", null);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(onboardingService).forwardDpa("raw-token", null);
+  }
+
+  @Test
+  void forwardDpa_isAnonymousAndMappedOnBothPrefixes() throws Exception {
+    Method forwardDpa =
+        TenantAdminOnboardingController.class.getMethod(
+            "forwardDpa", String.class, TenantAdminOnboardingController.DpaForwardRequestDTO.class);
+
+    assertNull(forwardDpa.getAnnotation(PreAuthorize.class));
+    assertTrue(
+        Arrays.asList(forwardDpa.getAnnotation(PostMapping.class).value())
+            .containsAll(
+                Arrays.asList(
+                    "/users/account-invites/{token}/onboarding/dpa-forward",
+                    "/service/users/account-invites/{token}/onboarding/dpa-forward")));
+  }
 }
