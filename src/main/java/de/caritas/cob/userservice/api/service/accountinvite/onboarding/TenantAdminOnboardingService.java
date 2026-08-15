@@ -25,11 +25,14 @@ import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Multili
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.OnboardingDpaAcceptanceDTO;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /**
  * Public tenant-admin onboarding behind an invite link (#569 chain fix, UserService side of the
@@ -64,6 +67,14 @@ public class TenantAdminOnboardingService {
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
   /**
+   * Drives the short database-only transactions of the read paths explicitly: the invite row is
+   * read under a PESSIMISTIC_WRITE lock, so no upstream call (TenantService DPA text, Keycloak) may
+   * run while that lock is held (#1008 review, same treatment as {@link
+   * CounsellorOnboardingService}).
+   */
+  private final @NonNull PlatformTransactionManager transactionManager;
+
+  /**
    * Resolves the invite state for a raw link token. Mirrors the accept endpoint's state machine: a
    * deliverable ({@code EMAIL_SENT}) unexpired invite resolves plainly; a consumed invite whose
    * mandatory 2FA activation is still open and whose link is unexpired resolves with a pending
@@ -74,21 +85,43 @@ public class TenantAdminOnboardingService {
    * step asks the invitee to confirm the agreement on behalf of their organisation, so the wording
    * must be on screen and navigable (anchor/TOC) rather than replaced by a placeholder hint. The
    * resume path skips the lookup — it re-enters at the 2FA step, which shows no contract.
+   *
+   * <p>Transaction shape (#1008 review): the locked load, the expiry transition and the state
+   * classification are ONE short database transaction; the operator DPA lookup — an HTTP call to
+   * TenantService behind a technical-user login — runs after it committed, never while the invite's
+   * row lock is held.
    */
-  @Transactional
   public OnboardingInviteState resolveOnboardingInvite(String rawToken) {
-    AccountInvite invite = findTenantAdminInvite(rawToken);
-    LocalDateTime now = LocalDateTime.now();
+    ResolvedOnboardingInvite resolved = loadInviteForResolve(rawToken);
+    // Thrown only now, i.e. after the transaction committed, so a persisted EXPIRED transition
+    // survives the link-death answer (what noRollbackFor used to buy).
+    resolved.rethrowLinkDeath();
 
-    if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
-      expireIfPastExpiry(invite, now);
-      return new OnboardingInviteState(
-          invite, false, operatorDpaContentClient.fetchPublishedDpaContent());
+    if (resolved.pendingTwoFactorResume()) {
+      return new OnboardingInviteState(resolved.invite(), true, null);
     }
-    if (isResumableAtTwoFactorStep(invite, now)) {
-      return new OnboardingInviteState(invite, true, null);
-    }
-    throw linkDeathException(invite);
+    return new OnboardingInviteState(
+        resolved.invite(), false, operatorDpaContentClient.fetchPublishedDpaContent());
+  }
+
+  /** The database-only part of {@link #resolveOnboardingInvite}: locked load and classification. */
+  private ResolvedOnboardingInvite loadInviteForResolve(String rawToken) {
+    return inTransaction(
+        () -> {
+          AccountInvite invite = findTenantAdminInvite(rawToken);
+          LocalDateTime now = LocalDateTime.now();
+
+          if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
+            AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
+            return expired == null
+                ? ResolvedOnboardingInvite.open(invite)
+                : ResolvedOnboardingInvite.dead(expired);
+          }
+          if (isResumableAtTwoFactorStep(invite, now)) {
+            return ResolvedOnboardingInvite.pendingTwoFactorResume(invite);
+          }
+          return ResolvedOnboardingInvite.dead(linkDeathException(invite));
+        });
   }
 
   /**
@@ -111,7 +144,10 @@ public class TenantAdminOnboardingService {
    * registration is refused up front — before the invite is claimed, so the link stays usable once
    * the operator publishes.
    */
-  @Transactional
+  // noRollbackFor mirrors resolveOnboardingInvite: the expiry transition must survive the
+  // link-death exception. Every other AccountInviteLinkException in this method is thrown
+  // before any write (the lost claim race writes nothing), so nothing partial can commit.
+  @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public TenantAdminRegistrationResult registerTenantAdmin(
       String rawToken, RegisterTenantAdminCommand command) {
     validateRegistration(command);
@@ -121,7 +157,11 @@ public class TenantAdminOnboardingService {
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
       throw linkDeathException(invite);
     }
-    expireIfPastExpiry(invite, now);
+    AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
+    if (expired != null) {
+      // noRollbackFor (see above) keeps the EXPIRED transition this just persisted.
+      throw expired;
+    }
     if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
       // Legacy invite created while TenantService lacked the TEN-INV-U1 allocation endpoints —
       // a reservation-consuming creation is impossible without the authoritative ledger.
@@ -290,28 +330,16 @@ public class TenantAdminOnboardingService {
    * Confirms the pending TOTP setup with a first one-time password. An invalid or rejected code
    * answers 400 (the Admin panel maps 400/422 to its invalid-code state); once the gate is
    * satisfied the link is terminally consumed.
+   *
+   * <p>Transaction shape (#1008 review): the state checks are one short transaction, the Keycloak
+   * round trips run outside it, and consuming the gate is a second short transaction — the invite's
+   * row lock is never held across a remote call.
    */
-  @Transactional
   public void activateTwoFactor(String rawToken, String oneTimePassword) {
     if (isBlank(oneTimePassword)) {
       throw new BadRequestException("otp is required");
     }
-    AccountInvite invite = findTenantAdminInvite(rawToken);
-    LocalDateTime now = LocalDateTime.now();
-
-    if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
-      throw new BadRequestException("Registration has not happened yet for this invite");
-    }
-    if (invite.getStatus() != AccountInviteStatus.ACCEPTED) {
-      throw linkDeathException(invite);
-    }
-    if (!isResumableAtTwoFactorStep(invite, now)) {
-      // Gate already satisfied or resume window expired — terminally consumed.
-      throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
-    }
-    if (isBlank(invite.getTotpPendingSecret()) || isBlank(invite.getAcceptedByUserId())) {
-      throw new BadRequestException("No pending TOTP setup exists for this invite");
-    }
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
 
     var profile =
         identityProfileLookup
@@ -325,10 +353,55 @@ public class TenantAdminOnboardingService {
       throw new BadRequestException("Invalid one-time password");
     }
 
-    accountInviteService.markTwoFactorActive(invite.getAcceptedByUserId());
-    invite.setTotpPendingSecret(null);
-    invite.setUpdateDate(now);
-    accountInviteRepository.save(invite);
+    consumeTwoFactorGate(invite);
+  }
+
+  /**
+   * The database-only precondition check of {@link #activateTwoFactor}. Every rejection here is
+   * thrown before anything is written, so an ordinary rollback loses nothing.
+   */
+  private AccountInvite loadInviteForTwoFactorActivation(String rawToken) {
+    return inTransaction(
+        () -> {
+          AccountInvite invite = findTenantAdminInvite(rawToken);
+          LocalDateTime now = LocalDateTime.now();
+
+          if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
+            throw new BadRequestException("Registration has not happened yet for this invite");
+          }
+          if (invite.getStatus() != AccountInviteStatus.ACCEPTED) {
+            throw linkDeathException(invite);
+          }
+          if (!isResumableAtTwoFactorStep(invite, now)) {
+            // Gate already satisfied or resume window expired — terminally consumed.
+            throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
+          }
+          if (isBlank(invite.getTotpPendingSecret()) || isBlank(invite.getAcceptedByUserId())) {
+            throw new BadRequestException("No pending TOTP setup exists for this invite");
+          }
+          return invite;
+        });
+  }
+
+  /**
+   * Terminal consumption of the link once Keycloak accepted the one-time password. The pending
+   * secret is cleared FIRST so the gate transition — which re-reads the invite by its acceptor —
+   * wins over the merge of the detached row loaded before the Keycloak round trip.
+   */
+  private void consumeTwoFactorGate(AccountInvite invite) {
+    inTransaction(
+        () -> {
+          invite.setTotpPendingSecret(null);
+          invite.setUpdateDate(LocalDateTime.now());
+          accountInviteRepository.save(invite);
+          accountInviteService.markTwoFactorActive(invite.getAcceptedByUserId());
+          return null;
+        });
+  }
+
+  /** Runs {@code action} in its own short database transaction (no remote call belongs inside). */
+  private <T> T inTransaction(Supplier<T> action) {
+    return new TransactionTemplate(transactionManager).execute(status -> action.get());
   }
 
   private AccountInvite findTenantAdminInvite(String rawToken) {
@@ -346,13 +419,21 @@ public class TenantAdminOnboardingService {
     return invite;
   }
 
-  private void expireIfPastExpiry(AccountInvite invite, LocalDateTime now) {
+  /**
+   * Persists the {@code EMAIL_SENT -> EXPIRED} transition of an overdue link and RETURNS the
+   * link-death answer instead of throwing it: the caller must let that write commit before the
+   * exception leaves the flow.
+   *
+   * @return the {@code EXPIRED} link-death exception, or {@code null} when the link is still live
+   */
+  private AccountInviteLinkException expireIfPastExpiry(AccountInvite invite, LocalDateTime now) {
     if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
       invite.setStatus(AccountInviteStatus.EXPIRED);
       invite.setUpdateDate(now);
       accountInviteRepository.save(invite);
-      throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
+      return new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
+    return null;
   }
 
   private static boolean isResumableAtTwoFactorStep(AccountInvite invite, LocalDateTime now) {
