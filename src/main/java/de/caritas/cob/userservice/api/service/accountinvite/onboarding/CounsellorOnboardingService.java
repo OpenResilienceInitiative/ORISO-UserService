@@ -25,6 +25,7 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.function.Consumer;
 import java.util.function.Supplier;
@@ -243,19 +244,25 @@ public class CounsellorOnboardingService {
       throw new BadRequestException("No pending TOTP setup exists for this invite");
     }
 
+    // Pinned BEFORE the Keycloak round trip: exactly this acceptor and exactly this secret are
+    // what the verification below proves the one-time password against, and the gate may only be
+    // activated on a row that still carries both (see #consumeTwoFactorGate).
+    String verifiedAcceptorId = invite.getAcceptedByUserId();
+    String verifiedPendingSecret = invite.getTotpPendingSecret();
+
     var profile =
         identityProfileLookup
-            .findById(invite.getAcceptedByUserId())
+            .findById(verifiedAcceptorId)
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
     boolean valid =
         identitySecondFactor.setUpOtpCredential(
-            profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
+            profile.username(), oneTimePassword.trim(), verifiedPendingSecret);
     if (!valid) {
       throw new BadRequestException("Invalid one-time password");
     }
 
-    consumeTwoFactorGate(invite);
+    consumeTwoFactorGate(invite, verifiedAcceptorId, verifiedPendingSecret);
   }
 
   /**
@@ -288,20 +295,58 @@ public class CounsellorOnboardingService {
   /**
    * Terminal consumption of the link once Keycloak accepted the one-time password. The row is
    * re-read under its lock (the instance held here was detached across the Keycloak round trip),
-   * and only the pending secret is cleared — that happens FIRST so the gate transition, which
+   * the freshly locked row is re-checked for eligibility (see {@link #revalidateTwoFactorGate}) and
+   * only then is the pending secret cleared — that happens FIRST so the gate transition, which
    * re-reads the invite by its acceptor and therefore works on the very same managed row, is not
    * undone by this write.
    */
-  private void consumeTwoFactorGate(AccountInvite invite) {
+  private void consumeTwoFactorGate(
+      AccountInvite invite, String verifiedAcceptorId, String verifiedPendingSecret) {
     inTransaction(
         () -> {
           AccountInvite locked = lockedInvite(invite.getId());
+          revalidateTwoFactorGate(locked, verifiedAcceptorId, verifiedPendingSecret);
           locked.setTotpPendingSecret(null);
           locked.setUpdateDate(LocalDateTime.now());
           accountInviteRepository.save(locked);
           accountInviteService.markTwoFactorActive(locked.getAcceptedByUserId());
           return null;
         });
+  }
+
+  /**
+   * Closes the time-of-check/time-of-use window of the 2FA gate (#1030 review). The eligibility
+   * check of {@link #loadInviteForTwoFactorActivation} and the write that activates the gate are
+   * separated by the Keycloak round trip, which deliberately runs with no lock held — so in between
+   * the invite may have been revoked or superseded, may have passed its expiry, may already have
+   * had its gate activated, may have been re-accepted by a different acceptor, or may have had its
+   * pending secret rotated. Activating the gate on such a row would honour a one-time password that
+   * was verified against state which no longer exists.
+   *
+   * <p>Runs on the freshly locked row inside the writing transaction and rejects with EXACTLY the
+   * answers {@link #loadInviteForTwoFactorActivation} gives for the same row states — a link that
+   * dies mid-flow is indistinguishable from a link that was already dead when the request arrived.
+   * No new status code or reason is introduced. Nothing has been written when this throws, and no
+   * expiry transition applies here (that transition only exists for {@code EMAIL_SENT} rows), so
+   * the rollback of the surrounding transaction loses nothing.
+   */
+  private static void revalidateTwoFactorGate(
+      AccountInvite locked, String verifiedAcceptorId, String verifiedPendingSecret) {
+    if (locked.getStatus() != AccountInviteStatus.ACCEPTED) {
+      // Revoked, superseded or expired in the meantime — the link's own death reason.
+      throw linkDeathException(locked);
+    }
+    if (!isResumableAtTwoFactorStep(locked, LocalDateTime.now())) {
+      // Gate satisfied in the meantime or the resume window closed — terminally consumed.
+      throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
+    }
+    if (!Objects.equals(locked.getAcceptedByUserId(), verifiedAcceptorId)
+        || !Objects.equals(locked.getTotpPendingSecret(), verifiedPendingSecret)) {
+      // A different acceptor now owns the invite, or the pending secret was rotated: the setup
+      // this code was verified against is gone — same answer the precondition check gives for a
+      // row without usable setup material.
+      throw new BadRequestException("No pending TOTP setup exists for this invite");
+    }
   }
 
   /** Runs {@code action} in its own short database transaction (no remote call belongs inside). */
