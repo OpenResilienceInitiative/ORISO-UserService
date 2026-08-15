@@ -28,7 +28,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -52,26 +51,50 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class CounsellorOnboardingService {
 
   private static final int MIN_PASSWORD_LENGTH = 8;
 
-  private final @NonNull AccountInviteRepository accountInviteRepository;
-  private final @NonNull AccountInviteService accountInviteService;
-  private final @NonNull CounsellorInviteProvisioningService counsellorInviteProvisioningService;
-  private final @NonNull IdentitySecondFactor identitySecondFactor;
-  private final @NonNull IdentityProfileLookup identityProfileLookup;
-  private final @NonNull AgencyService agencyService;
-  private final @NonNull TopicService topicService;
-  private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final AccountInviteRepository accountInviteRepository;
+  private final AccountInviteService accountInviteService;
+  private final CounsellorInviteProvisioningService counsellorInviteProvisioningService;
+  private final IdentitySecondFactor identitySecondFactor;
+  private final IdentityProfileLookup identityProfileLookup;
+  private final AgencyService agencyService;
+  private final TopicService topicService;
+  private final UsernameTranscoder usernameTranscoder;
 
   /**
    * Drives the SHORT database-only transactions of this flow explicitly instead of annotating the
    * public entry points: the invite row is read under a PESSIMISTIC_WRITE lock, and every remote
    * call of this service (AgencyService, TopicService, Keycloak) has to happen OUTSIDE that lock.
+   *
+   * <p>One reusable instance built in the constructor (#1008 review): a {@link TransactionTemplate}
+   * is thread-safe and stays unmodified after construction, so allocating a fresh one per call
+   * bought nothing.
    */
-  private final @NonNull PlatformTransactionManager transactionManager;
+  private final TransactionTemplate transactionTemplate;
+
+  public CounsellorOnboardingService(
+      @NonNull AccountInviteRepository accountInviteRepository,
+      @NonNull AccountInviteService accountInviteService,
+      @NonNull CounsellorInviteProvisioningService counsellorInviteProvisioningService,
+      @NonNull IdentitySecondFactor identitySecondFactor,
+      @NonNull IdentityProfileLookup identityProfileLookup,
+      @NonNull AgencyService agencyService,
+      @NonNull TopicService topicService,
+      @NonNull UsernameTranscoder usernameTranscoder,
+      @NonNull PlatformTransactionManager transactionManager) {
+    this.accountInviteRepository = accountInviteRepository;
+    this.accountInviteService = accountInviteService;
+    this.counsellorInviteProvisioningService = counsellorInviteProvisioningService;
+    this.identitySecondFactor = identitySecondFactor;
+    this.identityProfileLookup = identityProfileLookup;
+    this.agencyService = agencyService;
+    this.topicService = topicService;
+    this.usernameTranscoder = usernameTranscoder;
+    this.transactionTemplate = new TransactionTemplate(transactionManager);
+  }
 
   /**
    * Resolves the invite state for a raw link token. Mirrors the tenant-admin resolve state machine:
@@ -258,7 +281,7 @@ public class CounsellorOnboardingService {
 
   /** Runs {@code action} in its own short database transaction (no remote call belongs inside). */
   private <T> T inTransaction(Supplier<T> action) {
-    return new TransactionTemplate(transactionManager).execute(status -> action.get());
+    return transactionTemplate.execute(status -> action.get());
   }
 
   /**

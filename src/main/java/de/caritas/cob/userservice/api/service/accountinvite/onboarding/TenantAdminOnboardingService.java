@@ -25,7 +25,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.function.Supplier;
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -46,29 +45,57 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class TenantAdminOnboardingService {
 
   private static final int MIN_PASSWORD_LENGTH = 8;
 
-  private final @NonNull AccountInviteRepository accountInviteRepository;
-  private final @NonNull AccountInviteService accountInviteService;
-  private final @NonNull CreateAdminService createAdminService;
-  private final @NonNull IdentityClient identityClient;
-  private final @NonNull IdentitySecondFactor identitySecondFactor;
-  private final @NonNull IdentityAccountRemover identityAccountRemover;
-  private final @NonNull IdentityProfileLookup identityProfileLookup;
-  private final @NonNull TenantCreationClient tenantCreationClient;
-  private final @NonNull OperatorDpaContentClient operatorDpaContentClient;
-  private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final AccountInviteRepository accountInviteRepository;
+  private final AccountInviteService accountInviteService;
+  private final CreateAdminService createAdminService;
+  private final IdentityClient identityClient;
+  private final IdentitySecondFactor identitySecondFactor;
+  private final IdentityAccountRemover identityAccountRemover;
+  private final IdentityProfileLookup identityProfileLookup;
+  private final TenantCreationClient tenantCreationClient;
+  private final OperatorDpaContentClient operatorDpaContentClient;
+  private final UsernameTranscoder usernameTranscoder;
 
   /**
    * Drives the short database-only transactions of the read paths explicitly: the invite row is
    * read under a PESSIMISTIC_WRITE lock, so no upstream call (TenantService DPA text, Keycloak) may
    * run while that lock is held (#1008 review, same treatment as {@link
    * CounsellorOnboardingService}).
+   *
+   * <p>One reusable instance built in the constructor (#1008 review): a {@link TransactionTemplate}
+   * is thread-safe and stays unmodified after construction, so allocating a fresh one per call
+   * bought nothing.
    */
-  private final @NonNull PlatformTransactionManager transactionManager;
+  private final TransactionTemplate transactionTemplate;
+
+  public TenantAdminOnboardingService(
+      @NonNull AccountInviteRepository accountInviteRepository,
+      @NonNull AccountInviteService accountInviteService,
+      @NonNull CreateAdminService createAdminService,
+      @NonNull IdentityClient identityClient,
+      @NonNull IdentitySecondFactor identitySecondFactor,
+      @NonNull IdentityAccountRemover identityAccountRemover,
+      @NonNull IdentityProfileLookup identityProfileLookup,
+      @NonNull TenantCreationClient tenantCreationClient,
+      @NonNull OperatorDpaContentClient operatorDpaContentClient,
+      @NonNull UsernameTranscoder usernameTranscoder,
+      @NonNull PlatformTransactionManager transactionManager) {
+    this.accountInviteRepository = accountInviteRepository;
+    this.accountInviteService = accountInviteService;
+    this.createAdminService = createAdminService;
+    this.identityClient = identityClient;
+    this.identitySecondFactor = identitySecondFactor;
+    this.identityAccountRemover = identityAccountRemover;
+    this.identityProfileLookup = identityProfileLookup;
+    this.tenantCreationClient = tenantCreationClient;
+    this.operatorDpaContentClient = operatorDpaContentClient;
+    this.usernameTranscoder = usernameTranscoder;
+    this.transactionTemplate = new TransactionTemplate(transactionManager);
+  }
 
   /**
    * Resolves the invite state for a raw link token. Mirrors the accept endpoint's state machine: a
@@ -307,7 +334,7 @@ public class TenantAdminOnboardingService {
 
   /** Runs {@code action} in its own short database transaction (no remote call belongs inside). */
   private <T> T inTransaction(Supplier<T> action) {
-    return new TransactionTemplate(transactionManager).execute(status -> action.get());
+    return transactionTemplate.execute(status -> action.get());
   }
 
   private AccountInvite findTenantAdminInvite(String rawToken) {
