@@ -32,6 +32,8 @@ class ReplicaSafetyInventoryContractTest {
           "tenant-admin-cache",
           "topics-cache",
           "operator-dpa-content-cache",
+          "case-handover-policy-cache-refresh",
+          "case-handover-co-access-expiry",
           "appointment-cleanup-scheduler",
           "enquiry-notification-scheduler",
           "group-chat-deactivation-scheduler",
