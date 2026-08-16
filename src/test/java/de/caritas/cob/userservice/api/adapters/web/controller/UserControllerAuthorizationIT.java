@@ -31,10 +31,12 @@ import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_U
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_UPDATE_MOBILE_TOKEN;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_UPDATE_PASSWORD;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_PUT_UPDATE_SESSION_DATA;
+import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_RECORD_SESSION_CONSENT;
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.PATH_UPDATE_KEY;
 import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.VALID_UPDATE_CHAT_BODY;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -99,6 +101,7 @@ import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -202,6 +205,7 @@ class UserControllerAuthorizationIT {
   @MockitoBean private UserAccountService userAccountService;
   @MockitoBean private SessionDataService sessionDataService;
   @MockitoBean private SessionArchiveService sessionArchiveService;
+  @MockitoBean private SessionConsentService sessionConsentService;
   @MockitoBean private ConsultantUpdateService consultantUpdateService;
   @MockitoBean private ConsultantService consultantService;
   @MockitoBean private ConsultantPublicSlugService consultantPublicSlugService;
@@ -2325,6 +2329,52 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isOk());
 
     verify(this.sessionArchiveService).archiveSession(any());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.ANONYMOUS_DEFAULT})
+  void recordSessionConsent_Should_BeAllowed_When_CallerIsAnAnonymousHelpSeeker() throws Exception {
+    /* Gate 2 is passed by anonymous help-seekers above all, and they hold
+    ANONYMOUS_DEFAULT rather than USER_DEFAULT. */
+    mvc.perform(
+            put(PATH_RECORD_SESSION_CONSENT)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"legalVersionId\":7}"))
+        .andExpect(status().isNoContent());
+
+    verify(this.sessionConsentService).recordConsent(eq(123L), any(), eq(7L));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void recordSessionConsent_Should_ReturnForbiddenAndCallNoMethods_When_CallerIsAConsultant()
+      throws Exception {
+    // A counsellor can never agree on the help-seeker's behalf.
+    mvc.perform(
+            put(PATH_RECORD_SESSION_CONSENT)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"legalVersionId\":7}"))
+        .andExpect(status().isForbidden());
+
+    verifyNoMoreInteractions(sessionConsentService);
+  }
+
+  @Test
+  void recordSessionConsent_Should_ReturnUnauthorizedAndCallNoMethods_When_NoKeycloakAuthorization()
+      throws Exception {
+    mvc.perform(
+            put(PATH_RECORD_SESSION_CONSENT)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"legalVersionId\":7}"))
+        .andExpect(status().isUnauthorized());
+
+    verifyNoMoreInteractions(sessionConsentService);
   }
 
   @Test
