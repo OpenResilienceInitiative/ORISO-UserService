@@ -90,6 +90,8 @@ public class TenantAdminOnboardingService {
       @NonNull IdentityProfileLookup identityProfileLookup,
       @NonNull TenantCreationClient tenantCreationClient,
       @NonNull OperatorDpaContentClient operatorDpaContentClient,
+      @NonNull PublicDpaForwardClient publicDpaForwardClient,
+      @NonNull DpaForwardEmailService dpaForwardEmailService,
       @NonNull UsernameTranscoder usernameTranscoder,
       @NonNull PlatformTransactionManager transactionManager) {
     this.accountInviteRepository = accountInviteRepository;
@@ -101,6 +103,8 @@ public class TenantAdminOnboardingService {
     this.identityProfileLookup = identityProfileLookup;
     this.tenantCreationClient = tenantCreationClient;
     this.operatorDpaContentClient = operatorDpaContentClient;
+    this.publicDpaForwardClient = publicDpaForwardClient;
+    this.dpaForwardEmailService = dpaForwardEmailService;
     this.usernameTranscoder = usernameTranscoder;
     this.transactionTemplate = new TransactionTemplate(transactionManager);
   }
