@@ -5,8 +5,10 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.model.TenantCaseHandoverPolicyCache;
 import de.caritas.cob.userservice.api.port.out.TenantCaseHandoverPolicyCacheRepository;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -23,6 +25,7 @@ public class CaseHandoverPolicyCacheService {
 
   private final @NonNull TenantCaseHandoverPolicyCacheRepository repository;
   private final @NonNull TenantAdminServiceApiControllerFactory tenantServiceFactory;
+  private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -37,6 +40,13 @@ public class CaseHandoverPolicyCacheService {
   @Transactional
   public CaseHandoverPolicies refresh(Long tenantId) {
     var existing = repository.findById(tenantId);
+    if (!scheduledTaskClaimService.tryClaim(
+        "case-handover-policy-refresh-" + tenantId, Duration.ofMinutes(1))) {
+      return existing
+          .map(this::deserialize)
+          .orElseThrow(
+              () -> new IllegalStateException("Case Handover policy refresh already in progress"));
+    }
     try {
       var response =
           tenantServiceFactory.createControllerApi().getTenantPermissionPolicies(tenantId);

@@ -251,6 +251,20 @@ class SessionSupervisorControllerTest {
   }
 
   @Test
+  void setTeamAccess_mapsAllowedTrueToOptedOutFalse() {
+    var owner = user("owner-1");
+    var request = new SessionSupervisorController.TeamAccessDTO();
+    request.setAllowed(true);
+    when(userAccountService.retrieveValidatedUser()).thenReturn(owner);
+    when(sessionService.getSession(74L)).thenReturn(Optional.of(sessionOwnedBy(74L, owner)));
+
+    var response = controller.setTeamAccess(74L, request);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    verify(sessionSupervisorFacade).setSupervisionOptedOut(74L, false);
+  }
+
+  @Test
   void setTeamAccess_returnsForbidden_whenCallerDoesNotOwnSession() {
     var caller = user("intruder-1");
     var request = new SessionSupervisorController.TeamAccessDTO();

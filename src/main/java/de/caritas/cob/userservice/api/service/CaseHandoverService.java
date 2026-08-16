@@ -30,7 +30,9 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -49,6 +51,7 @@ import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -70,6 +73,7 @@ public class CaseHandoverService {
   private static final String OUTCOME_ACCESS_REVOKED = "ACCESS_REVOKED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
+  private static final String CO_ACCESS_EXPIRY_TASK = "case-handover-co-access-expiry";
 
   /**
    * Default client-facing notification templates per reason and language (de/en/tr/uk). Source:
@@ -197,7 +201,11 @@ public class CaseHandoverService {
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+  private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
+
+  @Value("${case.handover.co-access-claim-duration:PT2M}")
+  private Duration coAccessClaimDuration = Duration.ofMinutes(2);
 
   public List<CaseHandoverReason> listReasons() {
     return listReasons(TenantContext.getCurrentTenant());
@@ -210,19 +218,9 @@ public class CaseHandoverService {
   private List<CaseHandoverReason> listReasons(
       Long tenantId, String language, boolean includeDisabled) {
     if (tenantId != null && tenantId > 0) {
+      de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies cached;
       try {
-        var cached = caseHandoverPolicyCacheService.getEffective(tenantId);
-        if (cached != null && cached.getReasons() != null && !cached.getReasons().isEmpty()) {
-          return cached.getReasons().values().stream()
-              .map(policy -> toReason(policy, language))
-              .filter(reason -> includeDisabled || reason.isEnabled())
-              .sorted(
-                  java.util.Comparator.comparing(
-                          CaseHandoverReason::getDisplayOrder,
-                          java.util.Comparator.nullsLast(Integer::compareTo))
-                      .thenComparing(CaseHandoverReason::getCode))
-              .collect(Collectors.toList());
-        }
+        cached = caseHandoverPolicyCacheService.getEffective(tenantId);
       } catch (RuntimeException exception) {
         var legacy = legacyReasons(includeDisabled);
         if (!legacy.isEmpty()) {
@@ -233,6 +231,17 @@ public class CaseHandoverService {
           return legacy;
         }
         throw exception;
+      }
+      if (cached != null && cached.getReasons() != null && !cached.getReasons().isEmpty()) {
+        return cached.getReasons().values().stream()
+            .map(policy -> toReason(policy, language))
+            .filter(reason -> includeDisabled || reason.isEnabled())
+            .sorted(
+                java.util.Comparator.comparing(
+                        CaseHandoverReason::getDisplayOrder,
+                        java.util.Comparator.nullsLast(Integer::compareTo))
+                    .thenComparing(CaseHandoverReason::getCode))
+            .collect(Collectors.toList());
       }
     }
     return legacyOrDefaults(includeDisabled);
@@ -461,12 +470,19 @@ public class CaseHandoverService {
       request.setStatus(Status.GRANTED);
       request.setAuditOutcome(OUTCOME_ACCESS_GRANTED);
       request.setAccessType(accessType(request.getReasonCode()));
-      request.setMaxAccessDurationMinutes(
-          maxAccessDurationMinutes(findReason(session, request.getReasonCode())));
-      request.setExpiresAt(
-          request.getAccessType() == AccessType.CO_ACCESS
-              ? now.plusMinutes(request.getMaxAccessDurationMinutes())
-              : null);
+      if (request.getAccessType() == AccessType.CO_ACCESS) {
+        Integer capturedDuration = request.getMaxAccessDurationMinutes();
+        if (capturedDuration == null) {
+          capturedDuration =
+              maxAccessDurationMinutes(findReason(session, request.getReasonCode(), true));
+        }
+        request.setMaxAccessDurationMinutes(
+            validateMaxAccessDuration(request.getReasonCode(), capturedDuration));
+        request.setExpiresAt(now.plusMinutes(request.getMaxAccessDurationMinutes()));
+      } else {
+        request.setMaxAccessDurationMinutes(null);
+        request.setExpiresAt(null);
+      }
       ensureRequesterJoinedMatrixRoom(
           session, request.getRequesterConsultant(), request.getPreviousConsultant());
       if (request.getAccessType() == AccessType.TAKEOVER) {
@@ -673,10 +689,15 @@ public class CaseHandoverService {
   }
 
   private CaseHandoverReason findReason(Session session, String reasonCode) {
+    return findReason(session, reasonCode, false);
+  }
+
+  private CaseHandoverReason findReason(
+      Session session, String reasonCode, boolean includeDisabled) {
     String normalized = reasonCode == null ? "" : reasonCode.trim().toUpperCase(Locale.ROOT);
     Long tenantId = session == null ? TenantContext.getCurrentTenant() : session.getTenantId();
     String language = session == null ? "de" : resolveSessionLanguage(session);
-    return listReasons(tenantId, language, false).stream()
+    return listReasons(tenantId, language, includeDisabled).stream()
         .filter(reason -> reason.getCode().equals(normalized))
         .findFirst()
         .orElseThrow(() -> new BadRequestException("Unknown handover reason"));
@@ -879,14 +900,20 @@ public class CaseHandoverService {
         caseHandoverRequestRepository.findBySessionIdAndStatusAndAccessType(
             sessionId, Status.GRANTED, AccessType.CO_ACCESS);
     LocalDateTime now = LocalDateTime.now(clock);
+    List<CaseHandoverRequest> revoked = new ArrayList<>();
     active.forEach(
         request -> {
+          if (!removeCoAccessRequesterFromMatrixRoom(request)) {
+            throw new InternalServerErrorException(
+                "Could not revoke active Case Handover Matrix access");
+          }
           request.setStatus(Status.REVOKED);
           request.setAuditOutcome(OUTCOME_ACCESS_REVOKED);
           request.setResolvedAt(now);
+          revoked.add(request);
         });
-    caseHandoverRequestRepository.saveAll(active);
-    return active.size();
+    caseHandoverRequestRepository.saveAll(revoked);
+    return revoked.size();
   }
 
   /**
@@ -897,7 +924,15 @@ public class CaseHandoverService {
       initialDelayString = "${case.handover.co-access-sweep-initial-delay-ms:60000}")
   @Transactional
   public void expireCoAccessSchedule() {
-    expireCoAccess();
+    if (!scheduledTaskClaimService.tryClaim(CO_ACCESS_EXPIRY_TASK, coAccessClaimDuration)) {
+      return;
+    }
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    try {
+      expireCoAccess();
+    } finally {
+      TenantContext.clear();
+    }
   }
 
   /** Exact persisted expiry sweep; API reads also close the curtain at {@code expiresAt}. */
@@ -907,14 +942,22 @@ public class CaseHandoverService {
     List<CaseHandoverRequest> expired =
         caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
             Status.GRANTED, AccessType.CO_ACCESS, now);
+    List<CaseHandoverRequest> revoked = new ArrayList<>();
     expired.forEach(
         request -> {
+          if (!removeCoAccessRequesterFromMatrixRoom(request)) {
+            log.warn(
+                "Could not remove Case Handover requester for request {}; retrying on the next expiry sweep",
+                request.getId());
+            return;
+          }
           request.setStatus(Status.EXPIRED);
           request.setAuditOutcome(OUTCOME_ACCESS_EXPIRED);
           request.setResolvedAt(now);
+          revoked.add(request);
         });
-    caseHandoverRequestRepository.saveAll(expired);
-    return expired.size();
+    caseHandoverRequestRepository.saveAll(revoked);
+    return revoked.size();
   }
 
   private CaseHandoverStatus denyRequest(
@@ -1042,7 +1085,7 @@ public class CaseHandoverService {
     var reasonCode = normalizeReasonCode(request.getReasonCode());
     Map<String, String> templates =
         Optional.ofNullable(
-                findReason(request.getSession(), reasonCode).getClientNotificationTemplates())
+                findReason(request.getSession(), reasonCode, true).getClientNotificationTemplates())
             .filter(map -> !map.isEmpty())
             .orElseGet(() -> DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(reasonCode));
     if (templates == null || templates.isEmpty()) {
@@ -1067,7 +1110,7 @@ public class CaseHandoverService {
       return switch (language) {
         case "de" -> hours + (hours == 1 ? " Stunde" : " Stunden");
         case "tr" -> hours + " saat";
-        case "uk" -> hours + (hours == 1 ? " година" : " години");
+        case "uk" -> hours + ukHourSuffix(hours);
         default -> hours + (hours == 1 ? " hour" : " hours");
       };
     }
@@ -1077,6 +1120,62 @@ public class CaseHandoverService {
       case "uk" -> minutes + " хвилин";
       default -> minutes + " minutes";
     };
+  }
+
+  private String ukHourSuffix(int hours) {
+    int mod100 = hours % 100;
+    int mod10 = hours % 10;
+    if (mod10 == 1 && mod100 != 11) {
+      return " година";
+    }
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return " години";
+    }
+    return " годин";
+  }
+
+  private boolean removeCoAccessRequesterFromMatrixRoom(CaseHandoverRequest request) {
+    try {
+      Session accessSession = request.getSession();
+      Consultant requester = request.getRequesterConsultant();
+      if (accessSession == null || isBlank(accessSession.getMatrixRoomId())) {
+        return true;
+      }
+      if (requester == null || isBlank(requester.getMatrixUserId())) {
+        return true;
+      }
+      String roomId = accessSession.getMatrixRoomId();
+      String requesterId = requester.getMatrixUserId();
+      var membersBefore = matrixSynapseService.getRoomMembers(roomId);
+      if (membersBefore.isPresent() && !membersBefore.get().contains(requesterId)) {
+        return true;
+      }
+      Consultant operator =
+          request.getPreviousConsultant() != null
+              ? request.getPreviousConsultant()
+              : accessSession.getConsultant();
+      if (operator == null || isBlank(operator.getMatrixUserId())) {
+        return false;
+      }
+      String operatorToken =
+          matrixSynapseService.loginAsUserAccessToken(operator.getMatrixUserId());
+      if (isBlank(operatorToken)) {
+        return false;
+      }
+      if (matrixSynapseService.removeUserFromRoom(roomId, requesterId, operatorToken)) {
+        return true;
+      }
+      return matrixSynapseService
+          .getRoomMembers(roomId)
+          .map(members -> !members.contains(requesterId))
+          .orElse(false);
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Could not reconcile Matrix access for Case Handover request {}",
+          request.getId(),
+          exception);
+      return false;
+    }
   }
 
   private String resolveSessionLanguage(Session session) {
