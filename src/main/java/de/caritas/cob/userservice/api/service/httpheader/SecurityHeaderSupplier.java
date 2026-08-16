@@ -42,7 +42,8 @@ public class SecurityHeaderSupplier {
    */
   public HttpHeaders getKeycloakAndCsrfHttpHeaders() {
     var header = getCsrfHttpHeaders();
-    var currentAccessToken = authenticatedUser.getAccessToken();
+    var currentAccessToken =
+        TechnicalAccessTokenContext.get().orElseGet(authenticatedUser::getAccessToken);
     if (StringUtils.isNotBlank(currentAccessToken)) {
       this.addKeycloakAuthorizationHeader(header, currentAccessToken);
     }

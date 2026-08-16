@@ -23,8 +23,11 @@ public class AccessTokenTenantResolver implements TenantResolver {
 
   private Optional<Long> resolveTenantIdFromTokenClaims(HttpServletRequest request) {
     Map<String, Object> claimMap = getClaimMap(request);
-    log.debug("Found tenantId in claim : " + claimMap.toString());
-    return getUserTenantIdAttribute(claimMap);
+    // Never log the full claim map: it carries the complete JWT payload (subject, roles, e-mail,
+    // session ids). Only the resolved tenant is of diagnostic value here.
+    var tenantId = getUserTenantIdAttribute(claimMap);
+    log.debug("Resolved tenantId from access token claims: {}", tenantId.orElse(null));
+    return tenantId;
   }
 
   private Optional<Long> getUserTenantIdAttribute(Map<String, Object> claimMap) {

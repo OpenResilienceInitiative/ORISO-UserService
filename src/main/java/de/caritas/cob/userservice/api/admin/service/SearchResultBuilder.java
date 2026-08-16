@@ -20,6 +20,15 @@ public abstract class SearchResultBuilder<F, S> implements HalLinkBuilder {
     this.fullTextQuery = fullTextQuery;
   }
 
+  /**
+   * For builders that do not paginate through Hibernate Search and therefore have no {@link
+   * FullTextQuery} to supply. Subclasses using this constructor <b>must</b> override {@link
+   * #hasNextPage()}, which otherwise dereferences {@link #fullTextQuery}.
+   */
+  protected SearchResultBuilder() {
+    this.fullTextQuery = null;
+  }
+
   public SearchResultBuilder<F, S> withFilter(F filter) {
     this.filter = filter;
     return this;

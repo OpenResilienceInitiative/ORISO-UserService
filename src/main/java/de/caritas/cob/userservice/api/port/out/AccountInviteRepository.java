@@ -23,6 +23,16 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   Optional<AccountInvite> findByTokenHash(String tokenHash);
 
   /**
+   * Lock-free role probe for the shared public onboarding routes (#1008 review): the route decides
+   * from the invite's target role which onboarding flow answers, and that flow then loads the very
+   * same row under {@link #findByTokenHash}'s pessimistic lock. Reading the whole entity through
+   * the locking finder just to read one enum would request a write lock on the row TWICE per
+   * request, so the dispatch probe projects the role alone and takes no lock at all.
+   */
+  @Query("SELECT i.targetRole FROM AccountInvite i WHERE i.tokenHash = :tokenHash")
+  Optional<AccountInviteTargetRole> findTargetRoleByTokenHash(@Param("tokenHash") String tokenHash);
+
+  /**
    * Atomic single-use claim of an invite (hardening for ORISO-Admin#569): flips {@code EMAIL_SENT
    * -> ACCEPTED} as one guarded UPDATE, so of two concurrent accepts exactly one sees an affected
    * row — independent of whether the database honored the pessimistic lock hint on the token

@@ -22,9 +22,11 @@ import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.api.service.helper.MailService;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -53,10 +55,15 @@ class EnquiryNotificationServiceTest {
 
   @Mock private ReleaseToggleService releaseToggleService;
 
+  @Mock private ScheduledTaskClaimService taskClaimService;
+
   @BeforeEach
   public void setup() {
     setField(enquiryNotificationService, "openEnquiryCheckHours", 12L);
     setField(enquiryNotificationService, "applicationBaseUrl", "base/url");
+    setField(enquiryNotificationService, "claimDuration", Duration.ofMinutes(30));
+    when(taskClaimService.tryClaim("enquiry-notification", Duration.ofMinutes(30)))
+        .thenReturn(true);
   }
 
   @Test
@@ -165,6 +172,21 @@ class EnquiryNotificationServiceTest {
     enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
 
     verifyNoInteractions(mailService);
+  }
+
+  @Test
+  void sendEmailNotificationsForOpenEnquiriesShouldDoNoWorkWhenAnotherReplicaOwnsClaim() {
+    when(taskClaimService.tryClaim("enquiry-notification", Duration.ofMinutes(30)))
+        .thenReturn(false);
+
+    enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
+
+    verifyNoInteractions(
+        mailService,
+        sessionRepository,
+        consultantAgencyService,
+        agencyService,
+        releaseToggleService);
   }
 
   private List<Session> openEnquiriesForAgency(

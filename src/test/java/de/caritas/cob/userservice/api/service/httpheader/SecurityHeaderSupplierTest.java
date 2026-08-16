@@ -64,6 +64,19 @@ public class SecurityHeaderSupplierTest {
   }
 
   @Test
+  public void getKeycloakAndCsrfHttpHeaders_Should_PreferTechnicalWorkflowToken() {
+    TechnicalAccessTokenContext.set("technical-token");
+
+    try {
+      HttpHeaders result = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders();
+
+      assertThat(result.get("Authorization").get(0), is("Bearer technical-token"));
+    } finally {
+      TechnicalAccessTokenContext.clear();
+    }
+  }
+
+  @Test
   public void getKeycloakAndCsrfHttpHeaders_Should_ReturnHeaderWithValidCsrfHeaderProperties() {
     when(authenticatedUser.getAccessToken()).thenReturn(BEARER_TOKEN);
 

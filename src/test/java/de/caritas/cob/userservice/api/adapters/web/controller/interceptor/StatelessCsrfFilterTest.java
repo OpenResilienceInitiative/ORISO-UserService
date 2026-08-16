@@ -89,6 +89,18 @@ public class StatelessCsrfFilterTest {
   }
 
   @Test
+  void accountInviteAcceptanceShouldNotRequireCsrfBeforeLogin()
+      throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn("/service/users/account-invites/emailed-token/accept");
+    when(request.getMethod()).thenReturn("POST");
+
+    csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(filterChain).doFilter(request, response);
+    verifyNoMoreInteractions(accessDeniedHandler);
+  }
+
+  @Test
   public void doFilterInternal_Should_executeFilterChain_When_requestHasCsrfWhitelistHeader()
       throws IOException, ServletException {
     when(request.getRequestURI()).thenReturn("uri");
@@ -97,6 +109,29 @@ public class StatelessCsrfFilterTest {
     this.csrfFilter.doFilterInternal(request, response, filterChain);
 
     verify(this.filterChain, times(1)).doFilter(request, response);
+  }
+
+  @Test
+  public void doFilterInternal_Should_executeFilterChain_ForExactInternalMatrixRtcPolicyEndpoint()
+      throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn("/internal/matrixrtc/call-policy");
+    when(request.getMethod()).thenReturn("POST");
+
+    this.csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(this.filterChain, times(1)).doFilter(request, response);
+  }
+
+  @Test
+  public void doFilterInternal_Should_requireCsrf_ForOtherInternalMatrixRtcEndpoints()
+      throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn("/internal/matrixrtc/call-policy-extra");
+    when(request.getMethod()).thenReturn("POST");
+
+    this.csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(this.accessDeniedHandler, times(1)).handle(any(), any(), any());
+    verifyNoMoreInteractions(this.filterChain);
   }
 
   @Test

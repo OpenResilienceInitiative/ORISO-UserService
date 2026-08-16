@@ -1,11 +1,15 @@
 package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUsersRegisteredOnlyService;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import java.time.Duration;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -21,10 +25,19 @@ public class DeleteUsersRegisteredOnlySchedulerTest {
 
   @Mock TenantContextProvider tenantContextProvider;
 
+  @Mock ScheduledTaskClaimService taskClaimService;
+
+  @BeforeEach
+  void setUp() {
+    setField(deleteUsersRegisteredOnlyScheduler, "claimDuration", Duration.ofHours(12));
+  }
+
   @Test
   public void
       performDeletionWorkflow_Should_executeDeleteUserAccountsTimeSensitive_WhenFeatureIsEnabled() {
     setField(deleteUsersRegisteredOnlyScheduler, "userRegisteredOnlyDeleteWorkflowEnabled", true);
+    when(taskClaimService.tryClaim("registered-only-user-deletion", Duration.ofHours(12)))
+        .thenReturn(true);
     deleteUsersRegisteredOnlyScheduler.performDeletionWorkflow();
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
@@ -37,8 +50,7 @@ public class DeleteUsersRegisteredOnlySchedulerTest {
     setField(deleteUsersRegisteredOnlyScheduler, "userRegisteredOnlyDeleteWorkflowEnabled", false);
     deleteUsersRegisteredOnlyScheduler.performDeletionWorkflow();
 
-    verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
-    verify(deleteUsersRegisteredOnlyService, never()).deleteUserAccountsTimeSensitive();
+    verifyNoInteractions(tenantContextProvider, deleteUsersRegisteredOnlyService, taskClaimService);
   }
 
   @Test
@@ -48,6 +60,8 @@ public class DeleteUsersRegisteredOnlySchedulerTest {
         deleteUsersRegisteredOnlyScheduler,
         "userRegisteredOnlyDeleteWorkflowAfterSessionPurgeEnabled",
         true);
+    when(taskClaimService.tryClaim("registered-only-user-deletion", Duration.ofHours(12)))
+        .thenReturn(true);
     deleteUsersRegisteredOnlyScheduler.performDeletionWorkflow();
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
@@ -63,7 +77,21 @@ public class DeleteUsersRegisteredOnlySchedulerTest {
         false);
     deleteUsersRegisteredOnlyScheduler.performDeletionWorkflow();
 
-    verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
-    verify(deleteUsersRegisteredOnlyService, never()).deleteUserAccountsTimeInsensitive();
+    verifyNoInteractions(tenantContextProvider, deleteUsersRegisteredOnlyService, taskClaimService);
+  }
+
+  @Test
+  void performDeletionWorkflow_Should_skipAllDownstreamCalls_When_claimIsLost() {
+    setField(deleteUsersRegisteredOnlyScheduler, "userRegisteredOnlyDeleteWorkflowEnabled", true);
+    setField(
+        deleteUsersRegisteredOnlyScheduler,
+        "userRegisteredOnlyDeleteWorkflowAfterSessionPurgeEnabled",
+        true);
+    when(taskClaimService.tryClaim("registered-only-user-deletion", Duration.ofHours(12)))
+        .thenReturn(false);
+
+    deleteUsersRegisteredOnlyScheduler.performDeletionWorkflow();
+
+    verifyNoInteractions(tenantContextProvider, deleteUsersRegisteredOnlyService);
   }
 }

@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.actions.ActionCommandMockProvider;
 import de.caritas.cob.userservice.api.actions.chat.StopChatActionCommand;
 import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -19,6 +20,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -118,6 +120,61 @@ class DeactivateGroupChatServiceTest {
     this.deactivateGroupChatService.deactivateStaleGroupChats();
 
     verify(this.commandMockProvider.getActionMock(StopChatActionCommand.class)).execute(chat);
+  }
+
+  @Test
+  void deactivateStaleGroupChats_Should_leaveInternalTeamChatsAlone_When_theyAreLongOverdue() {
+    var internalChat = new Chat();
+    internalChat.setDuration(60);
+    internalChat.setActive(true);
+    internalChat.setUpdateDate(LocalDateTime.now().minusDays(30));
+    internalChat.setConversationType(ConversationType.INTERNAL_GROUP);
+    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(internalChat));
+
+    this.deactivateGroupChatService.deactivateStaleGroupChats();
+
+    verifyNoMoreInteractions(
+        this.actionsRegistry, this.commandMockProvider.getActionMock(StopChatActionCommand.class));
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = ConversationType.class,
+      names = {"INTERNAL_GROUP"},
+      mode = EnumSource.Mode.EXCLUDE)
+  void deactivateStaleGroupChats_Should_stillStopEveryOtherModality(
+      ConversationType conversationType) {
+    var chat = new Chat();
+    chat.setDuration(60);
+    chat.setActive(true);
+    chat.setUpdateDate(LocalDateTime.now().minusDays(30));
+    chat.setConversationType(conversationType);
+    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(chat));
+    when(this.actionsRegistry.buildContainerForType(Chat.class))
+        .thenReturn(commandMockProvider.getActionContainer(Chat.class));
+
+    this.deactivateGroupChatService.deactivateStaleGroupChats();
+
+    verify(this.commandMockProvider.getActionMock(StopChatActionCommand.class)).execute(chat);
+  }
+
+  /**
+   * Rows written before the modality column existed carry a null conversation type. They must keep
+   * the previous behaviour rather than silently become undeletable.
+   */
+  @Test
+  void deactivateStaleGroupChats_Should_stillStopChats_When_theConversationTypeIsUnset() {
+    var legacyChat = new Chat();
+    legacyChat.setDuration(60);
+    legacyChat.setActive(true);
+    legacyChat.setUpdateDate(LocalDateTime.now().minusDays(30));
+    when(this.chatRepository.findAllByActiveIsTrue()).thenReturn(List.of(legacyChat));
+    when(this.actionsRegistry.buildContainerForType(Chat.class))
+        .thenReturn(commandMockProvider.getActionContainer(Chat.class));
+
+    this.deactivateGroupChatService.deactivateStaleGroupChats();
+
+    verify(this.commandMockProvider.getActionMock(StopChatActionCommand.class)).execute(legacyChat);
   }
 
   private static List<LocalDateTime> createOverdueUpdateDates() {

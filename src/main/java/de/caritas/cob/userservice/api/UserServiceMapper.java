@@ -288,6 +288,9 @@ public class UserServiceMapper {
     map.put("isTeamConsultant", nonNull(fullConsultant) && fullConsultant.isTeamConsultant());
     map.put("isSupervisor", nonNull(fullConsultant) && fullConsultant.isSupervisor());
     map.put("displayName", nonNull(fullConsultant) ? fullConsultant.getDisplayName() : null);
+    map.put(
+        "internalDisplayName",
+        nonNull(fullConsultant) ? fullConsultant.getInternalDisplayName() : null);
     map.put("publicSlug", nonNull(fullConsultant) ? fullConsultant.getPublicSlug() : null);
     map.put(
         "pendingPublicSlug",
