@@ -47,6 +47,8 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -670,6 +672,24 @@ class CaseHandoverServiceTest {
             caseHandoverService, "formatDuration", 300, "uk");
 
     assertEquals("5 годин", duration);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "de,3 Stunden",
+    "en,3 hours",
+    "fr,3 heures",
+    "ru,3 часа",
+    "tr,3 saat",
+    "uk,3 години",
+    "ti,3 ሰዓታት"
+  })
+  void formatDuration_localizesEveryAdminTemplateLanguage(String language, String expected) {
+    String duration =
+        org.springframework.test.util.ReflectionTestUtils.invokeMethod(
+            caseHandoverService, "formatDuration", 180, language);
+
+    assertEquals(expected, duration);
   }
 
   @Test

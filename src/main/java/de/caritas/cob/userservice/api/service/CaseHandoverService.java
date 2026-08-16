@@ -1110,17 +1110,35 @@ public class CaseHandoverService {
       int hours = minutes / 60;
       return switch (language) {
         case "de" -> hours + (hours == 1 ? " Stunde" : " Stunden");
+        case "fr" -> hours + (hours == 1 ? " heure" : " heures");
+        case "ru" -> hours + russianUnitSuffix(hours, " час", " часа", " часов");
         case "tr" -> hours + " saat";
         case "uk" -> hours + ukHourSuffix(hours);
+        case "ti" -> hours + (hours == 1 ? " ሰዓት" : " ሰዓታት");
         default -> hours + (hours == 1 ? " hour" : " hours");
       };
     }
     return switch (language) {
       case "de" -> minutes + " Minuten";
+      case "fr" -> minutes + (minutes == 1 ? " minute" : " minutes");
+      case "ru" -> minutes + russianUnitSuffix(minutes, " минута", " минуты", " минут");
       case "tr" -> minutes + " dakika";
       case "uk" -> minutes + " хвилин";
+      case "ti" -> minutes + " ደቓይቕ";
       default -> minutes + " minutes";
     };
+  }
+
+  private String russianUnitSuffix(int value, String singular, String paucal, String plural) {
+    int mod100 = value % 100;
+    int mod10 = value % 10;
+    if (mod10 == 1 && mod100 != 11) {
+      return singular;
+    }
+    if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) {
+      return paucal;
+    }
+    return plural;
   }
 
   private String ukHourSuffix(int hours) {
