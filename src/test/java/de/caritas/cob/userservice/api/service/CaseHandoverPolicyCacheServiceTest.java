@@ -2,12 +2,17 @@ package de.caritas.cob.userservice.api.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.model.TenantCaseHandoverPolicyCache;
 import de.caritas.cob.userservice.api.port.out.TenantCaseHandoverPolicyCacheRepository;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantPermissionPolicies;
@@ -31,13 +36,17 @@ class CaseHandoverPolicyCacheServiceTest {
   @Mock private TenantCaseHandoverPolicyCacheRepository repository;
   @Mock private TenantAdminServiceApiControllerFactory tenantServiceFactory;
   @Mock private TenantControllerApi tenantControllerApi;
+  @Mock private ScheduledTaskClaimService scheduledTaskClaimService;
   private final Clock clock = Clock.fixed(Instant.parse("2026-08-16T10:00:00Z"), ZoneOffset.UTC);
   private CaseHandoverPolicyCacheService service;
 
   @BeforeEach
   void setUp() {
-    service = new CaseHandoverPolicyCacheService(repository, tenantServiceFactory, clock);
-    when(tenantServiceFactory.createControllerApi()).thenReturn(tenantControllerApi);
+    service =
+        new CaseHandoverPolicyCacheService(
+            repository, tenantServiceFactory, scheduledTaskClaimService, clock);
+    lenient().when(tenantServiceFactory.createControllerApi()).thenReturn(tenantControllerApi);
+    when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
   }
 
   @Test
@@ -87,5 +96,38 @@ class CaseHandoverPolicyCacheServiceTest {
     assertThatThrownBy(() -> service.refresh(42L))
         .isInstanceOf(RestClientException.class)
         .hasMessageContaining("unavailable");
+  }
+
+  @Test
+  void refresh_rejectsAMismatchedTenantResponseWithoutPersistingIt() {
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(
+            new TenantPermissionPolicies()
+                .tenantId(43L)
+                .policies(Map.of())
+                .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of())));
+
+    assertThatThrownBy(() -> service.refresh(42L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("matching");
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void refresh_usesThePersistedSnapshotWhenAnotherReplicaOwnsTheTenantLease() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder()
+            .tenantId(42L)
+            .policies("{\"reasons\":{}}")
+            .refreshedAt(LocalDateTime.of(2026, 8, 16, 9, 0))
+            .build();
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(false);
+
+    assertThat(service.refresh(42L).getReasons()).isEmpty();
+
+    verify(tenantControllerApi, never()).getTenantPermissionPolicies(any());
+    verify(repository, never()).save(any());
   }
 }
