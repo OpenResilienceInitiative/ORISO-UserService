@@ -1266,6 +1266,35 @@ components:
           type: string
           example: nikunj-rohit
           description: Optional public slug. Admin-created values go live immediately.
+        displayName:
+          type: string
+          maxLength: 255
+          description: Optional PUBLIC display name shown to advice seekers.
+        internalDisplayName:
+          type: string
+          maxLength: 255
+          description: >-
+            Optional internal display name for internal surfaces; internal contexts fall back to
+            the public displayName when empty.
+        salutation:
+          type: string
+          maxLength: 64
+          example: counsellor_female
+          description: Stable salutation key chosen from the admin form option list.
+        position:
+          type: string
+          maxLength: 255
+          example: "Head of counselling centre north"
+        title:
+          type: string
+          maxLength: 255
+          example: "Dipl.-Soz.Päd."
+        adminRemarks:
+          type: string
+          maxLength: 10000
+          description: >-
+            Internal remarks about the consultant. Only readable and writable for tenant-level
+            admins (tenant admin / platform admin); ignored for other callers.
 
     IsGroupchatConsultant:
       type: boolean
@@ -1357,6 +1386,43 @@ components:
           type: boolean
           example: false
           description: If true, rejects the currently pending public slug without changing the active slug.
+        displayName:
+          type: string
+          maxLength: 255
+          description: >-
+            The PUBLIC display name shown to advice seekers. Null leaves the stored value
+            untouched; an empty string clears it.
+        internalDisplayName:
+          type: string
+          maxLength: 255
+          description: >-
+            Optional internal display name for internal surfaces; internal contexts fall back to
+            the public displayName when empty. Null leaves the stored value untouched; an empty
+            string clears it.
+        salutation:
+          type: string
+          maxLength: 64
+          example: counsellor_female
+          description: >-
+            Stable salutation key chosen from the admin form option list. Null leaves the stored
+            value untouched; an empty string clears it.
+        position:
+          type: string
+          maxLength: 255
+          example: "Head of counselling centre north"
+          description: Null leaves the stored value untouched; an empty string clears it.
+        title:
+          type: string
+          maxLength: 255
+          example: "Dipl.-Soz.Päd."
+          description: Null leaves the stored value untouched; an empty string clears it.
+        adminRemarks:
+          type: string
+          maxLength: 10000
+          description: >-
+            Internal remarks about the consultant. Only readable and writable for tenant-level
+            admins (tenant admin / platform admin); ignored for other callers. Null leaves the
+            stored value untouched; an empty string clears it.
 
     ConsultantDTO:
       type: object
@@ -1412,8 +1478,29 @@ components:
           type: string
         displayName:
           type: string
+          description: The PUBLIC display name — the name advice seekers see.
         publicName:
           type: string
+          description: Alias of displayName (the public name), kept for existing clients.
+        internalDisplayName:
+          type: string
+          description: >-
+            Optional internal display name for internal surfaces (team lists, internal group
+            chats, supervision). Internal contexts fall back to displayName when empty.
+        salutation:
+          type: string
+          example: counsellor_female
+        position:
+          type: string
+          example: "Head of counselling centre north"
+        title:
+          type: string
+          example: "Dipl.-Soz.Päd."
+        adminRemarks:
+          type: string
+          description: >-
+            Internal remarks about the consultant. Only present for tenant-level admin callers
+            (tenant admin / platform admin).
         publicSlug:
           type: string
           example: nikunj-rohit

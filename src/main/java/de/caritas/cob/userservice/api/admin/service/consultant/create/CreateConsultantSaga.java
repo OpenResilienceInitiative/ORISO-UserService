@@ -130,6 +130,9 @@ public class CreateConsultantSaga {
       throws DistributedTransactionException {
     Consultant newConsultant = this.createNewConsultantWithoutAppointment(createConsultantDTO);
 
+    // adminRemarks intentionally stays at the builder's fail-closed default (null) here: this
+    // DTO is also the appointment-service payload. ConsultantAdminService#createNewConsultant
+    // re-attaches the submitted remarks to the outgoing response for tenant-level admins.
     ConsultantAdminResponseDTO consultantAdminResponseDTO =
         ConsultantResponseDTOBuilder.getInstance(newConsultant).buildResponseDTO();
 
@@ -443,6 +446,12 @@ public class CreateConsultantSaga {
             .email(consultantCreationInput.getEmail())
             .absent(isTrue(consultantCreationInput.isAbsent()))
             .absenceMessage(consultantCreationInput.getAbsenceMessage())
+            .displayName(consultantCreationInput.getDisplayName())
+            .internalDisplayName(consultantCreationInput.getInternalDisplayName())
+            .salutation(consultantCreationInput.getSalutation())
+            .position(consultantCreationInput.getPosition())
+            .title(consultantCreationInput.getTitle())
+            .adminRemarks(consultantCreationInput.getAdminRemarks())
             .teamConsultant(consultantCreationInput.isTeamConsultant())
             .matrixUserId(matrixUserId)
             .encourage2fa(true)
@@ -495,9 +504,14 @@ public class CreateConsultantSaga {
       long numberOfActiveConsultants =
           consultantService.getNumberOfActiveConsultants(createConsultantDTO.getTenantId());
 
-      assert nonNull(tenantById.getLicensing());
-      Integer allowedNumberOfUsers = tenantById.getLicensing().getAllowedNumberOfUsers();
-      if (numberOfActiveConsultants >= allowedNumberOfUsers) {
+      // No configured limit means no limit. Every tenant created through the invite flow has
+      // `licensing_allowed_users = NULL` — only the seed tenant carries a number — so unboxing it
+      // straight into the comparison killed consultant creation for every new tenant with a bare
+      // 500. The previous `assert nonNull(...)` guard could not catch that: Java disables
+      // assertions at runtime unless `-ea` is passed, so it never executed in production.
+      var licensing = tenantById.getLicensing();
+      Integer allowedNumberOfUsers = isNull(licensing) ? null : licensing.getAllowedNumberOfUsers();
+      if (nonNull(allowedNumberOfUsers) && numberOfActiveConsultants >= allowedNumberOfUsers) {
         throw new CustomValidationHttpStatusException(
             HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED);
       }

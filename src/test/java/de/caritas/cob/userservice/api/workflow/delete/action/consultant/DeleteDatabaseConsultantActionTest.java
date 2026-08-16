@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.workflow.delete.action.consultant;
 
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.CONSULTANT;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.DATABASE;
+import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.USER_CONTENT;
 import static java.util.Collections.emptyList;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
@@ -11,6 +12,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -188,5 +190,33 @@ public class DeleteDatabaseConsultantActionTest {
     assertThat(workflowErrors.get(0).getReason(), is("Unable to delete consultant supervisions"));
     assertThat(workflowErrors.get(0).getDeletionSourceType(), is(CONSULTANT));
     assertThat(workflowErrors.get(0).getDeletionTargetType(), is(DATABASE));
+  }
+
+  /**
+   * Drafts and the notification feed are keyed by the consultant and hold counselling content that
+   * is not end-to-end encrypted. Deleting the account row while they are still there would orphan
+   * them beyond any retry, so the row has to survive a failed cleanup (#983, KDG epic #1010).
+   */
+  @Test
+  public void execute_Should_keepConsultantRow_When_unencryptedContentCleanupFailed() {
+    var consultant = new Consultant();
+    consultant.setId("consultant id");
+    var workflowDTO =
+        new ConsultantDeletionWorkflowDTO(
+            consultant,
+            new ArrayList<>(
+                List.of(
+                    DeletionWorkflowError.builder()
+                        .deletionSourceType(CONSULTANT)
+                        .deletionTargetType(USER_CONTENT)
+                        .identifier("consultant id")
+                        .reason("Could not delete event notifications")
+                        .build())));
+
+    this.deleteDatabaseConsultantAction.execute(workflowDTO);
+
+    verify(this.consultantRepository, never()).delete(any(Consultant.class));
+    verify(this.identityTombstoneService, never()).recordDeletedConsultant(any());
+    assertThat(workflowDTO.getDeletionWorkflowErrors(), hasSize(1));
   }
 }

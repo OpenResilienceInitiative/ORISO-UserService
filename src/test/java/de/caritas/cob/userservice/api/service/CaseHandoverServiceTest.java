@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -123,7 +124,40 @@ class CaseHandoverServiceTest {
     assertEquals(requester, session.getConsultant());
     verify(sessionRepository).save(session);
     verify(eventNotificationService, atLeastOnce())
-        .createEvent(any(), any(), any(), any(), any(), any(), any(), any());
+        .createEvent(any(), any(), any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /**
+   * #1010 task 1a: the handover explanation is free text a counsellor writes and can reference case
+   * content. It used to be formatted into {@code event_notification.text}, a table with no
+   * retention that outlives the case, which made it the one place counselling content sat in
+   * plaintext. The client reads it from the handover request instead.
+   */
+  @Test
+  void requestAccess_neverCopiesTheExplanationIntoAStoredNotification() {
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Client disclosed self-harm.");
+
+    ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
+    verify(eventNotificationService, atLeastOnce())
+        .createEvent(any(), any(), any(), any(), text.capture(), any(), any(), any(), any());
+
+    assertTrue(
+        text.getAllValues().stream()
+            .noneMatch(value -> value != null && value.contains("Client disclosed self-harm")),
+        "stored notification text must not carry the counsellor's explanation");
+    assertTrue(
+        text.getAllValues().stream()
+            .noneMatch(value -> value != null && value.contains("Explanation")),
+        "the explanation label must be gone too, not just this sample's wording");
+  }
+
+  /** The reason stays — it is a configured label, not free text — and moves into params. */
+  @Test
+  void requestAccess_carriesRequesterAndReasonAsParams() {
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
+
+    verify(eventNotificationService, atLeastOnce())
+        .buildCaseHandoverParams(any(), anyString(), eq("COUNSELLOR_IS_ILL"), any(), any());
   }
 
   @Test
@@ -287,6 +321,28 @@ class CaseHandoverServiceTest {
     assertEquals("asker", candidate.getUser().getUsername());
     assertNull(candidate.getUser().getSessionData());
     assertEquals("previous", candidate.getConsultant().getId());
+  }
+
+  @Test
+  void searchCandidates_matchesInternalDisplayNameOnlyQuery() {
+    // The candidate list renders the internal name with fallback (#996), so a query matching
+    // ONLY the internal name must not filter the session out before rendering; the public
+    // display name stays a valid search term as well.
+    previous.setDisplayName("Anna B.");
+    previous.setInternalDisplayName("Standort Nord Team 7");
+    when(sessionRepository
+            .findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
+                List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
+        .thenReturn(List.of(session));
+
+    var internalNameResponse = caseHandoverService.searchCandidates("standort nord", 0, 15, false);
+    var publicNameResponse = caseHandoverService.searchCandidates("anna b", 0, 15, false);
+
+    assertEquals(1, internalNameResponse.getTotal());
+    assertEquals(
+        "Standort Nord Team 7",
+        internalNameResponse.getSessions().get(0).getConsultant().getDisplayName());
+    assertEquals(1, publicNameResponse.getTotal());
   }
 
   @Test
