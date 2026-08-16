@@ -233,6 +233,19 @@ class CoverageSummaryTest(unittest.TestCase):
         guard = action.index("target/site/jacoco/jacoco.csv")
         self.assertLess(guard, invocation, "an existing report must short-circuit the invocation")
 
+    def test_standalone_report_generation_is_time_bounded(self):
+        """`|| echo` catches a nonzero exit, not a hang.
+
+        The goal resolves reporting dependencies over the network and no job sets
+        timeout-minutes, so an unbounded stall would run to GitHub's 6h default
+        and take the failed-test report and the status gate down with it.
+        """
+        action = MAVEN_BUILD_ACTION.read_text()
+
+        invocation = action.index("./mvnw -B jacoco:report")
+        preceding = action[max(0, invocation - 120) : invocation]
+        self.assertIn("timeout", preceding, "the standalone goal must be time-bounded")
+
     def test_does_not_suppress_test_failures_in_maven(self):
         """testFailureIgnore would hide a red suite from every consumer of the build."""
         action = MAVEN_BUILD_ACTION.read_text()
