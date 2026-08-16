@@ -919,18 +919,18 @@ paths:
         '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
   /tenantadmin/{id}/permission-policies:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
     get:
       tags:
         - tenant-controller
       operationId: getTenantPermissionPolicies
       summary: Gets the resolved permission policies for one tenant
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema:
-            type: integer
-            format: int64
       responses:
         '200':
           description: Resolved tenant policies
