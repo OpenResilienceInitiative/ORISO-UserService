@@ -175,7 +175,9 @@ class CounsellorOnboardingWizardIT {
         .andExpect(jsonPath("$.topics.length()").value(2))
         .andExpect(jsonPath("$.phase").doesNotExist());
 
-    // 2) Register with the wizard fields.
+    // 2) Register with the wizard fields. The selection deliberately includes the AGENCY-ONLY
+    // topic 7 next to the routed department topic 2 (#1008 review): a regression that offers the
+    // agency coverage on resolve but drops or rejects it on register would otherwise pass here.
     mockMvc
         .perform(
             post("/users/account-invites/{token}/onboarding/register", token)
@@ -188,7 +190,7 @@ class CounsellorOnboardingWizardIT {
                       "account": { "username": "codex_wizard_counsellor", "password": "Valid-Test-Password-2026!" },
                       "person": { "salutation": "counsellor_female", "position": "Head of centre", "title": "Dipl.-Soz.Päd." },
                       "names": { "publicName": "Lisa", "internalDisplayName": "Lisa S. (Nord)" },
-                      "topicIds": [2]
+                      "topicIds": [2, 7]
                     }
                     """))
         .andExpect(status().isOk())
@@ -205,7 +207,8 @@ class CounsellorOnboardingWizardIT {
     assertThat(consultant.getUsername()).isEqualTo("codex_wizard_counsellor");
     assertThat(consultant.getEmail()).isEqualTo("lisa.simpson@oriso.org");
     assertThat(consultant.getTenantId()).isEqualTo(79L);
-    assertThat(consultant.getTopicIds()).containsExactly(2L);
+    // Both topics reach the provisioning command — the agency-only topic 7 included.
+    assertThat(consultant.getTopicIds()).containsExactly(2L, 7L);
     assertThat(consultant.getSalutation()).isEqualTo("counsellor_female");
     assertThat(consultant.getPosition()).isEqualTo("Head of centre");
     assertThat(consultant.getTitle()).isEqualTo("Dipl.-Soz.Päd.");

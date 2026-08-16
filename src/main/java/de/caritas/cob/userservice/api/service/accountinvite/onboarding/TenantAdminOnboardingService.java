@@ -1,5 +1,9 @@
 package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.isResumableAtTwoFactorStep;
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.linkDeathException;
+import static de.caritas.cob.userservice.api.service.accountinvite.onboarding.OnboardingTwoFactorGuard.revalidateTwoFactorGate;
+
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -27,7 +31,6 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.function.Supplier;
 import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -48,7 +51,6 @@ import org.springframework.transaction.support.TransactionTemplate;
  */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class TenantAdminOnboardingService {
 
   private static final int MIN_PASSWORD_LENGTH = 8;
@@ -71,8 +73,37 @@ public class TenantAdminOnboardingService {
    * read under a PESSIMISTIC_WRITE lock, so no upstream call (TenantService DPA text, Keycloak) may
    * run while that lock is held (#1008 review, same treatment as {@link
    * CounsellorOnboardingService}).
+   *
+   * <p>One reusable instance built in the constructor (#1008 review): a {@link TransactionTemplate}
+   * is thread-safe and stays unmodified after construction, so allocating a fresh one per call
+   * bought nothing.
    */
-  private final @NonNull PlatformTransactionManager transactionManager;
+  private final TransactionTemplate transactionTemplate;
+
+  public TenantAdminOnboardingService(
+      @NonNull AccountInviteRepository accountInviteRepository,
+      @NonNull AccountInviteService accountInviteService,
+      @NonNull CreateAdminService createAdminService,
+      @NonNull IdentityClient identityClient,
+      @NonNull IdentitySecondFactor identitySecondFactor,
+      @NonNull IdentityAccountRemover identityAccountRemover,
+      @NonNull IdentityProfileLookup identityProfileLookup,
+      @NonNull TenantCreationClient tenantCreationClient,
+      @NonNull OperatorDpaContentClient operatorDpaContentClient,
+      @NonNull UsernameTranscoder usernameTranscoder,
+      @NonNull PlatformTransactionManager transactionManager) {
+    this.accountInviteRepository = accountInviteRepository;
+    this.accountInviteService = accountInviteService;
+    this.createAdminService = createAdminService;
+    this.identityClient = identityClient;
+    this.identitySecondFactor = identitySecondFactor;
+    this.identityAccountRemover = identityAccountRemover;
+    this.identityProfileLookup = identityProfileLookup;
+    this.tenantCreationClient = tenantCreationClient;
+    this.operatorDpaContentClient = operatorDpaContentClient;
+    this.usernameTranscoder = usernameTranscoder;
+    this.transactionTemplate = new TransactionTemplate(transactionManager);
+  }
 
   /**
    * Resolves the invite state for a raw link token. Mirrors the accept endpoint's state machine: a
@@ -147,6 +178,12 @@ public class TenantAdminOnboardingService {
   // noRollbackFor mirrors resolveOnboardingInvite: the expiry transition must survive the
   // link-death exception. Every other AccountInviteLinkException in this method is thrown
   // before any write (the lost claim race writes nothing), so nothing partial can commit.
+  //
+  // This method deliberately KEEPS its single atomic transaction (#1008 review): the tenant, the
+  // Keycloak account and the irreversible reservation consumption only stay compensable together,
+  // and the explicit Keycloak rollback below is built on exactly that. Every invite it writes is
+  // therefore a MANAGED entity — re-read by id inside this very transaction after the atomic
+  // claim — so it never merges a detached snapshot and needs no targeted-field treatment.
   @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public TenantAdminRegistrationResult registerTenantAdmin(
       String rawToken, RegisterTenantAdminCommand command) {
@@ -348,19 +385,25 @@ public class TenantAdminOnboardingService {
     }
     AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
 
+    // Pinned BEFORE the Keycloak round trip: exactly this acceptor and exactly this secret are
+    // what the verification below proves the one-time password against, and the gate may only be
+    // activated on a row that still carries both (see #consumeTwoFactorGate).
+    String verifiedAcceptorId = invite.getAcceptedByUserId();
+    String verifiedPendingSecret = invite.getTotpPendingSecret();
+
     var profile =
         identityProfileLookup
-            .findById(invite.getAcceptedByUserId())
+            .findById(verifiedAcceptorId)
             .orElseThrow(
                 () -> new BadRequestException("No identity profile exists for this invite"));
     boolean valid =
         identitySecondFactor.setUpOtpCredential(
-            profile.username(), oneTimePassword.trim(), invite.getTotpPendingSecret());
+            profile.username(), oneTimePassword.trim(), verifiedPendingSecret);
     if (!valid) {
       throw new BadRequestException("Invalid one-time password");
     }
 
-    consumeTwoFactorGate(invite);
+    consumeTwoFactorGate(invite, verifiedAcceptorId, verifiedPendingSecret);
   }
 
   /**
@@ -391,24 +434,38 @@ public class TenantAdminOnboardingService {
   }
 
   /**
-   * Terminal consumption of the link once Keycloak accepted the one-time password. The pending
-   * secret is cleared FIRST so the gate transition — which re-reads the invite by its acceptor —
-   * wins over the merge of the detached row loaded before the Keycloak round trip.
+   * Terminal consumption of the link once Keycloak accepted the one-time password.
+   *
+   * <p>The instance held here was detached across the Keycloak round trip, so the row is re-read
+   * under its PESSIMISTIC_WRITE lock and only the field this write owns — the pending secret — is
+   * touched (#1008 review). Saving the detached snapshot instead would merge every column as it
+   * looked before the round trip and silently revert a concurrent update; {@link AccountInvite}
+   * carries neither {@code @Version} nor {@code @DynamicUpdate} to catch that. That freshly locked
+   * row is re-checked for eligibility (see {@link
+   * OnboardingTwoFactorGuard#revalidateTwoFactorGate}) before anything is written. Clearing the
+   * secret stays FIRST so the gate transition, which re-reads the invite by its acceptor and
+   * therefore works on the very same managed row, is not undone by this write.
    */
-  private void consumeTwoFactorGate(AccountInvite invite) {
+  private void consumeTwoFactorGate(
+      AccountInvite invite, String verifiedAcceptorId, String verifiedPendingSecret) {
     inTransaction(
         () -> {
-          invite.setTotpPendingSecret(null);
-          invite.setUpdateDate(LocalDateTime.now());
-          accountInviteRepository.save(invite);
-          accountInviteService.markTwoFactorActive(invite.getAcceptedByUserId());
+          AccountInvite locked =
+              accountInviteRepository
+                  .findByIdForUpdate(invite.getId())
+                  .orElseThrow(() -> new NotFoundException("Account invite not found"));
+          revalidateTwoFactorGate(locked, verifiedAcceptorId, verifiedPendingSecret);
+          locked.setTotpPendingSecret(null);
+          locked.setUpdateDate(LocalDateTime.now());
+          accountInviteRepository.save(locked);
+          accountInviteService.markTwoFactorActive(locked.getAcceptedByUserId());
           return null;
         });
   }
 
   /** Runs {@code action} in its own short database transaction (no remote call belongs inside). */
   private <T> T inTransaction(Supplier<T> action) {
-    return new TransactionTemplate(transactionManager).execute(status -> action.get());
+    return transactionTemplate.execute(status -> action.get());
   }
 
   private AccountInvite findTenantAdminInvite(String rawToken) {
@@ -441,27 +498,6 @@ public class TenantAdminOnboardingService {
       return new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
     return null;
-  }
-
-  private static boolean isResumableAtTwoFactorStep(AccountInvite invite, LocalDateTime now) {
-    boolean twoFactorStillPending =
-        !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());
-    boolean withinExpiryWindow =
-        invite.getExpiresAt() == null || !invite.getExpiresAt().isBefore(now);
-    return invite.getStatus() == AccountInviteStatus.ACCEPTED
-        && twoFactorStillPending
-        && withinExpiryWindow;
-  }
-
-  private static AccountInviteLinkException linkDeathException(AccountInvite invite) {
-    return switch (invite.getStatus()) {
-      case ACCEPTED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
-      case REVOKED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.REVOKED);
-      case SUPERSEDED ->
-          new AccountInviteLinkException(AccountInviteLinkException.Reason.SUPERSEDED);
-      case EXPIRED -> new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
-      default -> new AccountInviteLinkException(AccountInviteLinkException.Reason.NOT_ACTIVE);
-    };
   }
 
   private static void validateRegistration(RegisterTenantAdminCommand command) {
