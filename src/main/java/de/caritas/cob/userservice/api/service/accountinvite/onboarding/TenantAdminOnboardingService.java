@@ -275,7 +275,10 @@ public class TenantAdminOnboardingService {
    * the link back to share manually. Only an EMAIL_SENT, unexpired invite may forward — the DPA
    * step is only reachable in that state.
    */
-  @Transactional
+  // noRollbackFor mirrors registerTenantAdmin: the EXPIRED transition below must survive the
+  // link-death exception. No other write happens before an AccountInviteLinkException can be
+  // thrown here, so nothing partial can commit.
+  @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public DpaForwardResult forwardDpa(String rawToken, String recipientEmail) {
     AccountInvite invite = findTenantAdminInvite(rawToken);
     LocalDateTime now = LocalDateTime.now();
@@ -283,7 +286,11 @@ public class TenantAdminOnboardingService {
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
       throw linkDeathException(invite);
     }
-    expireIfPastExpiry(invite, now);
+    AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
+    if (expired != null) {
+      // noRollbackFor (see above) keeps the EXPIRED transition this just persisted.
+      throw expired;
+    }
     if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
       throw new InternalServerErrorException(
           "Invite holds no authoritative tenant-ID reservation — re-issue the invite after"
