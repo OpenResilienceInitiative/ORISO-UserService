@@ -20,8 +20,26 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
 
   private final Consultant consultant;
 
+  /**
+   * Whether {@code adminRemarks} may be exposed. Defaults to {@code false} (fail closed): only
+   * callers that verified tenant-level admin access opt in via {@link
+   * #includeAdminRemarks(boolean)}.
+   */
+  private boolean includeAdminRemarks;
+
   private ConsultantResponseDTOBuilder(Consultant consultant) {
     this.consultant = requireNonNull(consultant);
+  }
+
+  /**
+   * Opts into exposing {@code adminRemarks} for tenant-level admin callers.
+   *
+   * @param includeAdminRemarks true if the caller may read admin remarks
+   * @return this builder
+   */
+  public ConsultantResponseDTOBuilder includeAdminRemarks(boolean includeAdminRemarks) {
+    this.includeAdminRemarks = includeAdminRemarks;
+    return this;
   }
 
   /**
@@ -70,6 +88,11 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
         .deleteDate(String.valueOf(consultant.getDeleteDate()))
         .status(String.valueOf(consultant.getStatus()))
         .tenantId(consultant.getTenantId() != null ? consultant.getTenantId().intValue() : null)
+        .internalDisplayName(consultant.getInternalDisplayName())
+        .salutation(consultant.getSalutation())
+        .position(consultant.getPosition())
+        .title(consultant.getTitle())
+        .adminRemarks(includeAdminRemarks ? consultant.getAdminRemarks() : null)
         .publicSlug(consultant.getPublicSlug())
         .pendingPublicSlug(consultant.getPendingPublicSlug())
         .publicSlugStatus(

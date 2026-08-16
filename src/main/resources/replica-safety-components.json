@@ -330,6 +330,17 @@
       "decision": "Prove room close/leave effects are idempotent under concurrent execution or add a lease.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "blocker"
+    },
+    {
+      "id": "event-notification-retention-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/notificationretention/scheduler/EventNotificationRetentionScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": ["purgeExpiredNotifications"],
+      "decision": "Leases the run through ScheduledTaskClaimService; the purge itself is an idempotent bulk delete of expired rows.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "bounded"
     }
   ]
 }

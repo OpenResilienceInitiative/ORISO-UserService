@@ -49,6 +49,43 @@ public class ConsultantTest {
     assertEquals(expectedFullName, result);
   }
 
+  // ---------------------------------------------------------------------------
+  // #996 — central internal-display-name fallback rule
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void getInternalDisplayNameOrFallback_Should_returnInternalName_When_set() {
+    Consultant consultant = new Consultant();
+    consultant.setDisplayName("Anna B.");
+    consultant.setInternalDisplayName("Anna Beispiel (Standort Nord)");
+
+    assertEquals("Anna Beispiel (Standort Nord)", consultant.getInternalDisplayNameOrFallback());
+  }
+
+  @Test
+  public void getInternalDisplayNameOrFallback_Should_fallbackToPublicName_When_internalIsNull() {
+    Consultant consultant = new Consultant();
+    consultant.setDisplayName("Anna B.");
+
+    assertEquals("Anna B.", consultant.getInternalDisplayNameOrFallback());
+  }
+
+  @Test
+  public void getInternalDisplayNameOrFallback_Should_fallbackToPublicName_When_internalIsBlank() {
+    Consultant consultant = new Consultant();
+    consultant.setDisplayName("Anna B.");
+    consultant.setInternalDisplayName("   ");
+
+    assertEquals("Anna B.", consultant.getInternalDisplayNameOrFallback());
+  }
+
+  @Test
+  public void getInternalDisplayNameOrFallback_Should_returnNull_When_neitherNameIsSet() {
+    Consultant consultant = new Consultant();
+
+    assertEquals(null, consultant.getInternalDisplayNameOrFallback());
+  }
+
   @Test
   public void equals_Should_returnTrue_When_objectIsSameReference() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);

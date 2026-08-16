@@ -377,6 +377,22 @@ public class AccountInviteService {
     throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
   }
 
+  /**
+   * Resolves ONLY the target role of an invite by its raw link token — the dispatch probe of the
+   * shared public onboarding routes. Answers exactly like {@link #findInviteByToken} for a blank
+   * (400) or unknown (404) token, but takes no pessimistic row lock: the role-specific flow this
+   * probe selects loads the same row under its own lock right afterwards (#1008 review).
+   */
+  @Transactional(readOnly = true)
+  public AccountInviteTargetRole findTargetRoleByToken(String rawToken) {
+    if (isBlank(rawToken)) {
+      throw new BadRequestException("Invite token is required");
+    }
+    return accountInviteRepository
+        .findTargetRoleByTokenHash(hash(rawToken))
+        .orElseThrow(() -> new NotFoundException("Account invite not found"));
+  }
+
   /** Resolves an invite by its raw link token without any state checks. */
   @Transactional(readOnly = true)
   public AccountInvite findInviteByToken(String rawToken) {
