@@ -127,8 +127,8 @@ public class CreateConsultantSagaTenantAwareIT {
     // into a comparison, so creating the first consultant for such a tenant died with a
     // NullPointerException and the admin saw a bare 500. No limit configured means no limit.
     TenantContext.setCurrentTenant(1L);
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     var tenant =
         new TenantDTO()
             .licensing(new Licensing().allowedNumberOfUsers(null))
@@ -156,8 +156,8 @@ public class CreateConsultantSagaTenantAwareIT {
     // The previous guard was `assert nonNull(...)`, which Java disables at runtime unless -ea is
     // passed — so it never protected anything in production.
     TenantContext.setCurrentTenant(1L);
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     var tenant =
         new TenantDTO()
             .settings(
