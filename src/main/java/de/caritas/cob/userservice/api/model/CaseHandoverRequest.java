@@ -44,7 +44,14 @@ public class CaseHandoverRequest implements TenantAware {
     PENDING_CLIENT_CONSENT,
     GRANTED,
     DENIED,
-    CLIENT_CONSENT_DECLINED
+    CLIENT_CONSENT_DECLINED,
+    EXPIRED,
+    REVOKED
+  }
+
+  public enum AccessType {
+    CO_ACCESS,
+    TAKEOVER
   }
 
   @Id
@@ -91,6 +98,16 @@ public class CaseHandoverRequest implements TenantAware {
 
   @Column(name = "resolved_at")
   private LocalDateTime resolvedAt;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "access_type", length = 20)
+  private AccessType accessType;
+
+  @Column(name = "max_access_duration_minutes")
+  private Integer maxAccessDurationMinutes;
+
+  @Column(name = "expires_at")
+  private LocalDateTime expiresAt;
 
   @Column(name = "tenant_id")
   private Long tenantId;

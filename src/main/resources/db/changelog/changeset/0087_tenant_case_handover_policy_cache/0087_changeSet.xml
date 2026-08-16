@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="0087-tenant-case-handover-policy-cache" author="oriso">
+    <sqlFile
+      path="db/changelog/changeset/0087_tenant_case_handover_policy_cache/create.sql"
+      relativeToChangelogFile="false"
+      splitStatements="true"
+      stripComments="true"
+      endDelimiter=";"/>
+    <rollback>
+      <sql>DROP TABLE IF EXISTS tenant_case_handover_policy_cache;</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

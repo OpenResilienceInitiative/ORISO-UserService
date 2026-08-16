@@ -280,7 +280,8 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
-                    "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
+                    "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
+                    "/users/sessions/{sessionId:[0-9]+}/team-access")
                 .hasAuthority(USER_DEFAULT)
                 /* Gate 2 consent pointer (ADR-022 decision 2). Anonymous help-seekers are the
                 main case — they hold ANONYMOUS_DEFAULT, not USER_DEFAULT — but a registered
