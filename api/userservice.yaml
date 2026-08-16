@@ -2107,6 +2107,21 @@ components:
           $ref: '#/components/schemas/VideoCallMessageDTO'
         topic:
           $ref: '#/components/schemas/SessionTopicDTO'
+        consentedLegalVersionId:
+          type: integer
+          format: int64
+          example: 7
+          description: >-
+            ADR-022 decision 2 - the legal-text version (owned by ORISO-AgencyService) this room is
+            currently cleared for; null when Gate 2 has not been passed. A pointer, overwritten on
+            re-consent, never a consent log. Additive - older clients can ignore it.
+        consentRequired:
+          type: boolean
+          example: false
+          description: >-
+            true when Gate 2 applies to this session and no consent pointer is recorded, i.e. the
+            client must show the consent gate instead of the composer. Internal rooms (no
+            help-seeker) always report false. Additive - older clients can ignore it.
 
     SessionAttachmentDTO:
       type: object

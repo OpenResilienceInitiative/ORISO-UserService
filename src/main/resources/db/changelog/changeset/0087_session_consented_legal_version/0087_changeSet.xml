@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- ADR-022 decision 2: session.consented_legal_version_id is a nullable POINTER to the
+       legal-text version the room is cleared for. It is OVERWRITTEN on re-consent — never
+       append-only, no per-user consent log, no behavioural record about anonymous
+       help-seekers. Evidence of what applied when comes from the publication history in
+       ORISO-AgencyService (ADR-021 decision 3), not from here. See migrate.sql.
+
+       No precondition needed: the SQL guards the column with IF NOT EXISTS, so the
+       changeset is idempotent and safe to run against any schema state. -->
+  <changeSet id="0087-session-consented-legal-version" author="frank">
+    <sqlFile
+      path="db/changelog/changeset/0087_session_consented_legal_version/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    <rollback>
+      <sql>ALTER TABLE session DROP COLUMN IF EXISTS consented_legal_version_id;</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

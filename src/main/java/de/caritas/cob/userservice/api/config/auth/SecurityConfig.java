@@ -271,6 +271,15 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
                 .hasAuthority(USER_DEFAULT)
+                /* Gate 2 consent pointer (ADR-022 decision 2). Anonymous help-seekers are the
+                main case — they hold ANONYMOUS_DEFAULT, not USER_DEFAULT — but a registered
+                help-seeker passes the same gate in the room. Ownership of the session is
+                verified in SessionConsentService, not here. */
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/users/sessions/{sessionId:[0-9]+}/consent",
+                    "/service/users/sessions/{sessionId:[0-9]+}/consent")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers(
                     HttpMethod.GET, "/users/sessions/room", "/service/users/sessions/room")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)

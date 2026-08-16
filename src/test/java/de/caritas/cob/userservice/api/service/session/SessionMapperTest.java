@@ -87,6 +87,44 @@ class SessionMapperTest {
   }
 
   @Test
+  void convertToSessionDTO_Should_projectTheConsentPointerAndClearTheGate() {
+    // ADR-022 decision 2: the read path exists so the client can open the composer.
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.setConsentedLegalVersionId(7L);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertThat(sessionDTO.getConsentedLegalVersionId(), is(7L));
+    assertThat(sessionDTO.getConsentRequired(), is(false));
+  }
+
+  @Test
+  void convertToSessionDTO_Should_requireConsent_When_noPointerIsRecorded() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.LIVE_CHAT);
+    session.setConsentedLegalVersionId(null);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertNull(sessionDTO.getConsentedLegalVersionId());
+    assertThat(sessionDTO.getConsentRequired(), is(true));
+  }
+
+  @Test
+  void convertToSessionDTO_Should_notRequireConsent_When_theRoomHasNoHelpSeeker() {
+    // ADR-022 scope: internal rooms (supervision, Team-Besprechung) have no help-seeker
+    // and therefore no gate.
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.INTERNAL_GROUP);
+    session.setConsentedLegalVersionId(null);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertThat(sessionDTO.getConsentRequired(), is(false));
+  }
+
+  @Test
   void convertToSessionDTO_Should_leaveConversationTypeAndAskerMatrixUserIdNull_When_userIsNull() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setConversationType(null);

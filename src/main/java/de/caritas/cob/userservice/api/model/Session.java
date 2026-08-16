@@ -212,6 +212,24 @@ public class Session implements TenantAware {
   @Column(name = "is_supervision_opted_out", columnDefinition = "bit default false")
   private Boolean supervisionOptedOut = false;
 
+  /**
+   * ADR-022 decision 2 — the Gate 2 consent pointer: the id of the legal-text version (owned by
+   * ORISO-AgencyService, ADR-021 decision 3) this room is currently cleared for. {@code null} means
+   * the gate has not been passed.
+   *
+   * <p><b>This is a pointer, not a log. Do not turn it into one.</b> It is <i>overwritten</i> on
+   * re-consent. There must be no append-only history, no timestamp/actor columns beside it and no
+   * per-user consent event table anywhere. ADR-022 rejected a consent event log explicitly, because
+   * it would create a behavioural record about anonymous help-seekers that does not exist today —
+   * for evidentiary value the publication history in ORISO-AgencyService already provides. The
+   * field exists for <b>control flow</b> only: whether the composer may open. It is never evidence.
+   *
+   * <p>The referenced target is a public document version, so this adds no new category of personal
+   * data. Deliberately no foreign key — the version lives in another service.
+   */
+  @Column(name = "consented_legal_version_id")
+  private Long consentedLegalVersionId;
+
   @OneToMany(
       targetEntity = SessionTopic.class,
       mappedBy = "session",
@@ -235,6 +253,17 @@ public class Session implements TenantAware {
   @Override
   public int hashCode() {
     return Objects.hash(id);
+  }
+
+  /**
+   * ADR-022 scope: Gate 2 applies to rooms that have a help-seeker — 1:1 counselling, live chat and
+   * self-help groups. Internal rooms (supervision per ADR-008, Team-Besprechung per ADR-016) have
+   * no help-seeker and therefore no gate. A session whose modality was never recorded predates
+   * ADR-006 and is treated as a help-seeker room, which is the safe direction: the gate shows.
+   */
+  @JsonIgnore
+  public boolean isConsentGateApplicable() {
+    return conversationType != ConversationType.INTERNAL_GROUP;
   }
 
   @JsonIgnore
