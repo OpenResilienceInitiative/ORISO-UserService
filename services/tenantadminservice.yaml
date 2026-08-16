@@ -1670,6 +1670,12 @@ components:
       properties:
         code:
           type: string
+          enum:
+            - COUNSELLOR_ASKED_FOR_ADVICE
+            - COUNSELLOR_ON_HOLIDAY
+            - OTHER_EMERGENCY
+            - COUNSELLOR_IS_ILL
+            - COUNSELLOR_LEFT
         labels:
           $ref: '#/components/schemas/MultilingualTextPermissionPolicy'
         enabled:
@@ -1683,7 +1689,9 @@ components:
         clientNotificationTemplates:
           $ref: '#/components/schemas/MultilingualTextPermissionPolicy'
         maxAccessDurationMinutes:
-          $ref: '#/components/schemas/IntegerPermissionPolicy'
+          allOf:
+            - $ref: '#/components/schemas/IntegerPermissionPolicy'
+          description: Required only for COUNSELLOR_ASKED_FOR_ADVICE; absent for non-expiring takeover reasons.
     CaseHandoverPolicies:
       type: object
       required: [reasons]
