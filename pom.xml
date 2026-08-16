@@ -42,7 +42,7 @@
 		<adapters.web.dto.path>
 			${project.groupId}.${project.artifactId}.api.adapters.web.dto
 		</adapters.web.dto.path>
-		<log4j.version>2.25.4</log4j.version> <!-- force safe version due to https://logging.apache.org/log4j/2.x/security.html -->
+		<log4j.version>2.25.5</log4j.version> <!-- force safe version due to https://logging.apache.org/log4j/2.x/security.html -->
 		<commons-text.version>1.10.0</commons-text.version>
 		<commons-validator.version>1.10.1</commons-validator.version>
 		<liquibase.version>4.27.0</liquibase.version>
