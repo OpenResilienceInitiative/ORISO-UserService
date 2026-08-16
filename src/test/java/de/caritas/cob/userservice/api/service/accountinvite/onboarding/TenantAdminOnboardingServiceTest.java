@@ -48,6 +48,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @ExtendWith(MockitoExtension.class)
 class TenantAdminOnboardingServiceTest {
@@ -69,6 +71,14 @@ class TenantAdminOnboardingServiceTest {
   @Mock private TenantCreationClient tenantCreationClient;
   @Mock private OperatorDpaContentClient operatorDpaContentClient;
 
+  /**
+   * The read paths drive their short database-only transactions through a {@link
+   * TransactionTemplate} (#1008 review) instead of {@code @Transactional}. A mocked manager hands
+   * out a null status, which the template treats as an ordinary transaction: the callback runs,
+   * exceptions propagate.
+   */
+  @Mock private PlatformTransactionManager transactionManager;
+
   private TenantAdminOnboardingService service;
 
   @BeforeEach
@@ -84,7 +94,8 @@ class TenantAdminOnboardingServiceTest {
             identityProfileLookup,
             tenantCreationClient,
             operatorDpaContentClient,
-            new UsernameTranscoder());
+            new UsernameTranscoder(),
+            transactionManager);
   }
 
   private static AccountInvite tenantAdminInvite(AccountInviteStatus status) {

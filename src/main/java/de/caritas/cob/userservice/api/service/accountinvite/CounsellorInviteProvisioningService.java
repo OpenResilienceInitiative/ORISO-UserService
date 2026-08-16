@@ -152,7 +152,19 @@ public class CounsellorInviteProvisioningService {
         .absent(false)
         .tenantId(invite.getTenantId())
         .isGroupchatConsultant(false)
-        .topicIds(List.of(invite.getDepartmentId()));
+        // Wizard registrations (#997) may choose topics within the invite's coverage (validated
+        // by CounsellorOnboardingService); the plain accept flow keeps the routed department.
+        .topicIds(
+            command.topicIds() == null || command.topicIds().isEmpty()
+                ? List.of(invite.getDepartmentId())
+                : List.copyOf(command.topicIds()))
+        // Optional #994/#996 profile fields collected by the onboarding wizard; null on the
+        // plain accept flow and simply left unset on the created consultant.
+        .salutation(command.salutation())
+        .position(command.position())
+        .title(command.title())
+        .displayName(command.displayName())
+        .internalDisplayName(command.internalDisplayName());
   }
 
   private static void validate(ProvisionCounsellorCommand command, AccountInvite invite) {
@@ -182,6 +194,28 @@ public class CounsellorInviteProvisioningService {
     return value == null || value.trim().isEmpty();
   }
 
+  /**
+   * Input of a counsellor provisioning. The first four fields carry the public accept flow
+   * (ORISO-Frontend PR #956); the optional trailing fields are only filled by the onboarding wizard
+   * (#997) and default to {@code null} on the plain accept path.
+   */
   public record ProvisionCounsellorCommand(
-      String username, String password, Boolean formalLanguage, String acceptedByUserId) {}
+      String username,
+      String password,
+      Boolean formalLanguage,
+      String acceptedByUserId,
+      String salutation,
+      String position,
+      String title,
+      String displayName,
+      String internalDisplayName,
+      List<Long> topicIds) {
+
+    /** Plain accept-flow shape (no wizard profile fields). */
+    public ProvisionCounsellorCommand(
+        String username, String password, Boolean formalLanguage, String acceptedByUserId) {
+      this(
+          username, password, formalLanguage, acceptedByUserId, null, null, null, null, null, null);
+    }
+  }
 }
