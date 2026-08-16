@@ -28,6 +28,16 @@ import org.junit.jupiter.api.Test;
 class SessionMapperTest {
 
   @Test
+  void convertToSessionDTO_projectsTheBackwardCompatibleOptOutAsTeamAccessAllowed() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setSupervisionOptedOut(false);
+    assertThat(new SessionMapper().convertToSessionDTO(session).getTeamAccessAllowed(), is(true));
+
+    session.setSupervisionOptedOut(true);
+    assertThat(new SessionMapper().convertToSessionDTO(session).getTeamAccessAllowed(), is(false));
+  }
+
+  @Test
   void convertToSessionDTOShouldProjectConversationType() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setConversationType(ConversationType.LIVE_CHAT);

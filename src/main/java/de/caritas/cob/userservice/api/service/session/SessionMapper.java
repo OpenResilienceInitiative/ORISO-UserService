@@ -71,6 +71,7 @@ public class SessionMapper {
                 : null)
         .messageDate(toUnixTime(session.getEnquiryMessageDate()))
         .isTeamSession(session.isTeamSession())
+        .teamAccessAllowed(!Boolean.TRUE.equals(session.getSupervisionOptedOut()))
         .language(LanguageCode.fromValue(session.getLanguageCode().name()))
         .registrationType(session.getRegistrationType().name())
         .createDate(toIsoTime(session.getCreateDate()))

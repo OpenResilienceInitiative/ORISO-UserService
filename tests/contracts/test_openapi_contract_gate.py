@@ -165,6 +165,24 @@ class OpenApiContractGateTest(unittest.TestCase):
         self.assertIn("contract-gate-tests:", workflow)
         self.assertIn("python -m pytest -q tests/contracts", workflow)
 
+    def test_team_access_contract_uses_positive_owner_bound_boolean(self):
+        provider = yaml.safe_load((ROOT / "api/userservice.yaml").read_text())
+
+        operation = provider["paths"][
+            "/users/sessions/{sessionId}/team-access"
+        ]["post"]
+        request_schema = operation["requestBody"]["content"]["application/json"][
+            "schema"
+        ]
+        self.assertEqual(
+            "#/components/schemas/TeamAccessDTO", request_schema["$ref"]
+        )
+        self.assertIn("403", operation["responses"])
+
+        team_access = provider["components"]["schemas"]["TeamAccessDTO"]
+        self.assertEqual(["allowed"], team_access["required"])
+        self.assertEqual("boolean", team_access["properties"]["allowed"]["type"])
+
 
 if __name__ == "__main__":
     unittest.main()

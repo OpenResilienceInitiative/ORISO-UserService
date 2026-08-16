@@ -187,6 +187,42 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/team-access:
+    post:
+      tags:
+        - session-supervisor-controller
+      summary: Allow or block future team access to the authenticated asker's session
+      description: >-
+        The session owner controls the shared supervision and Advice Needed co-access setting.
+        Disabling it revokes active read-only access immediately. Re-enabling it affects only
+        future access and never restores a previous supervisor or co-access lease.
+      operationId: setTeamAccess
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TeamAccessDTO'
+      responses:
+        '204':
+          description: Team access setting updated
+        '400':
+          description: Invalid request body
+        '401':
+          description: No or invalid access token
+        '403':
+          description: The caller is not the session owner
+        '404':
+          description: Session not found
+      security:
+        - Bearer: [ ]
   /users/sessions/new/{sessionId}:
     put:
       tags:
@@ -1846,6 +1882,16 @@ paths:
 
 components:
   schemas:
+    TeamAccessDTO:
+      type: object
+      required: [allowed]
+      properties:
+        allowed:
+          type: boolean
+          description: >-
+            True allows future team access without a separate confirmation. False immediately
+            revokes active supervision and Advice Needed co-access and requires active consent
+            for future access.
     OccurrenceOverrideRequest:
       type: object
       required: [originalStartUtc]
@@ -2095,6 +2141,12 @@ components:
         isTeamSession:
           type: boolean
           example: false
+        teamAccessAllowed:
+          type: boolean
+          default: true
+          description: >-
+            Session-scoped advice-seeker choice shared by supervision and Advice Needed
+            co-access. False means active consent is required for future access.
         registrationType:
           type: string
           example: ANONYMOUS

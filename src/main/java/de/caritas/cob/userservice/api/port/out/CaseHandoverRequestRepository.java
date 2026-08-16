@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -23,6 +24,14 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
   List<CaseHandoverRequest> findByRequesterConsultantId(String requesterConsultantId);
 
   List<CaseHandoverRequest> findByPreviousConsultantId(String previousConsultantId);
+
+  List<CaseHandoverRequest> findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
+      CaseHandoverRequest.Status status,
+      CaseHandoverRequest.AccessType accessType,
+      LocalDateTime expiresAt);
+
+  List<CaseHandoverRequest> findBySessionIdAndStatusAndAccessType(
+      Long sessionId, CaseHandoverRequest.Status status, CaseHandoverRequest.AccessType accessType);
 
   @Modifying(flushAutomatically = true, clearAutomatically = true)
   @Query("delete from CaseHandoverRequest request where request.session.id = :sessionId")

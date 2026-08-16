@@ -146,6 +146,10 @@
     file="db/changelog/changeset/0084_event_notification_explanation_backfill/0084_changeSet.xml" />
   <include
     file="db/changelog/changeset/0085_consultant_internal_display_name/0085_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0086_case_handover_co_access/0086_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0087_tenant_case_handover_policy_cache/0087_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
