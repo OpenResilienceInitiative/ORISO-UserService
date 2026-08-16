@@ -196,19 +196,19 @@
       "primaryTotal": -509
     },
     "verifiedCurrent": {
-      "verifiedApplicationHead": "3bfa3d06a2d77e396e8a8712829164a74dc39344",
-      "unit": 3865,
-      "integration": 873,
-      "primaryTotal": 4738,
+      "verifiedApplicationHead": "fd6044a8d24f0e575e8dedc4ded1632d59cca0db",
+      "unit": 3990,
+      "integration": 895,
+      "primaryTotal": 4885,
       "localEvidence": [
         "JDK 21: ./mvnw -Dskip.integration-tests=true test plus exact inventory gate",
         "JDK 21: scripts/ci/run-required-integration-tests.sh plus exact inventory gate"
       ]
     },
     "sinceCutoverDelta": {
-      "unit": 492,
-      "integration": 33,
-      "primaryTotal": 525
+      "unit": 617,
+      "integration": 55,
+      "primaryTotal": 672
     },
     "sourceDiff": {
       "fromCommit": "dce9b2f4d89851d452135de6b0697d22413368c7",
@@ -221,15 +221,15 @@
   },
   "currentRequiredSuite": {
     "command": "scripts/ci/run-required-integration-tests.sh",
-    "unitTests": 3865,
-    "unitReports": 440,
+    "unitTests": 3990,
+    "unitReports": 453,
     "unitSkipped": 0,
-    "integrationReports": 92,
-    "integrationTests": 873,
-    "integrationSkipped": 12,
+    "integrationReports": 96,
+    "integrationTests": 895,
+    "integrationSkipped": 14,
     "failures": 0,
     "errors": 0,
-    "skipped": 12,
+    "skipped": 14,
     "quarantine": false,
     "environmentBoundSkippedTests": [
       {
@@ -291,6 +291,16 @@
       },
       {
         "testId": "de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimMariaDbIT#twoReplicaContendersProduceOneWinnerForInitialAndExpiredClaim",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.workflow.delete.scheduler.DeleteUserAccountSchedulerMariaDbReplicaIT#twoSchedulerInstancesTriggerOneAccountDeletionWorkflow",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.workflow.delete.scheduler.DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT#twoSchedulerInstancesTriggerOneRegisteredOnlyDeletionBatch",
         "environmentVariable": "LIQUIBASE_IT_DB_URL",
         "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
       }
