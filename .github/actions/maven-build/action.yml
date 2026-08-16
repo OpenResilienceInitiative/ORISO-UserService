@@ -72,8 +72,9 @@ runs:
         python3 scripts/ci/coverage-summary.py
       } | tee -a "$GITHUB_STEP_SUMMARY"
 
-  # The summary carries totals and a per-package breakdown. Per-class and
-  # per-line detail lives in the HTML report, which is too large to inline.
+  # The summary carries totals plus collapsed per-package and per-class
+  # breakdowns. Per-LINE detail — which statements are red — only exists in the
+  # HTML report, which is far too large to inline, so it is uploaded instead.
   - name: Upload coverage report
     if: ${{ always() }}
     uses: actions/upload-artifact@v4
