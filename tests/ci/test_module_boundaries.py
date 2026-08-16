@@ -137,6 +137,34 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(direct_application_imports),
         )
 
+    def test_user_web_boundaries_do_not_import_outbound_identity_configuration(self):
+        """The web layer asks an application policy, it does not read provider config.
+
+        Reading `IdentityClientConfig` here put the OTP role rule, the consultant
+        display-name flag and the dummy-email suffix in the controllers, so each
+        caller re-derived the rule. This keeps the seam closed.
+        """
+        sources = [
+            CONTROLLERS / "UserController.java",
+            *CONTROLLERS.glob("User*ControllerDelegate.java"),
+        ]
+        forbidden_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;"
+        )
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in sources
+            if forbidden_import in source.read_text()
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "User web adapters must ask an application-owned identity policy "
+            "instead of reading outbound identity configuration:\n"
+            + "\n".join(offenders),
+        )
+
     def test_session_module_depends_on_ports_not_chat_adapters(self):
         session_module = (
             ROOT

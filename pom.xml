@@ -53,6 +53,9 @@
 		<!-- Spring Boot 4.0.7 still manages Netty 4.2.15; 4.2.16 fixes CVE-2026-59901,
 		     CVE-2026-55831, CVE-2026-55833 and CVE-2026-56745 (image CVE gate). -->
 		<netty.version>4.2.16.Final</netty.version>
+		<!-- Spring Boot 4.0.7 still manages HttpCore 5.3.6; 5.4.3 fixes
+		     CVE-2026-54399 and is compatible with the managed HttpClient 5.5.2. -->
+		<httpcore5.version>5.4.3</httpcore5.version>
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
 		<testcontainers.version>1.21.4</testcontainers.version>
 		<lombok.version>1.18.42</lombok.version>
