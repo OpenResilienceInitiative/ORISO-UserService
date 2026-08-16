@@ -4,8 +4,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 import com.google.api.client.util.Lists;
@@ -125,8 +123,6 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
     createConsultantAgencyDTO.setAgencyId(15L);
     createConsultantAgencyDTO.setRoleSetKey("valid-role-set");
 
-    when(identityClient.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
-
     AgencyDTO agencyDTO = new AgencyDTO();
     agencyDTO.setId(15L);
     agencyDTO.setTeamAgency(false);
@@ -169,7 +165,6 @@ class ConsultantAgencyRelationCreatorServiceTenantAwareIT {
 
     CreateConsultantAgencyDTO createConsultantAgencyDTO =
         new CreateConsultantAgencyDTO().agencyId(15L).roleSetKey("valid-role-set");
-    when(identityClient.userHasRole(eq(consultant.getId()), any())).thenReturn(true);
     AgencyDTO agencyDTO = new AgencyDTO().id(15L).teamAgency(false).consultingType(0).tenantId(83L);
     when(agencyService.getAgency(15L)).thenReturn(agencyDTO);
     when(agencyService.getAgenciesWithoutCaching(List.of(15L))).thenReturn(List.of(agencyDTO));

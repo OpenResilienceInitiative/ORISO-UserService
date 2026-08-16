@@ -118,6 +118,25 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             + "\n".join(offenders),
         )
 
+    def test_broad_identity_client_does_not_expose_role_membership_predicates(self):
+        """Role membership is read through the focused lookup, not the broad client.
+
+        `userHasRole` duplicated what `IdentityRoleLookup#findAllByUserId` already
+        returns, and `userHasAuthority` had no caller at all. Re-adding either would
+        put role policy back behind an outbound predicate the application cannot see.
+        """
+        identity_client = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        )
+        source = identity_client.read_text()
+
+        for forbidden in ("userHasRole", "userHasAuthority"):
+            self.assertNotIn(
+                forbidden,
+                source,
+                f"IdentityClient must not expose {forbidden}; use IdentityRoleLookup",
+            )
+
     def test_session_module_depends_on_ports_not_chat_adapters(self):
         session_module = (
             ROOT
