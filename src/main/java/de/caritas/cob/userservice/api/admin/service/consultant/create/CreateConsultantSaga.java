@@ -494,9 +494,14 @@ public class CreateConsultantSaga {
       long numberOfActiveConsultants =
           consultantService.getNumberOfActiveConsultants(createConsultantDTO.getTenantId());
 
-      assert nonNull(tenantById.getLicensing());
-      Integer allowedNumberOfUsers = tenantById.getLicensing().getAllowedNumberOfUsers();
-      if (numberOfActiveConsultants >= allowedNumberOfUsers) {
+      // No configured limit means no limit. Every tenant created through the invite flow has
+      // `licensing_allowed_users = NULL` — only the seed tenant carries a number — so unboxing it
+      // straight into the comparison killed consultant creation for every new tenant with a bare
+      // 500. The previous `assert nonNull(...)` guard could not catch that: Java disables
+      // assertions at runtime unless `-ea` is passed, so it never executed in production.
+      var licensing = tenantById.getLicensing();
+      Integer allowedNumberOfUsers = isNull(licensing) ? null : licensing.getAllowedNumberOfUsers();
+      if (nonNull(allowedNumberOfUsers) && numberOfActiveConsultants >= allowedNumberOfUsers) {
         throw new CustomValidationHttpStatusException(
             HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED);
       }

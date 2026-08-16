@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.workflow.delete.action.UserContentCleanup;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -45,11 +46,21 @@ public class DeleteDatabaseConsultantAction
    * a supervision performed by somebody else, that supervision is lost as collateral — making
    * {@code added_by_consultant_id} nullable in a migration would allow it to survive.
    *
+   * <p>The row is also kept when clearing the consultant's unencrypted content (drafts,
+   * notification feed) failed earlier in the workflow. That content is keyed by the consultant, so
+   * deleting the account row would orphan it beyond any retry — the row is what the next scheduler
+   * run needs to try again (#983, KDG epic #1010).
+   *
    * @param actionTarget the {@link ConsultantDeletionWorkflowDTO} with the {@link Consultant} to
    *     delete
    */
   @Override
   public void execute(ConsultantDeletionWorkflowDTO actionTarget) {
+    if (UserContentCleanup.failed(actionTarget.getDeletionWorkflowErrors())) {
+      log.warn("Keeping consultant account row: unencrypted user content could not be deleted");
+      return;
+    }
+
     try {
       this.sessionRepository
           .findByConsultantAndStatusIn(

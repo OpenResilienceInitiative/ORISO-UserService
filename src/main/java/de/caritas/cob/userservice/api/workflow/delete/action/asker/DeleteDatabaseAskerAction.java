@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.workflow.delete.action.UserContentCleanup;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -37,10 +38,19 @@ public class DeleteDatabaseAskerAction implements ActionCommand<AskerDeletionWor
    * fails. The chat itself is deliberately left alone — a group chat outlives any single
    * participant.
    *
+   * <p>The row is also kept when clearing the user's unencrypted content (drafts, notification
+   * feed) failed earlier in the workflow. That content is keyed by the user, so deleting the
+   * account row would orphan it beyond any retry — the row is what the next scheduler run needs to
+   * try again (#983, KDG epic #1010).
+   *
    * @param actionTarget the {@link AskerDeletionWorkflowDTO} with the {@link User} to delete
    */
   @Override
   public void execute(AskerDeletionWorkflowDTO actionTarget) {
+    if (UserContentCleanup.failed(actionTarget.getDeletionWorkflowErrors())) {
+      log.warn("Keeping user account row: unencrypted user content could not be deleted");
+      return;
+    }
     if (!deleteChatMemberships(actionTarget) || !deleteMobileTokens(actionTarget)) {
       return;
     }
