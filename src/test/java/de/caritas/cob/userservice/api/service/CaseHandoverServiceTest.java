@@ -1328,7 +1328,9 @@ class CaseHandoverServiceTest {
     var advice =
         new de.caritas.cob.userservice.tenantadminservice.generated.web.model
                 .CaseHandoverReasonPolicy()
-            .code("COUNSELLOR_ASKED_FOR_ADVICE")
+            .code(
+                de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .CaseHandoverReasonPolicy.CodeEnum.COUNSELLOR_ASKED_FOR_ADVICE)
             .labels(labels)
             .enabled(enabled)
             .accessAllowed(enabled)
@@ -1338,7 +1340,7 @@ class CaseHandoverServiceTest {
             .maxAccessDurationMinutes(duration);
     return new de.caritas.cob.userservice.tenantadminservice.generated.web.model
             .CaseHandoverPolicies()
-        .reasons(java.util.Map.of(advice.getCode(), advice));
+        .reasons(java.util.Map.of(advice.getCode().getValue(), advice));
   }
 
   @Test
