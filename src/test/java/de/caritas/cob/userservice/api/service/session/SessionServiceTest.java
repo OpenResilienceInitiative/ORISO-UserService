@@ -197,6 +197,11 @@ class SessionServiceTest {
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private AgencyService agencyService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.config.observability.ConsultantAgencyFallbackTelemetry
+      agencyFallbackTelemetry;
+
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
   private final EasyRandom easyRandom = new EasyRandom();
@@ -218,7 +223,8 @@ class SessionServiceTest {
             sessionAccessService,
             sessionSupervisorRepository);
     userSessionQueryService =
-        new UserSessionQueryService(sessionRepository, agencyService, sessionAccessService);
+        new UserSessionQueryService(
+            sessionRepository, agencyService, sessionAccessService, agencyFallbackTelemetry);
     consultantSessionDetailService =
         new ConsultantSessionDetailService(sessionRepository, sessionAccessService, null);
     sessionService = new SessionService(sessionRepository, consultingTypeManager);
@@ -1176,6 +1182,9 @@ class SessionServiceTest {
         .thenReturn(List.of());
 
     Session participantSession = easyRandom.nextObject(Session.class);
+    // Explicit, like the supervised-session sibling below: every source in this method is
+    // restricted to IN_PROGRESS, and easyRandom would otherwise pick the status at random.
+    participantSession.setStatus(SessionStatus.IN_PROGRESS);
     GroupChatParticipant participant = mock(GroupChatParticipant.class);
     when(participant.getChatId()).thenReturn(participantSession.getId());
     when(groupChatParticipantRepository.findByConsultantId(CONSULTANT_ID))
@@ -1189,6 +1198,38 @@ class SessionServiceTest {
         consultantSessionQueryService.getTeamSessionsForConsultant(consultant);
 
     assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void
+      getTeamSessionsForConsultant_Should_ExcludeParticipantSessions_When_SessionIsNotInProgress() {
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getConsultantAgencies()).thenReturn(CONSULTANT_AGENCY_SET);
+    when(consultant.getId()).thenReturn(CONSULTANT_ID);
+    when(sessionRepository
+            .findByAgencyIdInAndConsultantNotAndStatusAndTeamSessionOrderByCreateDateAsc(
+                any(), any(), any(), anyBoolean()))
+        .thenReturn(List.of());
+    when(sessionRepository.findByConsultantAndTeamSessionAndStatus(any(), anyBoolean(), any()))
+        .thenReturn(List.of());
+
+    // findAllById applies no status filter, so a finished group chat used to be listed among
+    // the consultant's active team sessions.
+    Session finishedParticipantSession = easyRandom.nextObject(Session.class);
+    finishedParticipantSession.setStatus(SessionStatus.DONE);
+    GroupChatParticipant participant = mock(GroupChatParticipant.class);
+    when(participant.getChatId()).thenReturn(finishedParticipantSession.getId());
+    when(groupChatParticipantRepository.findByConsultantId(CONSULTANT_ID))
+        .thenReturn(List.of(participant));
+    when(sessionRepository.findAllById(List.of(finishedParticipantSession.getId())))
+        .thenReturn(List.of(finishedParticipantSession));
+    when(sessionSupervisorRepository.findActiveSupervisionsByConsultantId(CONSULTANT_ID))
+        .thenReturn(List.of());
+
+    List<ConsultantSessionResponseDTO> result =
+        consultantSessionQueryService.getTeamSessionsForConsultant(consultant);
+
+    assertThat(result).isEmpty();
   }
 
   @Test

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api;
 
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
@@ -60,13 +61,21 @@ public class IdentityManager implements IdentityManaging {
     return identityAuthentication.verifyPasswordIgnoringSecondFactor(username, password);
   }
 
+  /**
+   * The typed policy failure is rethrown, not collapsed into {@code false}: the adapter raises
+   * {@link CustomValidationHttpStatusException} with {@code PASSWORD_NOT_VALID} / HTTP 400 for a
+   * rejected password, and a caller that only sees {@code false} cannot tell "weak password" from
+   * "provider unreachable". Everything else keeps the boolean fallback.
+   */
   @Override
   public boolean changePassword(String userId, String password) {
     try {
       identityPasswordUpdater.updatePassword(userId, password);
       return true;
+    } catch (CustomValidationHttpStatusException validationException) {
+      throw validationException;
     } catch (Exception ex) {
-      log.info("Could not change password for user with id {}", userId);
+      log.warn("Could not change password for user with id {}", userId, ex);
       return false;
     }
   }
@@ -106,8 +115,15 @@ public class IdentityManager implements IdentityManaging {
                 .equals(usernameTranscoder.decodeUsername(ownerUsername)));
   }
 
+  /**
+   * Case-insensitive, matching the assignment and removal paths in the Keycloak adapter: realm role
+   * names are not case-normalised, so an exact match failed to recognise a role stored as e.g.
+   * {@code CONSULTANT}.
+   */
   @Override
   public boolean hasRole(String userId, UserRole role) {
-    return identityRoleLookup.findAllByUserId(userId).contains(role.getValue());
+    return identityRoleLookup.findAllByUserId(userId).stream()
+        .filter(java.util.Objects::nonNull)
+        .anyMatch(roleName -> roleName.equalsIgnoreCase(role.getValue()));
   }
 }

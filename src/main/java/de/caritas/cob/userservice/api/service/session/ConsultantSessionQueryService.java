@@ -81,7 +81,15 @@ public class ConsultantSessionQueryService {
         Iterable<Session> participantSessionsIterable =
             sessionRepository.findAllById(participantSessionIds);
         List<Session> participantSessions = new ArrayList<>();
-        participantSessionsIterable.forEach(participantSessions::add);
+        // IN_PROGRESS like every other source in this method: `findAllById` applies no
+        // status filter, so a finished group chat the consultant merely participated in
+        // was still listed among their active team sessions.
+        participantSessionsIterable.forEach(
+            session -> {
+              if (session.getStatus() == SessionStatus.IN_PROGRESS) {
+                participantSessions.add(session);
+              }
+            });
         if (!participantSessions.isEmpty()) {
           sessions.addAll(participantSessions);
         }
@@ -101,7 +109,7 @@ public class ConsultantSessionQueryService {
       }
     }
 
-    return mapSessionsToConsultantSessionDto(sessions);
+    return mapSessionsToConsultantSessionDto(distinctById(sessions));
   }
 
   @Transactional(readOnly = true)
@@ -128,17 +136,7 @@ public class ConsultantSessionQueryService {
       return emptyList();
     }
 
-    List<Session> dedupedSessions =
-        mergedSessions.stream()
-            .filter(Objects::nonNull)
-            .collect(
-                Collectors.collectingAndThen(
-                    Collectors.toMap(
-                        Session::getId,
-                        session -> session,
-                        (left, right) -> left,
-                        LinkedHashMap::new),
-                    map -> new ArrayList<>(map.values())));
+    List<Session> dedupedSessions = distinctById(mergedSessions);
 
     dedupedSessions.sort(
         Comparator.comparing(
@@ -146,6 +144,22 @@ public class ConsultantSessionQueryService {
             .reversed());
 
     return mapSessionsToConsultantSessionDto(dedupedSessions);
+  }
+
+  /**
+   * First occurrence wins, encounter order preserved. Several of the query methods union sessions
+   * from independent repository lookups (agency, topic, owned, participated, supervised) that can
+   * legitimately return the same session, and a duplicate would otherwise reach the client as a
+   * repeated list entry.
+   */
+  private List<Session> distinctById(List<Session> sessions) {
+    return sessions.stream()
+        .filter(Objects::nonNull)
+        .collect(
+            Collectors.collectingAndThen(
+                Collectors.toMap(
+                    Session::getId, session -> session, (left, right) -> left, LinkedHashMap::new),
+                map -> new ArrayList<>(map.values())));
   }
 
   private List<Session> retrieveRegisteredSessions(List<Long> consultantAgencyIds) {
@@ -231,6 +245,7 @@ public class ConsultantSessionQueryService {
     return mapSessionsToConsultantSessionDto(sessions);
   }
 
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getVisibleAnonymousLiveChatEnquiriesByIds(
       Consultant consultant, Set<Long> sessionIds) {
     if (!isNotEmpty(sessionIds)) {
@@ -251,6 +266,7 @@ public class ConsultantSessionQueryService {
     return mapSessionsToConsultantSessionDto(sessions);
   }
 
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getDirectlyAssignedSessionsByIdsCrossTenant(
       Consultant consultant, Set<Long> sessionIds) {
     if (!isNotEmpty(sessionIds)) {

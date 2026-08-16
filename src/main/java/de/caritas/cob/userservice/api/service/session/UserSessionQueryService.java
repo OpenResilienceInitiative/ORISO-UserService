@@ -7,6 +7,8 @@ import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
+import de.caritas.cob.userservice.api.config.observability.ConsultantAgencyFallbackTelemetry;
+import de.caritas.cob.userservice.api.config.observability.ConsultantAgencyFallbackTelemetry.Reason;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -20,6 +22,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 
 /** Builds user-facing session query responses and resolves their agency data. */
@@ -31,15 +34,20 @@ public class UserSessionQueryService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull AgencyService agencyService;
   private final @NonNull SessionAccessService sessionAccessService;
+  private final @NonNull ConsultantAgencyFallbackTelemetry fallbackTelemetry;
 
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsForUserId(String userId) {
     List<Session> sessions = sessionRepository.findByUserUserId(userId);
     if (!isNotEmpty(sessions)) {
       return emptyList();
     }
-    return convertToUserSessionResponseDTO(sessions, fetchAgencies(sessions, "user " + userId));
+    // A fixed label, never the user id: this string reaches a WARN log on every
+    // AgencyService 403, and the Keycloak user id does not belong in application logs.
+    return convertToUserSessionResponseDTO(sessions, fetchAgencies(sessions, "user session list"));
   }
 
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsByUserAndRoomIds(
       String userId, Set<String> matrixRoomIds, Set<String> roles) {
     sessionAccessService.checkForAskerRoles(roles);
@@ -50,6 +58,7 @@ public class UserSessionQueryService {
         sessions, fetchAgencies(sessions, "session list lookup"));
   }
 
+  @Transactional(readOnly = true)
   public List<UserSessionResponseDTO> getSessionsByUserAndSessionIds(
       String userId, Set<Long> sessionIds, Set<String> roles) {
     sessionAccessService.checkForAskerRoles(roles);
@@ -79,9 +88,25 @@ public class UserSessionQueryService {
     try {
       return agencyService.getAgencies(agencyIds);
     } catch (HttpClientErrorException.Forbidden e) {
-      log.warn("Forbidden while loading agencies for {}: {}", context, e.getMessage());
+      // Counted, not just logged: the caller still returns 200 with `agency` null,
+      // so without a metric this degradation is invisible to operators. The
+      // exception message is dropped — it can carry the upstream response body.
+      recordAgencyFallback(context);
       return emptyList();
     }
+  }
+
+  private void recordAgencyFallback(String context) {
+    fallbackTelemetry
+        .record(Reason.DEPENDENCY_ERROR)
+        .ifPresent(
+            suppressed ->
+                log.warn(
+                    "AgencyService forbidden while loading agencies for {}; returning sessions "
+                        + "without agency data. suppressedSincePreviousWarning={}. "
+                        + "Per-call failures remain available in outbound dependency metrics.",
+                    context,
+                    suppressed));
   }
 
   private List<UserSessionResponseDTO> convertToUserSessionResponseDTO(

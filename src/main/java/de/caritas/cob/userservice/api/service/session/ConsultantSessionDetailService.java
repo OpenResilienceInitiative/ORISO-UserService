@@ -14,6 +14,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.lang.Nullable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Focused authorized query boundary for one consultant-facing session detail response. */
 @Service
@@ -27,6 +28,7 @@ public class ConsultantSessionDetailService {
   @Value("${feature.topics.enabled:true}")
   private boolean topicsFeatureEnabled;
 
+  @Transactional(readOnly = true)
   public ConsultantSessionDTO fetchSessionForConsultant(
       @NonNull Long sessionId, @NonNull Consultant consultant) {
     var session =

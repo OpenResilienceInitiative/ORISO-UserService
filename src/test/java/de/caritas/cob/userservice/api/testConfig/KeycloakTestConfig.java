@@ -16,6 +16,9 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.keycloak.admin.client.resource.UserResource;
@@ -103,11 +106,30 @@ public class KeycloakTestConfig {
         return dummyMail;
       }
 
-      @Override
-      public void assignRoles(String userId, Collection<String> roleNames) {}
+      /**
+       * Per-user role state, so role provisioning is observable in integration tests. Previously
+       * both mutators discarded their arguments and {@link #findAllByUserId} returned every {@link
+       * UserRole}: a service that assigned the wrong roles — or none — still looked correct, and
+       * every role-gated assertion passed unconditionally.
+       *
+       * <p>Seed roles explicitly (via {@code assignRoles}) in a test that needs them.
+       */
+      private final Map<String, Set<String>> rolesByUserId = new ConcurrentHashMap<>();
 
       @Override
-      public void removeRolesIfPresent(String userId, Collection<String> roleNames) {}
+      public void assignRoles(String userId, Collection<String> roleNames) {
+        rolesByUserId
+            .computeIfAbsent(userId, key -> ConcurrentHashMap.newKeySet())
+            .addAll(roleNames);
+      }
+
+      @Override
+      public void removeRolesIfPresent(String userId, Collection<String> roleNames) {
+        var assigned = rolesByUserId.get(userId);
+        if (assigned != null) {
+          assigned.removeAll(roleNames);
+        }
+      }
 
       @Override
       public void updatePassword(String userId, String password) {}
@@ -127,7 +149,7 @@ public class KeycloakTestConfig {
 
       @Override
       public List<String> findAllByUserId(String userId) {
-        return java.util.Arrays.stream(UserRole.values()).map(UserRole::getValue).toList();
+        return List.copyOf(rolesByUserId.getOrDefault(userId, Set.of()));
       }
     };
   }

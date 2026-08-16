@@ -1,11 +1,13 @@
 package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
@@ -196,6 +198,48 @@ class IdentityManagerTest {
     when(identityRoleLookup.findAllByUserId("consultant-id")).thenReturn(List.of("user"));
 
     assertThat(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT)).isFalse();
+  }
+
+  @Test
+  void hasRoleShouldMatchRealmRoleNameIgnoringCase() {
+    // Keycloak does not case-normalise realm role names, and the assignment path already
+    // compares lower-cased. An exact match here left an upper-cased role unrecognised.
+    when(identityRoleLookup.findAllByUserId("consultant-id"))
+        .thenReturn(List.of("USER", "Group-Chat-Consultant"));
+
+    assertThat(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT)).isTrue();
+  }
+
+  @Test
+  void hasRoleShouldIgnoreNullRoleNamesFromTheLookup() {
+    when(identityRoleLookup.findAllByUserId("consultant-id"))
+        .thenReturn(java.util.Arrays.asList(null, "group-chat-consultant"));
+
+    assertThat(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT)).isTrue();
+  }
+
+  @Test
+  void changePasswordShouldRethrowTheTypedPolicyViolation() {
+    // A weak password must stay a 400 PASSWORD_NOT_VALID; collapsing it into `false` made it
+    // indistinguishable from the identity provider being unreachable.
+    var validationException =
+        new CustomValidationHttpStatusException(
+            de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                .HttpStatusExceptionReason.PASSWORD_NOT_VALID,
+            org.springframework.http.HttpStatus.BAD_REQUEST);
+    doThrow(validationException).when(identityPasswordUpdater).updatePassword("user-id", "weak");
+
+    assertThatThrownBy(() -> identityManager.changePassword("user-id", "weak"))
+        .isSameAs(validationException);
+  }
+
+  @Test
+  void changePasswordShouldReturnFalseForUnexpectedFailures() {
+    doThrow(new IllegalStateException("provider down"))
+        .when(identityPasswordUpdater)
+        .updatePassword("user-id", "secret");
+
+    assertThat(identityManager.changePassword("user-id", "secret")).isFalse();
   }
 
   @Test

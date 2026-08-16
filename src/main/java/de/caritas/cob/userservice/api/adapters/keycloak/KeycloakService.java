@@ -127,9 +127,6 @@ public class KeycloakService
 
   private OutboundHttpMetrics outboundHttpMetrics;
 
-  @Value("${api.error.keycloakError}")
-  private String keycloakError;
-
   @Value("${multitenancy.enabled}")
   private Boolean multiTenancyEnabled;
 
@@ -349,15 +346,22 @@ public class KeycloakService
         }
         return new IdentityAccountCreated(createdUserId);
       }
-      handleCreateKeycloakUserError(response);
+      // The detail is returned, never stashed on the bean: KeycloakService is a
+      // singleton, so writing it to a field let two concurrent failures report
+      // each other's provider error text (and permanently overwrote the
+      // configured `api.error.keycloakError` default after the first failure).
+      throw new InternalServerErrorException(
+          String.format(
+              "Could not create Keycloak account for: %s %nKeycloak error: %s",
+              account.username(), handleCreateKeycloakUserError(response)));
     }
-    throw new InternalServerErrorException(
-        String.format(
-            "Could not create Keycloak account for: %s %nKeycloak error: %s",
-            account.username(), keycloakError));
   }
 
-  private void handleCreateKeycloakUserError(Response response) {
+  /**
+   * Throws the typed duplicate-account exceptions, or returns the failure detail for the caller to
+   * put into its own message.
+   */
+  private String handleCreateKeycloakUserError(Response response) {
     final int status = response.getStatus();
     String rawResponse = "";
 
@@ -380,13 +384,12 @@ public class KeycloakService
       throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
-    // Preserve prior behavior but include status/raw details to avoid opaque 500s.
-    keycloakError =
-        !rawResponse.isBlank()
-            ? String.format("Keycloak create-user failed with status %s: %s", status, rawResponse)
-            : String.format("Keycloak create-user failed with status %s", status);
-
     log.warn("Keycloak create-user failed. status={}, rawResponse={}", status, rawResponse);
+
+    // Preserve prior behavior but include status/raw details to avoid opaque 500s.
+    return !rawResponse.isBlank()
+        ? String.format("Keycloak create-user failed with status %s: %s", status, rawResponse)
+        : String.format("Keycloak create-user failed with status %s", status);
   }
 
   /**
@@ -623,9 +626,20 @@ public class KeycloakService
       return;
     }
 
+    // Case-insensitive on both sides, matching `ensureRolesOnce`. Keycloak realm
+    // roles are not case-normalised, so an exact match left a role stored as
+    // `CONSULTANT` un-removable — a privilege that could never be revoked.
+    var requestedRoleNames =
+        roleNames.stream()
+            .filter(roleName -> nonNull(roleName))
+            .map(roleName -> roleName.toLowerCase(Locale.ROOT))
+            .collect(Collectors.toCollection(LinkedHashSet::new));
     var rolesToRemove =
         assignedRoles.stream()
-            .filter(role -> role.getName() != null && roleNames.contains(role.getName()))
+            .filter(
+                role ->
+                    role.getName() != null
+                        && requestedRoleNames.contains(role.getName().toLowerCase(Locale.ROOT)))
             .toList();
     if (!rolesToRemove.isEmpty()) {
       realmRoles.remove(rolesToRemove);

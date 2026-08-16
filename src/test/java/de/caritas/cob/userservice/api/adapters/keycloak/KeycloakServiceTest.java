@@ -932,6 +932,29 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void removeRolesIfPresent_Should_remove_When_assignedRoleDiffersOnlyByCase() {
+    // Keycloak realm role names are not case-normalised. Matching exactly meant a role stored
+    // as "CONSULTANT" could never be revoked, while the assignment path already lower-cased.
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.get(anyString())).thenReturn(userResource);
+    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
+    RoleRepresentation assignedRole = mock(RoleRepresentation.class);
+    when(assignedRole.getName()).thenReturn("CONSULTANT");
+    when(roleScopeResource.listAll()).thenReturn(singletonList(assignedRole));
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
+    when(userResource.roles()).thenReturn(roleMappingResource);
+    RealmResource realmResource = mock(RealmResource.class);
+    when(realmResource.users()).thenReturn(usersResource);
+    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+
+    this.keycloakService.removeRolesIfPresent("user", Set.of("consultant"));
+
+    verify(roleScopeResource).remove(List.of(assignedRole));
+  }
+
+  @Test
   public void removeRolesIfPresent_Should_notWrite_When_requestedRolesAreAbsent() {
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);

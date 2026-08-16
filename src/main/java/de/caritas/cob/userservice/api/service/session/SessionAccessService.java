@@ -90,12 +90,23 @@ public class SessionAccessService {
     }
   }
 
+  /**
+   * A session without a user falls through to the 403 rather than throwing NPE: callers such as
+   * {@code UserSessionQueryService#getSessionsByUserAndRoomIds} feed every row matched by room id
+   * into this check, and {@code Session#getUser()} is nullable (see {@code
+   * FinishAnonymousConversationFacade#verifyPermissionToFinish}). The role grouping is
+   * parenthesised explicitly — an authorization rule should not depend on operator precedence to be
+   * read correctly.
+   */
   void checkAskerPermissionForSession(Session session, String userId, Set<String> roles) {
-    if ((roles.contains(UserRole.USER.getValue())
-            || session.getRegistrationType() == RegistrationType.ANONYMOUS
-                && roles.contains(UserRole.ANONYMOUS.getValue()))
-        && session.getUser().getUserId().equals(userId)) {
-      return;
+    if (nonNull(session.getUser())) {
+      boolean askerRoleMatches =
+          roles.contains(UserRole.USER.getValue())
+              || (session.getRegistrationType() == RegistrationType.ANONYMOUS
+                  && roles.contains(UserRole.ANONYMOUS.getValue()));
+      if (askerRoleMatches && userId.equals(session.getUser().getUserId())) {
+        return;
+      }
     }
     throw new ForbiddenException(
         String.format("Asker %s not allowed to access session with ID %s", userId, session.getId()),
@@ -106,7 +117,10 @@ public class SessionAccessService {
     try {
       checkConsultantAssignment(consultant, session);
     } catch (ForbiddenException e) {
-      log.info(e.getMessage());
+      // Only the session id, at debug: the exception message carries the consultant and session
+      // identifiers, and this is an expected negative result on a filtering path — logging it at
+      // INFO put identifiers into application logs on every non-permitted session.
+      log.debug("Consultant not permitted to session {}", session.getId());
       return false;
     }
     return true;
