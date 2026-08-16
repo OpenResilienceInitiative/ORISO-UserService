@@ -584,15 +584,6 @@ public class KeycloakService
     return null;
   }
 
-  /**
-   * Assigns the role "user" to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   */
-  public void updateUserRole(final String userId) {
-    updateRole(userId, "user");
-  }
-
   @Override
   public void ensureRoles(final String userId, final Collection<String> roleNames) {
     var requestedRoles = new LinkedHashSet<>(roleNames);
@@ -627,16 +618,6 @@ public class KeycloakService
     }
   }
 
-  /**
-   * Assigns the given {@link UserRole} to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   * @param role {@link UserRole}
-   */
-  public void updateRole(final String userId, final UserRole role) {
-    this.updateRole(userId, role.getValue());
-  }
-
   @Override
   public void removeRoleIfPresent(final String userId, final String roleName) {
     // Get realm and user resources
@@ -666,24 +647,24 @@ public class KeycloakService
     return Optional.empty();
   }
 
-  /**
-   * Assigns the role with the given name to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   * @param roleName Keycloak role name
-   */
-  public void updateRole(final String userId, final String roleName) {
+  @Override
+  public void assignRoles(final String userId, final Collection<String> roleNames) {
+    var requestedRoles = new LinkedHashSet<>(roleNames);
+    if (requestedRoles.isEmpty()) {
+      return;
+    }
+
     try {
-      updateRolesOnce(userId, Collections.singletonList(roleName));
+      updateRolesOnce(userId, requestedRoles);
     } catch (NotAuthorizedException e) {
       log.warn(
-          "Keycloak admin session was unauthorized while assigning role {} to user {}, forcing"
+          "Keycloak admin session was unauthorized while assigning {} roles to user {}, forcing"
               + " token refresh and retrying once",
-          roleName,
+          requestedRoles.size(),
           userId);
       recordRetry("admin-session-refresh");
       keycloakClient.refreshAdminSession();
-      updateRolesOnce(userId, Collections.singletonList(roleName));
+      updateRolesOnce(userId, requestedRoles);
     }
   }
 

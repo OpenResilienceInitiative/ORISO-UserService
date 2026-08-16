@@ -811,7 +811,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void updateRole_Should_throwKeycloakException_When_roleCouldNotBeUpdated() {
+  public void assignRoles_Should_throwKeycloakException_When_roleCouldNotBeUpdated() {
     assertThrows(
         KeycloakException.class,
         () -> {
@@ -835,12 +835,12 @@ public class KeycloakServiceTest {
           when(realmResource.roles()).thenReturn(rolesResource);
           when(keycloakClient.getRealmResource()).thenReturn(realmResource);
 
-          this.keycloakService.updateRole("user", "role");
+          this.keycloakService.assignRoles("user", List.of("role"));
         });
   }
 
   @Test
-  public void updateRole_Should_updateRole_When_roleUpdateIsValid() {
+  public void assignRoles_Should_updateRole_When_roleUpdateIsValid() {
     String validRole = "role";
 
     UserResource userResource = mock(UserResource.class);
@@ -867,13 +867,13 @@ public class KeycloakServiceTest {
     when(realmResource.roles()).thenReturn(rolesResource);
     when(keycloakClient.getRealmResource()).thenReturn(realmResource);
 
-    this.keycloakService.updateRole("user", validRole);
+    this.keycloakService.assignRoles("user", List.of(validRole));
 
     verify(roleScopeResource, times(1)).add(any());
   }
 
   @Test
-  public void updateRole_Should_RefreshAdminSessionAndRetry_When_Unauthorized() {
+  public void assignRoles_Should_RefreshAdminSessionAndRetry_When_Unauthorized() {
     var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
     keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
     String validRole = "role";
@@ -899,7 +899,7 @@ public class KeycloakServiceTest {
         .thenThrow(new NotAuthorizedException("Bearer"))
         .thenReturn(realmResource);
 
-    keycloakService.updateRole("user", validRole);
+    keycloakService.assignRoles("user", List.of(validRole));
 
     verify(keycloakClient).refreshAdminSession();
     verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
@@ -941,8 +941,8 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void updateRole_Should_updateUserWithProvidedRole() {
-    UserRole validRole = UserRole.USER;
+  public void assignRoles_Should_updateUserWithProvidedRole() {
+    String validRole = UserRole.USER.getValue();
 
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);
@@ -951,7 +951,7 @@ public class KeycloakServiceTest {
     RoleRepresentation keycloakRoleMock = mock(RoleRepresentation.class);
     // Production verifies the assignment via RoleRepresentation#getName (isRoleAssigned), not
     // toString; otherwise the role appears unassigned and updateRole throws a KeycloakException.
-    when(keycloakRoleMock.getName()).thenReturn(validRole.getValue());
+    when(keycloakRoleMock.getName()).thenReturn(validRole);
     when(roleScopeResource.listAll()).thenReturn(singletonList(keycloakRoleMock));
     RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
     when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
@@ -968,10 +968,10 @@ public class KeycloakServiceTest {
     when(realmResource.roles()).thenReturn(rolesResource);
     when(keycloakClient.getRealmResource()).thenReturn(realmResource);
 
-    this.keycloakService.updateRole("user", validRole);
+    this.keycloakService.assignRoles("user", List.of(validRole));
 
     verify(roleScopeResource, times(1)).add(any());
-    verify(rolesResource, times(1)).get(validRole.getValue());
+    verify(rolesResource, times(1)).get(validRole);
   }
 
   @Test

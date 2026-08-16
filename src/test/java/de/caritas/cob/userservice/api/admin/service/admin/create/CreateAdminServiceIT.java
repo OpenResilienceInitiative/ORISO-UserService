@@ -114,8 +114,9 @@ class CreateAdminServiceIT {
     assertNull(userDTOArgumentCaptor.getValue().getTenantId());
 
     verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify((IdentityRoleUpdater) identityClient)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isNull();
@@ -150,8 +151,9 @@ class CreateAdminServiceIT {
     assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
 
     verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify((IdentityRoleUpdater) identityClient)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isEqualTo(1L);
@@ -190,8 +192,9 @@ class CreateAdminServiceIT {
     assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
 
     verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify((IdentityRoleUpdater) identityClient)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isEqualTo(1L);
@@ -222,8 +225,9 @@ class CreateAdminServiceIT {
     assertNull(userDTOArgumentCaptor.getValue().getTenantId());
 
     verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify((IdentityRoleUpdater) identityClient)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isNull();
