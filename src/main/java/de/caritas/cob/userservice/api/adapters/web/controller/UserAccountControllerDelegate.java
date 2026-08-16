@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import static java.util.Objects.nonNull;
-
 import de.caritas.cob.userservice.api.adapters.web.dto.AbsenceDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.DeleteUserAccountDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
@@ -28,8 +26,8 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -54,7 +52,7 @@ class UserAccountControllerDelegate {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull DecryptionService decryptionService;
   private final @NonNull ConsultantDataFacade consultantDataFacade;
-  private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull IdentityPolicy identityPolicy;
   private final @NonNull IdentityManaging identityManager;
   private final @NonNull AccountManaging accountManager;
   private final @NonNull Messaging messenger;
@@ -128,7 +126,7 @@ class UserAccountControllerDelegate {
             partialUserData,
             otpInfoDTO,
             videoChatConfig.getE2eEncryptionEnabled(),
-            identityClientConfig.getDisplayNameAllowedForConsultants());
+            identityPolicy.isConsultantDisplayNameAllowed());
 
     return new ResponseEntity<>(fullUserData, HttpStatus.OK);
   }
@@ -159,7 +157,7 @@ class UserAccountControllerDelegate {
   }
 
   private boolean isOtpAllowed() {
-    return identityClientConfig.isOtpAllowed(authenticatedUser.getRoles());
+    return identityPolicy.isTwoFactorAuthenticationAllowed(authenticatedUser.getRoles());
   }
 
   private IdentityOtpCredential retrieveOtpCredentialIfAllowed() {
@@ -229,10 +227,7 @@ class UserAccountControllerDelegate {
       email = userAccountProvider.retrieveValidatedUser().getEmail();
     }
 
-    boolean hasRealEmail =
-        nonNull(email)
-            && !email.isBlank()
-            && !email.endsWith(identityClientConfig.getEmailDummySuffix());
+    boolean hasRealEmail = identityPolicy.isProfileEmailUsableForMagicLink(email);
     if (!hasRealEmail) {
       throw new BadRequestException(
           "Magic link login can only be enabled when a profile email is set.");
