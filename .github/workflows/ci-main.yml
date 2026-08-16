@@ -8,6 +8,7 @@ on:
       - dev
       - pre-dev
 
+      - 'speed/**'
 env:
   REGISTRY: ghcr.io
   ORG: openresilienceinitiative
