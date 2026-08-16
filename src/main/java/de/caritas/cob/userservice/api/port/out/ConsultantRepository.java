@@ -65,6 +65,7 @@ public interface ConsultantRepository
               + "    OR UPPER(c.firstName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(c.lastName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(c.email) LIKE CONCAT('%', UPPER(?1), '%')"
+              + "    OR UPPER(c.internalDisplayName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    )"
               + "  )")
   Page<ConsultantBase> findAllByInfix(String infix, Long tenantId, Pageable pageable);
@@ -90,6 +91,7 @@ public interface ConsultantRepository
               + "    OR UPPER(c.firstName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(c.lastName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "    OR UPPER(c.email) LIKE CONCAT('%', UPPER(?1), '%')"
+              + "    OR UPPER(c.internalDisplayName) LIKE CONCAT('%', UPPER(?1), '%')"
               + "  )"
               + ")")
   Page<ConsultantBase> findAllByInfixAndAgencyIds(

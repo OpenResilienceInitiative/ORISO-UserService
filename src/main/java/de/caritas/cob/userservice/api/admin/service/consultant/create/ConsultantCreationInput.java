@@ -24,6 +24,30 @@ interface ConsultantCreationInput {
     return null;
   }
 
+  default String getDisplayName() {
+    return null;
+  }
+
+  default String getInternalDisplayName() {
+    return null;
+  }
+
+  default String getSalutation() {
+    return null;
+  }
+
+  default String getPosition() {
+    return null;
+  }
+
+  default String getTitle() {
+    return null;
+  }
+
+  default String getAdminRemarks() {
+    return null;
+  }
+
   String getPassword();
 
   default boolean shouldGeneratePassword() {
