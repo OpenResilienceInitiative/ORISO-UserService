@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountSettingsUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -89,6 +90,7 @@ import org.springframework.web.client.RestClientResponseException;
 @RequiredArgsConstructor
 public class KeycloakService
     implements IdentityAccountRemover,
+        IdentityAccountSettingsUpdater,
         IdentityAuthentication,
         IdentityClient,
         IdentityDeactivator,
@@ -144,6 +146,7 @@ public class KeycloakService
    * @param password Keycloak password
    * @return true if password change was successful
    */
+  @Override
   public boolean changePassword(final String userId, final String password) {
     try {
       updatePassword(userId, password);
@@ -155,7 +158,8 @@ public class KeycloakService
     return true;
   }
 
-  public void changeLanguage(final String userId, final String locale) {
+  @Override
+  public void changePreferredLanguage(final String userId, final String locale) {
     UserResource userResource = keycloakClient.getUsersResource().get(userId);
     var user = userResource.toRepresentation();
 
