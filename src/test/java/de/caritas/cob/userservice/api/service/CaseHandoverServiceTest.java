@@ -324,6 +324,28 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void searchCandidates_matchesInternalDisplayNameOnlyQuery() {
+    // The candidate list renders the internal name with fallback (#996), so a query matching
+    // ONLY the internal name must not filter the session out before rendering; the public
+    // display name stays a valid search term as well.
+    previous.setDisplayName("Anna B.");
+    previous.setInternalDisplayName("Standort Nord Team 7");
+    when(sessionRepository
+            .findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
+                List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
+        .thenReturn(List.of(session));
+
+    var internalNameResponse = caseHandoverService.searchCandidates("standort nord", 0, 15, false);
+    var publicNameResponse = caseHandoverService.searchCandidates("anna b", 0, 15, false);
+
+    assertEquals(1, internalNameResponse.getTotal());
+    assertEquals(
+        "Standort Nord Team 7",
+        internalNameResponse.getSessions().get(0).getConsultant().getDisplayName());
+    assertEquals(1, publicNameResponse.getTotal());
+  }
+
+  @Test
   void searchCandidates_matchesDecodedUsernames() {
     UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
     asker.setUsername(usernameTranscoder.encodeUsername("codexasker1782348153159"));

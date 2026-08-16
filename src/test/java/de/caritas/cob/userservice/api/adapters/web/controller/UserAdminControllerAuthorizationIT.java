@@ -345,6 +345,11 @@ class UserAdminControllerAuthorizationIT {
   void createConsultant_Should_ReturnOkAndCallConsultantAdminFilterService_When_userAdminAuthority()
       throws Exception {
     CreateConsultantDTO createConsultantDTO = easyRandom.nextObject(CreateConsultantDTO.class);
+    // This test is about authorization, not payload validation. EasyRandom runs on jeasy's
+    // fixed default seed, so adding fields to any DTO shifts the deterministic string stream —
+    // which can hand `password` a value shorter than its @Size(min = 8) and turn this into a
+    // seed-dependent 400. Pin the only min-length-constrained field to a valid value.
+    createConsultantDTO.setPassword("SecurePass123!");
 
     mvc.perform(
             post(CONSULTANT_PATH)
