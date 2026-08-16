@@ -725,7 +725,8 @@ public class CaseHandoverService {
       de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverReasonPolicy
           policy,
       String language) {
-    String code = normalizeReasonCode(policy.getCode());
+    String code =
+        normalizeReasonCode(policy.getCode() == null ? null : policy.getCode().getValue());
     Map<String, String> labels = valueOf(policy.getLabels());
     Set<String> approvalRoles =
         policy.getApprovalRoles() == null || policy.getApprovalRoles().getValue() == null
