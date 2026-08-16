@@ -256,14 +256,27 @@ public class Session implements TenantAware {
   }
 
   /**
-   * ADR-022 scope: Gate 2 applies to rooms that have a help-seeker — 1:1 counselling, live chat and
-   * self-help groups. Internal rooms (supervision per ADR-008, Team-Besprechung per ADR-016) have
-   * no help-seeker and therefore no gate. A session whose modality was never recorded predates
-   * ADR-006 and is treated as a help-seeker room, which is the safe direction: the gate shows.
+   * Whether <b>this pointer</b> can carry Gate 2 consent for this room — an allowlist, so a new
+   * modality has to be classified here deliberately instead of silently inheriting the gate.
+   *
+   * <p>True exactly where the session's own {@code user} <i>is</i> the help-seeker: 1:1 counselling
+   * ({@code AGENCY_COUNSELLING}), live chat ({@code LIVE_CHAT}), and legacy rooms that predate
+   * ADR-006 and carry no modality at all.
+   *
+   * <p><b>Group chats are deliberately excluded, including {@code SELF_HELP}, even though ADR-022
+   * scopes self-help groups into Gate 2.</b> {@code CreateChatFacade#createMatrixGroupChat} gives
+   * those sessions a tenant <i>system</i> user, because {@code user_id} is NOT NULL; the real
+   * participants join through the chat path. One pointer on that shared session therefore cannot
+   * express per-participant consent — the first participant to agree would clear the gate for
+   * everybody — and its owner is not a person who could agree in the first place. Consent for
+   * self-help groups needs a per-participant carrier, which is separate work; this construct must
+   * not be stretched to fake it.
    */
   @JsonIgnore
   public boolean isConsentGateApplicable() {
-    return conversationType != ConversationType.INTERNAL_GROUP;
+    return conversationType == null
+        || conversationType == ConversationType.AGENCY_COUNSELLING
+        || conversationType == ConversationType.LIVE_CHAT;
   }
 
   @JsonIgnore

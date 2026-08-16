@@ -8,8 +8,10 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -95,10 +97,52 @@ class SessionConsentServiceTest {
     verify(sessionRepository, never()).save(any());
   }
 
+  @Test
+  void recordConsentRejectsAGroupChatRoomThatHasNoGate() {
+    /* SELF_HELP and INTERNAL_GROUP sessions are owned by a tenant system user
+    (CreateChatFacade#createMatrixGroupChat) — one pointer there cannot express
+    per-participant consent, so the pointer must refuse the room outright rather
+    than clear the gate for everybody. */
+    var groupChat = sessionOf(42L, "system-user", null);
+    groupChat.setConversationType(ConversationType.SELF_HELP);
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(groupChat));
+    var participant = askerWithId("system-user");
+
+    assertThatThrownBy(() -> sessionConsentService.recordConsent(42L, participant, 7L))
+        .isInstanceOf(ConflictException.class);
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void recordConsentRejectsAnInternalRoomThatHasNoGate() {
+    var internalRoom = sessionOf(42L, "system-user", null);
+    internalRoom.setConversationType(ConversationType.INTERNAL_GROUP);
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(internalRoom));
+    var participant = askerWithId("system-user");
+
+    assertThatThrownBy(() -> sessionConsentService.recordConsent(42L, participant, 7L))
+        .isInstanceOf(ConflictException.class);
+    verify(sessionRepository, never()).save(any());
+  }
+
+  @Test
+  void recordConsentAcceptsALiveChatRoom() {
+    var liveChat = sessionOf(42L, "asker-1", null);
+    liveChat.setConversationType(ConversationType.LIVE_CHAT);
+    when(sessionRepository.findById(42L)).thenReturn(Optional.of(liveChat));
+
+    sessionConsentService.recordConsent(42L, askerWithId("asker-1"), 7L);
+
+    var saved = ArgumentCaptor.forClass(Session.class);
+    verify(sessionRepository).save(saved.capture());
+    assertThat(saved.getValue().getConsentedLegalVersionId()).isEqualTo(7L);
+  }
+
   private Session sessionOf(Long id, String askerId, Long consentedLegalVersionId) {
     var session = new Session();
     session.setId(id);
     session.setUser(askerWithId(askerId));
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
     session.setConsentedLegalVersionId(consentedLegalVersionId);
     return session;
   }

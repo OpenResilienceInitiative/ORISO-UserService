@@ -9,11 +9,13 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
+import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -46,6 +48,8 @@ class SessionConsentPointerIT {
   @Autowired private SessionRepository sessionRepository;
 
   @Autowired private UserRepository userRepository;
+
+  @Autowired private EntityManager entityManager;
 
   private User adviceSeeker;
 
@@ -88,7 +92,13 @@ class SessionConsentPointerIT {
     assertThat(reload(session.getId()).getConsentedLegalVersionId()).isNull();
   }
 
+  /**
+   * A real round-trip, not a first-level-cache read: without the flush/clear the assertion would
+   * pass on the in-memory instance even if the column were never written.
+   */
   private Session reload(Long sessionId) {
+    entityManager.flush();
+    entityManager.clear();
     return sessionRepository.findById(sessionId).orElseThrow();
   }
 
@@ -96,6 +106,7 @@ class SessionConsentPointerIT {
     Session session =
         new Session(adviceSeeker, CONSULTING_TYPE_ID_OFFENDER, "00000", null, NEW, false);
     session.setRegistrationType(ANONYMOUS);
+    session.setConversationType(ConversationType.LIVE_CHAT);
     session.setIsConsultantDirectlySet(false);
     session.setLanguageCode(de);
     session.setCreateDate(LocalDateTime.now().minusMinutes(1));

@@ -4,6 +4,7 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.Session;
@@ -47,6 +48,8 @@ public class SessionConsentService {
    * @param legalVersionId the legal-text version the room is cleared for
    * @throws BadRequestException if no legal version is supplied
    * @throws NotFoundException if the session does not exist
+   * @throws ConflictException if the room has no Gate 2 at all (group chats, whose session is owned
+   *     by a tenant system user — see {@link Session#isConsentGateApplicable()})
    * @throws ForbiddenException if the authenticated user is not the session's help-seeker
    */
   @Transactional
@@ -62,6 +65,14 @@ public class SessionConsentService {
             .findById(sessionId)
             .orElseThrow(
                 () -> new NotFoundException(String.format("Session %s not found", sessionId)));
+    if (!session.isConsentGateApplicable()) {
+      /* Checked before ownership so the caller gets the honest reason. Group-chat
+      sessions are owned by a tenant system user, so an ownership check alone would
+      answer 403 "not yours" for a room that has no gate to pass in the first place. */
+      throw new ConflictException(
+          String.format(
+              "Session %s has no consent gate — its owner is not a help-seeker", sessionId));
+    }
     if (!isOwnedBy(session, adviceSeeker)) {
       /* The message reaches a client of somebody who may have chosen not to identify
       themselves, so it names the session and nothing about the person. */
