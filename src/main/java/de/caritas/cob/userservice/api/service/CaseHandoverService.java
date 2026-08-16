@@ -70,7 +70,6 @@ public class CaseHandoverService {
   private static final String OUTCOME_PENDING_CLIENT_CONSENT = "PENDING_CLIENT_CONSENT";
   private static final String OUTCOME_CLIENT_CONSENT_DECLINED = "CLIENT_CONSENT_DECLINED";
   private static final String OUTCOME_ACCESS_EXPIRED = "ACCESS_EXPIRED";
-  private static final String OUTCOME_ACCESS_REVOKED = "ACCESS_REVOKED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
   private static final String CO_ACCESS_EXPIRY_TASK = "case-handover-co-access-expiry";
@@ -85,13 +84,13 @@ public class CaseHandoverService {
           "COUNSELLOR_ASKED_FOR_ADVICE",
           Map.of(
               "de",
-              "Du hast dem zeitlich begrenzten Teamzugriff zugestimmt. {{newAdvisor}} kann diese Sitzung für {{duration}} zeitlich begrenzt mitlesen. Deine bisherige Berater:in bleibt für dich zuständig.",
+              "Du hast einem zeitlich begrenzten Einblick zugestimmt. {{newAdvisor}} kann diese Sitzung für {{duration}} mitlesen. Deine bisherige Berater:in bleibt für dich zuständig.",
               "en",
-              "You agreed to time-limited team access. {{newAdvisor}} can read this session for {{duration}}. Your current counsellor remains responsible for you.",
+              "You agreed to a time-limited review. {{newAdvisor}} can read this session for {{duration}}. Your current counsellor remains responsible for you.",
               "tr",
-              "Süreli ekip erişimini onayladınız. {{newAdvisor}} bu oturumu {{duration}} boyunca okuyabilir. Mevcut danışmanınız sizden sorumlu olmaya devam eder.",
+              "Süreli incelemeyi onayladınız. {{newAdvisor}} bu oturumu {{duration}} boyunca okuyabilir. Mevcut danışmanınız sizden sorumlu olmaya devam eder.",
               "uk",
-              "Ви погодилися на обмежений у часі доступ команди. {{newAdvisor}} може читати цю сесію протягом {{duration}}. Ваш поточний консультант залишається відповідальним за вас."),
+              "Ви погодилися на тимчасовий перегляд консультації. {{newAdvisor}} може читати цю сесію протягом {{duration}}. Ваш поточний консультант залишається відповідальним за вас."),
           "COUNSELLOR_ON_HOLIDAY",
           Map.of(
               "de",
@@ -397,8 +396,7 @@ public class CaseHandoverService {
           session, requester, reason, normalizedExplanation, OUTCOME_ACCESS_DENIED, now);
     }
 
-    boolean clientConsentRequired =
-        reason.isClientConsentRequired() || Boolean.TRUE.equals(session.getSupervisionOptedOut());
+    boolean clientConsentRequired = reason.isClientConsentRequired();
     Status status = clientConsentRequired ? Status.PENDING_CLIENT_CONSENT : Status.GRANTED;
     String auditOutcome =
         clientConsentRequired ? OUTCOME_PENDING_CLIENT_CONSENT : OUTCOME_ACCESS_GRANTED;
@@ -894,29 +892,6 @@ public class CaseHandoverService {
         && !request.getExpiresAt().isAfter(LocalDateTime.now(clock));
   }
 
-  /** Ends every currently granted Advice Needed lease while preserving completed takeovers. */
-  @Transactional
-  public int revokeActiveCoAccessForSession(Long sessionId) {
-    List<CaseHandoverRequest> active =
-        caseHandoverRequestRepository.findBySessionIdAndStatusAndAccessType(
-            sessionId, Status.GRANTED, AccessType.CO_ACCESS);
-    LocalDateTime now = LocalDateTime.now(clock);
-    List<CaseHandoverRequest> revoked = new ArrayList<>();
-    active.forEach(
-        request -> {
-          if (!removeCoAccessRequesterFromMatrixRoom(request)) {
-            throw new InternalServerErrorException(
-                "Could not revoke active Case Handover Matrix access");
-          }
-          request.setStatus(Status.REVOKED);
-          request.setAuditOutcome(OUTCOME_ACCESS_REVOKED);
-          request.setResolvedAt(now);
-          revoked.add(request);
-        });
-    caseHandoverRequestRepository.saveAll(revoked);
-    return revoked.size();
-  }
-
   /**
    * Scheduler entrypoint must be {@code void}; the shared scheduler logging advice returns void.
    */
@@ -1026,7 +1001,7 @@ public class CaseHandoverService {
           session.getUser().getUserId(),
           "case.handover.granted",
           EventNotificationService.CATEGORY_SYSTEM,
-          coAccess ? "Time-limited team access granted" : "New counsellor took over your case",
+          coAccess ? "Time-limited case review granted" : "New counsellor took over your case",
           coAccess
               ? String.format(
                   "%s may read this session for %d minutes. Reason: %s",
@@ -1045,7 +1020,7 @@ public class CaseHandoverService {
           previousConsultant.getId(),
           "case.handover.granted",
           EventNotificationService.CATEGORY_SYSTEM,
-          coAccess ? "Time-limited team access granted" : "Case handover completed",
+          coAccess ? "Time-limited case review granted" : "Case handover completed",
           coAccess
               ? String.format(
                   "%s may read case #%s for %d minutes. Reason: %s",

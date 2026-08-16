@@ -107,22 +107,6 @@ public class SessionSupervisorController {
     return ResponseEntity.noContent().build();
   }
 
-  /**
-   * Canonical team-access toggle used by the chat system-message variant. The persisted {@code
-   * supervisionOptedOut} flag remains the backward-compatible storage representation while the
-   * public request uses the positive, user-facing meaning.
-   */
-  @PostMapping("/{sessionId}/team-access")
-  public ResponseEntity<Void> setTeamAccess(
-      @PathVariable @NotNull Long sessionId, @Valid @RequestBody TeamAccessDTO request) {
-    User client = userAccountService.retrieveValidatedUser();
-    if (client == null || !isClientOfSession(client, sessionId)) {
-      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
-    }
-    sessionSupervisorFacade.setSupervisionOptedOut(sessionId, !request.isAllowed());
-    return ResponseEntity.noContent().build();
-  }
-
   /** True when the authenticated user is the ratsuchende (asker) that owns the session. */
   private boolean isClientOfSession(User client, Long sessionId) {
     return sessionService
@@ -326,19 +310,6 @@ public class SessionSupervisorController {
 
     public void setOptedOut(Boolean optedOut) {
       this.optedOut = optedOut;
-    }
-  }
-
-  /** Positive request contract for the shared supervision and case-handover access setting. */
-  public static class TeamAccessDTO {
-    @NotNull private Boolean allowed;
-
-    public boolean isAllowed() {
-      return Boolean.TRUE.equals(allowed);
-    }
-
-    public void setAllowed(Boolean allowed) {
-      this.allowed = allowed;
     }
   }
 

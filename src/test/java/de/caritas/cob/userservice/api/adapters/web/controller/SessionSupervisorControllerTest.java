@@ -236,51 +236,6 @@ class SessionSupervisorControllerTest {
   }
 
   @Test
-  void setTeamAccess_mapsAllowedToTheBackwardCompatibleOptOutState() {
-    var owner = user("owner-1");
-    var session = sessionOwnedBy(72L, owner);
-    var request = new SessionSupervisorController.TeamAccessDTO();
-    request.setAllowed(false);
-    when(userAccountService.retrieveValidatedUser()).thenReturn(owner);
-    when(sessionService.getSession(72L)).thenReturn(Optional.of(session));
-
-    var response = controller.setTeamAccess(72L, request);
-
-    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-    verify(sessionSupervisorFacade).setSupervisionOptedOut(72L, true);
-  }
-
-  @Test
-  void setTeamAccess_mapsAllowedTrueToOptedOutFalse() {
-    var owner = user("owner-1");
-    var request = new SessionSupervisorController.TeamAccessDTO();
-    request.setAllowed(true);
-    when(userAccountService.retrieveValidatedUser()).thenReturn(owner);
-    when(sessionService.getSession(74L)).thenReturn(Optional.of(sessionOwnedBy(74L, owner)));
-
-    var response = controller.setTeamAccess(74L, request);
-
-    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
-    verify(sessionSupervisorFacade).setSupervisionOptedOut(74L, false);
-  }
-
-  @Test
-  void setTeamAccess_returnsForbidden_whenCallerDoesNotOwnSession() {
-    var caller = user("intruder-1");
-    var request = new SessionSupervisorController.TeamAccessDTO();
-    request.setAllowed(true);
-    when(userAccountService.retrieveValidatedUser()).thenReturn(caller);
-    when(sessionService.getSession(73L))
-        .thenReturn(Optional.of(sessionOwnedBy(73L, user("owner-1"))));
-
-    var response = controller.setTeamAccess(73L, request);
-
-    assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
-    verify(sessionSupervisorFacade, never())
-        .setSupervisionOptedOut(any(), org.mockito.ArgumentMatchers.anyBoolean());
-  }
-
-  @Test
   void controllerMethods_doNotDeclarePreAuthorizeAnnotation() throws Exception {
     // Business reason: test explicitly documents current security annotation state for future
     // hardening.

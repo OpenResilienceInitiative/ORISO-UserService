@@ -269,8 +269,7 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/client-consent",
                     "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
-                    "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
-                    "/users/sessions/{sessionId:[0-9]+}/team-access")
+                    "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(
                     HttpMethod.GET, "/users/sessions/room", "/service/users/sessions/room")

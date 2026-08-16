@@ -22,7 +22,6 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
-import de.caritas.cob.userservice.api.service.CaseHandoverService;
 import de.caritas.cob.userservice.api.supervision.SupervisionConsent;
 import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
 import de.caritas.cob.userservice.api.supervision.SupervisionReason;
@@ -69,7 +68,6 @@ class SessionSupervisorFacadeTest {
   @Mock private de.caritas.cob.userservice.api.service.user.UserAccountService userAccountService;
   @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
   @Mock private de.caritas.cob.userservice.api.helper.AuthenticatedUser authenticatedUser;
-  @Mock private CaseHandoverService caseHandoverService;
 
   private Session session;
   private Consultant addedBy;
@@ -472,7 +470,6 @@ class SessionSupervisorFacadeTest {
     assertThat(active.getRemovedDate()).isNotNull();
     verify(matrixSynapseService).removeUserFromRoom(eq(SIDE_ROOM), eq(SUPERVISOR_MXID), any());
     verify(matrixSynapseService).removeUserFromRoom(eq(CLIENT_ROOM), eq(SUPERVISOR_MXID), any());
-    verify(caseHandoverService).revokeActiveCoAccessForSession(SESSION_ID);
   }
 
   @Test
@@ -488,7 +485,6 @@ class SessionSupervisorFacadeTest {
     // reactivation) — an explicit re-add is required.
     verify(sessionSupervisorRepository, never()).findBySessionIdAndIsActiveTrue(SESSION_ID);
     verify(matrixSynapseService, never()).loginAsUserAccessToken(any());
-    verify(caseHandoverService, never()).revokeActiveCoAccessForSession(SESSION_ID);
   }
 
   // --- removeSupervisor ---

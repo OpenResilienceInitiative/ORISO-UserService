@@ -351,22 +351,6 @@ class CaseHandoverServiceTest {
   }
 
   @Test
-  void requestAccess_requiresActiveConsentWhenTeamAccessIsDisabled() {
-    session.setSupervisionOptedOut(true);
-
-    CaseHandoverStatus status =
-        caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Urgent cover.");
-
-    assertEquals("PENDING_CLIENT_CONSENT", status.getStatus());
-    assertTrue(status.isClientConsentRequired());
-    assertEquals(previous, session.getConsultant());
-    ArgumentCaptor<CaseHandoverRequest> savedRequest =
-        ArgumentCaptor.forClass(CaseHandoverRequest.class);
-    verify(caseHandoverRequestRepository).save(savedRequest.capture());
-    assertEquals("PENDING_CLIENT_CONSENT", savedRequest.getValue().getAuditOutcome());
-  }
-
-  @Test
   void getStatus_closesCoAccessExactlyAtExpiryEvenBeforeSweepRuns() {
     CaseHandoverRequest request = grantedAdviceRequest();
     request.setExpiresAt(LocalDateTime.of(2026, 8, 16, 10, 0));
@@ -473,31 +457,6 @@ class CaseHandoverServiceTest {
 
     verify(scheduledTaskClaimService).tryClaim(eq("case-handover-co-access-expiry"), any());
     assertNull(TenantContext.getCurrentTenant());
-  }
-
-  @Test
-  void revokeActiveCoAccess_doesNotSelectCompletedTakeovers() {
-    CaseHandoverRequest request = grantedAdviceRequest();
-    session.setMatrixRoomId("!room:matrix");
-    requester.setMatrixUserId("@requester:matrix");
-    previous.setMatrixUserId("@previous:matrix");
-    when(matrixSynapseService.getRoomMembers("!room:matrix"))
-        .thenReturn(Optional.of(List.of("@requester:matrix")));
-    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
-        .thenReturn("previous-token");
-    when(matrixSynapseService.removeUserFromRoom(
-            "!room:matrix", "@requester:matrix", "previous-token"))
-        .thenReturn(true);
-    when(caseHandoverRequestRepository.findBySessionIdAndStatusAndAccessType(
-            123L, CaseHandoverRequest.Status.GRANTED, CaseHandoverRequest.AccessType.CO_ACCESS))
-        .thenReturn(List.of(request));
-
-    assertEquals(1, caseHandoverService.revokeActiveCoAccessForSession(123L));
-
-    assertEquals(CaseHandoverRequest.Status.REVOKED, request.getStatus());
-    assertEquals("ACCESS_REVOKED", request.getAuditOutcome());
-    verify(matrixSynapseService)
-        .removeUserFromRoom("!room:matrix", "@requester:matrix", "previous-token");
   }
 
   @Test
@@ -708,7 +667,7 @@ class CaseHandoverServiceTest {
             org.mockito.ArgumentMatchers.eq("Advice needed"),
             org.mockito.ArgumentMatchers.eq("Need a second opinion."),
             description.capture());
-    assertTrue(description.getValue().contains("zeitlich begrenzt mitlesen"));
+    assertTrue(description.getValue().contains("zeitlich begrenzten Einblick"));
     assertTrue(description.getValue().contains("3 Stunden"));
     assertTrue(description.getValue().contains("bleibt für dich zuständig"));
     assertFalse(description.getValue().contains("Fall übernommen"));

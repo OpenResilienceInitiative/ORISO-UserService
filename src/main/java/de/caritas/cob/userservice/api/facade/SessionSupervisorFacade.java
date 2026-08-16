@@ -16,7 +16,6 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
-import de.caritas.cob.userservice.api.service.CaseHandoverService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.supervision.SupervisionConsent;
 import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
@@ -48,7 +47,6 @@ public class SessionSupervisorFacade {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull IdentityClient identityClient;
-  private final @NonNull CaseHandoverService caseHandoverService;
 
   /**
    * ADR-008 item 4: the current request's authenticated user, used to check the Berater-Admin
@@ -441,9 +439,8 @@ public class SessionSupervisorFacade {
 
     if (optedOut) {
       deactivateAllActiveSupervisors(session);
-      caseHandoverService.revokeActiveCoAccessForSession(sessionId);
     }
-    log.info("Session {} team access allowed set to {}", sessionId, !optedOut);
+    log.info("Session {} supervision opt-out set to {}", sessionId, optedOut);
   }
 
   /**
