@@ -506,6 +506,52 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void createUser_ShouldRefreshAdminSessionAndRetryOnce_WhenFirstResponseIsUnauthorized() {
+    var userDTO = new EasyRandom().nextObject(UserDTO.class);
+    var usersResource = mock(UsersResource.class);
+    var unauthorizedResponse = mock(Response.class);
+    var createdResponse = mock(Response.class);
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    when(unauthorizedResponse.getStatus()).thenReturn(HttpStatus.UNAUTHORIZED.value());
+    when(unauthorizedResponse.readEntity(String.class)).thenReturn("");
+    when(createdResponse.getStatus()).thenReturn(HttpStatus.CREATED.value());
+    when(usersResource.create(any())).thenReturn(unauthorizedResponse, createdResponse);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    givenPostCreateAttributeUpdate(usersResource, createdResponse, USER_ID);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+
+    var createdIdentity = keycloakService.createUser(userDTO);
+
+    assertThat(createdIdentity.getUserId(), is(USER_ID));
+    verify(usersResource, times(2)).create(any());
+    verify(keycloakClient, times(1)).refreshAdminSession();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
+  }
+
+  @Test
+  public void createUser_ShouldFailAfterOneRetry_WhenBothResponsesAreUnauthorized() {
+    var userDTO = new EasyRandom().nextObject(UserDTO.class);
+    var usersResource = mock(UsersResource.class);
+    var firstUnauthorizedResponse = mock(Response.class);
+    var secondUnauthorizedResponse = mock(Response.class);
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    when(firstUnauthorizedResponse.getStatus()).thenReturn(HttpStatus.UNAUTHORIZED.value());
+    when(firstUnauthorizedResponse.readEntity(String.class)).thenReturn("");
+    when(secondUnauthorizedResponse.getStatus()).thenReturn(HttpStatus.UNAUTHORIZED.value());
+    when(secondUnauthorizedResponse.readEntity(String.class)).thenReturn("");
+    when(usersResource.create(any()))
+        .thenReturn(firstUnauthorizedResponse, secondUnauthorizedResponse);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+
+    assertThrows(InternalServerErrorException.class, () -> keycloakService.createUser(userDTO));
+
+    verify(usersResource, times(2)).create(any());
+    verify(keycloakClient, times(1)).refreshAdminSession();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
+  }
+
+  @Test
   public void createUser_Should_createExpectedTenantAwareUser_When_keycloakReturnsCreated() {
     TenantContext.setCurrentTenant(1L);
     setField(keycloakService, "multiTenancyEnabled", true);

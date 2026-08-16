@@ -364,30 +364,41 @@ public class KeycloakService
     var locale =
         isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
     var kcUser = getUserRepresentation(user, firstName, lastName, locale);
-    try (var response = keycloakClient.getUsersResource().create(kcUser)) {
-      if (response.getStatus() == HttpStatus.CREATED.value()) {
-        final String createdUserId = getCreatedUserId(response.getLocation());
-        try {
-          updateIdentityAttributesAfterCreate(user, createdUserId);
-        } catch (Exception exception) {
-          log.error(
-              "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
-              createdUserId,
-              exception);
-          rollbackUser(createdUserId);
-          throw new InternalServerErrorException(
-              String.format(
-                  "Could not persist mandatory keycloak user attributes for user %s",
-                  createdUserId),
-              exception);
+    for (int attempt = 0; attempt < 2; attempt++) {
+      try (var response = keycloakClient.getUsersResource().create(kcUser)) {
+        if (response.getStatus() == HttpStatus.UNAUTHORIZED.value() && attempt == 0) {
+          log.warn(
+              "Keycloak admin session was unauthorized while creating a user, forcing token refresh and retrying once");
+          recordRetry("admin-session-refresh");
+          keycloakClient.refreshAdminSession();
+          continue;
         }
-        return new CreatedIdentity(createdUserId);
+        if (response.getStatus() == HttpStatus.CREATED.value()) {
+          final String createdUserId = getCreatedUserId(response.getLocation());
+          try {
+            updateIdentityAttributesAfterCreate(user, createdUserId);
+          } catch (Exception exception) {
+            log.error(
+                "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
+                createdUserId,
+                exception);
+            rollbackUser(createdUserId);
+            throw new InternalServerErrorException(
+                String.format(
+                    "Could not persist mandatory keycloak user attributes for user %s",
+                    createdUserId),
+                exception);
+          }
+          return new CreatedIdentity(createdUserId);
+        }
+        handleCreateKeycloakUserError(response);
       }
-      handleCreateKeycloakUserError(response);
+      throw new InternalServerErrorException(
+          String.format(
+              "Could not create Keycloak account for: %s %nKeycloak error: %s",
+              user, keycloakError));
     }
-    throw new InternalServerErrorException(
-        String.format(
-            "Could not create Keycloak account for: %s %nKeycloak error: %s", user, keycloakError));
+    throw new IllegalStateException("Unreachable Keycloak create-user retry state");
   }
 
   private void handleCreateKeycloakUserError(Response response) {
