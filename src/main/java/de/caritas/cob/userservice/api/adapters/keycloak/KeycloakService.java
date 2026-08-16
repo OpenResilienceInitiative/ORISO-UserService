@@ -11,7 +11,6 @@ import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
-import de.caritas.cob.userservice.api.config.auth.Authority;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -914,50 +913,6 @@ public class KeycloakService
       keycloakClient.getUsersResource().get(userId).remove();
     } catch (NotFoundException e) {
       log.warn("User {} not found in Keycloak, skipping deletion.", userId);
-    }
-  }
-
-  /**
-   * Returns true if the given user has the provided authority.
-   *
-   * @param userId Keycloak user ID
-   * @param authority Keycloak authority
-   * @return true if user hast provided authority
-   */
-  public boolean userHasAuthority(String userId, String authority) {
-    try {
-      return getUserRoles(userId).stream()
-          .map(role -> UserRole.getRoleByValue(role.getName()))
-          .filter(Optional::isPresent)
-          .map(Optional::get)
-          .map(Authority::getAuthoritiesByUserRole)
-          .anyMatch(currentAuthority -> currentAuthority.contains(authority));
-    } catch (Exception ex) {
-      var error = String.format("Could not get roles for user id %s", userId);
-      log.error("Keycloak error: " + error, ex);
-      throw new KeycloakException(error);
-    }
-  }
-
-  /**
-   * Returns true if the given user has the provided role.
-   *
-   * @param userId Keycloak user ID
-   * @param userRole Keycloak role
-   * @return true if user hast provided role
-   */
-  public boolean userHasRole(String userId, String userRole) {
-    try {
-      return getUserRoles(userId).stream()
-          .map(this::toUserRole)
-          .filter(Optional::isPresent)
-          .map(Optional::get)
-          .map(UserRole::getValue)
-          .anyMatch(userRole::equals);
-    } catch (Exception ex) {
-      var error = String.format("Could not get roles for user id %s", userId);
-      log.error("Keycloak error: " + error, ex);
-      throw new KeycloakException(error);
     }
   }
 

@@ -30,7 +30,6 @@ import com.google.common.collect.Maps;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
-import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -1138,56 +1137,6 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void userHasAuthority_Should_returnTrue_When_userHasAuthority() {
-    RoleRepresentation roleRepresentation = mock(RoleRepresentation.class);
-    when(roleRepresentation.getName()).thenReturn("user");
-    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
-    when(roleScopeResource.listAll()).thenReturn(singletonList(roleRepresentation));
-    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
-    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
-    UserResource userResource = mock(UserResource.class);
-    when(userResource.roles()).thenReturn(roleMappingResource);
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    boolean hasAuthority =
-        this.keycloakService.userHasAuthority("user", AuthorityValue.USER_DEFAULT);
-
-    assertThat(hasAuthority, is(true));
-  }
-
-  @Test
-  public void userHasAuthority_Should_returnThrowKeycloakException_When_userHasNoRoles() {
-    assertThrows(
-        KeycloakException.class,
-        () -> {
-          UserResource userResource = mock(UserResource.class);
-          UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-          when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-          this.keycloakService.userHasAuthority("user", "authority");
-        });
-  }
-
-  @Test
-  public void userHasAuthority_Should_returnFalse_When_userHasNotAuthority() {
-    RoleRepresentation roleRepresentation = mock(RoleRepresentation.class);
-    when(roleRepresentation.getName()).thenReturn("user");
-    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
-    when(roleScopeResource.listAll()).thenReturn(singletonList(roleRepresentation));
-    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
-    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
-    UserResource userResource = mock(UserResource.class);
-    when(userResource.roles()).thenReturn(roleMappingResource);
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    boolean hasAuthority = this.keycloakService.userHasAuthority("user", AuthorityValue.USER_ADMIN);
-
-    assertThat(hasAuthority, is(false));
-  }
-
-  @Test
   public void deactivateUser_Should_deactivateUser() {
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);
@@ -1610,33 +1559,6 @@ public class KeycloakServiceTest {
     UserResource userResource = mock(UserResource.class);
     when(userResource.roles()).thenReturn(roleMappingResource);
     return userResource;
-  }
-
-  @Test
-  public void userHasRole_Should_ReturnTrue_When_UserHasRole() {
-    UserResource userResource = givenUserResourceWithRealmRoles("user");
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    assertThat(keycloakService.userHasRole(USER_ID, "user"), is(true));
-  }
-
-  @Test
-  public void userHasRole_Should_ReturnFalse_When_UserDoesNotHaveRole() {
-    UserResource userResource = givenUserResourceWithRealmRoles("consultant");
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    assertThat(keycloakService.userHasRole(USER_ID, "user"), is(false));
-  }
-
-  @Test
-  public void userHasRole_Should_ThrowKeycloakException_When_LookupFails() {
-    UsersResource usersResource = mock(UsersResource.class);
-    when(usersResource.get(any())).thenThrow(new RuntimeException("boom"));
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    assertThrows(KeycloakException.class, () -> keycloakService.userHasRole(USER_ID, "user"));
   }
 
   @Test
