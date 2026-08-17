@@ -382,7 +382,7 @@ public class CaseHandoverService {
     }
 
     if (request.getStatus() != Status.PENDING_CLIENT_CONSENT) {
-      return toStatus(request);
+      return toClientStatus(request);
     }
 
     LocalDateTime now = LocalDateTime.now();
@@ -392,7 +392,7 @@ public class CaseHandoverService {
         request.setStatus(Status.DENIED);
         request.setAuditOutcome(OUTCOME_ALREADY_ANSWERED);
         CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
-        return toStatus(saved);
+        return toClientStatus(saved);
       }
 
       request.setStatus(Status.GRANTED);
@@ -404,14 +404,14 @@ public class CaseHandoverService {
       sessionRepository.save(session);
       CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
       notifyGranted(saved);
-      return toStatus(saved);
+      return toClientStatus(saved);
     }
 
     request.setStatus(Status.CLIENT_CONSENT_DECLINED);
     request.setAuditOutcome(OUTCOME_CLIENT_CONSENT_DECLINED);
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
     notifyConsentDeclined(saved);
-    return toStatus(saved);
+    return toClientStatus(saved);
   }
 
   private Consultant retrieveCurrentConsultant() {
@@ -722,11 +722,24 @@ public class CaseHandoverService {
         .build();
   }
 
+  private CaseHandoverStatus toClientStatus(CaseHandoverRequest request) {
+    return CaseHandoverStatus.builder()
+        .requestId(request.getId())
+        .sessionId(request.getSession().getId())
+        .status(request.getStatus().name())
+        .canViewContent(request.getStatus() == Status.GRANTED)
+        .clientConsentRequired(Boolean.TRUE.equals(request.getClientConsentRequired()))
+        .auditOutcome(request.getAuditOutcome())
+        .createdAt(request.getCreatedAt())
+        .resolvedAt(request.getResolvedAt())
+        .build();
+  }
+
   private void notifyGranted(CaseHandoverRequest request) {
     Session session = request.getSession();
     Consultant requester = request.getRequesterConsultant();
     String requesterName = resolveConsultantName(requester);
-    postGrantedChatSystemMessage(request, session, requesterName);
+    String clientDescription = postGrantedChatSystemMessage(request, session, requesterName);
     // #1010 task 1a: the explanation is counsellor-written free text that can reference case
     // content. It is no longer copied into the notification, which kept it in plaintext for good;
     // the handover-request API serves it on demand instead.
@@ -735,14 +748,18 @@ public class CaseHandoverService {
             session, requesterName, request.getReasonCode(), request.getReasonLabel(), null);
 
     if (session.getUser() != null && session.getUser().getUserId() != null) {
+      String clientParams =
+          eventNotificationService.buildCaseHandoverParams(
+              session, requesterName, null, null, null);
       eventNotificationService.createEvent(
           session.getUser().getUserId(),
           "case.handover.granted",
           EventNotificationService.CATEGORY_SYSTEM,
           "New counsellor took over your case",
-          String.format(
-              "%s took over your case. Reason: %s", requesterName, request.getReasonLabel()),
-          params,
+          isBlank(clientDescription)
+              ? String.format("%s took over your case.", requesterName)
+              : clientDescription,
+          clientParams,
           buildAskerSessionActionPath(session),
           session.getId(),
           session.getTenantId());
@@ -769,18 +786,20 @@ public class CaseHandoverService {
    * Posts the designed in-chat system notification ("new counsellor took over your case") into the
    * session's Matrix room. Emission failures must never fail the handover itself.
    */
-  private void postGrantedChatSystemMessage(
+  private String postGrantedChatSystemMessage(
       CaseHandoverRequest request, Session session, String requesterName) {
+    String description = null;
     try {
-      var description = resolveClientNotificationDescription(request, requesterName);
+      description = resolveClientNotificationDescription(request, requesterName);
       matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
-          session, requesterName, request.getReasonLabel(), request.getExplanation(), description);
+          session, requesterName, description);
     } catch (RuntimeException exception) {
       log.warn(
           "Case-handover system message for session {} could not be posted: {}",
           session.getId(),
           exception.getMessage());
     }
+    return description;
   }
 
   private String resolveClientNotificationDescription(
@@ -817,22 +836,17 @@ public class CaseHandoverService {
       return;
     }
     String requesterName = resolveConsultantName(request.getRequesterConsultant());
-    // #1010 task 1a: no explanation free text in the stored notification — the client reads it
-    // from the handover request itself, which the action path and params already point at.
+    // The request id remains so the advice seeker can answer the consent prompt. The configured
+    // reason and counsellor-written explanation stay staff-only and are never copied into the
+    // advice seeker's notification payload.
     eventNotificationService.createEvent(
         session.getUser().getUserId(),
         "case.handover.consent.requested",
         EventNotificationService.CATEGORY_SYSTEM,
         "Counsellor access request",
-        String.format(
-            "%s requested access to your case. Reason: %s",
-            requesterName, request.getReasonLabel()),
+        String.format("%s requested access to your case.", requesterName),
         eventNotificationService.buildCaseHandoverParams(
-            session,
-            requesterName,
-            request.getReasonCode(),
-            request.getReasonLabel(),
-            request.getId()),
+            session, requesterName, null, null, request.getId()),
         buildAskerSessionActionPath(session) + "?caseHandoverRequestId=" + request.getId(),
         session.getId(),
         session.getTenantId());

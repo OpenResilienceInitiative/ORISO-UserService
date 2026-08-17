@@ -7,7 +7,9 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -41,6 +43,8 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -151,6 +155,66 @@ class CaseHandoverServiceTest {
         "the explanation label must be gone too, not just this sample's wording");
   }
 
+  @Test
+  void requestAccess_usesOnlyLocalizedClientTemplateForAskerNotification() {
+    when(eventNotificationService.buildCaseHandoverParams(
+            eq(session), anyString(), isNull(), isNull(), isNull()))
+        .thenReturn("{\"audience\":\"asker\"}");
+
+    caseHandoverService.requestAccess(
+        123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
+
+    verify(eventNotificationService)
+        .createEvent(
+            eq("asker"),
+            eq("case.handover.granted"),
+            eq(EventNotificationService.CATEGORY_SYSTEM),
+            anyString(),
+            contains("erkrankt"),
+            eq("{\"audience\":\"asker\"}"),
+            anyString(),
+            eq(123L),
+            eq(7L));
+  }
+
+  @Test
+  void requestAccess_keepsPendingConsentReasonOutOfAskerNotification() {
+    when(eventNotificationService.buildCaseHandoverParams(
+            eq(session), anyString(), isNull(), isNull(), isNull()))
+        .thenReturn("{\"audience\":\"asker\"}");
+
+    caseHandoverService.requestAccess(
+        123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Client disclosed sensitive information.");
+
+    verify(eventNotificationService)
+        .createEvent(
+            eq("asker"),
+            eq("case.handover.consent.requested"),
+            eq(EventNotificationService.CATEGORY_SYSTEM),
+            anyString(),
+            eq("Requesting Counsellor requested access to your case."),
+            eq("{\"audience\":\"asker\"}"),
+            anyString(),
+            eq(123L),
+            eq(7L));
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"de", "en", "fr", "ru", "tr", "uk", "ti"})
+  void requestAccess_providesSafeClientDescriptionForEverySupportedLanguage(String language) {
+    session.setLanguageCode(LanguageCode.getByCode(language));
+    ArgumentCaptor<String> description = ArgumentCaptor.forClass(String.class);
+
+    caseHandoverService.requestAccess(
+        123L, "OTHER_EMERGENCY", "Client disclosed sensitive information.");
+
+    verify(matrixSessionSystemMessageService)
+        .postCaseHandoverGrantedMessage(eq(session), anyString(), description.capture());
+    assertFalse(description.getValue().isBlank());
+    assertFalse(description.getValue().contains("Other emergency"));
+    assertFalse(description.getValue().contains("Client disclosed sensitive information"));
+  }
+
   /** The reason stays — it is a configured label, not free text — and moves into params. */
   @Test
   void requestAccess_carriesRequesterAndReasonAsParams() {
@@ -246,8 +310,6 @@ class CaseHandoverServiceTest {
         .postCaseHandoverGrantedMessage(
             org.mockito.ArgumentMatchers.eq(session),
             org.mockito.ArgumentMatchers.anyString(),
-            org.mockito.ArgumentMatchers.eq("Other emergency"),
-            org.mockito.ArgumentMatchers.eq("Colleague is unavailable."),
             org.mockito.ArgumentMatchers.contains("deinen Fall übernommen"));
   }
 
@@ -392,6 +454,8 @@ class CaseHandoverServiceTest {
 
     assertEquals("GRANTED", status.getStatus());
     assertTrue(status.isCanViewContent());
+    assertNull(status.getReasonCode());
+    assertNull(status.getReasonLabel());
     assertEquals(requester, session.getConsultant());
     assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
     assertEquals("ACCESS_GRANTED", request.getAuditOutcome());
@@ -411,8 +475,6 @@ class CaseHandoverServiceTest {
         .postCaseHandoverGrantedMessage(
             org.mockito.ArgumentMatchers.eq(session),
             org.mockito.ArgumentMatchers.eq("Requesting Counsellor"),
-            org.mockito.ArgumentMatchers.eq("Counsellor asked for advice"),
-            org.mockito.ArgumentMatchers.eq("Need a second opinion."),
             description.capture());
     assertTrue(description.getValue().contains("hat deinen Fall übernommen"));
     assertFalse(description.getValue().contains("zeitweise mitlesen"));
