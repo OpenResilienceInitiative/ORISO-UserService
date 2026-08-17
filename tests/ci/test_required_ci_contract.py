@@ -18,6 +18,54 @@ def job_block(workflow: str, job_name: str) -> str:
 
 
 class RequiredCiContractTest(unittest.TestCase):
+    def test_required_runner_rejects_skipped_tests_and_counts_only_executed_tests(self):
+        runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            fake_maven = temp_root / "mvnw"
+            fake_maven.write_text(
+                "#!/usr/bin/env python3\n"
+                "from pathlib import Path\n"
+                "reports = Path('target/surefire-reports')\n"
+                "reports.mkdir(parents=True)\n"
+                "required = [\n"
+                "    'AppointmentControllerE2EIT',\n"
+                "    'ConversationControllerAuthorizationIT',\n"
+                "    'ConversationControllerIT',\n"
+                "    'UserAdminControllerE2EIT',\n"
+                "    'UserControllerE2EIT',\n"
+                "]\n"
+                "classes = required + [f'Integration{i}IT' for i in range(70)]\n"
+                "for index, name in enumerate(classes):\n"
+                "    tests = 756 if index == 0 else 1\n"
+                "    skipped = 4 if index == 0 else 0\n"
+                "    (reports / f'TEST-{name}.xml').write_text(\n"
+                "        f'<testsuite name=\"{name}\" tests=\"{tests}\" failures=\"0\" '\n"
+                "        f'errors=\"0\" skipped=\"{skipped}\" />'\n"
+                "    )\n"
+            )
+            fake_maven.chmod(0o755)
+            env = os.environ.copy()
+            env["ORISO_MAVEN_WRAPPER"] = str(fake_maven)
+
+            result = subprocess.run(
+                [runner],
+                cwd=temp_root,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+        self.assertNotEqual(0, result.returncode)
+        self.assertIn("tests=830", result.stdout)
+        self.assertIn("executed=826", result.stdout)
+        self.assertIn("skipped=4", result.stdout)
+        self.assertIn(
+            "Expected at least 830 executed integration tests, found 826.", result.stderr
+        )
+        self.assertIn("Integration reports contain 4 skipped tests.", result.stderr)
+
     def test_integration_tests_preserve_the_configured_test_database(self):
         test_root = ROOT / "src/test/java"
         offenders = []
@@ -59,6 +107,44 @@ class RequiredCiContractTest(unittest.TestCase):
 
         self.assertEqual(23, result.returncode)
 
+    def test_required_runner_does_not_discover_mariadb_owned_tests(self):
+        runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            arguments_file = temp_root / "arguments"
+            fake_maven = temp_root / "mvnw"
+            fake_maven.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os\n"
+                "from pathlib import Path\n"
+                "import sys\n"
+                "Path(os.environ['MAVEN_ARGUMENTS_FILE']).write_text('\\n'.join(sys.argv[1:]))\n"
+                "raise SystemExit(23)\n"
+            )
+            fake_maven.chmod(0o755)
+            env = os.environ.copy()
+            env["ORISO_MAVEN_WRAPPER"] = str(fake_maven)
+            env["MAVEN_ARGUMENTS_FILE"] = str(arguments_file)
+
+            result = subprocess.run([runner], cwd=temp_root, env=env, check=False)
+
+            arguments = arguments_file.read_text()
+
+        self.assertEqual(23, result.returncode)
+        for mariadb_owned_test in (
+            "DatabaseChangelogDriftIT",
+            "AdminStatisticsRepositoryMariaDbIT",
+            "ProvisioningCompensationMariaDbIT",
+            "ScheduledTaskClaimMariaDbIT",
+            "TutorialProgressServiceMariaDbReplicaIT",
+            "OrganizerMariaDbReplicaIT",
+            "DeactivateGroupChatSchedulerMariaDbReplicaIT",
+            "DeleteUserAccountSchedulerMariaDbReplicaIT",
+            "DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT",
+            "SupportRoomMigrationConvergenceIT",
+        ):
+            self.assertIn(f"!{mariadb_owned_test}", arguments)
+
     def test_pull_request_has_one_truthful_required_conclusion(self):
         workflow = (ROOT / ".github/workflows/ci-pull-request.yml").read_text()
         integration = job_block(workflow, "required-integration-tests")
@@ -91,8 +177,13 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("LIQUIBASE_IT_DB_URL", reusable)
         self.assertIn("DatabaseChangelogDriftIT", reusable)
         self.assertIn("AdminStatisticsRepositoryMariaDbIT", reusable)
+        self.assertIn("ProvisioningCompensationMariaDbIT", reusable)
+        self.assertIn("ScheduledTaskClaimMariaDbIT", reusable)
+        self.assertIn("TutorialProgressServiceMariaDbReplicaIT", reusable)
         self.assertIn("OrganizerMariaDbReplicaIT", reusable)
         self.assertIn("DeactivateGroupChatSchedulerMariaDbReplicaIT", reusable)
+        self.assertIn("DeleteUserAccountSchedulerMariaDbReplicaIT", reusable)
+        self.assertIn("DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT", reusable)
         self.assertNotIn("continue-on-error:", reusable)
 
         for relative_path in (
@@ -104,7 +195,7 @@ class RequiredCiContractTest(unittest.TestCase):
             mariadb = job_block(workflow, "mariadb-contract")
             self.assertIn("uses: ./.github/workflows/mariadb-contract.yml", mariadb)
 
-    def test_required_integration_jobs_provide_redis(self):
+    def test_required_integration_jobs_execute_redis_without_discovering_mariadb_tests(self):
         for relative_path in (
             ".github/workflows/ci-pull-request.yml",
             ".github/workflows/ci-feature-branch.yml",
@@ -122,10 +213,18 @@ class RequiredCiContractTest(unittest.TestCase):
                 integration,
                 f"{relative_path} must wait for Redis readiness",
             )
+            self.assertIn(
+                "ORISO_LOCAL_REDIS_IT: true",
+                integration,
+                f"{relative_path} must execute Redis-gated integration tests",
+            )
+            self.assertNotIn("LIQUIBASE_IT_DB_URL", integration)
+            self.assertNotIn("mariadb:", integration)
 
     def test_full_integration_suite_is_required_without_quarantine(self):
         runner = (ROOT / "scripts/ci/run-required-integration-tests.sh").read_text()
-        self.assertIn("-Dskip.unit-tests=true clean integration-test", runner)
+        self.assertIn("-Dskip.unit-tests=true", runner)
+        self.assertIn('"-Dtest=${required_test_pattern}" clean integration-test', runner)
         minimum_reports = re.search(
             r"^minimum_reports = (?P<value>\d+)$", runner, re.MULTILINE
         )
@@ -137,7 +236,9 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertGreaterEqual(int(minimum_reports.group("value")), 75)
         self.assertGreaterEqual(int(minimum_tests.group("value")), 830)
         self.assertIn("if len(reports) < minimum_reports:", runner)
-        self.assertIn("if tests < minimum_tests:", runner)
+        self.assertIn("executed = tests - skipped", runner)
+        self.assertIn("if executed < minimum_tests:", runner)
+        self.assertIn("if skipped:", runner)
 
         for required_e2e in (
             "AppointmentControllerE2EIT",
