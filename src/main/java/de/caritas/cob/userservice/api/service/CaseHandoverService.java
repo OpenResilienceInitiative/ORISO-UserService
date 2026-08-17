@@ -63,28 +63,63 @@ public class CaseHandoverService {
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
 
+  private record ClientHandoverCopy(
+      String grantedTitle,
+      String grantedDescription,
+      String pendingTitle,
+      String pendingDescription) {}
+
   /**
-   * Client-safe handover text deliberately carries no reason-derived wording. The internal policy
-   * reason may describe illness, absence, emergencies, or staffing changes and therefore must stay
-   * on staff and audit surfaces. Unknown languages deliberately fall back to German; every
-   * currently supported language has an explicit entry.
+   * Built-in client-safe copy used until the tenant-scoped effective policy cache in
+   * ORISO-UserService#201 becomes the canonical source. No entry contains reason-derived wording;
+   * internal illness, absence, emergency, and staffing details stay on staff and audit surfaces.
+   * Unknown languages deliberately fall back to German, while every currently supported language
+   * has an explicit entry. fr/ru/tr/uk/ti copy requires native-speaker review before final release.
    */
-  private static final Map<String, String> CLIENT_SAFE_HANDOVER_TEMPLATES =
+  private static final Map<String, ClientHandoverCopy> CLIENT_SAFE_HANDOVER_COPY =
       Map.of(
           "de",
-          "{{newAdvisor}} hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.",
+          new ClientHandoverCopy(
+              "Neue Beratungsperson hat deinen Fall übernommen",
+              "{{newAdvisor}} hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.",
+              "Zugriffsanfrage einer Beratungsperson",
+              "{{newAdvisor}} bittet um Zugriff auf deinen Fall. Deine Zustimmung ist erforderlich."),
           "en",
-          "{{newAdvisor}} has taken over your case and will continue your counselling from now on.",
+          new ClientHandoverCopy(
+              "New counsellor took over your case",
+              "{{newAdvisor}} has taken over your case and will continue your counselling from now on.",
+              "Counsellor access request",
+              "{{newAdvisor}} requested access to your case. Your consent is required."),
           "fr",
-          "{{newAdvisor}} a repris votre dossier et poursuivra désormais votre accompagnement.",
+          new ClientHandoverCopy(
+              "Un nouveau conseiller ou une nouvelle conseillère a repris votre dossier",
+              "{{newAdvisor}} a repris votre dossier et poursuivra désormais votre accompagnement.",
+              "Demande d’accès d’un conseiller ou d’une conseillère",
+              "{{newAdvisor}} demande l’accès à votre dossier. Votre consentement est requis."),
           "ru",
-          "{{newAdvisor}} принял(а) ваше дело и с этого момента продолжит консультирование.",
+          new ClientHandoverCopy(
+              "Новый консультант принял ваше дело",
+              "{{newAdvisor}} принял(а) ваше дело и с этого момента продолжит консультирование.",
+              "Запрос консультанта на доступ",
+              "{{newAdvisor}} запросил(а) доступ к вашему делу. Требуется ваше согласие."),
           "tr",
-          "{{newAdvisor}} vakanızı devraldı ve bundan sonra danışmanlığınıza devam edecek.",
+          new ClientHandoverCopy(
+              "Yeni bir danışman vakanızı devraldı",
+              "{{newAdvisor}} vakanızı devraldı ve bundan sonra danışmanlığınıza devam edecek.",
+              "Danışman erişim talebi",
+              "{{newAdvisor}} vakanıza erişim istedi. Onayınız gerekiyor."),
           "uk",
-          "{{newAdvisor}} перейняв(-ла) вашу справу й відтепер продовжуватиме консультування.",
+          new ClientHandoverCopy(
+              "Новий консультант перейняв вашу справу",
+              "{{newAdvisor}} перейняв(-ла) вашу справу й відтепер продовжуватиме консультування.",
+              "Запит консультанта на доступ",
+              "{{newAdvisor}} запитує доступ до вашої справи. Потрібна ваша згода."),
           "ti",
-          "{{newAdvisor}} ጉዳይካ ተረኪቡ ካብ ሕጂ ንደሓር ምኽሪ ክቕጽል እዩ።");
+          new ClientHandoverCopy(
+              "ሓድሽ ኣማኻሪ ጉዳይካ ተረኪቡ",
+              "{{newAdvisor}} ጉዳይካ ተረኪቡ ካብ ሕጂ ንደሓር ምኽሪ ክቕጽል እዩ።",
+              "ናይ ኣማኻሪ ናይ ምእታው ሕቶ",
+              "{{newAdvisor}} ናብ ጉዳይካ ክኣቱ ሓቲቱ። ፍቓድካ የድሊ።"));
 
   /**
    * Default client-facing notification templates per reason and language (de/en/tr/uk). Source:
@@ -762,7 +797,9 @@ public class CaseHandoverService {
     Session session = request.getSession();
     Consultant requester = request.getRequesterConsultant();
     String requesterName = resolveConsultantName(requester);
-    String clientDescription = postGrantedChatSystemMessage(session, requesterName);
+    ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
+    String clientDescription = renderClientCopy(clientCopy.grantedDescription(), requesterName);
+    postGrantedChatSystemMessage(session, requesterName, clientDescription);
     // #1010 task 1a: the explanation is counsellor-written free text that can reference case
     // content. It is no longer copied into the notification, which kept it in plaintext for good;
     // the handover-request API serves it on demand instead.
@@ -778,7 +815,7 @@ public class CaseHandoverService {
           session.getUser().getUserId(),
           "case.handover.granted",
           EventNotificationService.CATEGORY_SYSTEM,
-          "New counsellor took over your case",
+          clientCopy.grantedTitle(),
           clientDescription,
           clientParams,
           buildAskerSessionActionPath(session),
@@ -807,10 +844,9 @@ public class CaseHandoverService {
    * Posts the designed in-chat system notification ("new counsellor took over your case") into the
    * session's Matrix room. Emission failures must never fail the handover itself.
    */
-  private String postGrantedChatSystemMessage(Session session, String requesterName) {
-    String description = null;
+  private void postGrantedChatSystemMessage(
+      Session session, String requesterName, String description) {
     try {
-      description = resolveClientNotificationDescription(session, requesterName);
       matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
           session, requesterName, description);
     } catch (RuntimeException exception) {
@@ -819,14 +855,14 @@ public class CaseHandoverService {
           session.getId(),
           exception.getMessage());
     }
-    return description;
   }
 
-  private String resolveClientNotificationDescription(Session session, String requesterName) {
+  private ClientHandoverCopy resolveClientHandoverCopy(Session session) {
     var language = resolveSessionLanguage(session);
-    var template =
-        CLIENT_SAFE_HANDOVER_TEMPLATES.getOrDefault(
-            language, CLIENT_SAFE_HANDOVER_TEMPLATES.get("de"));
+    return CLIENT_SAFE_HANDOVER_COPY.getOrDefault(language, CLIENT_SAFE_HANDOVER_COPY.get("de"));
+  }
+
+  private String renderClientCopy(String template, String requesterName) {
     return template.replace("{{newAdvisor}}", requesterName);
   }
 
@@ -843,6 +879,7 @@ public class CaseHandoverService {
       return;
     }
     String requesterName = resolveConsultantName(request.getRequesterConsultant());
+    ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
     // The request id remains so the advice seeker can answer the consent prompt. The configured
     // reason and counsellor-written explanation stay staff-only and are never copied into the
     // advice seeker's notification payload.
@@ -850,8 +887,8 @@ public class CaseHandoverService {
         session.getUser().getUserId(),
         "case.handover.consent.requested",
         EventNotificationService.CATEGORY_SYSTEM,
-        "Counsellor access request",
-        String.format("%s requested access to your case.", requesterName),
+        clientCopy.pendingTitle(),
+        renderClientCopy(clientCopy.pendingDescription(), requesterName),
         eventNotificationService.buildCaseHandoverParams(
             session, requesterName, null, null, request.getId()),
         buildAskerSessionActionPath(session) + "?caseHandoverRequestId=" + request.getId(),
