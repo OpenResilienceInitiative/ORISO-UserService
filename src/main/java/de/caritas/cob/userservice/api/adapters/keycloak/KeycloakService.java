@@ -325,39 +325,57 @@ public class KeycloakService
     }
   }
 
-  /** Creates an identity account and returns its provider-neutral identifier. */
+  /**
+   * Creates an identity account and returns its provider-neutral identifier.
+   *
+   * <p>A stale Keycloak admin session answers 401 on the first attempt (#1044). Refresh the session
+   * once and retry; a second 401 is a real authorization problem and is reported.
+   */
   @Override
   public IdentityAccountCreated createAccount(IdentityAccountCreation account) {
     var locale = isNull(account.locale()) ? "de" : account.locale();
     var kcUser = getUserRepresentation(account, locale);
-    try (var response = keycloakClient.getUsersResource().create(kcUser)) {
-      if (response.getStatus() == HttpStatus.CREATED.value()) {
-        final String createdUserId = getCreatedUserId(response.getLocation());
-        try {
-          updateIdentityAttributesAfterCreate(account, createdUserId);
-        } catch (Exception exception) {
-          log.error(
-              "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
-              createdUserId,
-              exception);
-          rollbackUser(createdUserId);
-          throw new InternalServerErrorException(
-              String.format(
-                  "Could not persist mandatory keycloak user attributes for user %s",
-                  createdUserId),
-              exception);
+    for (int attempt = 0; attempt < 2; attempt++) {
+      try (var response = keycloakClient.getUsersResource().create(kcUser)) {
+        if (response.getStatus() == HttpStatus.UNAUTHORIZED.value() && attempt == 0) {
+          log.warn(
+              "Keycloak admin session was unauthorized while creating a user, forcing token refresh and retrying once");
+          recordRetry("admin-session-refresh");
+          keycloakClient.refreshAdminSession();
+          continue;
         }
-        return new IdentityAccountCreated(createdUserId);
+        if (response.getStatus() == HttpStatus.CREATED.value()) {
+          final String createdUserId = getCreatedUserId(response.getLocation());
+          try {
+            updateIdentityAttributesAfterCreate(account, createdUserId);
+          } catch (Exception exception) {
+            log.error(
+                "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
+                createdUserId,
+                exception);
+            rollbackUser(createdUserId);
+            throw new InternalServerErrorException(
+                String.format(
+                    "Could not persist mandatory keycloak user attributes for user %s",
+                    createdUserId),
+                exception);
+          }
+          return new IdentityAccountCreated(createdUserId);
+        }
+        // The detail is returned, never stashed on the bean: KeycloakService is a
+        // singleton, so writing it to a field let two concurrent failures report
+        // each other's provider error text (and permanently overwrote the
+        // configured `api.error.keycloakError` default after the first failure).
+        throw new InternalServerErrorException(
+            String.format(
+                "Could not create Keycloak account for: %s %nKeycloak error: %s",
+                account.username(), handleCreateKeycloakUserError(response)));
       }
-      // The detail is returned, never stashed on the bean: KeycloakService is a
-      // singleton, so writing it to a field let two concurrent failures report
-      // each other's provider error text (and permanently overwrote the
-      // configured `api.error.keycloakError` default after the first failure).
-      throw new InternalServerErrorException(
-          String.format(
-              "Could not create Keycloak account for: %s %nKeycloak error: %s",
-              account.username(), handleCreateKeycloakUserError(response)));
     }
+    throw new InternalServerErrorException(
+        String.format(
+            "Could not create Keycloak account for: %s %nKeycloak error: %s",
+            account.username(), "admin session stayed unauthorized after one refresh"));
   }
 
   /**
