@@ -48,8 +48,11 @@ What is enforced rather than described:
   any failure, error, or skipped testcase;
 - a required CI guard rejects newly disabled or ignored tests;
 - the MariaDB schema and statistics contracts run in their separately required
-  MariaDB job and are excluded from discovery in the primary inventory; the
-  Redis availability contract runs in the required integration environment.
+  MariaDB job and are excluded from discovery in the primary inventory;
+- `ConsultantActivityRegistryRedisIT` proves Redis-backed availability and
+  `RedisOneTimeTokenStoreIT` proves shared one-time-token state. Both run in the
+  primary required inventory; the pull-request workflow additionally reruns
+  them in its separately required `redis-contract` job.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the
