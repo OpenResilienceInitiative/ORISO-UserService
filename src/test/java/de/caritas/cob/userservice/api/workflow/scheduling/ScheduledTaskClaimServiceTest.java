@@ -9,6 +9,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataIntegrityViolationException;
 
 @ExtendWith(MockitoExtension.class)
@@ -36,6 +37,18 @@ class ScheduledTaskClaimServiceTest {
     when(claimWriter.hasActiveClaim("task")).thenReturn(false);
 
     assertThatThrownBy(() -> service.tryClaim("task", duration)).isSameAs(failure);
+  }
+
+  @Test
+  void tryClaimShouldRetryOnceWhenInitialInsertDeadlocksBeforeWinnerIsVisible() {
+    var service = new ScheduledTaskClaimService(claimWriter);
+    var duration = Duration.ofMinutes(30);
+    when(claimWriter.claim("task", duration))
+        .thenThrow(new CannotAcquireLockException("initial insert deadlock"))
+        .thenReturn(false);
+    when(claimWriter.hasActiveClaim("task")).thenReturn(false);
+
+    assertThat(service.tryClaim("task", duration)).isFalse();
   }
 
   @Test

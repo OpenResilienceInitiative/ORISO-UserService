@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.service.session.SessionAccessService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +25,7 @@ import org.springframework.stereotype.Service;
 public class FinishAnonymousConversationFacade {
 
   private final @NonNull SessionService sessionService;
+  private final @NonNull SessionAccessService sessionAccessService;
   private final @NonNull ActionsRegistry actionsRegistry;
   private final @NonNull AuthenticatedUser authenticatedUser;
 
@@ -61,7 +63,7 @@ public class FinishAnonymousConversationFacade {
 
   private void verifyPermissionToFinish(Session session) {
     if (session.getRegistrationType() != ANONYMOUS
-        && !sessionService.isAnonymousStyleRegistration(session)) {
+        && !sessionAccessService.isAnonymousStyleRegistration(session)) {
       throw new ForbiddenException(
           "Session with id %s is not an anonymous conversation.", session.getId());
     }

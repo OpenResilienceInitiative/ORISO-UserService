@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -170,14 +171,13 @@ public class ConsultantUpdateServiceTest {
     UpdateAdminConsultantDTO updateConsultant =
         new EasyRandom().nextObject(UpdateAdminConsultantDTO.class);
     updateConsultant.setIsGroupchatConsultant(null);
+    updateConsultant.setEmail("consultant@example.com");
     keepDisplayNameUnchanged(consultant, updateConsultant);
 
     this.consultantUpdateService.updateConsultant("", updateConsultant);
 
-    verify(this.keycloakService, Mockito.never())
-        .updateRole(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
-    verify(this.keycloakService, Mockito.never())
-        .removeRoleIfPresent(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+    verify(this.keycloakService, Mockito.never()).ensureRoles(any(), any());
+    verify(this.keycloakService, Mockito.never()).removeRolesIfPresent(any(), any());
 
     ArgumentCaptor<IdentityProfileUpdate> profileCaptor =
         ArgumentCaptor.forClass(IdentityProfileUpdate.class);
@@ -186,6 +186,7 @@ public class ConsultantUpdateServiceTest {
     assertEquals(profileCaptor.getValue().tenantId(), consultant.getTenantId());
     assertEquals(profileCaptor.getValue().firstName(), updateConsultant.getFirstname());
     assertEquals(profileCaptor.getValue().lastName(), updateConsultant.getLastname());
+    assertEquals("consultant@example.com", profileCaptor.getValue().email());
     verify(this.consultantService, times(1)).saveConsultant(any());
     verify(this.appointmentService, times(1)).syncConsultantData(any());
   }
@@ -216,8 +217,8 @@ public class ConsultantUpdateServiceTest {
     this.consultantUpdateService.updateConsultant(consultant.getId(), updateConsultant, false);
 
     verify(this.keycloakService, Mockito.never()).updateProfile(any(), any());
-    verify(this.keycloakService, Mockito.never()).updateRole(any(), any(String.class));
-    verify(this.keycloakService, Mockito.never()).removeRoleIfPresent(any(), any());
+    verify(this.keycloakService, Mockito.never()).ensureRoles(any(), any());
+    verify(this.keycloakService, Mockito.never()).removeRolesIfPresent(any(), any());
     verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
     verify(this.consultantPublicSlugService).requestSlug(consultant, "nikunnj-rohit");
     verify(this.consultantService, times(1)).saveConsultant(any());
@@ -236,7 +237,7 @@ public class ConsultantUpdateServiceTest {
     this.consultantUpdateService.updateConsultant("", updateConsultant);
 
     verify(this.keycloakService)
-        .updateRole(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+        .ensureRoles(consultant.getId(), Set.of(UserRole.GROUP_CHAT_CONSULTANT.getValue()));
 
     verify(this.keycloakService, times(1))
         .updateProfile(eq(consultant.getId()), any(IdentityProfileUpdate.class));
@@ -257,7 +258,8 @@ public class ConsultantUpdateServiceTest {
     this.consultantUpdateService.updateConsultant("", updateConsultant);
 
     verify(this.keycloakService)
-        .removeRoleIfPresent(consultant.getId(), UserRole.GROUP_CHAT_CONSULTANT.getValue());
+        .removeRolesIfPresent(
+            consultant.getId(), Set.of(UserRole.GROUP_CHAT_CONSULTANT.getValue()));
 
     verify(this.keycloakService, times(1))
         .updateProfile(eq(consultant.getId()), any(IdentityProfileUpdate.class));

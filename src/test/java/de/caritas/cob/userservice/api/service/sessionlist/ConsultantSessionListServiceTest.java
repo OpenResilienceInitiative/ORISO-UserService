@@ -19,8 +19,8 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.session.ConsultantSessionQueryService;
 import de.caritas.cob.userservice.api.service.session.SessionFilter;
-import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -33,7 +33,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class ConsultantSessionListServiceTest {
 
   @InjectMocks private ConsultantSessionListService consultantSessionListService;
-  @Mock private SessionService sessionService;
+  @Mock private ConsultantSessionQueryService consultantSessionQueryService;
   @Mock private ChatService chatService;
   @Mock private ConsultantSessionEnricher consultantSessionEnricher;
   @Mock private ConsultantChatEnricher consultantChatEnricher;
@@ -42,7 +42,7 @@ class ConsultantSessionListServiceTest {
   void
       retrieveSessionsForAuthenticatedConsultant_Should_ReturnOnlySessions_WhenQueryParameterSessionStatusIsNew() {
 
-    when(sessionService.getRegisteredEnquiriesForConsultant(Mockito.any()))
+    when(consultantSessionQueryService.getRegisteredEnquiriesForConsultant(Mockito.any()))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
     when(this.consultantSessionEnricher.updateRequiredConsultantSessionValues(
             eq(CONSULTANT_SESSION_RESPONSE_DTO_LIST)))
@@ -63,7 +63,7 @@ class ConsultantSessionListServiceTest {
 
   @Test
   void retrieveSessionsForAuthenticatedConsultant_ShouldNot_SendChatsInEnquiryList() {
-    when(sessionService.getRegisteredEnquiriesForConsultant(Mockito.any()))
+    when(consultantSessionQueryService.getRegisteredEnquiriesForConsultant(Mockito.any()))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
     when(this.consultantSessionEnricher.updateRequiredConsultantSessionValues(
             eq(CONSULTANT_SESSION_RESPONSE_DTO_LIST)))
@@ -89,7 +89,7 @@ class ConsultantSessionListServiceTest {
         .thenReturn(List.of(CONSULTANT_SESSION_RESPONSE_DTO_WITH_ENCRYPTED_CHAT_MESSAGE));
     when(chatService.getChatsForConsultant(Mockito.any()))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST_WITH_ENCRYPTED_CHAT_MESSAGE);
-    when(sessionService.getActiveAndDoneSessionsForConsultant(Mockito.any()))
+    when(consultantSessionQueryService.getActiveAndDoneSessionsForConsultant(Mockito.any()))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
 
     List<ConsultantSessionResponseDTO> result =

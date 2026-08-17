@@ -15,7 +15,6 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
@@ -58,10 +57,9 @@ public class TenantAdminOnboardingService {
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull CreateAdminService createAdminService;
-  private final @NonNull IdentityClient identityClient;
-  private final @NonNull IdentitySecondFactor identitySecondFactor;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
   private final @NonNull IdentityProfileLookup identityProfileLookup;
+  private final @NonNull IdentitySecondFactor identitySecondFactor;
   private final @NonNull TenantCreationClient tenantCreationClient;
   private final @NonNull OperatorDpaContentClient operatorDpaContentClient;
   private final @NonNull PublicDpaForwardClient publicDpaForwardClient;
@@ -84,7 +82,6 @@ public class TenantAdminOnboardingService {
       @NonNull AccountInviteRepository accountInviteRepository,
       @NonNull AccountInviteService accountInviteService,
       @NonNull CreateAdminService createAdminService,
-      @NonNull IdentityClient identityClient,
       @NonNull IdentitySecondFactor identitySecondFactor,
       @NonNull IdentityAccountRemover identityAccountRemover,
       @NonNull IdentityProfileLookup identityProfileLookup,
@@ -97,7 +94,6 @@ public class TenantAdminOnboardingService {
     this.accountInviteRepository = accountInviteRepository;
     this.accountInviteService = accountInviteService;
     this.createAdminService = createAdminService;
-    this.identityClient = identityClient;
     this.identitySecondFactor = identitySecondFactor;
     this.identityAccountRemover = identityAccountRemover;
     this.identityProfileLookup = identityProfileLookup;

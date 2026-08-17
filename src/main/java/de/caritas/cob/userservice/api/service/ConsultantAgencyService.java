@@ -8,6 +8,8 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
+import de.caritas.cob.userservice.api.config.observability.ConsultantAgencyFallbackTelemetry;
+import de.caritas.cob.userservice.api.config.observability.ConsultantAgencyFallbackTelemetry.Reason;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -40,6 +42,7 @@ public class ConsultantAgencyService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull AccountManaging accountManager;
   private final @NonNull UserDtoMapper userDtoMapper;
+  private final @NonNull ConsultantAgencyFallbackTelemetry fallbackTelemetry;
 
   @Value("${registration.agency-fallback.consulting-type-id:#{null}}")
   private Integer registrationAgencyFallbackConsultingTypeId;
@@ -195,20 +198,27 @@ public class ConsultantAgencyService {
       List<AgencyDTO> agencies =
           filterOutOfflineAgencies(agencyService.getAgenciesNotCached(agencyIds));
       if (agencies.isEmpty()) {
-        log.warn(
-            "AgencyService returned no agencies for consultant {} and ids {}. Falling back to local topic assignments",
-            consultantId,
-            agencyIds);
+        recordFallback(Reason.EMPTY_RESPONSE);
         return agenciesWithLocalTopicAssignments(agencyIds, consultantTopicIds);
       }
       return enrichAgenciesWithConsultantTopicIds(agencies, consultantTopicIds);
     } catch (RuntimeException exception) {
-      log.warn(
-          "Could not load agencies for consultant {} from AgencyService, falling back to local topic assignments",
-          consultantId,
-          exception);
+      recordFallback(Reason.DEPENDENCY_ERROR);
       return agenciesWithLocalTopicAssignments(agencyIds, consultantTopicIds);
     }
+  }
+
+  private void recordFallback(Reason reason) {
+    fallbackTelemetry
+        .record(reason)
+        .ifPresent(
+            suppressed ->
+                log.warn(
+                    "AgencyService consultant-agency fallback active: reason={}, "
+                        + "suppressedSincePreviousWarning={}. "
+                        + "Per-call failures remain available in outbound dependency metrics.",
+                    reason.tagValue(),
+                    suppressed));
   }
 
   private List<AgencyDTO> enrichAgenciesWithConsultantTopicIds(

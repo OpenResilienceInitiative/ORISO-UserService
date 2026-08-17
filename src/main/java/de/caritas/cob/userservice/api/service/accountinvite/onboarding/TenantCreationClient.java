@@ -2,9 +2,8 @@ package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.api.service.identity.TechnicalIdentityTokenProvider;
 import de.caritas.cob.userservice.tenantadminservice.generated.ApiClient;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
@@ -31,8 +30,7 @@ import org.springframework.web.client.HttpClientErrorException;
 public class TenantCreationClient {
 
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
-  private final @NonNull IdentityAuthentication identityAuthentication;
-  private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull TechnicalIdentityTokenProvider technicalIdentityTokenProvider;
 
   private final @NonNull TenantAdminServiceApiControllerFactory
       tenantAdminServiceApiControllerFactory;
@@ -59,11 +57,9 @@ public class TenantCreationClient {
   }
 
   private void addTechnicalUserHeaders(ApiClient apiClient) {
-    var techUser = identityClientConfig.getTechnicalUser();
-    var identityLogin =
-        identityAuthentication.login(techUser.getUsername(), techUser.getPassword());
     HttpHeaders headers =
-        securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
+        securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(
+            technicalIdentityTokenProvider.getAccessToken());
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }
 }

@@ -5,8 +5,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixRoomMembershipProvider;
-import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
+import de.caritas.cob.userservice.api.service.session.UserSessionQueryService;
 import java.sql.Timestamp;
 import java.util.ArrayList;
 import java.util.Date;
@@ -29,7 +29,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class UserSessionListService {
 
-  private final @NonNull SessionService sessionService;
+  private final @NonNull UserSessionQueryService userSessionQueryService;
   private final @NonNull ChatService chatService;
   private final @NonNull MatrixRoomMembershipProvider matrixRoomMembershipProvider;
 
@@ -40,7 +40,7 @@ public class UserSessionListService {
   private SessionTopicEnrichmentService sessionTopicEnrichmentService;
 
   public List<UserSessionResponseDTO> retrieveSessionsForAuthenticatedUser(String userId) {
-    var sessions = sessionService.getSessionsForUserId(userId);
+    var sessions = userSessionQueryService.getSessionsForUserId(userId);
     var chats = chatService.getChatsForUserId(userId);
 
     var mergedSessions = mergeUserSessionsAndChats(userId, sessions, chats);
@@ -73,7 +73,7 @@ public class UserSessionListService {
     var sessions =
         matrixRoomIds.isEmpty()
             ? List.<UserSessionResponseDTO>of()
-            : sessionService.getSessionsByUserAndRoomIds(userId, matrixRoomIds, roles);
+            : userSessionQueryService.getSessionsByUserAndRoomIds(userId, matrixRoomIds, roles);
 
     return mergeUserSessionsAndChats(userId, sessions, chats);
   }
@@ -81,7 +81,8 @@ public class UserSessionListService {
   public List<UserSessionResponseDTO> retrieveSessionsForAuthenticatedUserAndSessionIds(
       String userId, List<Long> sessionIds, Set<String> roles) {
     var uniqueSessionIds = new HashSet<>(sessionIds);
-    var sessions = sessionService.getSessionsByUserAndSessionIds(userId, uniqueSessionIds, roles);
+    var sessions =
+        userSessionQueryService.getSessionsByUserAndSessionIds(userId, uniqueSessionIds, roles);
     var matrixRoomIds =
         sessions.stream()
             .map(sessionResponse -> sessionResponse.getSession().getMatrixRoomId())

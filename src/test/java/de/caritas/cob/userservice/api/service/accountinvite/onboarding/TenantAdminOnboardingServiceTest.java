@@ -27,7 +27,6 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -64,10 +63,9 @@ class TenantAdminOnboardingServiceTest {
   @Mock private AccountInviteRepository accountInviteRepository;
   @Mock private AccountInviteService accountInviteService;
   @Mock private CreateAdminService createAdminService;
-  @Mock private IdentityClient identityClient;
-  @Mock private IdentitySecondFactor identitySecondFactor;
   @Mock private IdentityAccountRemover identityAccountRemover;
   @Mock private IdentityProfileLookup identityProfileLookup;
+  @Mock private IdentitySecondFactor identitySecondFactor;
   @Mock private TenantCreationClient tenantCreationClient;
   @Mock private OperatorDpaContentClient operatorDpaContentClient;
   @Mock private PublicDpaForwardClient publicDpaForwardClient;
@@ -93,7 +91,6 @@ class TenantAdminOnboardingServiceTest {
             accountInviteRepository,
             accountInviteService,
             createAdminService,
-            identityClient,
             identitySecondFactor,
             identityAccountRemover,
             identityProfileLookup,
@@ -709,7 +706,8 @@ class TenantAdminOnboardingServiceTest {
     when(identityProfileLookup.findById("kc-user-1"))
         .thenReturn(
             Optional.of(
-                new IdentityProfile("kc-user-1", "enc.keycloak-username", null, null, null)));
+                new IdentityProfile(
+                    "kc-user-1", "enc.keycloak-username", "Erika", "Beispiel", null)));
     when(identitySecondFactor.setUpOtpCredential("enc.keycloak-username", "123456", "TOTPSECRET"))
         .thenReturn(true);
     // Consuming the gate re-reads the row under its lock instead of merging the snapshot held
@@ -737,7 +735,8 @@ class TenantAdminOnboardingServiceTest {
     when(identityProfileLookup.findById("kc-user-1"))
         .thenReturn(
             Optional.of(
-                new IdentityProfile("kc-user-1", "enc.keycloak-username", null, null, null)));
+                new IdentityProfile(
+                    "kc-user-1", "enc.keycloak-username", "Erika", "Beispiel", null)));
     when(identitySecondFactor.setUpOtpCredential(anyString(), anyString(), anyString()))
         .thenReturn(false);
 

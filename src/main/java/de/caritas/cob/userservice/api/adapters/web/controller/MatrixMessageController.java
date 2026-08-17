@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
+import de.caritas.cob.userservice.api.service.session.SessionAccessService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Map;
@@ -33,6 +34,7 @@ public class MatrixMessageController {
   private static final long MATRIX_BROWSER_TOKEN_TTL_MS = 55 * 60 * 1000L;
 
   private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull SessionAccessService sessionAccessService;
   private final @NonNull SessionService sessionService;
   private final @NonNull ChatService chatService;
   private final @NonNull AuthenticatedUser authenticatedUser;
@@ -119,7 +121,7 @@ public class MatrixMessageController {
   public ResponseEntity<?> sendMessage(
       @PathVariable Long sessionId, @RequestBody Map<String, Object> messageRequest) {
 
-    var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
+    var session = sessionAccessService.assertUserHasAccess(sessionId, authenticatedUser);
 
     try {
       if (session.getMatrixRoomId() == null) {
@@ -265,7 +267,7 @@ public class MatrixMessageController {
   @GetMapping("/sessions/{sessionId}/sync")
   public ResponseEntity<?> syncMessages(@PathVariable Long sessionId) {
 
-    var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
+    var session = sessionAccessService.assertUserHasAccess(sessionId, authenticatedUser);
 
     try {
       if (session.getMatrixRoomId() == null) {
@@ -345,7 +347,7 @@ public class MatrixMessageController {
     if (session.isPresent() && session.get().getMatrixRoomId() != null) {
       return Optional.of(
           MatrixRoomAccess.forSession(
-              sessionService.assertUserHasAccess(sessionId, authenticatedUser)));
+              sessionAccessService.assertUserHasAccess(sessionId, authenticatedUser)));
     }
 
     var chat = chatService.getChat(sessionId);

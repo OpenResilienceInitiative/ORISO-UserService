@@ -10,10 +10,9 @@ import de.caritas.cob.userservice.api.config.apiclient.AppointmentAgencyServiceA
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentAskerServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentConsultantServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.service.identity.TechnicalIdentityTokenProvider;
 import de.caritas.cob.userservice.appointmentservice.generated.ApiClient;
 import de.caritas.cob.userservice.appointmentservice.generated.web.AgencyApi;
 import de.caritas.cob.userservice.appointmentservice.generated.web.ConsultantApi;
@@ -48,8 +47,7 @@ public class AppointmentService {
 
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
-  private final @NonNull IdentityAuthentication identityAuthentication;
-  private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull TechnicalIdentityTokenProvider technicalIdentityTokenProvider;
 
   @Value("${feature.appointment.enabled}")
   private boolean appointmentFeatureEnabled;
@@ -163,10 +161,9 @@ public class AppointmentService {
 
   @SuppressWarnings("Duplicates")
   private void addTechnicalUserHeaders(ApiClient apiClient) {
-    var techUser = identityClientConfig.getTechnicalUser();
-    var identityLogin =
-        identityAuthentication.login(techUser.getUsername(), techUser.getPassword());
-    var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
+    var headers =
+        securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(
+            technicalIdentityTokenProvider.getAccessToken());
     tenantHeaderSupplier.addTenantHeader(headers);
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }

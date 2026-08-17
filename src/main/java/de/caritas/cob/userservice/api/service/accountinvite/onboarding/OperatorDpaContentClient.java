@@ -1,9 +1,8 @@
 package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.api.service.identity.TechnicalIdentityTokenProvider;
 import de.caritas.cob.userservice.tenantadminservice.generated.ApiClient;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaVersionDTO;
@@ -37,8 +36,9 @@ import org.springframework.web.client.RestClientException;
  * onboarding flow and must not 500 because the upstream lookup hiccuped. Every upstream failure
  * degrades to {@code null}, which the Admin panel renders as the "text will be provided by the
  * platform operator" hint. Published text is cached for a short while because resolve is called on
- * an anonymous endpoint and each miss costs a technical-user login; a miss is never cached, so
- * publishing the operator DPA takes effect immediately.
+ * an anonymous endpoint and each miss costs an authenticated TenantService read; a miss is never
+ * cached, so publishing the operator DPA takes effect immediately. The technical identity grant
+ * itself is shared with the other server-to-server clients and bounded by its provider-side expiry.
  */
 @Service
 @Slf4j
@@ -48,8 +48,7 @@ public class OperatorDpaContentClient {
   static final Duration CACHE_TTL = Duration.ofMinutes(5);
 
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
-  private final @NonNull IdentityAuthentication identityAuthentication;
-  private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull TechnicalIdentityTokenProvider technicalIdentityTokenProvider;
 
   private final @NonNull TenantAdminServiceApiControllerFactory
       tenantAdminServiceApiControllerFactory;
@@ -60,13 +59,11 @@ public class OperatorDpaContentClient {
 
   public OperatorDpaContentClient(
       @NonNull SecurityHeaderSupplier securityHeaderSupplier,
-      @NonNull IdentityAuthentication identityAuthentication,
-      @NonNull IdentityClientConfig identityClientConfig,
+      @NonNull TechnicalIdentityTokenProvider technicalIdentityTokenProvider,
       @NonNull TenantAdminServiceApiControllerFactory tenantAdminServiceApiControllerFactory,
       @Value("${account.invite.onboarding.operator-dpa.tenant-id:1}") long operatorTenantId) {
     this.securityHeaderSupplier = securityHeaderSupplier;
-    this.identityAuthentication = identityAuthentication;
-    this.identityClientConfig = identityClientConfig;
+    this.technicalIdentityTokenProvider = technicalIdentityTokenProvider;
     this.tenantAdminServiceApiControllerFactory = tenantAdminServiceApiControllerFactory;
     this.operatorTenantId = operatorTenantId;
   }
@@ -153,11 +150,9 @@ public class OperatorDpaContentClient {
   }
 
   private void addTechnicalUserHeaders(ApiClient apiClient) {
-    var techUser = identityClientConfig.getTechnicalUser();
-    var identityLogin =
-        identityAuthentication.login(techUser.getUsername(), techUser.getPassword());
     HttpHeaders headers =
-        securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
+        securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(
+            technicalIdentityTokenProvider.getAccessToken());
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }
 

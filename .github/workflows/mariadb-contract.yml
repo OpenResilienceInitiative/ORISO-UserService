@@ -46,3 +46,6 @@ jobs:
         USERSERVICE_LOAD_REQUESTS: 80
         USERSERVICE_LOAD_CONCURRENCY: 12
       run: ./scripts/load/run-authenticated-write-replicas.sh
+
+    - name: Prove bounded AgencyService outage across two replicas
+      run: ./scripts/load/run-seeded-public-read-replicas-outage.sh

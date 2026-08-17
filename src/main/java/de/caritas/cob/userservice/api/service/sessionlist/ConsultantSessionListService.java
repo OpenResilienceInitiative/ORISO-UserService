@@ -10,7 +10,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.service.ChatService;
-import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.session.ConsultantSessionQueryService;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -27,7 +27,7 @@ import org.springframework.stereotype.Service;
 @Service
 public class ConsultantSessionListService {
 
-  private final @NonNull SessionService sessionService;
+  private final @NonNull ConsultantSessionQueryService consultantSessionQueryService;
   private final @NonNull ChatService chatService;
   private final @NonNull ConsultantSessionEnricher consultantSessionEnricher;
   private final @NonNull ConsultantChatEnricher consultantChatEnricher;
@@ -42,7 +42,8 @@ public class ConsultantSessionListService {
       Consultant consultant, List<String> roomIds, Set<String> roles) {
     var matrixRoomIds = new HashSet<>(roomIds);
     var sessions =
-        sessionService.getAllowedSessionsByConsultantAndRoomIds(consultant, matrixRoomIds, roles);
+        consultantSessionQueryService.getAllowedSessionsByConsultantAndRoomIds(
+            consultant, matrixRoomIds, roles);
     var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
 
     return mergeConsultantSessionsAndChats(consultant, sessions, chats);
@@ -57,7 +58,8 @@ public class ConsultantSessionListService {
   public List<ConsultantSessionResponseDTO> retrieveSessionsForConsultantAndSessionIds(
       Consultant consultant, List<Long> sessionIds, Set<String> roles) {
     var uniqueSessionIds = new HashSet<>(sessionIds);
-    var sessions = sessionService.getSessionsByIds(consultant, uniqueSessionIds, roles);
+    var sessions =
+        consultantSessionQueryService.getSessionsByIds(consultant, uniqueSessionIds, roles);
     var matrixRoomIds =
         sessions.stream()
             .map(sessionResponse -> sessionResponse.getSession().getMatrixRoomId())
@@ -77,7 +79,8 @@ public class ConsultantSessionListService {
       retrieveAnonymousLiveChatEnquiriesForConsultantBySessionIds(
           Consultant consultant, List<Long> sessionIds) {
     var uniqueSessionIds = new HashSet<>(sessionIds);
-    return sessionService.getVisibleAnonymousLiveChatEnquiriesByIds(consultant, uniqueSessionIds);
+    return consultantSessionQueryService.getVisibleAnonymousLiveChatEnquiriesByIds(
+        consultant, uniqueSessionIds);
   }
 
   /**
@@ -89,7 +92,8 @@ public class ConsultantSessionListService {
       retrieveDirectlyAssignedSessionsForConsultantBySessionIds(
           Consultant consultant, List<Long> sessionIds) {
     var uniqueSessionIds = new HashSet<>(sessionIds);
-    return sessionService.getDirectlyAssignedSessionsByIdsCrossTenant(consultant, uniqueSessionIds);
+    return consultantSessionQueryService.getDirectlyAssignedSessionsByIdsCrossTenant(
+        consultant, uniqueSessionIds);
   }
 
   public List<ConsultantSessionResponseDTO> retrieveChatsForConsultantAndChatIds(
@@ -139,10 +143,10 @@ public class ConsultantSessionListService {
     var sessionStatus = getVerifiedSessionStatus(status);
 
     if (sessionStatus.equals(SessionStatus.NEW)) {
-      return this.sessionService.getRegisteredEnquiriesForConsultant(consultant);
+      return consultantSessionQueryService.getRegisteredEnquiriesForConsultant(consultant);
     }
     if (sessionStatus.equals(SessionStatus.IN_PROGRESS)) {
-      return this.sessionService.getActiveAndDoneSessionsForConsultant(consultant);
+      return consultantSessionQueryService.getActiveAndDoneSessionsForConsultant(consultant);
     }
     return emptyList();
   }
@@ -167,7 +171,7 @@ public class ConsultantSessionListService {
 
     // Get team sessions (Session entities)
     List<ConsultantSessionResponseDTO> teamSessions =
-        sessionService.getTeamSessionsForConsultant(consultant);
+        consultantSessionQueryService.getTeamSessionsForConsultant(consultant);
 
     // MATRIX MIGRATION: Also get chats for group chats (Chat entities with topic field)
     // Group chats created via the new flow have BOTH Session and Chat entities

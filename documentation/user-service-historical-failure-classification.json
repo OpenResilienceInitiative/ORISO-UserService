@@ -185,15 +185,30 @@
       "integration": 940,
       "primaryTotal": 4722
     },
-    "matrixOnlyCurrent": {
+    "matrixOnlyCutover": {
       "unit": 3373,
       "integration": 840,
       "primaryTotal": 4213
     },
-    "matrixOnlyDelta": {
+    "matrixOnlyCutoverDelta": {
       "unit": -409,
       "integration": -100,
       "primaryTotal": -509
+    },
+    "verifiedCurrent": {
+      "verifiedApplicationHead": "1ecca61a2459b4ae88f3f72031c7d50cc77453cf",
+      "unit": 3994,
+      "integration": 895,
+      "primaryTotal": 4889,
+      "localEvidence": [
+        "JDK 21: ./mvnw -Dskip.integration-tests=true test plus exact inventory gate",
+        "JDK 21: scripts/ci/run-required-integration-tests.sh plus exact inventory gate"
+      ]
+    },
+    "sinceCutoverDelta": {
+      "unit": 621,
+      "integration": 55,
+      "primaryTotal": 676
     },
     "sourceDiff": {
       "fromCommit": "dce9b2f4d89851d452135de6b0697d22413368c7",
@@ -202,16 +217,94 @@
       "addedJUnitTestClasses": 29,
       "deletedLegacyNamedClasses": 33
     },
-    "note": "Redis and MariaDB rows are dedicated environment proofs for integration cases and are not added to the primary current inventory. Parameterized and dynamic executions prevent a one-to-one mapping from class counts to execution counts."
+    "note": "matrixOnlyCutover preserves the first post-cutover inventory. verifiedCurrent is the exact application-head inventory confirmed locally before exact-head GitHub validation. Redis and MariaDB rows are dedicated environment proofs for integration cases and are not added to the primary current inventory. Parameterized and dynamic executions prevent a one-to-one mapping from class counts to execution counts."
   },
   "currentRequiredSuite": {
     "command": "scripts/ci/run-required-integration-tests.sh",
-    "integrationReports": 78,
-    "integrationTests": 840,
+    "unitTests": 3994,
+    "unitReports": 454,
+    "unitSkipped": 0,
+    "integrationReports": 96,
+    "integrationTests": 895,
+    "integrationSkipped": 14,
     "failures": 0,
     "errors": 0,
-    "skipped": 2,
+    "skipped": 14,
     "quarantine": false,
+    "environmentBoundSkippedTests": [
+      {
+        "testId": "de.caritas.cob.userservice.api.DatabaseChangelogDriftIT#freshDatabaseBuiltFromChangelogShouldSatisfyJpaEntityModel",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.OrganizerMariaDbReplicaIT#concurrentCleanupTransactionsAreIdempotent",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.SupportRoomMigrationConvergenceIT#canonicalChangelogRepairsSupportRoomRemovedByDivergentMigration",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml",
+        "executionStatus": "known-gap",
+        "knownGapReason": "The test currently fails after another Spring Liquibase test initializes the shared MariaDB schema."
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.port.out.AdminStatisticsRepositoryMariaDbIT#countDailyNewSessionsByTenantShouldProjectDayWithoutConversionError",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistryRedisIT#availabilitySurvivesRegistryReconstructionExpiresAndHeartbeatCannotEnable",
+        "environmentVariable": "ORISO_LOCAL_REDIS_IT",
+        "requiredWorkflow": ".github/workflows/ci-pull-request.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensationMariaDbIT#incompleteProvisioningRemovesRelationSessionChildrenAndUserInReverseOrder",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.service.tutorial.TutorialProgressServiceMariaDbReplicaIT#newScopeIsRejectedWhenTheRowCapIsReached",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.service.tutorial.TutorialProgressServiceMariaDbReplicaIT#concurrentFirstWritesFromTwoReplicasUpsertOneCanonicalProgressRow",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.service.tutorial.TutorialProgressServiceMariaDbReplicaIT#existingScopeRemainsWritableWhenTheRowCapIsReached",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.service.tutorial.TutorialProgressServiceMariaDbReplicaIT#concurrentNewScopesForOneUserNeverExceedTheRowCap",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.workflow.deactivate.scheduler.DeactivateGroupChatSchedulerMariaDbReplicaIT#twoSchedulerInstancesShutdownOneExpiredMatrixChatExactlyOnce",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimMariaDbIT#twoReplicaContendersProduceOneWinnerForInitialAndExpiredClaim",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.workflow.delete.scheduler.DeleteUserAccountSchedulerMariaDbReplicaIT#twoSchedulerInstancesTriggerOneAccountDeletionWorkflow",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      },
+      {
+        "testId": "de.caritas.cob.userservice.api.workflow.delete.scheduler.DeleteUsersRegisteredOnlySchedulerMariaDbReplicaIT#twoSchedulerInstancesTriggerOneRegisteredOnlyDeletionBatch",
+        "environmentVariable": "LIQUIBASE_IT_DB_URL",
+        "requiredWorkflow": ".github/workflows/mariadb-contract.yml"
+      }
+    ],
     "additionalRequiredContracts": [
       "fresh MariaDB schema and statistics contracts",
       "Redis shared-state contracts",

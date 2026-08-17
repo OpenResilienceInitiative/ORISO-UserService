@@ -96,16 +96,28 @@ changesets and passes Hibernate validation.
 
 ## Dependency and call measurements
 
-The source inventory contains 13 generated API-controller factories, six
-client/configuration helpers and 71 direct `RestTemplate` call sites. The
-runtime dependency set is:
+The executable
+[`user-service-outbound-dependencies.json`](user-service-outbound-dependencies.json)
+catalog maps all 11 generated API-controller factories to their configured
+dependency and also records every custom HTTP transport construction site.
+CI compares that catalog with the production source tree, so adding, removing
+or renaming a generated client cannot silently make this inventory stale.
+Six additional client/configuration helpers sit behind the generated factories.
+Runtime call frequency is measured from metrics and load evidence rather than
+being inferred from a fragile count of source expressions. The runtime
+dependency set is:
 
 | Boundary | Dependencies | Transport |
 | --- | --- | --- |
 | Identity | Keycloak, identity extensions | Keycloak client + HTTP |
 | Chat | Matrix only | HTTP long-poll + HTTP |
-| ORISO services | Agency, Tenant, Consulting Type/Topic/Application Settings, Appointment, Message, Mail, Live | HTTP |
+| ORISO services | Agency/Agency Admin, Tenant/Tenant Admin, Consulting Type/Topic/Application Settings, Appointment and Mail | HTTP |
 | State/event infrastructure | MariaDB, Redis, RabbitMQ | JDBC, Redis, AMQP |
+
+Rocket.Chat, Jitsi, the former LiveService transport and the former
+MessageService client are explicitly absent runtime dependencies in the
+catalog. The UserService therefore has no hidden chat or video fallback outside
+Matrix.
 
 All `RestTemplateBuilder` clients now emit:
 
@@ -118,6 +130,8 @@ All `RestTemplateBuilder` clients now emit:
   when `Content-Length` is available;
 - `userservice.outbound.retries`: explicitly scheduled Keycloak and Matrix
   retries by fixed dependency and operation tags.
+- `userservice.dependency.fallbacks`: successful application fallbacks by fixed
+  dependency, operation and reason tags.
 
 Paths, query values, IDs and exception text are never custom metric tags.
 Spring Boot's standard `http.client.requests` remains available as an
@@ -137,9 +151,11 @@ Keycloak traces contained dynamic test-identity path segments. No raw values
 are copied into this record. This is current-runtime evidence, not proof of this
 branch being deployed. After merge and rollout, the aggregate-only verification
 query must show zero raw-query URI classes and origin-only `http.url` values.
-The Java `HttpClient` used by LiveService is not covered by the payload
-interceptor; its higher-level retry paths are covered by the explicit retry
-counter. This remains a known measurement boundary, not an implied zero.
+The former LiveService Java `HttpClient`, its retry path and its generated
+transport schema have been removed. `/liveproxy/send` remains for one provider
+contract deprecation cycle as a dependency-free `410 Gone` tombstone; it
+performs no outbound call. Issue #903 tracks final route removal after the
+compatibility cycle.
 
 Keycloak's own RESTEasy admin-client transport is covered separately by
 `KeycloakAdminClientTransport`. It preserves one pooled singleton client (50
@@ -153,7 +169,52 @@ slow response timeout, pool-exhaustion timeout, one failed HTTP attempt instead
 of Apache's previous four attempts, and eight concurrent admin reads sharing
 one token acquisition.
 
-Current `pre-dev` has removed the Rocket.Chat production adapter,
+The dependency catalog also versions the effective default transport policy:
+three-second connect timeout, ten-second ordinary read timeout, 42-second
+Matrix long-poll timeout and zero automatic transport retries. These values are
+checked against `RestTemplateTimeouts`, so the documentation cannot drift from
+the production constants.
+
+The sampled `POST /users/askers/session/new` trace exposed one avoidable
+Keycloak call per new agency-held session. A repository-wide authentication
+consumer audit then found the same per-call technical-user password grant in
+AppointmentService synchronization, TenantService tenant creation and each
+uncached operator-DPA lookup. All four server-to-server consumers now use
+`TechnicalIdentityTokenProvider`: one synchronized in-memory grant is shared by
+concurrent callers on one UserService replica and reused only until a
+pre-expiry boundary. Interactive login, anonymous-account login and explicit
+password verification continue to use `IdentityAuthentication` directly and
+are forbidden from using the technical-token cache by an executable module
+contract. No password, refresh token or access token is stored in Redis.
+
+The AgencyService Matrix-credential boundary retains its stricter recovery
+contract: a downstream 401 invalidates only the rejected token, schedules at
+most one fresh grant and records
+`userservice.outbound.retries{dependency=agency-service,operation=matrix-credentials-auth-refresh}`.
+The parallel service-path regression sends 64 session creations through the
+real `CreateSessionFacade`, holding-room orchestration, Keycloak auth client and
+AgencyService credential HTTP client. The healthy path produces one shared
+password grant and exactly 64 AgencyService attempts. When the initial token is
+rejected, all requests share one refresh, every successful session still makes
+exactly one accepted AgencyService call, and total attempts remain bounded at
+two per session. A refreshed token rejected again is invalidated without a
+third attempt in the same session and is not reused by the next session.
+Expiry, zero-lifetime and targeted invalidation remain covered separately.
+After warm-up, this removes the observed per-session Keycloak roundtrip and the
+equivalent password-grant fan-out from the three additional technical
+consumers, while preserving their existing downstream retry policies and the
+separate AgencyService public-agency and secret Matrix-credential boundaries.
+The complete session service-path increment and exact 3,556-test unit
+inventory were verified at `45e7cc2d61200e19188cffb933ce488228ddc374`.
+
+The follow-up repository-wide consumer cut at
+`a4135a0c487e1966863ebbff02e939539c1fb8c3` extends that same provider to the
+AppointmentService, tenant-creation and operator-DPA clients. Its focused
+client tests and executable technical-versus-interactive authentication seam
+pass, and the complete unit inventory is 3,558 tests in 406 reports with zero
+failures, errors or skips.
+
+Current `pre-dev` source has removed the Rocket.Chat production adapter,
 configuration, DTOs, database/wire fields and optional MongoDB access.
 Matrix/Synapse is the sole messaging backbone, the ORISO frontend remains the
 product surface, and LiveKit plus the controlled Element Call/MatrixRTC fork is
@@ -188,10 +249,51 @@ That real cardinality defect motivated the bounded observation convention
 above. Existing standard histograms exposed only the `+Inf` bucket, which
 motivated the explicit finite latency buckets.
 
-The audited pod predates this branch. Therefore its live data proves the OTel
-pipeline and supplies a baseline, but it does not prove the new
-`userservice.outbound.*` metrics, payload sizes, retry counters or cardinality
-repair. Those require the branch image to be deployed and queried again.
+The pod audited on July 25 predates this branch. Its data proves the OTel
+pipeline and supplies a historical baseline, but it is not evidence for the
+current integration head.
+
+### Live PreDev deployment truth on 2026-07-28/29
+
+Read-only cluster and SigNoz audits at 23:53 CEST and again at 00:09 CEST
+separate current source from current runtime:
+
+- `origin/pre-dev` remained
+  `be15d12f6305f3370e626a0eec131293cceb5624`; integration PR #888 remained
+  unmerged.
+- The first audit observed one ready UserService replica from the local
+  `fe811-20260728` image. Before the second audit the workload was republished
+  as the immutable GHCR image
+  `sha256:25d0ae8aabe3032b66dc37b1c128635c35ffe5086d1d8d1b41624c660960dea4`.
+  Its OCI revision label resolves exactly to the unchanged `pre-dev` commit
+  above, not the integration PR head. The replacement pod started at
+  00:01 CEST, was ready with zero restarts and ran as the only replica.
+- The first pod exported the bounded `userservice.outbound.*` metrics. Its
+  cumulative counters contained 73 `live-service` POST attempts, all with
+  `async_error`, 8.31 ms mean attempt latency and 138.08 measured request bytes
+  per call. That is direct runtime proof that the dead LiveService path in
+  #901/#902 has not yet been deployed away. The replacement baseline pod
+  produced 146 `LiveService`-matching log records after its restart, independently
+  confirming that the old path remains active; the log-record count is not
+  treated as an attempt counter.
+- Matrix, the MatrixRTC authorization/gateway components, Element Call and
+  LiveKit were running. No Rocket.Chat pod or Jitsi workload was present.
+- The old `rocketchat` Service nevertheless remained with zero endpoints, and
+  `rocketchat-ingress` still routed `/api/v1` traffic to it. The UserService
+  deployment also still consumed a ConfigMap containing Rocket.Chat and
+  UserService-Mongo configuration keys. No configuration values are copied into
+  this evidence.
+- A shared MongoDB workload remained because AgencyService and
+  ConsultingTypeService still declared MongoDB configuration. Removing the
+  UserService/Rocket.Chat keys is therefore separable from deciding whether
+  those other services still require the shared database.
+
+The runtime is consequently **not yet a completed Matrix-only cutover**, even
+though the current UserService source is. The final gate is an approved
+deployment of the reviewed removal slices plus deployment cleanup, followed by
+an immutable image readback and a new-pod SigNoz query showing zero
+`live-service` attempts and no Rocket.Chat routing or UserService configuration
+residue. Jitsi remains a negative workload assertion.
 
 ### Live PreDev follow-up after the `pre-dev` merge
 
@@ -231,6 +333,74 @@ test proves that both outbound boundaries remain untouched. Runtime
 confirmation still requires the repaired branch image to be merged, deployed
 and traced.
 
+### Read-only PreDev refresh on 2026-07-29
+
+A later read-only audit at approximately 10:10 CEST observed the same immutable
+UserService digest and pod described above. It still does not contain this
+integration branch. The pod had been running for about ten hours and exported
+6,043 outbound attempts while the server metric recorded 472 inbound requests.
+Those totals must not be divided into a per-request fan-out ratio because they
+include Matrix sync and deletion schedulers.
+
+The cumulative dependency measurements on that pod included:
+
+| Dependency/operation | Attempts | Outcome | Mean latency | Known request bytes/call |
+| --- | ---: | --- | ---: | ---: |
+| Matrix GET | 1,831 | 2xx | 19.86 s | n/a |
+| Matrix POST | 1,530 | 2xx | 28.48 ms | n/a |
+| Matrix DELETE | 778 | 2xx | 7.31 ms | n/a |
+| Keycloak DELETE | 1,589 | 4xx | 2.64 ms | n/a |
+| removed LiveService POST | 76 | asynchronous error | 9.27 ms | 139.78 |
+| AgencyService GET | 15 | 2xx | 35.33 ms | 0 |
+
+The Matrix GET mean remains dominated by the expected sync long-poll. The
+Keycloak DELETE count is a real repeat loop rather than user traffic: ten
+failed anonymous-deletion scheduler runs produced 1,583 idempotent
+"already absent" warnings covering 162 distinct deletion targets. Thirty
+database errors collapsed to three distinct stale `Session` references. The
+workflow removed external identities, then hit those stale database relations,
+poisoned the transaction and retried the external deletions in the next run.
+This independently confirms the failure shape addressed by the per-user
+transaction boundary below.
+
+Sampled request traces also supplied direct fan-out evidence:
+
+| Incoming operation | Sampled requests | Client spans/request | Mean request latency | Observed targets |
+| --- | ---: | ---: | ---: | --- |
+| `POST /users/askers/session/new` | 1 | 8 | 1,056.41 ms | Matrix 5, AgencyService 2, Keycloak 1 |
+| `GET /users/sessions/room` | 3 | 2 | 99.06 ms | Matrix 2 |
+| `GET /users/sessions/askers` | 2 | 2 | 118.84 ms | Matrix 2 |
+| `GET /users/data` | 1 | 1 | 24.06 ms | Keycloak 1 |
+| `GET /users/consultants/search` | 1 | 1 | 50.99 ms | AgencyService 1 |
+| `GET /useradmin/tenantadmins` | 30 | 0 | 5.01 ms | none |
+
+The low sample count is stated deliberately; it identifies concrete fan-out
+without pretending to be a statistically complete route profile. Background
+scheduler traces on the old image contained only their root span, so their
+dependency calls could be counted but not joined to the root operation. The
+reviewed branch must still be deployed before its improved attribution can be
+verified.
+
+The infrastructure cutover also remains incomplete. No Rocket.Chat or Jitsi
+workload is running, but `rocketchat` Service and `rocketchat-ingress` still
+exist with zero endpoints, and Rocket.Chat/Mongo configuration keys are still
+injected through the active UserService and AgencyService ConfigMaps. MongoDB
+therefore remains a shared workload. The final Matrix-only proof must remove
+that routing and configuration residue while preserving the target stack:
+ORISO-owned frontend, ORISO-controlled Element Call/MatrixRTC fork and LiveKit.
+
+The deterministic E2E contract declares J01 through J08, and its contract,
+managed-actor and trace-context tests pass. The implementation inventory still
+fails closed because only J01/J02 exist on the staged E2E branch; J03 through
+J08 have no executable journey files yet. A browser run against this stale
+deployment cannot satisfy the full release gate.
+
+Current `pre-dev` also acquired a separate test-context merge regression:
+`IdentityUsernameAvailability` disappeared from eight shared Keycloak mocks
+when the authentication-port change was reconciled. PR #912 restores only that
+test contract. Its local 3,543-unit/858-integration/54-CI checks and all GitHub
+checks pass, but it remains a separate review item and is not runtime evidence.
+
 ### Anonymous-deletion repeat loop
 
 Trace grouping identified one concrete chatty-call cause in
@@ -251,8 +421,13 @@ workflow identifiers instead of escaping the transaction. The technical mail
 context also no longer performs the TenantService lookup that caused the
 observed notification failure, which removes the most frequent trigger.
 
-Both suites, the focused supplier test and the formatting gate pass; the
-per-run counts are in the CI summary rather than repeated here.
+Measured on integration source commit
+`92069ff7f13642d3c7cb58fab36c1595425dd3ec`: 3,547 unit executions across
+403 reports with zero failures, zero errors and no skips, and 860 required
+integration executions across 84 reports with zero failures, zero errors and
+nine skips. The 77-test CI/architecture suite, 8-test OpenAPI contract suite,
+focused 177-test DPA/identity/Keycloak composition and formatting gate also
+pass.
 
 #### Measured limit of this repair
 
@@ -338,16 +513,30 @@ selected registered system accounts such as the per-tenant
   and performs the requested-set intersection in-process. The code-level bound
   is therefore zero identity calls for an empty role set and exactly one for a
   non-empty set, instead of up to one `userHasRole` request per candidate role.
-- Consultant role assignment uses the focused `IdentityRoleUpdater` batch
+- The unused identity session-close command was removed from the broad output
+  port, the Keycloak facade and its authentication collaborator. Repository-wide
+  tracing found no production consumer, so the removed path has an exact
+  zero-call bound. The active refresh-token logout flow remains unchanged.
+- All active admin, consultant and user provisioning role assignments use the
+  focused `IdentityRoleUpdater` batch
   port. Empty requests cause no identity traffic. Each non-empty attempt makes
-  one assigned-role list request, deduplicates the requested roles and skips
-  already assigned roles. For `M` missing roles, the adapter performs `M`
-  targeted role-representation lookups, one batch add and one complete-set
-  visibility read; visibility may be read at most three more times under the
-  existing bounded retry policy. An unauthorized admin session refreshes once
-  and retries the complete idempotent attempt once. This replaces one complete
-  add-and-visibility sequence per requested role while documenting the
-  remaining provider lookups instead of claiming a constant total call count.
+  one role-representation lookup per distinct requested role, one batch add and
+  one complete-set visibility read; visibility may be read at most three more
+  times under the existing bounded retry policy. The add itself is therefore
+  one call per attempt independent of role count. Existing consultant
+  group-role enablement retains the read-before-write `ensureRoles` behavior,
+  which skips roles already assigned. An unauthorized admin session refreshes
+  once and retries the complete attempt once. The broad identity client no
+  longer exposes a role-assignment command.
+- Consultant rollback and group-role disablement use the same focused
+  `IdentityRoleUpdater` for batch removal. Empty requests cause no provider
+  calls. A non-empty attempt deduplicates requested names, resolves the target
+  once, reads the complete assigned-role set once and performs at most one
+  batch removal containing every requested role that is present. Missing roles
+  cause no write and no per-role lookup. An unauthorized admin session
+  refreshes once and retries the complete batch once; other failures retain
+  their existing propagation behavior. The broad identity client no longer
+  exposes role removal.
 - Admin and consultant profile mutations use the focused
   `IdentityProfileUpdater` with exactly five provider-neutral values: username,
   email, tenant ID, first name and last name. Every mutation resolves the target
@@ -357,10 +546,6 @@ selected registered system accounts such as the per-tenant
   availability search, preserves the conflict response and performs no update.
   The adapter applies no automatic retry, so provider failures retain their
   existing propagation behavior.
-- The unused identity session-close command was removed from the broad output
-  port, the Keycloak facade and its authentication collaborator. Repository-wide
-  tracing found no production consumer, so the removed path has an exact
-  zero-call bound. The active refresh-token logout flow remains unchanged.
 
 The runtime metrics above are the gate for further optimization: prioritize a
 dependency only when PreDev shows high calls per request, payload volume or p95
@@ -393,8 +578,8 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. `IdentityClient` returns application-owned `CreatedIdentity` for user creation. Magic-link exchange returns the separate provider-neutral `api.model.identity.IdentitySession`; only Keycloak adapters own grant fields and provider response parsing. Profile email propagation uses the `MessageClient` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role writers use the focused batch `IdentityRoleUpdater` port and the broad identity command client no longer owns role ensuring. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Password writers depend on `IdentityPasswordUpdater`. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`. Admin and consultant profile writes use `IdentityProfileUpdater` and a five-field provider-neutral `IdentityProfileUpdate`; the broad identity command client no longer accepts web-layer profile DTOs. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. | Identity creation still accepts the web-layer `UserDTO`, and other identity operations on the broad port remain to be narrowed further. |
-| Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; identity creation consumes the neutral `CreatedIdentity` result; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and identity creation still receives the web-layer `UserDTO`. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; consultant DTO mapping asks `IdentityManaging` for role decisions instead of importing an outbound identity client. `service.identity` and `service.user` cannot import concrete identity/chat adapters. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`. Admin and consultant profile writes use `IdentityProfileUpdater` and a five-field provider-neutral `IdentityProfileUpdate`. Password writers depend on `IdentityPasswordUpdater`; credential construction and password-policy translation remain inside the Keycloak adapter. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Strict deletion and best-effort rollback use `IdentityAccountRemover`. Registration-time dummy-email replacement uses `IdentityDummyEmailUpdater`. All active registration, anonymous-user, admin and consultant provisioning paths create provider accounts through `IdentityAccountCreator` with provider-neutral request and result values. Account email writes use `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. Profile email changes synchronize the local model and AppointmentService without a legacy MessageService client. Magic-link exchange returns a provider-neutral `api.model.identity.IdentitySession`; only the Keycloak adapter owns grant fields and provider response parsing. Realm-role reads use `IdentityRoleLookup`; consultant role-set validation and `IdentityManager` role decisions each perform one full read. All active role writers use the focused batch `IdentityRoleUpdater`. Interactive and technical-user authentication use `IdentityAuthentication` and provider-neutral `IdentityLogin`. Username availability is isolated behind `IdentityUsernameAvailability`. OTP credential management and email verification use `IdentitySecondFactor`. Locale changes use `IdentityLocaleUpdater`. The broad `IdentityClient` contract is deleted, and no production or test Java source imports it. | `KeycloakService` remains a large adapter implementing several focused capabilities; application composition should keep consuming the narrow ports rather than the concrete adapter. |
+| Admin | Chat account creation/update uses `MatrixUserClient`; room membership uses Matrix-native services and transport-neutral member IDs. `api.admin` cannot import concrete Matrix adapters, and identity account creation no longer exposes a Keycloak response DTO. The generated admin API adapter composes four focused web delegates for query/report, consultant/identity, asker and admin-account operations instead of directly injecting application services, facades, mapping and authenticated-user state. Admin and consultant email normalization is JVM-locale independent. | The focused delegates still call the existing broad admin facades and services; those application boundaries can be narrowed independently without changing the generated HTTP contract. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
 `tests/ci/test_module_boundaries.py` prevents the stabilized user web slices
@@ -405,15 +590,17 @@ prevents the Identity/Profile packages and the Admin module from importing
 their protected concrete chat adapters. The separate removal contract prevents
 Rocket.Chat production packages, configuration, DTOs and schema fields from
 returning. A dead-surface contract prevents the unused identity session-close
-command from returning on the broad port or either Keycloak wrapper. The
+command or the deleted broad identity interface from returning. The
 appointment deletion repair stays behind `Organizing` and `AppointmentRepository`.
+The admin-controller contract additionally requires all four focused web
+delegates and rejects direct application-service, facade, mapper or
+authenticated-user imports in `UserAdminController`.
 
 A dedicated magic-link boundary contract prevents the application service and
 both web entry points from importing Keycloak transport types. It also prevents
 the public magic-link response DTO from depending on an outbound-port package.
-A dedicated profile-read contract keeps user-data facades off the broad
-identity client, removes profile lookup from that client and requires shared
-Spring identity mocks to provide the focused port.
+A dedicated profile-read contract keeps user-data facades on the focused port
+and prevents the deleted broad identity client from returning.
 The role-read contract keeps full realm-role reads behind the focused
 `IdentityRoleLookup` port and prevents per-candidate role checks from returning
 to consultant-agency validation.
@@ -451,6 +638,36 @@ deactivation action keeps its existing best-effort error handling; the account,
 asker and consultant deletion flows remain strict and preserve their existing
 ordering around lifecycle and persistence changes.
 
+Email-ownership validation now uses the focused
+`IdentityEmailOwnerLookup` output port and the application-owned
+`IdentityEmailOwner` value. `IdentityManager` no longer interprets Keycloak map
+keys, while the Keycloak adapter retains exact-email matching and representation
+mapping. The external-call bound is unchanged: one email-ownership check makes
+exactly one identity-provider lookup. An unused email remains accepted; raw and
+encoded representations of the same username remain accepted; incomplete owner
+data is rejected safely.
+
+A separate authentication boundary contract removes login, logout and
+password verification from the broad `IdentityClient`. The five live
+consumers—`IdentityManager`, anonymous-user creation, the agency Matrix
+credential client, appointment synchronization, account validation and both
+technical-user onboarding clients—now use `IdentityAuthentication`.
+`KeycloakService` alone maps the provider response to `IdentityLogin`. This
+changes ownership and transport coupling, not call count: each login, logout or
+password-verification operation still performs exactly one outbound Keycloak
+operation. The removed legacy alias-message consumer is not restored.
+
+The username-availability boundary reflects the actual current PreDev source,
+not the older stacked change: its four direct consumer classes are
+`UserController`, `UserRegistrationControllerDelegate`,
+`AnonymousUsernameRegistry` and `ConsultantImportService`. The removed
+`AskerImportService` path is not restored, and `UserVerifier` no longer retains
+an unused broad identity dependency. The focused port does not change the
+external API, schema, configuration or failure policy. One availability check
+still performs exactly two adapter-internal Keycloak searches, for the decoded
+and encoded username. This slice improves ownership and testability; it does
+not claim a call reduction or deployed/runtime evidence.
+
 A dedicated second-factor boundary contract keeps OTP and email-verification
 operations out of the broad `IdentityClient` contract. Each of the five
 operations performs exactly one provider request on its normal path. An initial
@@ -476,65 +693,88 @@ no-op after that lookup. Lowercase normalization uses the locale-independent
 root locale. External APIs, schemas and configuration remain unchanged. These
 are source-and-local-test guarantees until the branch is merged, deployed and
 verified on PreDev.
+The role-write contract requires all six active admin, consultant and user role
+writers plus shared Spring identity mocks to use the focused batch port, and
+prevents role ensuring or assignment from returning to the broad identity
+client. The removed Matrix-only AskerImport path is not restored.
+The profile-write contract keeps web and Keycloak transport types out of the
+focused value, requires both active application writers and shared Spring mocks
+to use the port, and removes profile writes from the broad identity client.
+
+The focused password-write boundary covers admin provisioning, consultant
+provisioning and imports, user registration and self-service password reset. A
+write resolves the target identity once, performs one provider reset and has no
+automatic retry. Password-reset token restoration and provisioning rollback
+remain application policies; provider credential DTOs and password-policy error
+translation remain adapter concerns.
+
+Identity deactivation now has an explicit one-user call bound: the Keycloak
+adapter resolves the users resource and user once, reads one representation and
+performs at most one update, with no hidden or application retry. The anonymous
+deactivation action keeps its existing best-effort error handling; the account,
+asker and consultant deletion flows remain strict and preserve their existing
+ordering around lifecycle and persistence changes.
+
+Identity account removal now has explicit provider-call bounds. A normal
+removal resolves the target once and calls remove once. An unauthorized removal
+refreshes the admin session once and retries the complete lookup/remove
+operation at most once. Provider not-found handling remains idempotent,
+provisioning rollback remains best-effort and strict deletion sequencing is
+unchanged.
+
+Registration-time dummy-email replacement now retains only username and tenant
+metadata in a provider-neutral value. The Keycloak adapter computes the dummy
+address, resolves the target identity once and performs one update. The former
+asker-import consumer no longer exists on the Matrix-only baseline; current-user
+email deletion remains on the existing email-address operation.
+
+Identity account creation now uses the focused `IdentityAccountCreator` output
+port for public registration, anonymous-user creation, admin creation and
+consultant creation. The application passes only username, email, tenant,
+optional names and locale through provider-neutral values. Keycloak user
+representations, status handling and mandatory post-create attributes remain in
+the adapter; the former Keycloak response DTO and the broad `IdentityClient`
+are deleted. The provider call sequence and rollback behavior are unchanged.
+Shared Spring tests use one compatible `KeycloakService` replacement so its
+focused capabilities cannot silently replace one another in the application
+context.
+
+The final broad-client removal moves `IdentityManager` password updates,
+locale changes and role reads to `IdentityPasswordUpdater`,
+`IdentityLocaleUpdater` and `IdentityRoleLookup`. Password success/failure
+semantics remain unchanged, locale mutation still performs one representation
+read and one provider update, and a role decision performs one full role-set
+read. Unused authority and role wrappers were removed from the Keycloak
+adapter, and its username search helper is no longer public. An executable
+contract requires the broad interface to remain absent and rejects any Java
+source that restores its import.
+
+The current Matrix-only graph also removes unused broad `IdentityClient`
+constructor dependencies from `SessionSupervisorFacade`,
+`ConsultantAgencyRelationCreatorService` and `UserAccountService`. None of
+those services performed an identity call. Their Matrix supervision,
+consultant-agency relation and account-lifecycle behavior is therefore
+unchanged, while the application graph no longer advertises nonexistent
+provider coupling. An executable removal contract covers all three consumers
+and also keeps the deleted Rocket.Chat adapter, MessageService and LiveService
+transport from returning.
 
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
-source, and identity create-user results are provider-neutral via `CreatedIdentity`. The next safe sequence
-is further non-authentication identity transport cleanup, then the Admin controller
-composition boundary, then smaller Session orchestration boundaries. Each step
-must add a failing boundary contract before moving dependencies.
-
-## Scheduler replica safety
-
-The hourly enquiry-notification workflow acquires the global, durable
-`scheduled_task_claim` named `enquiry-notification` before it reads sessions,
-agencies or consultants and before it sends mail. The claim lasts 30 minutes,
-shorter than the hourly schedule. A losing replica exits without downstream
-work; an expired claim can be renewed.
-
-The regression proof starts with the unfixed behavior: two concurrent service
-instances produced two mail batches. The fixed focused suite verifies one
-batch. `ScheduledTaskClaimMariaDbIT` then executes both the concurrent initial
-insert and the concurrent expired-claim renewal against MariaDB 11.0.6 with two
-separate transactions. Each race has exactly one winner; MariaDB's initial
-insert race is handled as an InnoDB deadlock/constraint conflict followed by a
-read of the winning active claim. The required MariaDB workflow runs this test
-together with schema drift, statistics projection and the other replica
-contracts.
-
-The anonymous-user deactivation scheduler uses the same lease primitive with
-the claim name `anonymous-user-deactivation` and a 30-minute duration below its
-hourly interval. A losing replica exits before setting the technical tenant
-context or invoking the lifecycle service. Its two-instance regression test
-first reproduced two workflow calls and now observes exactly one.
-
-The anonymous-user deletion scheduler likewise claims
-`anonymous-user-deletion` for 30 minutes before setting the technical tenant
-context or starting the irreversible deletion workflow. The red two-instance
-proof observed both replicas executing the workflow; the fixed regression
-observes one winner and no downstream work from the losing replica.
-
-The daily account-deletion scheduler claims `account-deletion` for 12 hours
-before establishing tenant context or starting database, Matrix and identity
-cleanup. This stays below the daily schedule interval. Its two-instance red
-proof observed duplicate workflow starts; the fixed regression observes one
-winner and no downstream work from the losing replica.
-
-The daily registered-only-user deletion scheduler returns without even
-claiming when both deletion modes are disabled. When either mode is enabled,
-it claims `registered-only-user-deletion` for 12 hours before tenant context,
-database, Matrix or identity cleanup. Its real two-instance regression enables
-both modes and observes one execution of each mode and no work from the loser.
+source, the broad identity transport contract is removed and the generated
+Admin HTTP adapter now has a focused composition boundary. The next safe
+sequence is smaller Session orchestration boundaries. Each step must add a
+failing boundary contract before moving dependencies.
 
 ## Microservice decision
 
 Decision: keep UserService as a modular monolith for now.
 
-The suite demonstrates extensive shared transactional behavior and the service
-already coordinates at least ten synchronous service boundaries. Splitting a
-module before runtime measurements would add more network calls, partial-failure
-states and contract deployment sequencing while the current internal ports
-already provide the needed seam.
+The suite demonstrates extensive shared transactional behavior and the
+executable dependency catalog already records several synchronous service and
+identity boundaries. Splitting a module before runtime measurements would add
+more network calls, partial-failure states and contract deployment sequencing
+while the current internal ports already provide the needed seam.
 
 Reconsider extraction only when PreDev telemetry supplies all of:
 
@@ -625,10 +865,11 @@ The runner also exposes the normal Micrometer endpoint only on the disposable
 local JVMs and captures `userservice.outbound.http.calls`,
 `userservice.outbound.http.latency` and
 `userservice.outbound.http.payload` immediately before and after the measured
-workload. It fails if the AgencyService path is not exercised, produces more
-than one call per consultant-profile read, loses a latency/payload measurement,
-or exceeds the configured mean-latency or response-payload bounds. The bounds
-can be overridden with
+workload. It also captures `userservice.dependency.fallbacks` and requires zero
+fallbacks for a healthy dependency. It fails if the AgencyService path is not
+exercised, produces more than one call per consultant-profile read, loses a
+latency/payload measurement, or exceeds the configured mean-latency or
+response-payload bounds. The bounds can be overridden with
 `USERSERVICE_LOAD_MAX_AGENCY_CALLS_PER_CONSULTANT_READ`,
 `USERSERVICE_LOAD_MAX_AGENCY_MEAN_LATENCY_MS` and
 `USERSERVICE_LOAD_MAX_AGENCY_RESPONSE_BYTES_PER_CALL`.
@@ -636,21 +877,23 @@ can be overridden with
 Cleanup removes both JVMs, the dependency containers, the AgencyService stub,
 and the temporary run directory.
 
-Local two-replica proof on 2026-07-27:
+Local two-replica proof on exact integration head
+`92069ff7f13642d3c7cb58fab36c1595425dd3ec` on 2026-07-29:
 
 | Scope | Requests | Failures | Response bytes | Mean | p95 | Max |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| Replica one | 700 | 0 | 274,800 | 44.79 ms | 81.29 ms | 183.89 ms |
-| Replica two | 700 | 0 | 206,200 | 30.01 ms | 56.67 ms | 218.61 ms |
-| **Overall** | **1,400** | **0** | **481,000** | **37.40 ms** | **68.61 ms** | **218.61 ms** |
+| Replica one | 700 | 0 | 274,800 | 56.78 ms | 104.16 ms | 223.89 ms |
+| Replica two | 700 | 0 | 206,200 | 39.72 ms | 80.56 ms | 190.52 ms |
+| **Overall** | **1,400** | **0** | **481,000** | **48.25 ms** | **93.76 ms** | **223.89 ms** |
 
-The current rerun completed in 1.648 seconds at 849.42 requests/second. The
-slowest named operation was `consultant-profile-peer` at 82.23 ms p95; all six
+The exact-head rerun completed in 2.124 seconds at 659.05 requests/second. The
+slowest named operation was `consultant-profile-addiction` at 108.18 ms p95; all six
 operations had zero failures. The measured 900 consultant-profile reads caused
 exactly 900 AgencyService calls across both JVMs: 1.0 call per profile read,
-6.74 ms mean and 140.55 ms maximum outbound latency, with 260,000 response
+5.90 ms mean and 127.97 ms maximum outbound latency, with 260,000 response
 bytes in total, 288.89 bytes per call on average and 436 bytes maximum. Every
-successful call had a latency and payload measurement.
+successful call had a latency and payload measurement, and the fallback count
+was exactly zero.
 
 This proves that the bounded mixed-read scenario can run across two real JVMs
 sharing MariaDB and Redis, and that its healthy AgencyService dependency has no
@@ -660,12 +903,31 @@ Kubernetes service routing, or deployed PreDev behavior. The production
 replica maximum must therefore remain one until those paths and their
 idempotency/locking contracts are exercised.
 
-The same seeded workload was also run with AgencyService deliberately
-unavailable. UserService still returned all 1,400 responses through its local
-topic fallback at concurrency 32 (121.19 ms p95, 843.2 requests/second).
-However, each failed dependency attempt emitted a WARN stack trace. That proves
-fallback continuity while exposing log amplification as a separate operational
-risk; it is not equivalent to the healthy-dependency result above.
+The required outage variant is:
+
+```bash
+bash scripts/load/run-seeded-public-read-replicas-outage.sh
+```
+
+It runs the same two JVMs and shared MariaDB/Redis state while the deterministic
+AgencyService stub returns HTTP 503. On exact source head
+`92069ff7f13642d3c7cb58fab36c1595425dd3ec`, all 1,400 responses succeeded at
+concurrency 32 with 93.16 ms overall p95 and 654.12 requests/second. The 900
+consultant-profile reads produced exactly 900 dependency attempts, 900 latency
+measurements and 900 `userservice.dependency.fallbacks` measurements: one
+attempt and one successful local fallback per read, with 7.57 ms mean and 92.28
+ms maximum dependency latency. Error response payloads were also measured at
+40 bytes per call.
+
+Fallback use remains fully countable while operator warnings are bounded
+independently in each process. The warm-up plus measured outage produced
+exactly one fallback warning in each JVM and no
+`HttpServerErrorException` stack trace. Later fallbacks within the configured
+one-minute window increment the metric and the suppressed-warning count instead
+of amplifying logs. The next emitted warning reports how many were suppressed;
+consultant, agency, tenant and exception values are never metric tags or
+warning fields. This outage proof is required by the MariaDB/replica workflow,
+not an ad-hoc local experiment.
 
 The earlier control proof on 2026-07-25 used a real started UserService testing process and
 500 requests at concurrency 20 against `/actuator/health/liveness`: 0 failures,
@@ -688,6 +950,9 @@ reads completed with 0 failures and 19.22 ms p95. The runner applies the same
 zero-error and 1,000 ms p95 bound per operation and per replica. Startup
 liveness and authenticated-path initialization are deliberately separated from
 the measured state-transition latency.
+The runner allocates its two replica ports and JWK-stub port while all three
+allocator sockets are held open, preventing the operating system from returning
+the same ephemeral port more than once within the run.
 MariaDB's native upsert protects one versioned scope. A database advisory lock,
 whose name hashes the user identifier, serializes only first writes for a user
 so concurrent replicas cannot exceed the per-user row cap while creating

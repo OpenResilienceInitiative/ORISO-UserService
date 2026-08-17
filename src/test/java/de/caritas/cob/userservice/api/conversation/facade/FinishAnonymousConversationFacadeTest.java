@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.service.session.SessionAccessService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
@@ -32,6 +33,7 @@ class FinishAnonymousConversationFacadeTest {
   @InjectMocks private FinishAnonymousConversationFacade finishAnonymousConversationFacade;
 
   @Mock private SessionService sessionService;
+  @Mock private SessionAccessService sessionAccessService;
 
   @Mock private ActionsRegistry actionsRegistry;
 
@@ -100,7 +102,7 @@ class FinishAnonymousConversationFacadeTest {
     session.setPostcode("00000");
     mockAskerOwnsSession(session);
     when(this.sessionService.getSession(any())).thenReturn(Optional.of(session));
-    when(this.sessionService.isAnonymousStyleRegistration(session)).thenReturn(true);
+    when(this.sessionAccessService.isAnonymousStyleRegistration(session)).thenReturn(true);
     when(this.actionsRegistry.buildContainerForType(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class))
         .thenReturn(this.actionCommandMockProvider.getActionContainer(Session.class));

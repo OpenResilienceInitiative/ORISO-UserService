@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.workflow.scheduling;
 import java.time.Duration;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.dao.CannotAcquireLockException;
 import org.springframework.dao.DataAccessException;
 import org.springframework.stereotype.Service;
 
@@ -26,7 +27,21 @@ public class ScheduledTaskClaimService {
       if (claimWriter.hasActiveClaim(taskName)) {
         return false;
       }
+      if (claimConflict instanceof CannotAcquireLockException) {
+        return retryAfterLockConflict(taskName, claimDuration);
+      }
       throw claimConflict;
+    }
+  }
+
+  private boolean retryAfterLockConflict(String taskName, Duration claimDuration) {
+    try {
+      return claimWriter.claim(taskName, claimDuration);
+    } catch (DataAccessException retryConflict) {
+      if (claimWriter.hasActiveClaim(taskName)) {
+        return false;
+      }
+      throw retryConflict;
     }
   }
 }

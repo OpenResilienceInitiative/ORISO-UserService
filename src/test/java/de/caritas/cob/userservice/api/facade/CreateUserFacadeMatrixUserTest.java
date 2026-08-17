@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.facade;
 
-import static de.caritas.cob.userservice.api.testHelper.KeycloakConstants.CREATED_IDENTITY_WITH_USER_ID;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_KREUZBUND;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
@@ -26,10 +25,12 @@ import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -58,10 +59,11 @@ class CreateUserFacadeMatrixUserTest {
   @InjectMocks private CreateUserFacade createUserFacade;
 
   @Mock private UserVerifier userVerifier;
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityAccountCreator identityAccountCreator;
   @Mock private IdentityAccountRemover identityAccountRemover;
-  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private IdentityDummyEmailUpdater identityDummyEmailUpdater;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private UserService userService;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Mock private AgencyVerifier agencyVerifier;
@@ -94,7 +96,8 @@ class CreateUserFacadeMatrixUserTest {
 
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(USER_ID));
 
     var createdUser =
         new User(

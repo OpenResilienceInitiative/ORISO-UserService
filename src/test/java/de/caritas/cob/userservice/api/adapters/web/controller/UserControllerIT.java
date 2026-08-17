@@ -15,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.*;
 import de.caritas.cob.userservice.api.adapters.web.dto.serialization.EncodeUsernameJsonDeserializer;
@@ -47,24 +48,10 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
-import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
@@ -77,6 +64,7 @@ import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.ConsultantSessionDetailService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -276,6 +264,8 @@ class UserControllerIT {
   @MockitoBean private ChatOccurrenceQueryService chatOccurrenceQueryService;
   @MockitoBean private GroupChatRoleService groupChatRoleService;
   @MockitoBean private SessionService sessionService;
+
+  @MockitoBean private ConsultantSessionDetailService consultantSessionDetailService;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;
 
@@ -292,25 +282,7 @@ class UserControllerIT {
   @MockitoBean private AssignSessionFacade assignSessionFacade;
   @MockitoBean private AssignEnquiryFacade assignEnquiryFacade;
 
-  @MockitoBean(
-      extraInterfaces = {
-        IdentityAccountRemover.class,
-        IdentityAuthentication.class,
-        IdentityDeactivator.class,
-        IdentityDummyEmailUpdater.class,
-        IdentityEmailAddressUpdater.class,
-        IdentityEmailOwnerLookup.class,
-        IdentityLocaleLookup.class,
-        IdentityPasswordUpdater.class,
-        IdentityProfileLookup.class,
-        IdentityProfileUpdater.class,
-        IdentityRoleLookup.class,
-        IdentityRoleUpdater.class,
-        IdentitySecondFactor.class,
-        IdentityUsernameAvailability.class
-      })
-  private IdentityClient identityClient;
-
+  @MockitoBean private KeycloakService identityClient;
   @MockitoBean private DecryptionService encryptionService;
   @MockitoBean private ConsultingTypeManager consultingTypeManager;
   @MockitoBean private UserHelper userHelper;
@@ -342,7 +314,7 @@ class UserControllerIT {
 
   @MockitoBean
   @SuppressWarnings("unused")
-  private IdentityClientConfig identityClientConfig;
+  private IdentityPolicy identityPolicy;
 
   @MockitoBean
   @SuppressWarnings("unused")
@@ -575,7 +547,7 @@ class UserControllerIT {
   void activateTwoFactorAuthByApp_Should_NotActivateIfSingleTenantAdminButNotConfiguredToUse2Fa()
       throws Exception {
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.SINGLE_TENANT_ADMIN.getValue()));
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     mvc.perform(
             put(PATH_ACTIVATE_2FA)
@@ -590,7 +562,7 @@ class UserControllerIT {
   void activateTwoFactorAuthByApp_Should_NotActivateIfTenantSuperAdminButNotConfiguredToUse2Fa()
       throws Exception {
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.TENANT_ADMIN.getValue()));
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     mvc.perform(
             put(PATH_ACTIVATE_2FA)
@@ -605,7 +577,7 @@ class UserControllerIT {
   void activateTwoFactorAuthByApp_Should_Activate() throws Exception {
     when(authenticatedUser.getUsername()).thenReturn("username");
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(true);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(true);
     when(identityManager.setUpOneTimePassword(anyString(), anyString(), anyString()))
         .thenReturn(true);
 
@@ -791,8 +763,9 @@ class UserControllerIT {
   }
 
   @Test
-  void registerNewConsultingTyp_Should_ReturnCreated_When_ProvidedWithValidRequestBody()
-      throws Exception {
+  void
+      registerNewConsultingType_Should_ReturnCreated_When_PublicRequestOmitsInternalNewUserAccount()
+          throws Exception {
 
     when(userAccountService.retrieveValidatedUser()).thenReturn(USER);
     when(createNewSessionFacade.initializeNewSession(
@@ -1611,7 +1584,8 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().is(HttpStatus.BAD_REQUEST.value()));
 
-    verify(identityClient, times(0)).changePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient, times(0))
+        .updatePassword(anyString(), anyString());
   }
 
   @Test
@@ -1973,7 +1947,8 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk());
 
-    verify(sessionService, atLeastOnce()).fetchSessionForConsultant(Mockito.any(), Mockito.any());
+    verify(consultantSessionDetailService, atLeastOnce())
+        .fetchSessionForConsultant(Mockito.any(), Mockito.any());
   }
 
   @Test
@@ -1990,7 +1965,8 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isInternalServerError());
 
-    verify(sessionService, never()).fetchSessionForConsultant(Mockito.any(), Mockito.any());
+    verify(consultantSessionDetailService, never())
+        .fetchSessionForConsultant(Mockito.any(), Mockito.any());
   }
 
   @Test
@@ -2259,14 +2235,8 @@ class UserControllerIT {
   }
 
   @Test
-  void
-      registerNewSession_Should_ReturnResponseStatusFromConsultingTypeFasade_When_ProvidedWithValidRequestBody()
-          throws Exception {
-    var newRegistrationDto = new NewRegistrationDto();
-    newRegistrationDto.setMainTopicId(1L);
-    newRegistrationDto.setPostcode("00001");
-    newRegistrationDto.setAgencyId(1L);
-    newRegistrationDto.setConsultingType("1");
+  void registerNewSession_Should_ReturnCreated_When_PublicRequestOmitsInternalNewUserAccount()
+      throws Exception {
     when(userAccountService.retrieveValidatedUser()).thenReturn(new User());
     when(createNewSessionFacade.initializeNewSession(
             Mockito.any(UserRegistrationDTO.class),
@@ -2279,7 +2249,7 @@ class UserControllerIT {
         mvc.perform(
                 post("/users/askers/session/new")
                     .contentType(MediaType.APPLICATION_JSON)
-                    .content(new ObjectMapper().writeValueAsString(newRegistrationDto)))
+                    .content(VALID_NEW_REGISTRATION_BODY))
             .andExpect(status().isCreated())
             .andReturn();
 

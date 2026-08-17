@@ -8,7 +8,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -21,11 +20,12 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO;
+import java.util.Set;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -94,8 +94,8 @@ public class CreateConsultantSagaTenantAwareIT {
     createConsultantForTenant("otherTenantUser1", 2L);
     createConsultantForTenant("otherTenantUser2", 2L);
 
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     var tenant =
         new TenantDTO()
             .licensing(new Licensing().allowedNumberOfUsers(2))
@@ -127,8 +127,8 @@ public class CreateConsultantSagaTenantAwareIT {
     // into a comparison, so creating the first consultant for such a tenant died with a
     // NullPointerException and the admin saw a bare 500. No limit configured means no limit.
     TenantContext.setCurrentTenant(1L);
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     var tenant =
         new TenantDTO()
             .licensing(new Licensing().allowedNumberOfUsers(null))
@@ -156,8 +156,8 @@ public class CreateConsultantSagaTenantAwareIT {
     // The previous guard was `assert nonNull(...)`, which Java disables at runtime unless -ea is
     // passed — so it never protected anything in production.
     TenantContext.setCurrentTenant(1L);
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     var tenant =
         new TenantDTO()
             .settings(
@@ -183,8 +183,8 @@ public class CreateConsultantSagaTenantAwareIT {
       createNewConsultant_Should_addConsultantAndGroupChatConsultantRole_When_isGroupChatConsultantFlagIsEnabled() {
     // given
     TenantContext.setCurrentTenant(1L);
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    when(keycloakService.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     var tenant =
         new TenantDTO()
             .licensing(new Licensing().allowedNumberOfUsers(1))
@@ -205,9 +205,9 @@ public class CreateConsultantSagaTenantAwareIT {
         createConsultantSaga.createNewConsultant(createConsultantDTO);
 
     // then
-    verify(keycloakService, times(2)).updateRole(anyString(), anyString());
-    verify(keycloakService).updateRole(anyString(), eq(CONSULTANT.getValue()));
-    verify(keycloakService).updateRole(anyString(), eq(GROUP_CHAT_CONSULTANT.getValue()));
+    verify(keycloakService)
+        .assignRoles(
+            anyString(), eq(Set.of(CONSULTANT.getValue(), GROUP_CHAT_CONSULTANT.getValue())));
 
     assertThat(consultant.getEmbedded(), notNullValue());
     assertThat(consultant.getEmbedded().getId(), notNullValue());

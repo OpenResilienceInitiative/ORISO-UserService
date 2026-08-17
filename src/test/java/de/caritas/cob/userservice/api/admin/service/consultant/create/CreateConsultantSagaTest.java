@@ -31,9 +31,10 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -67,8 +68,9 @@ class CreateConsultantSagaTest {
 
   @InjectMocks private CreateConsultantSaga createConsultantSaga;
 
-  @Mock private IdentityClient identityClient;
+  @Mock private IdentityAccountCreator identityAccountCreator;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private ConsultantPublicSlugService consultantPublicSlugService;
   @Mock private ConsultantService consultantService;
   @Mock private UserHelper userHelper;
@@ -112,7 +114,7 @@ class CreateConsultantSagaTest {
     assertThat(response, notNullValue());
     assertThat(response.getEmbedded(), notNullValue());
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
-    verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
+    verify(identityRoleUpdater).assignRoles(KEYCLOAK_USER_ID, Set.of(CONSULTANT.getValue()));
     verify(appointmentService, never()).createConsultant(any());
   }
 
@@ -145,7 +147,7 @@ class CreateConsultantSagaTest {
 
     assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
 
-    verify(identityClient, never()).createUser(any(), anyString(), anyString());
+    verify(identityAccountCreator, never()).createAccount(any());
   }
 
   @Test
@@ -230,7 +232,7 @@ class CreateConsultantSagaTest {
         () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
 
     verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
-    verify(identityClient, never()).updateRole(anyString(), anyString());
+    verify(identityRoleUpdater, never()).assignRoles(anyString(), any());
   }
 
   @Test
@@ -238,8 +240,8 @@ class CreateConsultantSagaTest {
       throws Exception {
     stubKeycloakUserCreation();
     doThrow(new RuntimeException("role update failed"))
-        .when(identityClient)
-        .updateRole(anyString(), anyString());
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), any());
 
     assertThrows(
         DistributedTransactionException.class,
@@ -283,8 +285,9 @@ class CreateConsultantSagaTest {
 
     createConsultantSaga.createNewConsultant(dto);
 
-    verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
-    verify(identityClient).updateRole(KEYCLOAK_USER_ID, GROUP_CHAT_CONSULTANT.getValue());
+    verify(identityRoleUpdater)
+        .assignRoles(
+            KEYCLOAK_USER_ID, Set.of(CONSULTANT.getValue(), GROUP_CHAT_CONSULTANT.getValue()));
   }
 
   @Test
@@ -329,7 +332,7 @@ class CreateConsultantSagaTest {
 
     assertThat(
         ex.getCustomHttpHeaders().get("X-Reason").get(0), is(NUMBER_OF_LICENSES_EXCEEDED.name()));
-    verify(identityClient, never()).createUser(any(), anyString(), anyString());
+    verify(identityAccountCreator, never()).createAccount(any());
   }
 
   @Test
@@ -396,13 +399,11 @@ class CreateConsultantSagaTest {
   }
 
   private void stubKeycloakUserCreation() {
-    when(identityClient.createUser(any(), anyString(), anyString()))
+    when(identityAccountCreator.createAccount(any()))
         .thenAnswer(
             invocation -> {
               PlainCredentialsHolder.set(VALID_USERNAME, null);
-              CreatedIdentity response = new CreatedIdentity();
-              response.setUserId(KEYCLOAK_USER_ID);
-              return response;
+              return new IdentityAccountCreated(KEYCLOAK_USER_ID);
             });
   }
 

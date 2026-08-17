@@ -23,30 +23,26 @@ public class ConsultantSessionTopicEnrichmentService {
 
   private final @NonNull TopicService topicService;
 
-  public ConsultantSessionDTO enrichSessionWithMainTopicData(ConsultantSessionDTO session) {
-    if (shouldEnrichMainTopic(session)) {
-      var availableTopics = topicService.getAllTopicsMap();
-      log.debug(
-          "Enriching session with id: {} with information about the mainTopic", session.getId());
-
-      enrichMainTopicTo(session, availableTopics);
-    } else {
-      log.debug(
-          "Skipping topic enrichment, topic id is not set for session with id: {}",
-          session.getId());
+  /**
+   * Enriches the main topic and topic list with one shared topic lookup.
+   *
+   * @param session consultant-facing session response
+   * @return the enriched response
+   */
+  public ConsultantSessionDTO enrichSessionWithTopicData(ConsultantSessionDTO session) {
+    boolean enrichMainTopic = shouldEnrichMainTopic(session);
+    boolean enrichTopics = shouldEnrichTopics(session);
+    if (!enrichMainTopic && !enrichTopics) {
+      log.debug("Skipping topic enrichment for session with id: {}", session.getId());
+      return session;
     }
-    return session;
-  }
 
-  public ConsultantSessionDTO enrichSessionWithTopicsData(ConsultantSessionDTO session) {
-    if (shouldEnrichTopics(session)) {
-      var availableTopics = topicService.getAllTopicsMap();
-      log.debug("Enriching session with id: {} with information about the topics", session.getId());
-
+    var availableTopics = topicService.getAllTopicsMap();
+    if (enrichMainTopic) {
+      enrichMainTopicTo(session, availableTopics);
+    }
+    if (enrichTopics) {
       enrichTopicsTo(session, availableTopics);
-    } else {
-      log.debug(
-          "Skipping topic enrichment, topics are not set for session with id: {}", session.getId());
     }
     return session;
   }

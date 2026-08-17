@@ -3,7 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService;
-import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.session.SessionAccessService;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
@@ -26,7 +26,7 @@ public class MatrixSyncController {
 
   private final @NonNull MatrixEventListenerService matrixEventListenerService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
-  private final @NonNull SessionService sessionService;
+  private final @NonNull SessionAccessService sessionAccessService;
   private final @NonNull AuthenticatedUser authenticatedUser;
 
   /**
@@ -44,7 +44,7 @@ public class MatrixSyncController {
     // NotFoundException propagate to the global exception handler (403/404) instead of being
     // swallowed into a 500. Closes the unauthenticated IDOR that leaked room ids + participant
     // counts and allowed anonymous state changes.
-    var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
+    var session = sessionAccessService.assertUserHasAccess(sessionId, authenticatedUser);
 
     try {
       log.info("📡 Registering Matrix room for session {}", sessionId);
@@ -113,7 +113,7 @@ public class MatrixSyncController {
     // Authorize the caller against the session before unregistering, so an outsider cannot silently
     // kill live-event notifications for another session (denial-of-function). Kept outside the
     // try/catch so ForbiddenException / NotFoundException reach the global exception handler.
-    var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
+    var session = sessionAccessService.assertUserHasAccess(sessionId, authenticatedUser);
 
     try {
       if (session.getMatrixRoomId() == null) {

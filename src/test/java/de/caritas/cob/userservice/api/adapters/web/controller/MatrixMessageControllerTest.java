@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
+import de.caritas.cob.userservice.api.service.session.SessionAccessService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.time.LocalDateTime;
@@ -47,6 +48,7 @@ class MatrixMessageControllerTest {
   private static final String MATRIX_USER_ID = "@seeker:matrix";
 
   @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private SessionAccessService sessionAccessService;
   @Mock private SessionService sessionService;
   @Mock private ChatService chatService;
   @Mock private AuthenticatedUser authenticatedUser;
@@ -62,6 +64,7 @@ class MatrixMessageControllerTest {
     controller =
         new MatrixMessageController(
             matrixSynapseService,
+            sessionAccessService,
             sessionService,
             chatService,
             authenticatedUser,
@@ -74,7 +77,7 @@ class MatrixMessageControllerTest {
 
   @Test
   void sendMessage_ShouldThrowForbiddenBeforeMatrixCall_WhenSessionAccessIsDenied() {
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenThrow(new ForbiddenException("No permission"));
 
     assertThrows(
@@ -87,7 +90,7 @@ class MatrixMessageControllerTest {
   @Test
   void getMessages_ShouldThrowForbiddenBeforeMatrixCall_WhenSessionAccessIsDenied() {
     when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(sessionWithMatrixRoom()));
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenThrow(new ForbiddenException("No permission"));
 
     assertThrows(ForbiddenException.class, () -> controller.getMessages(SESSION_ID));
@@ -111,7 +114,7 @@ class MatrixMessageControllerTest {
 
   @Test
   void sendMessage_ShouldSendMatrixMessage_WhenSessionAccessIsAllowed() {
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
@@ -175,7 +178,7 @@ class MatrixMessageControllerTest {
   @Test
   void sendMessage_ShouldReturnUnauthorized_WhenMatrixTokenUnavailable() {
     // Business reason: write operations must fail safely when Matrix auth token cannot be minted.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
@@ -199,7 +202,8 @@ class MatrixMessageControllerTest {
     var session = sessionWithMatrixRoom();
     session.setConsultant(consultantWithMatrixId("ignored"));
     when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+        .thenReturn(session);
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
@@ -218,7 +222,7 @@ class MatrixMessageControllerTest {
   @Test
   void syncMessages_ShouldReturnSyncPayload_WhenSessionRoomAndTokenExist() {
     // Business reason: chat UI long-polling depends on sync endpoint forwarding Matrix updates.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
@@ -252,7 +256,7 @@ class MatrixMessageControllerTest {
     // Business reason: successful media uploads must return Matrix response metadata for message
     // rendering.
     when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(sessionWithMatrixRoom()));
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);

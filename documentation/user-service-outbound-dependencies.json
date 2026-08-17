@@ -1,0 +1,160 @@
+{
+  "schemaVersion": 1,
+  "transportPolicies": {
+    "default-http": {
+      "connectTimeoutMs": 3000,
+      "readTimeoutMs": 10000,
+      "automaticTransportRetries": 0,
+      "implementation": "src/main/java/de/caritas/cob/userservice/api/config/RestTemplateTimeouts.java"
+    },
+    "matrix-long-poll": {
+      "connectTimeoutMs": 3000,
+      "readTimeoutMs": 42000,
+      "automaticTransportRetries": 0,
+      "implementation": "src/main/java/de/caritas/cob/userservice/api/config/RestTemplateTimeouts.java"
+    }
+  },
+  "generatedHttpApiFactories": [
+    {
+      "dependency": "AgencyService admin API",
+      "configurationProperty": "agency.admin.service.api.url",
+      "file": "src/main/java/de/caritas/cob/userservice/api/config/apiclient/AgencyAdminServiceApiControllerFactory.java"
+    },
+    {
+      "dependency": "AgencyService",
+      "configurationProperty": "agency.service.api.url",
+      "file": "src/main/java/de/caritas/cob/userservice/api/config/apiclient/AgencyServiceApiControllerFactory.java"
+    },
+    {
+      "dependency": "ConsultingTypeService application settings API",
+      "configurationProperty": "consulting.type.service.api.url",
+      "file": "src/main/java/de/caritas/cob/userservice/api/config/apiclient/ApplicationSettingsApiControllerFactory.java"
+    },
+    {
+      "dependency": "AppointmentService agency API",
+      "configurationProperty": "appointment.service.api.url",
+      "file": "src/main/java/de/caritas/cob/userservice/api/config/apiclient/AppointmentAgencyServiceApiControllerFactory.java"
+    },
+    {
+      "dependency": "AppointmentService asker API",
+      "configurationProperty": "appointment.service.api.url",
+      "file": "src/main/java/de/caritas/cob/userservice/api/config/apiclient/AppointmentAskerServiceApiControllerFactory.java"
+    },
+    {
+      "dependency": "AppointmentService consultant API",
+      "configurationProperty": "appointment.service.api.url",
+      "file": "src/main/java/de/caritas/cob/userservice/api/config/apiclient/AppointmentConsultantServiceApiControllerFactory.java"
+    },
+    {
+      "dependency": "ConsultingTypeService consulting-type API",
+      "configurationProperty": "consulting.type.service.api.url",
+      "file": "src/main/java/de/caritas/cob/userservice/api/config/apiclient/ConsultingTypeServiceApiControllerFactory.java"
+    },
+    {
+      "dependency": "MailService",
+      "configurationProperty": "mail.service.api.url",
+      "file": "src/main/java/de/caritas/cob/userservice/api/config/apiclient/MailServiceApiControllerFactory.java"
+    },
+    {
+      "dependency": "TenantService admin API",
+      "configurationProperty": "tenant.service.api.url",
+      "file": "src/main/java/de/caritas/cob/userservice/api/config/apiclient/TenantAdminServiceApiControllerFactory.java"
+    },
+    {
+      "dependency": "TenantService",
+      "configurationProperty": "tenant.service.api.url",
+      "file": "src/main/java/de/caritas/cob/userservice/api/config/apiclient/TenantServiceApiControllerFactory.java"
+    },
+    {
+      "dependency": "ConsultingTypeService topic API",
+      "configurationProperty": "consulting.type.service.api.url",
+      "file": "src/main/java/de/caritas/cob/userservice/api/config/apiclient/TopicServiceApiControllerFactory.java"
+    }
+  ],
+  "customHttpTransports": [
+    {
+      "dependency": "Generated ORISO service clients and ordinary Matrix calls",
+      "transport": "bounded Spring RestTemplate",
+      "constructionSite": "src/main/java/de/caritas/cob/userservice/api/config/AppConfig.java"
+    },
+    {
+      "dependency": "Matrix sync long-poll",
+      "transport": "bounded Spring RestTemplate with long-poll read timeout",
+      "constructionSite": "src/main/java/de/caritas/cob/userservice/api/config/AppConfig.java"
+    },
+    {
+      "dependency": "Keycloak identity extensions",
+      "transport": "bounded Spring RestTemplate",
+      "constructionSite": "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/config/KeycloakConfig.java"
+    },
+    {
+      "dependency": "Keycloak Admin API",
+      "transport": "bounded pooled RESTEasy client with automatic retries disabled",
+      "constructionSite": "src/main/java/de/caritas/cob/userservice/api/adapters/keycloak/config/KeycloakAdminClientTransport.java"
+    }
+  ],
+  "stateAndEventInfrastructure": [
+    {
+      "dependency": "MariaDB",
+      "transport": "JDBC"
+    },
+    {
+      "dependency": "Redis",
+      "transport": "Redis"
+    },
+    {
+      "dependency": "RabbitMQ",
+      "transport": "AMQP"
+    }
+  ],
+  "absentRuntimeDependencies": [
+    "Rocket.Chat",
+    "Jitsi",
+    "LiveService",
+    "MessageService"
+  ],
+  "chattyCallReductions": [
+    {
+      "id": "consultant-agency-batch",
+      "dependency": "AgencyService",
+      "operation": "public consultant profile read",
+      "bound": "one batched AgencyService call per consultant profile read",
+      "runtimeProof": "scripts/load/run-seeded-public-read-replicas.sh"
+    },
+    {
+      "id": "technical-identity-grant-amortization",
+      "dependency": "Keycloak",
+      "operation": "configured technical authentication for internal service calls",
+      "previousBehavior": "one password grant per AgencyService Matrix credential read, AppointmentService synchronization call, TenantService tenant creation, and uncached operator-DPA lookup",
+      "currentBehavior": "one synchronized in-memory grant per UserService replica and token lifetime",
+      "maxGrantsPerReplicaPerTokenLifetime": 1,
+      "agencyCredentialMaxAuthRefreshRetriesPerCall": 1,
+      "maxAgencyCredentialAttemptsPerSession": 2,
+      "agencyCredentialInvalidatesEveryUnauthorizedGrant": true,
+      "parallelFullPathSessions": 64,
+      "implementation": "src/main/java/de/caritas/cob/userservice/api/service/identity/TechnicalIdentityTokenProvider.java",
+      "consumers": [
+        "src/main/java/de/caritas/cob/userservice/api/service/agency/AgencyMatrixCredentialClient.java",
+        "src/main/java/de/caritas/cob/userservice/api/service/appointment/AppointmentService.java",
+        "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/onboarding/TenantCreationClient.java",
+        "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/onboarding/OperatorDpaContentClient.java"
+      ],
+      "interactiveAuthenticationExcluded": [
+        "src/main/java/de/caritas/cob/userservice/api/IdentityManager.java",
+        "src/main/java/de/caritas/cob/userservice/api/conversation/service/user/anonymous/AnonymousUserCreatorService.java",
+        "src/main/java/de/caritas/cob/userservice/api/service/user/validation/UserAccountValidator.java"
+      ],
+      "agencyCredentialRetryPolicy": "only the AgencyService Matrix-credential read retries once after 401; the other technical consumers reuse the pre-expiry grant but preserve their existing no-retry behavior",
+      "fullPathContract": "src/test/java/de/caritas/cob/userservice/api/facade/CreateSessionTechnicalIdentityFanOutTest.java",
+      "retryMetric": "userservice.outbound.retries{dependency=agency-service,operation=matrix-credentials-auth-refresh}"
+    }
+  ],
+  "measurementPolicy": {
+    "callAttempts": "userservice.outbound.http.calls",
+    "latency": "userservice.outbound.http.latency",
+    "payload": "userservice.outbound.http.payload",
+    "explicitRetries": "userservice.outbound.retries",
+    "applicationFallbacks": "userservice.dependency.fallbacks",
+    "note": "Runtime call frequency and successful application fallbacks are measured from metrics and load evidence, not inferred from static source-expression counts."
+  }
+}

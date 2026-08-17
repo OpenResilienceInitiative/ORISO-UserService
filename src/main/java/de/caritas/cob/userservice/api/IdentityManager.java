@@ -1,15 +1,18 @@
 package de.caritas.cob.userservice.api;
 
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import lombok.RequiredArgsConstructor;
@@ -21,10 +24,12 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class IdentityManager implements IdentityManaging {
 
-  private final IdentityClient identityClient;
   private final IdentityEmailAddressUpdater identityEmailAddressUpdater;
-  private final IdentityAuthentication identityAuthentication;
   private final IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  private final IdentityAuthentication identityAuthentication;
+  private final IdentityLocaleUpdater identityLocaleUpdater;
+  private final IdentityPasswordUpdater identityPasswordUpdater;
+  private final IdentityRoleLookup identityRoleLookup;
   private final IdentitySecondFactor identitySecondFactor;
   private final IdentityUsernameAvailability identityUsernameAvailability;
   private final UsernameTranscoder usernameTranscoder;
@@ -56,14 +61,28 @@ public class IdentityManager implements IdentityManaging {
     return identityAuthentication.verifyPasswordIgnoringSecondFactor(username, password);
   }
 
+  /**
+   * The typed policy failure is rethrown, not collapsed into {@code false}: the adapter raises
+   * {@link CustomValidationHttpStatusException} with {@code PASSWORD_NOT_VALID} / HTTP 400 for a
+   * rejected password, and a caller that only sees {@code false} cannot tell "weak password" from
+   * "provider unreachable". Everything else keeps the boolean fallback.
+   */
   @Override
   public boolean changePassword(String userId, String password) {
-    return identityClient.changePassword(userId, password);
+    try {
+      identityPasswordUpdater.updatePassword(userId, password);
+      return true;
+    } catch (CustomValidationHttpStatusException validationException) {
+      throw validationException;
+    } catch (Exception ex) {
+      log.warn("Could not change password for user with id {}", userId, ex);
+      return false;
+    }
   }
 
   @Override
   public void changeLanguage(String userId, String language) {
-    identityClient.changeLanguage(userId, language);
+    identityLocaleUpdater.updateLocale(userId, language);
   }
 
   @Override
@@ -96,8 +115,15 @@ public class IdentityManager implements IdentityManaging {
                 .equals(usernameTranscoder.decodeUsername(ownerUsername)));
   }
 
+  /**
+   * Case-insensitive, matching the assignment and removal paths in the Keycloak adapter: realm role
+   * names are not case-normalised, so an exact match failed to recognise a role stored as e.g.
+   * {@code CONSULTANT}.
+   */
   @Override
   public boolean hasRole(String userId, UserRole role) {
-    return identityClient.userHasRole(userId, role.getValue());
+    return identityRoleLookup.findAllByUserId(userId).stream()
+        .filter(java.util.Objects::nonNull)
+        .anyMatch(roleName -> roleName.equalsIgnoreCase(role.getValue()));
   }
 }

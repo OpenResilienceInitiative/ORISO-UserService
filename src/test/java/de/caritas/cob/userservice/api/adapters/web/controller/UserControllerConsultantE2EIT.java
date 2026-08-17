@@ -105,6 +105,9 @@ class UserControllerConsultantE2EIT {
 
   @Autowired private ConsultantRepository consultantRepository;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService keycloakService;
+
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
   @Autowired private UserRepository userRepository;
@@ -1022,6 +1025,12 @@ class UserControllerConsultantE2EIT {
 
       consultant = consultantRepository.save(consultant);
       consultantIdsToDelete.add(consultant.getId());
+      // Seeded explicitly: `ConsultantDtoMapper` derives `isGroupchatConsultant` from
+      // `hasRole(GROUP_CHAT_CONSULTANT)`, and the identity stub now reports only the roles a
+      // test actually assigned. It previously returned every UserRole, so the assertions on
+      // this flag held no matter what the service did.
+      keycloakService.assignRoles(
+          consultant.getId(), List.of(UserRole.GROUP_CHAT_CONSULTANT.getValue()));
 
       ConsultantAgency consultantAgency;
 

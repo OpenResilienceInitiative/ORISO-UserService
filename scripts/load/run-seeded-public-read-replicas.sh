@@ -5,15 +5,16 @@ repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 source "${repo_root}/scripts/load/ensure-java-21.sh"
 ensure_java_21
 
-replica_one_port="${USERSERVICE_REPLICA_ONE_PORT:-18082}"
-replica_two_port="${USERSERVICE_REPLICA_TWO_PORT:-18084}"
-agency_stub_port="${AGENCY_STUB_PORT:-18083}"
 request_count="${USERSERVICE_LOAD_REQUESTS:-1400}"
 concurrency="${USERSERVICE_LOAD_CONCURRENCY:-32}"
 max_p95_ms="${USERSERVICE_LOAD_MAX_P95_MS:-1000}"
 max_calls_per_consultant_read="${USERSERVICE_LOAD_MAX_AGENCY_CALLS_PER_CONSULTANT_READ:-1.0}"
 max_dependency_mean_latency_ms="${USERSERVICE_LOAD_MAX_AGENCY_MEAN_LATENCY_MS:-500}"
 max_dependency_response_bytes_per_call="${USERSERVICE_LOAD_MAX_AGENCY_RESPONSE_BYTES_PER_CALL:-4096}"
+agency_stub_status="${AGENCY_STUB_STATUS:-200}"
+expected_fallback="${USERSERVICE_LOAD_EXPECT_AGENCY_FALLBACK:-false}"
+max_fallback_warnings_per_replica="${USERSERVICE_LOAD_MAX_FALLBACK_WARNINGS_PER_REPLICA:-1}"
+keep_run_dir="${USERSERVICE_KEEP_RUN_DIR:-false}"
 run_dir="$(mktemp -d "${TMPDIR:-/tmp}/userservice-replica-load.XXXXXX")"
 run_id="userservice-replica-load-$$"
 mariadb_container="${run_id}-mariadb"
@@ -31,12 +32,17 @@ stop_process() {
 }
 
 cleanup() {
+  local exit_status="$?"
   stop_process "${userservice_replica_one_pid}"
   stop_process "${userservice_replica_two_pid}"
   stop_process "${agency_stub_pid}"
   docker rm -f "${mariadb_container}" >/dev/null 2>&1 || true
   docker rm -f "${redis_container}" >/dev/null 2>&1 || true
-  rm -r "${run_dir}"
+  if [[ "${keep_run_dir}" == "true" && "${exit_status}" != "0" ]]; then
+    echo "Preserved failed replica proof artifacts: ${run_dir}" >&2
+  else
+    rm -r "${run_dir}"
+  fi
 }
 trap cleanup EXIT
 trap 'exit 130' INT
@@ -48,6 +54,18 @@ for command in docker curl python3 java; do
     exit 1
   fi
 done
+
+read -r allocated_replica_one_port allocated_replica_two_port allocated_agency_stub_port \
+  < <(python3 "${repo_root}/scripts/load/allocate-distinct-ports.py" 3)
+replica_one_port="${USERSERVICE_REPLICA_ONE_PORT:-${allocated_replica_one_port}}"
+replica_two_port="${USERSERVICE_REPLICA_TWO_PORT:-${allocated_replica_two_port}}"
+agency_stub_port="${AGENCY_STUB_PORT:-${allocated_agency_stub_port}}"
+if [[ "${replica_one_port}" == "${replica_two_port}" \
+  || "${replica_one_port}" == "${agency_stub_port}" \
+  || "${replica_two_port}" == "${agency_stub_port}" ]]; then
+  echo "UserService replica and AgencyService stub ports must be distinct" >&2
+  exit 1
+fi
 
 docker run --detach \
   --name "${mariadb_container}" \
@@ -95,6 +113,7 @@ jdbc_url="jdbc:mariadb://127.0.0.1:${mariadb_port}/userservice"
 
 python3 "${repo_root}/tests/load/seeded_agency_stub.py" \
   --port "${agency_stub_port}" \
+  --status-code "${agency_stub_status}" \
   >"${run_dir}/agency-stub.log" 2>&1 &
 agency_stub_pid="$!"
 
@@ -208,10 +227,34 @@ python3 "${repo_root}/tests/load/outbound_dependency_metrics.py" capture \
   --output "${run_dir}/outbound-after.json"
 
 python3 -m json.tool "${run_dir}/load-result.json"
-python3 "${repo_root}/tests/load/outbound_dependency_metrics.py" compare \
-  --before "${run_dir}/outbound-before.json" \
-  --after "${run_dir}/outbound-after.json" \
-  --load-result "${run_dir}/load-result.json" \
-  --max-calls-per-consultant-read "${max_calls_per_consultant_read}" \
-  --max-mean-latency-ms "${max_dependency_mean_latency_ms}" \
+comparison_command=(
+  python3 "${repo_root}/tests/load/outbound_dependency_metrics.py" compare
+  --before "${run_dir}/outbound-before.json"
+  --after "${run_dir}/outbound-after.json"
+  --load-result "${run_dir}/load-result.json"
+  --max-calls-per-consultant-read "${max_calls_per_consultant_read}"
+  --max-mean-latency-ms "${max_dependency_mean_latency_ms}"
   --max-response-bytes-per-call "${max_dependency_response_bytes_per_call}"
+)
+if [[ "${expected_fallback}" == "true" ]]; then
+  comparison_command+=(--expected-fallback)
+fi
+"${comparison_command[@]}"
+
+if [[ "${expected_fallback}" == "true" ]]; then
+  warning_marker="AgencyService consultant-agency fallback active"
+  for replica_log in \
+    "${run_dir}/userservice-replica-one.log" \
+    "${run_dir}/userservice-replica-two.log"; do
+    fallback_warnings="$(grep -cF "${warning_marker}" "${replica_log}" || true)"
+    if ((fallback_warnings < 1 || fallback_warnings > max_fallback_warnings_per_replica)); then
+      echo "Expected 1..${max_fallback_warnings_per_replica} bounded fallback warnings in ${replica_log}, found ${fallback_warnings}" >&2
+      exit 1
+    fi
+    if grep -q "org.springframework.web.client.HttpServerErrorException" "${replica_log}"; then
+      echo "AgencyService outage emitted a dependency stack trace in ${replica_log}" >&2
+      exit 1
+    fi
+  done
+  echo "AgencyService outage fallback stayed available with bounded per-replica warnings."
+fi

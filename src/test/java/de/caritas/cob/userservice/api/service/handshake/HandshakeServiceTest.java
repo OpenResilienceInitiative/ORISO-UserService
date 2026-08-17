@@ -39,7 +39,6 @@ class HandshakeServiceTest {
   @Mock private HandshakeAuditEventRepository handshakeAuditEventRepository;
   @Mock private KeycloakAuthClient keycloakAuthClient;
   @Mock private HandshakeCompletionHandler completionHandler;
-  @Mock private de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
 
   @Mock private de.caritas.cob.userservice.api.port.out.IdentitySecondFactor identitySecondFactor;
 
@@ -54,7 +53,6 @@ class HandshakeServiceTest {
             handshakeSessionRepository,
             handshakeAuditEventRepository,
             keycloakAuthClient,
-            identityClient,
             identitySecondFactor,
             identityClientConfig,
             List.of(completionHandler));

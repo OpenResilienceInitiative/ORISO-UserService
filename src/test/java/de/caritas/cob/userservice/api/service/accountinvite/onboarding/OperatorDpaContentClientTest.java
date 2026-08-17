@@ -3,18 +3,14 @@ package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.mockito.ArgumentMatchers.anyLong;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.api.service.identity.TechnicalIdentityTokenProvider;
 import de.caritas.cob.userservice.tenantadminservice.generated.ApiClient;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaVersionDTO;
@@ -45,21 +41,15 @@ class OperatorDpaContentClientTest {
       "{\"de\":\"<h2>Auftragsverarbeitung</h2>\",\"en\":\"<h2>Data processing</h2>\"}";
 
   @Mock private SecurityHeaderSupplier securityHeaderSupplier;
-  @Mock private IdentityAuthentication identityAuthentication;
-  @Mock private IdentityClientConfig identityClientConfig;
+  @Mock private TechnicalIdentityTokenProvider technicalIdentityTokenProvider;
   @Mock private TenantAdminServiceApiControllerFactory controllerFactory;
   @Mock private TenantControllerApi tenantControllerApi;
   @Mock private ApiClient apiClient;
 
   @BeforeEach
   void setUp() {
-    TechnicalUserConfig technicalUser = new TechnicalUserConfig();
-    technicalUser.setUsername("technical");
-    technicalUser.setPassword("secret");
-    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
-    IdentityLogin identityLogin = new IdentityLogin("token", 0, 0, null);
-    when(identityAuthentication.login(anyString(), anyString())).thenReturn(identityLogin);
-    when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(anyString()))
+    when(technicalIdentityTokenProvider.getAccessToken()).thenReturn("token");
+    when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders("token"))
         .thenReturn(new HttpHeaders());
     when(controllerFactory.createControllerApi()).thenReturn(tenantControllerApi);
     when(tenantControllerApi.getApiClient()).thenReturn(apiClient);
@@ -68,8 +58,7 @@ class OperatorDpaContentClientTest {
   private OperatorDpaContentClient clientFor(long operatorTenantId) {
     return new OperatorDpaContentClient(
         securityHeaderSupplier,
-        identityAuthentication,
-        identityClientConfig,
+        technicalIdentityTokenProvider,
         controllerFactory,
         operatorTenantId);
   }
@@ -164,7 +153,7 @@ class OperatorDpaContentClientTest {
     assertNull(clientFor(0L).fetchPublishedDpaContent());
 
     verifyNoInteractions(controllerFactory);
-    verifyNoInteractions(identityAuthentication);
+    verifyNoInteractions(technicalIdentityTokenProvider);
   }
 
   @Test
@@ -213,12 +202,12 @@ class OperatorDpaContentClientTest {
   }
 
   @Test
-  void fetchPublishedDpaContentAuthenticatesAsTheConfiguredTechnicalUser() {
+  void fetchPublishedDpaContentUsesTheSharedTechnicalIdentityGrant() {
     when(tenantControllerApi.getDataProcessingAgreementVersions(anyLong())).thenReturn(List.of());
 
     clientFor(OPERATOR_TENANT_ID).fetchPublishedDpaContent();
 
-    verify(identityAuthentication).login("technical", "secret");
+    verify(technicalIdentityTokenProvider).getAccessToken();
     verify(securityHeaderSupplier).getKeycloakAndCsrfHttpHeaders("token");
   }
 }

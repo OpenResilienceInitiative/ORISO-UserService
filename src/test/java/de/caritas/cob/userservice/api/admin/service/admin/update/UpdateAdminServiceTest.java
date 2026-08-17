@@ -72,7 +72,9 @@ class UpdateAdminServiceTest {
   void updateAgencyAdmin_Should_updateAdmin_When_adminEntityHasTenantIdNull() {
     // given
     UpdateAgencyAdminDTO updateAgencyAdminDTO = mock(UpdateAgencyAdminDTO.class);
+    when(updateAgencyAdminDTO.getEmail()).thenReturn("mail@example.com");
     Admin admin = mock(Admin.class);
+    when(admin.getId()).thenReturn("identity-id");
     when(admin.getTenantId()).thenReturn(null);
     when(retrieveAdminService.findAdmin(anyString(), eq(AdminType.AGENCY))).thenReturn(admin);
 
@@ -80,8 +82,9 @@ class UpdateAdminServiceTest {
     updateAdminService.updateAgencyAdmin("adminId", updateAgencyAdminDTO);
 
     // then
-    verify(identityProfileUpdater).updateProfile(any(), profileUpdateCaptor.capture());
+    verify(identityProfileUpdater).updateProfile(eq("identity-id"), profileUpdateCaptor.capture());
     assertNull(profileUpdateCaptor.getValue().tenantId());
+    assertEquals("mail@example.com", profileUpdateCaptor.getValue().email());
     verify(adminRepository).save(admin);
   }
 
@@ -89,7 +92,9 @@ class UpdateAdminServiceTest {
   void updateAgencyAdmin_Should_updateAdmin_When_adminEntityHasTenantDifferentFromZero() {
     // given
     UpdateAgencyAdminDTO updateAgencyAdminDTO = mock(UpdateAgencyAdminDTO.class);
+    when(updateAgencyAdminDTO.getEmail()).thenReturn("mail@example.com");
     Admin admin = mock(Admin.class);
+    when(admin.getId()).thenReturn("identity-id");
     when(admin.getTenantId()).thenReturn(2L);
     when(retrieveAdminService.findAdmin(anyString(), eq(AdminType.AGENCY))).thenReturn(admin);
 
@@ -97,8 +102,9 @@ class UpdateAdminServiceTest {
     updateAdminService.updateAgencyAdmin("adminId", updateAgencyAdminDTO);
 
     // then
-    verify(identityProfileUpdater).updateProfile(any(), profileUpdateCaptor.capture());
+    verify(identityProfileUpdater).updateProfile(eq("identity-id"), profileUpdateCaptor.capture());
     assertEquals(2, profileUpdateCaptor.getValue().tenantId());
+    assertEquals("mail@example.com", profileUpdateCaptor.getValue().email());
     verify(adminRepository).save(admin);
   }
 
@@ -115,16 +121,18 @@ class UpdateAdminServiceTest {
     when(updateTenantAdminDTO.getLastname()).thenReturn("Lastname");
     when(updateTenantAdminDTO.getEmail()).thenReturn("mail@example.com");
     Admin admin = mock(Admin.class);
+    when(admin.getId()).thenReturn("identity-id");
     when(retrieveAdminService.findAdmin(anyString(), eq(AdminType.TENANT))).thenReturn(admin);
 
     // when
     updateAdminService.updateTenantAdmin("adminId", updateTenantAdminDTO);
 
     // then
-    verify(identityProfileUpdater).updateProfile(eq(admin.getId()), profileUpdateCaptor.capture());
+    verify(identityProfileUpdater).updateProfile(eq("identity-id"), profileUpdateCaptor.capture());
     assertEquals(5L, profileUpdateCaptor.getValue().tenantId());
     assertEquals("Firstname", profileUpdateCaptor.getValue().firstName());
     assertEquals("Lastname", profileUpdateCaptor.getValue().lastName());
+    assertEquals("mail@example.com", profileUpdateCaptor.getValue().email());
     verify(admin).setTenantId(5L);
     verify(admin).setFirstName("Firstname");
     verify(admin).setLastName("Lastname");
@@ -158,6 +166,7 @@ class UpdateAdminServiceTest {
     when(patchAdminDTO.getLastname()).thenReturn("Lastname");
     when(patchAdminDTO.getEmail()).thenReturn("mail@example.com");
     Admin admin = mock(Admin.class);
+    when(admin.getId()).thenReturn("identity-id");
     when(admin.getTenantId()).thenReturn(3L);
     when(retrieveAdminService.findAdmin(anyString(), eq(AdminType.AGENCY))).thenReturn(admin);
 
@@ -165,10 +174,11 @@ class UpdateAdminServiceTest {
     updateAdminService.patchAgencyAdmin("adminId", patchAdminDTO);
 
     // then
-    verify(identityProfileUpdater).updateProfile(eq(admin.getId()), profileUpdateCaptor.capture());
+    verify(identityProfileUpdater).updateProfile(eq("identity-id"), profileUpdateCaptor.capture());
     assertEquals(3, profileUpdateCaptor.getValue().tenantId());
     assertEquals("Firstname", profileUpdateCaptor.getValue().firstName());
     assertEquals("Lastname", profileUpdateCaptor.getValue().lastName());
+    assertEquals("mail@example.com", profileUpdateCaptor.getValue().email());
     verify(admin).setFirstName("Firstname");
     verify(admin).setLastName("Lastname");
     verify(admin).setEmail("mail@example.com");
@@ -183,6 +193,7 @@ class UpdateAdminServiceTest {
     when(patchAdminDTO.getLastname()).thenReturn("Lastname");
     when(patchAdminDTO.getEmail()).thenReturn("mail@example.com");
     Admin admin = mock(Admin.class);
+    when(admin.getId()).thenReturn("identity-id");
     when(admin.getTenantId()).thenReturn(7L);
     when(retrieveAdminService.findAdmin(anyString(), eq(AdminType.TENANT))).thenReturn(admin);
 
@@ -190,10 +201,11 @@ class UpdateAdminServiceTest {
     updateAdminService.patchTenantAdmin("adminId", patchAdminDTO);
 
     // then
-    verify(identityProfileUpdater).updateProfile(eq(admin.getId()), profileUpdateCaptor.capture());
+    verify(identityProfileUpdater).updateProfile(eq("identity-id"), profileUpdateCaptor.capture());
     assertEquals(7, profileUpdateCaptor.getValue().tenantId());
     assertEquals("Firstname", profileUpdateCaptor.getValue().firstName());
     assertEquals("Lastname", profileUpdateCaptor.getValue().lastName());
+    assertEquals("mail@example.com", profileUpdateCaptor.getValue().email());
     verify(admin).setFirstName("Firstname");
     verify(admin).setLastName("Lastname");
     verify(admin).setEmail("mail@example.com");

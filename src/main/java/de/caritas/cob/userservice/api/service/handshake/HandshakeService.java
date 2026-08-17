@@ -45,7 +45,6 @@ public class HandshakeService {
   private final @NonNull HandshakeSessionRepository handshakeSessionRepository;
   private final @NonNull HandshakeAuditEventRepository handshakeAuditEventRepository;
   private final @NonNull KeycloakAuthClient keycloakAuthClient;
-  private final @NonNull de.caritas.cob.userservice.api.port.out.IdentityClient identityClient;
 
   private final @NonNull de.caritas.cob.userservice.api.port.out.IdentitySecondFactor
       identitySecondFactor;

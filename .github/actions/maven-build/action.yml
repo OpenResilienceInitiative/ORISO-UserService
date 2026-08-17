@@ -103,6 +103,18 @@ runs:
         python3 scripts/ci/suite-inventory.py --require unit
       } | tee -a "$GITHUB_STEP_SUMMARY"
 
+  # Stricter counterpart of the reporting inventory above (#887): the recorded
+  # required-suite classification pins the exact unit totals, so a silently
+  # dropped or double-counted test is caught rather than absorbed.
+  - name: Verify the recorded unit inventory
+    if: ${{ always() }}
+    shell: bash
+    run: |
+      python3 scripts/ci/verify-test-inventory.py \
+        --suite unit \
+        --reports target/surefire-reports \
+        --classification documentation/user-service-historical-failure-classification.json
+
   # Re-raises the status held back above, now that the failing tests, the
   # coverage and the inventory have all been written to the summary. Kept
   # separate from the inventory gate so that a Maven failure which produced no

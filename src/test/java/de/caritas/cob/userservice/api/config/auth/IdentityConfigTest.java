@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.config.auth;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import jakarta.validation.ConstraintViolation;
@@ -43,6 +44,53 @@ class IdentityConfigTest {
   void teardownEach() {
     identityConfig = null;
     violations = null;
+  }
+
+  @Test
+  void isProfileEmailUsableForMagicLinkShouldRejectDummyNullAndBlankAddresses() {
+    givenAValidIdentityConfig();
+    identityConfig.setEmailDummySuffix("@dummy.oriso.org");
+
+    // The rule the web layer used to inline; owning it here gives it one definition.
+    assertTrue(identityConfig.isProfileEmailUsableForMagicLink("real.user@example.org"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink(null));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink(""));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("   "));
+  }
+
+  @Test
+  void isConsultantDisplayNameAllowedShouldReadTheConfiguredFlagNullSafely() {
+    givenAValidIdentityConfig();
+
+    identityConfig.setDisplayNameAllowedForConsultants(true);
+    assertTrue(identityConfig.isConsultantDisplayNameAllowed());
+
+    identityConfig.setDisplayNameAllowedForConsultants(false);
+    assertFalse(identityConfig.isConsultantDisplayNameAllowed());
+
+    // Boxed Boolean: an unset flag must not throw on unboxing.
+    identityConfig.setDisplayNameAllowedForConsultants(null);
+    assertFalse(identityConfig.isConsultantDisplayNameAllowed());
+  }
+
+  @Test
+  void isTwoFactorAuthenticationAllowedShouldMirrorTheOtpRolePolicy() {
+    givenAValidIdentityConfig();
+    identityConfig.setOtpAllowedForUsers(true);
+    identityConfig.setOtpAllowedForConsultants(false);
+
+    var users = Set.of(UserRole.USER.getValue());
+    var consultants = Set.of(UserRole.CONSULTANT.getValue());
+
+    // The port is a rename of the existing rule, not a second implementation of it.
+    assertTrue(identityConfig.isTwoFactorAuthenticationAllowed(users));
+    assertEquals(
+        identityConfig.isOtpAllowed(users), identityConfig.isTwoFactorAuthenticationAllowed(users));
+    assertFalse(identityConfig.isTwoFactorAuthenticationAllowed(consultants));
+    assertEquals(
+        identityConfig.isOtpAllowed(consultants),
+        identityConfig.isTwoFactorAuthenticationAllowed(consultants));
   }
 
   @Test

@@ -5,15 +5,20 @@ import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakAuthClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakMapper;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
-import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import java.util.Collection;
+import java.util.List;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.keycloak.admin.client.resource.UserResource;
@@ -48,12 +53,7 @@ public class KeycloakTestConfig {
         userHelper,
         keycloakAuthClient) {
       @Override
-      public boolean changePassword(String userId, String password) {
-        return super.changePassword(userId, password);
-      }
-
-      @Override
-      public void changeLanguage(String userId, String locale) {
+      public void updateLocale(String userId, String locale) {
         UserResource userResource = keycloakClient.getUsersResource().get(userId);
         UserRepresentation user = getUserRepresentationAndCreateNewUserIfNotExist(userResource);
         super.changeLanguageForTheUser(locale, userResource, user);
@@ -91,20 +91,13 @@ public class KeycloakTestConfig {
       public void updateEmailByUsername(String username, String emailAddress) {}
 
       @Override
-      public CreatedIdentity createUser(UserDTO user) {
-
-        CreatedIdentity keycloakUserDTO = new CreatedIdentity();
-        keycloakUserDTO.setUserId("keycloak-user-id " + RandomStringUtils.randomNumeric(5));
-        return keycloakUserDTO;
+      public IdentityAccountCreated createAccount(IdentityAccountCreation account) {
+        return new IdentityAccountCreated("keycloak-user-id " + RandomStringUtils.randomNumeric(5));
       }
 
       @Override
       public boolean isUsernameAvailable(String username) {
         return true;
-      }
-
-      private boolean shouldGenerateNewUsername(UserDTO user) {
-        return user.getUserGender() != null;
       }
 
       @Override
@@ -113,17 +106,30 @@ public class KeycloakTestConfig {
         return dummyMail;
       }
 
-      @Override
-      public void updateUserRole(String userId) {}
+      /**
+       * Per-user role state, so role provisioning is observable in integration tests. Previously
+       * both mutators discarded their arguments and {@link #findAllByUserId} returned every {@link
+       * UserRole}: a service that assigned the wrong roles — or none — still looked correct, and
+       * every role-gated assertion passed unconditionally.
+       *
+       * <p>Seed roles explicitly (via {@code assignRoles}) in a test that needs them.
+       */
+      private final Map<String, Set<String>> rolesByUserId = new ConcurrentHashMap<>();
 
       @Override
-      public void updateRole(String userId, UserRole role) {}
+      public void assignRoles(String userId, Collection<String> roleNames) {
+        rolesByUserId
+            .computeIfAbsent(userId, key -> ConcurrentHashMap.newKeySet())
+            .addAll(roleNames);
+      }
 
       @Override
-      public void updateRole(String userId, String roleName) {}
-
-      @Override
-      public void removeRoleIfPresent(String userId, String roleName) {}
+      public void removeRolesIfPresent(String userId, Collection<String> roleNames) {
+        var assigned = rolesByUserId.get(userId);
+        if (assigned != null) {
+          assigned.removeAll(roleNames);
+        }
+      }
 
       @Override
       public void updatePassword(String userId, String password) {}
@@ -142,8 +148,8 @@ public class KeycloakTestConfig {
       public void deactivateUser(String userId) {}
 
       @Override
-      public boolean userHasRole(String userId, String userRole) {
-        return true;
+      public List<String> findAllByUserId(String userId) {
+        return List.copyOf(rolesByUserId.getOrDefault(userId, Set.of()));
       }
     };
   }

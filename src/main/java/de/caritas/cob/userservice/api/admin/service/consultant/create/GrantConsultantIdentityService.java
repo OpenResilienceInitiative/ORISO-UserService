@@ -26,7 +26,6 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -60,7 +59,6 @@ public class GrantConsultantIdentityService {
 
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull ConsultantRepository consultantRepository;
-  private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull MatrixUserClient matrixUserClient;
   private final @NonNull ConsultantService consultantService;
@@ -235,10 +233,11 @@ public class GrantConsultantIdentityService {
   }
 
   private void removeGrantedRoles(String adminId, GrantConsultantIdentityDTO dto) {
-    identityClient.removeRoleIfPresent(adminId, CONSULTANT.getValue());
-    if (dto.isGroupchatConsultant()) {
-      identityClient.removeRoleIfPresent(adminId, GROUP_CHAT_CONSULTANT.getValue());
-    }
+    var grantedRoles =
+        dto.isGroupchatConsultant()
+            ? Set.of(CONSULTANT.getValue(), GROUP_CHAT_CONSULTANT.getValue())
+            : Set.of(CONSULTANT.getValue());
+    identityRoleUpdater.removeRolesIfPresent(adminId, grantedRoles);
   }
 
   private NotificationsSettingsDTO allActiveNotifications() {

@@ -9,10 +9,7 @@ import static java.util.Objects.nonNull;
 
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
-import de.caritas.cob.userservice.api.config.auth.Authority;
-import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -26,9 +23,11 @@ import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.Success;
 import de.caritas.cob.userservice.api.model.SuccessWithEmail;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
@@ -37,6 +36,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
@@ -47,7 +47,6 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.BadRequestException;
 import jakarta.ws.rs.NotAuthorizedException;
@@ -91,21 +90,22 @@ import org.springframework.web.client.RestClientResponseException;
 @Slf4j
 @RequiredArgsConstructor
 public class KeycloakService
-    implements IdentityAccountRemover,
+    implements IdentityAccountCreator,
+        IdentityAccountRemover,
         IdentityAuthentication,
-        IdentityClient,
         IdentityDeactivator,
         IdentityDummyEmailUpdater,
         IdentityEmailAddressUpdater,
         IdentityEmailOwnerLookup,
         IdentityLocaleLookup,
         IdentityPasswordUpdater,
+        IdentityLocaleUpdater,
         IdentityProfileLookup,
         IdentityProfileUpdater,
         IdentityRoleLookup,
         IdentityRoleUpdater,
-        IdentitySecondFactor,
-        IdentityUsernameAvailability {
+        IdentityUsernameAvailability,
+        IdentitySecondFactor {
 
   private static final String ENDPOINT_OTP_INFO = "/fetch-otp-setup-info/{username}";
   private static final String ENDPOINT_OTP_SETUP = "/setup-otp/{username}";
@@ -130,9 +130,6 @@ public class KeycloakService
 
   private OutboundHttpMetrics outboundHttpMetrics;
 
-  @Value("${api.error.keycloakError}")
-  private String keycloakError;
-
   @Value("${multitenancy.enabled}")
   private Boolean multiTenancyEnabled;
 
@@ -141,25 +138,8 @@ public class KeycloakService
     this.outboundHttpMetrics = outboundHttpMetrics;
   }
 
-  /**
-   * Changes the (Keycloak) password of a user and returns true on success.
-   *
-   * @param userId Keycloak user ID
-   * @param password Keycloak password
-   * @return true if password change was successful
-   */
-  public boolean changePassword(final String userId, final String password) {
-    try {
-      updatePassword(userId, password);
-    } catch (Exception ex) {
-      log.info("Could not change password for user with id {}", userId);
-      return false;
-    }
-
-    return true;
-  }
-
-  public void changeLanguage(final String userId, final String locale) {
+  @Override
+  public void updateLocale(final String userId, final String locale) {
     UserResource userResource = keycloakClient.getUsersResource().get(userId);
     var user = userResource.toRepresentation();
 
@@ -345,34 +325,16 @@ public class KeycloakService
     }
   }
 
-  /**
-   * Creates a user in Keycloak and returns its Keycloak user ID.
-   *
-   * @param user {@link UserDTO}
-   * @return provider-neutral created identity
-   */
-  public CreatedIdentity createUser(final UserDTO user) {
-    return createUser(user, null, null);
-  }
-
-  /**
-   * Creates a user with firstname and lastname in Keycloak and returns its Keycloak user ID.
-   *
-   * @param user {@link UserDTO}
-   * @param firstName first name of user
-   * @param lastName last name of user
-   * @return provider-neutral created identity
-   */
-  public CreatedIdentity createUser(
-      final UserDTO user, final String firstName, final String lastName) {
-    var locale =
-        isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
-    var kcUser = getUserRepresentation(user, firstName, lastName, locale);
+  /** Creates an identity account and returns its provider-neutral identifier. */
+  @Override
+  public IdentityAccountCreated createAccount(IdentityAccountCreation account) {
+    var locale = isNull(account.locale()) ? "de" : account.locale();
+    var kcUser = getUserRepresentation(account, locale);
     try (var response = keycloakClient.getUsersResource().create(kcUser)) {
       if (response.getStatus() == HttpStatus.CREATED.value()) {
         final String createdUserId = getCreatedUserId(response.getLocation());
         try {
-          updateIdentityAttributesAfterCreate(user, createdUserId);
+          updateIdentityAttributesAfterCreate(account, createdUserId);
         } catch (Exception exception) {
           log.error(
               "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
@@ -385,16 +347,24 @@ public class KeycloakService
                   createdUserId),
               exception);
         }
-        return new CreatedIdentity(createdUserId);
+        return new IdentityAccountCreated(createdUserId);
       }
-      handleCreateKeycloakUserError(response);
+      // The detail is returned, never stashed on the bean: KeycloakService is a
+      // singleton, so writing it to a field let two concurrent failures report
+      // each other's provider error text (and permanently overwrote the
+      // configured `api.error.keycloakError` default after the first failure).
+      throw new InternalServerErrorException(
+          String.format(
+              "Could not create Keycloak account for: %s %nKeycloak error: %s",
+              account.username(), handleCreateKeycloakUserError(response)));
     }
-    throw new InternalServerErrorException(
-        String.format(
-            "Could not create Keycloak account for: %s %nKeycloak error: %s", user, keycloakError));
   }
 
-  private void handleCreateKeycloakUserError(Response response) {
+  /**
+   * Throws the typed duplicate-account exceptions, or returns the failure detail for the caller to
+   * put into its own message.
+   */
+  private String handleCreateKeycloakUserError(Response response) {
     final int status = response.getStatus();
     String rawResponse = "";
 
@@ -417,13 +387,12 @@ public class KeycloakService
       throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
-    // Preserve prior behavior but include status/raw details to avoid opaque 500s.
-    keycloakError =
-        !rawResponse.isBlank()
-            ? String.format("Keycloak create-user failed with status %s: %s", status, rawResponse)
-            : String.format("Keycloak create-user failed with status %s", status);
-
     log.warn("Keycloak create-user failed. status={}, rawResponse={}", status, rawResponse);
+
+    // Preserve prior behavior but include status/raw details to avoid opaque 500s.
+    return !rawResponse.isBlank()
+        ? String.format("Keycloak create-user failed with status %s: %s", status, rawResponse)
+        : String.format("Keycloak create-user failed with status %s", status);
   }
 
   /**
@@ -473,14 +442,14 @@ public class KeycloakService
   }
 
   private UserRepresentation getUserRepresentation(
-      final UserDTO user, final String firstName, final String lastName) {
-    return getUserRepresentation(user, firstName, lastName, null);
-  }
-
-  private UserRepresentation getUserRepresentation(
-      final UserDTO user, final String firstName, final String lastName, final String locale) {
+      final IdentityAccountCreation account, final String locale) {
     return getUserRepresentation(
-        user.getUsername(), user.getEmail(), user.getTenantId(), firstName, lastName, locale);
+        account.username(),
+        account.email(),
+        account.tenantId(),
+        account.firstName(),
+        account.lastName(),
+        locale);
   }
 
   private UserRepresentation getUserRepresentation(final IdentityProfileUpdate profile) {
@@ -544,7 +513,8 @@ public class KeycloakService
     }
   }
 
-  private void updateIdentityAttributesAfterCreate(UserDTO userDTO, String keycloakUserId) {
+  private void updateIdentityAttributesAfterCreate(
+      IdentityAccountCreation account, String keycloakUserId) {
     var userResource = keycloakClient.getUsersResource().get(keycloakUserId);
     var representation = userResource.toRepresentation();
     Map<String, List<String>> attributes =
@@ -553,20 +523,16 @@ public class KeycloakService
             : new LinkedHashMap<>(representation.getAttributes());
 
     attributes.put(USER_ID_ATTRIBUTE, Collections.singletonList(keycloakUserId));
-    var decodedUsername = usernameTranscoder.decodeUsername(userDTO.getUsername());
+    var decodedUsername = usernameTranscoder.decodeUsername(account.username());
     attributes.put(USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
     attributes.put(LEGACY_USERNAME_ATTRIBUTE, Collections.singletonList(decodedUsername));
-    var tenantId = resolveTenantId(userDTO);
+    var tenantId = resolveTenantId(account.tenantId());
     if (tenantId != null) {
       attributes.put(TENANT_ID_ATTRIBUTE, Collections.singletonList(tenantId.toString()));
     }
 
     representation.setAttributes(attributes);
     userResource.update(representation);
-  }
-
-  private Long resolveTenantId(UserDTO userDTO) {
-    return resolveTenantId(userDTO.getTenantId());
   }
 
   private Long resolveTenantId(Long configuredTenantId) {
@@ -586,15 +552,6 @@ public class KeycloakService
     }
 
     return null;
-  }
-
-  /**
-   * Assigns the role "user" to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   */
-  public void updateUserRole(final String userId) {
-    updateRole(userId, "user");
   }
 
   @Override
@@ -619,75 +576,91 @@ public class KeycloakService
   }
 
   private void ensureRolesOnce(final String userId, final Collection<String> requestedRoles) {
-    var assignedRoles =
+    var assignedRoleNames =
         getUserRoles(userId).stream()
             .map(RoleRepresentation::getName)
             .filter(roleName -> nonNull(roleName))
+            .map(roleName -> roleName.toLowerCase(Locale.ROOT))
             .collect(Collectors.toCollection(LinkedHashSet::new));
-    var missingRoles = new LinkedHashSet<>(requestedRoles);
-    missingRoles.removeAll(assignedRoles);
+    var missingRoles =
+        requestedRoles.stream()
+            .filter(roleName -> !assignedRoleNames.contains(roleName.toLowerCase(Locale.ROOT)))
+            .collect(Collectors.toCollection(LinkedHashSet::new));
     if (!missingRoles.isEmpty()) {
       updateRolesOnce(userId, missingRoles);
     }
   }
 
-  /**
-   * Assigns the given {@link UserRole} to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   * @param role {@link UserRole}
-   */
-  public void updateRole(final String userId, final UserRole role) {
-    this.updateRole(userId, role.getValue());
+  @Override
+  public void assignRoles(final String userId, final Collection<String> roleNames) {
+    var requestedRoles = new LinkedHashSet<>(roleNames);
+    if (!requestedRoles.isEmpty()) {
+      updateRoles(userId, requestedRoles);
+    }
   }
 
   @Override
-  public void removeRoleIfPresent(final String userId, final String roleName) {
-    // Get realm and user resources
-    var realmResource = keycloakClient.getRealmResource();
-    UsersResource userRessource = realmResource.users();
-    UserResource user = userRessource.get(userId);
-    // Remove role
-    var optionalRole = findRole(user, roleName);
-    if (optionalRole.isPresent()) {
-      RoleRepresentation roleRepresentation =
-          realmResource.roles().get(optionalRole.get()).toRepresentation();
-      if (roleRepresentation != null) {
-        user.roles().realmLevel().remove(Collections.singletonList(roleRepresentation));
-      }
+  public void removeRolesIfPresent(final String userId, final Collection<String> roleNames) {
+    var requestedRoles = new LinkedHashSet<>(roleNames);
+    if (requestedRoles.isEmpty()) {
+      return;
     }
-  }
 
-  Optional<String> findRole(UserResource user, String roleName) {
-
-    List<RoleRepresentation> userRoles = user.roles().realmLevel().listAll();
-    if (userRoles != null) {
-      return userRoles.stream()
-          .filter(role -> role.getName() != null && role.getName().equals(roleName))
-          .map(RoleRepresentation::getName)
-          .findFirst();
-    }
-    return Optional.empty();
-  }
-
-  /**
-   * Assigns the role with the given name to the given user ID.
-   *
-   * @param userId Keycloak user ID
-   * @param roleName Keycloak role name
-   */
-  public void updateRole(final String userId, final String roleName) {
     try {
-      updateRolesOnce(userId, Collections.singletonList(roleName));
+      removeRolesOnce(userId, requestedRoles);
     } catch (NotAuthorizedException e) {
       log.warn(
-          "Keycloak admin session was unauthorized while assigning role {} to user {}, forcing"
+          "Keycloak admin session was unauthorized while removing {} roles from user {}, forcing"
               + " token refresh and retrying once",
-          roleName,
+          requestedRoles.size(),
           userId);
       recordRetry("admin-session-refresh");
       keycloakClient.refreshAdminSession();
-      updateRolesOnce(userId, Collections.singletonList(roleName));
+      removeRolesOnce(userId, requestedRoles);
+    }
+  }
+
+  private void removeRolesOnce(final String userId, final Collection<String> roleNames) {
+    var realmResource = keycloakClient.getRealmResource();
+    var user = realmResource.users().get(userId);
+    var realmRoles = user.roles().realmLevel();
+    var assignedRoles = realmRoles.listAll();
+    if (assignedRoles == null) {
+      return;
+    }
+
+    // Case-insensitive on both sides, matching `ensureRolesOnce`. Keycloak realm
+    // roles are not case-normalised, so an exact match left a role stored as
+    // `CONSULTANT` un-removable — a privilege that could never be revoked.
+    var requestedRoleNames =
+        roleNames.stream()
+            .filter(roleName -> nonNull(roleName))
+            .map(roleName -> roleName.toLowerCase(Locale.ROOT))
+            .collect(Collectors.toCollection(LinkedHashSet::new));
+    var rolesToRemove =
+        assignedRoles.stream()
+            .filter(
+                role ->
+                    role.getName() != null
+                        && requestedRoleNames.contains(role.getName().toLowerCase(Locale.ROOT)))
+            .toList();
+    if (!rolesToRemove.isEmpty()) {
+      realmRoles.remove(rolesToRemove);
+    }
+  }
+
+  private void updateRoles(final String userId, final Collection<String> roleNames) {
+    try {
+      updateRolesOnce(userId, roleNames);
+    } catch (NotAuthorizedException e) {
+      log.warn(
+          "Keycloak admin session was unauthorized while assigning {} roles to user {}, forcing"
+              + " token refresh and retrying once",
+          roleNames.size(),
+          userId);
+      recordRetry("admin-session-refresh");
+      keycloakClient.refreshAdminSession();
+      updateRolesOnce(userId, roleNames);
     }
   }
 
@@ -818,12 +791,13 @@ public class KeycloakService
   public String updateDummyEmail(
       final String userId, final IdentityDummyEmailUpdate identityUpdate) {
     var dummyEmail = userHelper.getDummyEmail(userId);
-    var user = new UserDTO();
-    user.setUsername(identityUpdate.username());
-    user.setEmail(dummyEmail);
-    user.setTenantId(identityUpdate.tenantId());
     var userResource = keycloakClient.getUsersResource().get(userId);
-    userResource.update(getUserRepresentation(user, null, null));
+    var representation = userResource.toRepresentation();
+    representation.setUsername(usernameTranscoder.decodeUsername(identityUpdate.username()));
+    representation.setEmail(dummyEmail);
+    putUsernameAttributes(identityUpdate.username(), representation);
+    updateTenantId(identityUpdate.tenantId(), representation);
+    userResource.update(representation);
     log.debug("Set email dummy for {} to {}", userId, dummyEmail);
     return dummyEmail;
   }
@@ -921,50 +895,6 @@ public class KeycloakService
   }
 
   /**
-   * Returns true if the given user has the provided authority.
-   *
-   * @param userId Keycloak user ID
-   * @param authority Keycloak authority
-   * @return true if user hast provided authority
-   */
-  public boolean userHasAuthority(String userId, String authority) {
-    try {
-      return getUserRoles(userId).stream()
-          .map(role -> UserRole.getRoleByValue(role.getName()))
-          .filter(Optional::isPresent)
-          .map(Optional::get)
-          .map(Authority::getAuthoritiesByUserRole)
-          .anyMatch(currentAuthority -> currentAuthority.contains(authority));
-    } catch (Exception ex) {
-      var error = String.format("Could not get roles for user id %s", userId);
-      log.error("Keycloak error: " + error, ex);
-      throw new KeycloakException(error);
-    }
-  }
-
-  /**
-   * Returns true if the given user has the provided role.
-   *
-   * @param userId Keycloak user ID
-   * @param userRole Keycloak role
-   * @return true if user hast provided role
-   */
-  public boolean userHasRole(String userId, String userRole) {
-    try {
-      return getUserRoles(userId).stream()
-          .map(this::toUserRole)
-          .filter(Optional::isPresent)
-          .map(Optional::get)
-          .map(UserRole::getValue)
-          .anyMatch(userRole::equals);
-    } catch (Exception ex) {
-      var error = String.format("Could not get roles for user id %s", userId);
-      log.error("Keycloak error: " + error, ex);
-      throw new KeycloakException(error);
-    }
-  }
-
-  /**
    * Returns the names of all realm roles currently assigned to the given user.
    *
    * @param userId Keycloak user ID
@@ -983,10 +913,6 @@ public class KeycloakService
     }
   }
 
-  private Optional<UserRole> toUserRole(RoleRepresentation roleRepresentation) {
-    return UserRole.getRoleByValue(roleRepresentation.getName());
-  }
-
   private List<RoleRepresentation> getUserRoles(String userId) {
     return keycloakClient.getUsersResource().get(userId).roles().realmLevel().listAll();
   }
@@ -998,7 +924,7 @@ public class KeycloakService
    * @param username Keycloak user name
    * @return {@link List} of found users
    */
-  public List<UserRepresentation> findByUsername(String username) {
+  List<UserRepresentation> findByUsername(String username) {
     try {
       return keycloakClient.getUsersResource().search(username);
     } catch (NotAuthorizedException e) {

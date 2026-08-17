@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.nullable;
 import static org.mockito.Mockito.spy;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
@@ -15,13 +16,10 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDT
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentAgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentAskerServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.AppointmentConsultantServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.service.identity.TechnicalIdentityTokenProvider;
 import de.caritas.cob.userservice.appointmentservice.generated.ApiClient;
 import de.caritas.cob.userservice.appointmentservice.generated.web.AgencyApi;
 import de.caritas.cob.userservice.appointmentservice.generated.web.AskerApi;
@@ -63,19 +61,13 @@ class AppointmentServiceTest {
   @Mock SecurityHeaderSupplier securityHeaderSupplier;
 
   @Mock TenantHeaderSupplier tenantHeaderSupplier;
-  @Mock IdentityAuthentication identityAuthentication;
-
-  @SuppressWarnings("unused")
-  @Mock
-  IdentityClientConfig identityClientConfig;
+  @Mock TechnicalIdentityTokenProvider technicalIdentityTokenProvider;
 
   @Mock Logger log;
 
   @Mock ConsultantDTO consultantDTO;
 
   @Mock ConsultantAdminResponseDTO consultantAdminResponseDTO;
-
-  @Mock IdentityLogin identityLogin;
 
   @Mock org.springframework.http.HttpHeaders httpHeaders;
 
@@ -91,7 +83,7 @@ class AppointmentServiceTest {
     appointmentService = spy(createAppointmentService());
     nonSpiedAppointmentService = createAppointmentService();
 
-    when(identityAuthentication.login(any(), any())).thenReturn(identityLogin);
+    when(technicalIdentityTokenProvider.getAccessToken()).thenReturn("technical-token");
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(any())).thenReturn(httpHeaders);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(httpHeaders);
     when(consultantDTO.getId()).thenReturn("testId");
@@ -108,8 +100,7 @@ class AppointmentServiceTest {
         new StubAppointmentAskerServiceApiControllerFactory(appointmentAskerApi),
         securityHeaderSupplier,
         tenantHeaderSupplier,
-        identityAuthentication,
-        identityClientConfig);
+        technicalIdentityTokenProvider);
   }
 
   @Test
@@ -139,7 +130,6 @@ class AppointmentServiceTest {
   @Test
   void
       deleteConsultant_Should_ProceedWithDeletion_WhenAppointmentsIsEnabledAndConsultantNotFoundInAppointmentService() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.NOT_FOUND);
     appointmentConsultantApi.deleteConsultantException = httpClientErrorException;
@@ -150,8 +140,6 @@ class AppointmentServiceTest {
   @Test
   void
       deleteConsultant_Should_ProceedWithDeletion_WhenAppointmentsIsEnabledAndAppointmentServiceThrowsExceptionOtherThan404() {
-    var identityClientConfig = easyRandom.nextObject(IdentityConfig.class);
-    setField(nonSpiedAppointmentService, "identityClientConfig", identityClientConfig);
     setField(nonSpiedAppointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
     appointmentConsultantApi.deleteConsultantException = httpClientErrorException;
@@ -169,15 +157,23 @@ class AppointmentServiceTest {
 
   @Test
   void createConsultant_Should_CallAppointmentService_WhenAppointmentsIsDisabled() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.createConsultant(consultantAdminResponseDTO);
     assertThat(appointmentConsultantApi.createConsultantCallCount.get()).isEqualTo(1);
   }
 
   @Test
+  void createConsultant_Should_UseSharedTechnicalIdentityGrant() {
+    setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
+
+    appointmentService.createConsultant(consultantAdminResponseDTO);
+
+    verify(technicalIdentityTokenProvider).getAccessToken();
+    verify(securityHeaderSupplier).getKeycloakAndCsrfHttpHeaders("technical-token");
+  }
+
+  @Test
   void updateConsultant_Should_CallAppointmentService_WhenAppointmentsIsDisabled() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.updateConsultant(consultantAdminResponseDTO);
     assertThat(appointmentConsultantApi.updateConsultantCallCount.get()).isEqualTo(1);
@@ -185,7 +181,6 @@ class AppointmentServiceTest {
 
   @Test
   void deleteConsultant_Should_CallAppointmentService_WhenAppointmentsIsDisabled() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.deleteConsultant("testId");
     assertThat(appointmentConsultantApi.deleteConsultantCallCount.get()).isEqualTo(1);
@@ -193,15 +188,9 @@ class AppointmentServiceTest {
 
   @Test
   void syncAgencies_Should_CallAppointmentService_WhenAppointmentsIsDisabled() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.syncAgencies("testId", new LinkedList<>());
     assertThat(appointmentAgencyApi.agencyConsultantsSyncCallCount.get()).isEqualTo(1);
-  }
-
-  private void givenAnIdentityClientConfig() {
-    var identityClientConfig = easyRandom.nextObject(IdentityConfig.class);
-    setField(appointmentService, "identityClientConfig", identityClientConfig);
   }
 
   // ---------------------------------------------------------------------------
@@ -210,7 +199,6 @@ class AppointmentServiceTest {
 
   @Test
   void createConsultant_Should_NotCallAppointmentService_WhenConsultantAdminResponseDtoIsNull() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.createConsultant(null);
     assertThat(appointmentConsultantApi.createConsultantCallCount.get()).isZero();
@@ -218,7 +206,6 @@ class AppointmentServiceTest {
 
   @Test
   void syncConsultantData_Should_CallUpdateConsultant_When_ConsultantIsGiven() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     var consultant = new Consultant();
     consultant.setId("consultantId");
@@ -234,7 +221,6 @@ class AppointmentServiceTest {
 
   @Test
   void updateConsultant_Should_SwallowException_When_MapperThrows() throws JsonProcessingException {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     when(objectMapper.readValue(
             nullable(String.class), ArgumentMatchers.<Class<ConsultantDTO>>any()))
@@ -247,7 +233,6 @@ class AppointmentServiceTest {
 
   @Test
   void deleteConsultant_Should_NotCallAppointmentService_When_ConsultantIdIsNull() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.deleteConsultant(null);
     assertThat(appointmentConsultantApi.deleteConsultantCallCount.get()).isZero();
@@ -255,7 +240,6 @@ class AppointmentServiceTest {
 
   @Test
   void deleteConsultant_Should_NotCallAppointmentService_When_ConsultantIdIsEmpty() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.deleteConsultant("");
     assertThat(appointmentConsultantApi.deleteConsultantCallCount.get()).isZero();
@@ -270,7 +254,6 @@ class AppointmentServiceTest {
 
   @Test
   void deleteAsker_Should_CallAppointmentService_WhenAppointmentsIsEnabled() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
 
     appointmentService.deleteAsker("askerId");
@@ -314,7 +297,6 @@ class AppointmentServiceTest {
 
   @Test
   void patchConsultant_Should_NotCallAppointmentService_When_ConsultantIdIsEmpty() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     appointmentService.patchConsultant("", "New Name");
     assertThat(appointmentConsultantApi.patchConsultantCallCount.get()).isZero();
@@ -322,7 +304,6 @@ class AppointmentServiceTest {
 
   @Test
   void patchConsultant_Should_CallAppointmentService_WhenAppointmentsIsEnabled() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
 
     appointmentService.patchConsultant("consultantId", "New Name");
@@ -333,7 +314,6 @@ class AppointmentServiceTest {
 
   @Test
   void patchConsultant_Should_ProceedSilently_When_AppointmentServiceThrows404() {
-    givenAnIdentityClientConfig();
     setField(appointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.NOT_FOUND);
     appointmentConsultantApi.patchConsultantException = httpClientErrorException;
@@ -345,8 +325,6 @@ class AppointmentServiceTest {
 
   @Test
   void patchConsultant_Should_RethrowException_When_AppointmentServiceThrowsNon404() {
-    var identityClientConfig = easyRandom.nextObject(IdentityConfig.class);
-    setField(nonSpiedAppointmentService, "identityClientConfig", identityClientConfig);
     setField(nonSpiedAppointmentService, FIELD_NAME_APPOINTMENTS_ENABLED, true);
     when(httpClientErrorException.getStatusCode()).thenReturn(HttpStatus.BAD_REQUEST);
     appointmentConsultantApi.patchConsultantException = httpClientErrorException;

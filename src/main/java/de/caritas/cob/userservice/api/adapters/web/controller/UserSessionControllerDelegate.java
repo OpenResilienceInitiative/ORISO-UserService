@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.session.ConsultantSessionDetailService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionFilter;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -46,6 +47,7 @@ class UserSessionControllerDelegate {
 
   private final @NonNull UserAccountService userAccountProvider;
   private final @NonNull SessionService sessionService;
+  private final @NonNull ConsultantSessionDetailService consultantSessionDetailService;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull SessionListFacade sessionListFacade;
   private final @NonNull AssignEnquiryFacade assignEnquiryFacade;
@@ -252,7 +254,8 @@ class UserSessionControllerDelegate {
 
   ResponseEntity<ConsultantSessionDTO> fetchSessionForConsultant(Long sessionId) {
     var consultant = this.userAccountProvider.retrieveValidatedConsultant();
-    var consultantSessionDTO = sessionService.fetchSessionForConsultant(sessionId, consultant);
+    var consultantSessionDTO =
+        consultantSessionDetailService.fetchSessionForConsultant(sessionId, consultant);
     return new ResponseEntity<>(consultantSessionDTO, HttpStatus.OK);
   }
 

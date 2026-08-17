@@ -20,7 +20,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.matrix.MatrixEventListenerService;
-import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.session.SessionAccessService;
 import java.util.Map;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
@@ -41,14 +41,14 @@ class MatrixSyncControllerTest {
 
   @Mock private MatrixEventListenerService matrixEventListenerService;
   @Mock private MatrixSynapseService matrixSynapseService;
-  @Mock private SessionService sessionService;
+  @Mock private SessionAccessService sessionAccessService;
   @Mock private AuthenticatedUser authenticatedUser;
 
   @InjectMocks private MatrixSyncController controller;
 
   @Test
   void registerRoomForSync_ShouldThrowForbiddenBeforeRegistering_WhenSessionAccessIsDenied() {
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenThrow(new ForbiddenException("No permission"));
 
     assertThrows(ForbiddenException.class, () -> controller.registerRoomForSync(SESSION_ID));
@@ -59,7 +59,7 @@ class MatrixSyncControllerTest {
 
   @Test
   void unregisterRoomFromSync_ShouldThrowForbiddenBeforeUnregistering_WhenSessionAccessIsDenied() {
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenThrow(new ForbiddenException("No permission"));
 
     assertThrows(ForbiddenException.class, () -> controller.unregisterRoomFromSync(SESSION_ID));
@@ -70,7 +70,7 @@ class MatrixSyncControllerTest {
 
   @Test
   void registerRoomForSync_ShouldRegisterRoom_WhenAuthorizedParticipant() {
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
 
     var response = controller.registerRoomForSync(SESSION_ID);
@@ -82,7 +82,7 @@ class MatrixSyncControllerTest {
   @Test
   void registerRoomForSync_noMatrixRoom_returnsNotFoundWithErrorBody() {
     // Business reason: sessions without a Matrix room must not leak sync state to callers.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithoutMatrixRoom());
 
     var response = controller.registerRoomForSync(SESSION_ID);
@@ -97,7 +97,7 @@ class MatrixSyncControllerTest {
   @Test
   void registerRoomForSync_withConsultant_registersTwoUserIds() {
     // Business reason: assigned consultants must receive live-event notifications alongside askers.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoomAndConsultant());
     ArgumentCaptor<Set<String>> userIdsCaptor = ArgumentCaptor.forClass(Set.class);
 
@@ -113,7 +113,7 @@ class MatrixSyncControllerTest {
   @Test
   void registerRoomForSync_withoutConsultant_registersOneUserId() {
     // Business reason: unassigned sessions should only notify the asker, not a missing consultant.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
     ArgumentCaptor<Set<String>> userIdsCaptor = ArgumentCaptor.forClass(Set.class);
 
@@ -128,7 +128,7 @@ class MatrixSyncControllerTest {
   @Test
   void registerRoomForSync_happyPath_returnsSuccessResponseBody() {
     // Business reason: frontend needs room id and participant count to confirm sync registration.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
 
     var response = controller.registerRoomForSync(SESSION_ID);
@@ -144,7 +144,7 @@ class MatrixSyncControllerTest {
   @Test
   void registerRoomForSync_registerRoomThrows_returnsInternalServerError() {
     // Business reason: downstream listener failures must surface as 500, not crash the caller.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
     doThrow(new RuntimeException("listener down"))
         .when(matrixEventListenerService)
@@ -161,7 +161,7 @@ class MatrixSyncControllerTest {
   @Test
   void registerRoomForSync_sessionNotFound_propagatesNotFoundException() {
     // Business reason: missing sessions must reach the global handler as 404, not be swallowed.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenThrow(new NotFoundException("Session not found"));
 
     assertThrows(NotFoundException.class, () -> controller.registerRoomForSync(SESSION_ID));
@@ -172,7 +172,7 @@ class MatrixSyncControllerTest {
   @Test
   void unregisterRoomFromSync_happyPath_unregistersRoomAndReturnsOk() {
     // Business reason: closing a session must stop live-event delivery for its Matrix room.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
 
     var response = controller.unregisterRoomFromSync(SESSION_ID);
@@ -187,7 +187,7 @@ class MatrixSyncControllerTest {
   @Test
   void unregisterRoomFromSync_noMatrixRoom_returnsOkWithoutUnregisterCall() {
     // Business reason: idempotent unregister must succeed even when no Matrix room was ever set.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithoutMatrixRoom());
 
     var response = controller.unregisterRoomFromSync(SESSION_ID);
@@ -202,7 +202,7 @@ class MatrixSyncControllerTest {
   @Test
   void unregisterRoomFromSync_unregisterThrows_returnsInternalServerError() {
     // Business reason: listener teardown failures must not appear as silent success to the client.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
     doThrow(new RuntimeException("unregister failed"))
         .when(matrixEventListenerService)
@@ -220,7 +220,7 @@ class MatrixSyncControllerTest {
   void unregisterRoomFromSync_sessionNotFound_propagatesNotFoundException() {
     // Business reason: unknown sessions must not allow unregister side-effects via error
     // swallowing.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenThrow(new NotFoundException("Session not found"));
 
     assertThrows(NotFoundException.class, () -> controller.unregisterRoomFromSync(SESSION_ID));
@@ -232,7 +232,7 @@ class MatrixSyncControllerTest {
   void registerRoomForSync_shouldEnsureAdminIsInRoom_soSyncLoopReceivesEvents() {
     // The listener /sync loop runs as the technical admin and only sees rooms the
     // admin has joined — registering must therefore also heal the admin membership.
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
 
     controller.registerRoomForSync(SESSION_ID);
@@ -242,7 +242,7 @@ class MatrixSyncControllerTest {
 
   @Test
   void registerRoomForSync_shouldStillSucceed_whenEnsureAdminInRoomFails() {
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
+    when(sessionAccessService.assertUserHasAccess(SESSION_ID, authenticatedUser))
         .thenReturn(sessionWithMatrixRoom());
     when(matrixSynapseService.ensureAdminInRoom(MATRIX_ROOM_ID, "@seeker:matrix"))
         .thenThrow(new RuntimeException("matrix down"));

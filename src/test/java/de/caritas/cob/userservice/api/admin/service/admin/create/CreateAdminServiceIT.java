@@ -13,29 +13,18 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.UserServiceApplication;
+import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
-import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
-import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
-import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
-import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
-import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
@@ -63,32 +52,19 @@ class CreateAdminServiceIT {
 
   @Autowired private CreateAdminService createAdminService;
 
-  @MockitoBean(
-      extraInterfaces = {
-        IdentityAccountRemover.class,
-        IdentityAuthentication.class,
-        IdentityDeactivator.class,
-        IdentityDummyEmailUpdater.class,
-        IdentityEmailAddressUpdater.class,
-        IdentityEmailOwnerLookup.class,
-        IdentityLocaleLookup.class,
-        IdentityPasswordUpdater.class,
-        IdentityProfileLookup.class,
-        IdentityProfileUpdater.class,
-        IdentityRoleLookup.class,
-        IdentityRoleUpdater.class,
-        IdentitySecondFactor.class,
-        IdentityUsernameAvailability.class
-      })
-  private IdentityClient identityClient;
+  @MockitoBean private KeycloakService identityClient;
 
+  private IdentityAccountCreator identityAccountCreator;
+  private IdentityRoleUpdater identityRoleUpdater;
   @MockitoBean private AuthenticatedUser authenticatedUser;
-  @Captor private ArgumentCaptor<UserDTO> userDTOArgumentCaptor;
+  @Captor private ArgumentCaptor<IdentityAccountCreation> accountCreationCaptor;
   private final EasyRandom easyRandom = new EasyRandom();
 
   @BeforeEach
   void setUp() {
     MockitoAnnotations.openMocks(this);
+    identityAccountCreator = (IdentityAccountCreator) identityClient;
+    identityRoleUpdater = (IdentityRoleUpdater) identityClient;
   }
 
   @AfterEach
@@ -102,8 +78,8 @@ class CreateAdminServiceIT {
     // given
     TenantContext.clear();
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", false);
-    when(identityClient.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     CreateAdminDTO createAdminDTO = this.easyRandom.nextObject(CreateAdminDTO.class);
     createAdminDTO.setUsername(VALID_USERNAME);
     createAdminDTO.setEmail(VALID_EMAIL_ADDRESS);
@@ -112,12 +88,13 @@ class CreateAdminServiceIT {
     Admin admin = this.createAdminService.createNewAgencyAdmin(createAdminDTO);
 
     // then
-    verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
-    assertNull(userDTOArgumentCaptor.getValue().getTenantId());
+    verify(identityAccountCreator).createAccount(accountCreationCaptor.capture());
+    assertNull(accountCreationCaptor.getValue().tenantId());
 
     verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify(identityRoleUpdater)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isNull();
@@ -137,8 +114,8 @@ class CreateAdminServiceIT {
     // given
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     TenantContext.setCurrentTenant(1L);
-    when(identityClient.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     CreateAdminDTO createAdminDTO = this.easyRandom.nextObject(CreateAdminDTO.class);
     createAdminDTO.setUsername(VALID_USERNAME);
     createAdminDTO.setEmail(VALID_EMAIL_ADDRESS);
@@ -147,13 +124,14 @@ class CreateAdminServiceIT {
     Admin admin = this.createAdminService.createNewAgencyAdmin(createAdminDTO);
 
     // then
-    verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
-    assertNotNull(userDTOArgumentCaptor.getValue().getTenantId());
-    assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
+    verify(identityAccountCreator).createAccount(accountCreationCaptor.capture());
+    assertNotNull(accountCreationCaptor.getValue().tenantId());
+    assertEquals(1L, (long) accountCreationCaptor.getValue().tenantId());
 
     verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify(identityRoleUpdater)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isEqualTo(1L);
@@ -174,10 +152,8 @@ class CreateAdminServiceIT {
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     TenantContext.setCurrentTenant(0L);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(identityClient.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
-    when(identityClient.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     CreateAdminDTO createAdminDTO = this.easyRandom.nextObject(CreateAdminDTO.class);
     createAdminDTO.setTenantId(1);
     createAdminDTO.setUsername(VALID_USERNAME);
@@ -187,13 +163,14 @@ class CreateAdminServiceIT {
     Admin admin = this.createAdminService.createNewAgencyAdmin(createAdminDTO);
 
     // then
-    verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
-    assertNotNull(userDTOArgumentCaptor.getValue().getTenantId());
-    assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
+    verify(identityAccountCreator).createAccount(accountCreationCaptor.capture());
+    assertNotNull(accountCreationCaptor.getValue().tenantId());
+    assertEquals(1L, (long) accountCreationCaptor.getValue().tenantId());
 
     verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify(identityRoleUpdater)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isEqualTo(1L);
@@ -207,10 +184,8 @@ class CreateAdminServiceIT {
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", false);
     TenantContext.setCurrentTenant(0L);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(identityClient.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
-    when(identityClient.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    when(identityAccountCreator.createAccount(any()))
+        .thenReturn(new IdentityAccountCreated(easyRandom.nextObject(String.class)));
     CreateAdminDTO createAdminDTO = this.easyRandom.nextObject(CreateAdminDTO.class);
     createAdminDTO.setTenantId(1);
     createAdminDTO.setUsername(VALID_USERNAME);
@@ -220,12 +195,13 @@ class CreateAdminServiceIT {
     Admin admin = this.createAdminService.createNewAgencyAdmin(createAdminDTO);
 
     // then
-    verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
-    assertNull(userDTOArgumentCaptor.getValue().getTenantId());
+    verify(identityAccountCreator).createAccount(accountCreationCaptor.capture());
+    assertNull(accountCreationCaptor.getValue().tenantId());
 
     verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
-    verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
-    verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
+    verify(identityRoleUpdater)
+        .assignRoles(
+            anyString(), eq(List.of(RESTRICTED_AGENCY_ADMIN.getValue(), USER_ADMIN.getValue())));
 
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isNull();
@@ -259,9 +235,8 @@ class CreateAdminServiceIT {
         CustomValidationHttpStatusException.class,
         () -> {
           // given
-          CreatedIdentity keycloakResponse = easyRandom.nextObject(CreatedIdentity.class);
-          keycloakResponse.setUserId(null);
-          when(identityClient.createUser(any(), anyString(), any())).thenReturn(keycloakResponse);
+          when(identityAccountCreator.createAccount(any()))
+              .thenReturn(new IdentityAccountCreated(null));
           CreateAdminDTO createAgencyAdminDTO = this.easyRandom.nextObject(CreateAdminDTO.class);
 
           // when

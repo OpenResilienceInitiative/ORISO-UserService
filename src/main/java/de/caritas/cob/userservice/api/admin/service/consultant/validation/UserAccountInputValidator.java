@@ -3,12 +3,15 @@ package de.caritas.cob.userservice.api.admin.service.consultant.validation;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.EMAIL_NOT_VALID;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.MISSING_ABSENCE_MESSAGE_FOR_ABSENT_USER;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.USERNAME_NOT_VALID;
+import static java.util.Objects.isNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
 import jakarta.validation.Validator;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -66,5 +69,16 @@ public class UserAccountInputValidator {
             violation -> {
               throw new CustomValidationHttpStatusException(failReason);
             });
+  }
+
+  /**
+   * Validates the created identity object.
+   *
+   * @param createdIdentity the identity creation result to be validated
+   */
+  public void validateIdentityAccountCreated(IdentityAccountCreated createdIdentity) {
+    if (isNull(createdIdentity) || isNull(createdIdentity.userId())) {
+      throw new IdentityProvisioningException("Identity user id is missing");
+    }
   }
 }

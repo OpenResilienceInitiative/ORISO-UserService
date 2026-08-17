@@ -36,7 +36,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import java.util.ArrayList;
 import java.util.UUID;
@@ -48,6 +47,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
+import org.springframework.context.annotation.Import;
 import org.springframework.hateoas.client.LinkDiscoverers;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -56,6 +56,12 @@ import org.springframework.test.web.servlet.MockMvc;
 @WebMvcTest(
     value = UserAdminController.class,
     excludeAutoConfiguration = HypermediaAutoConfiguration.class)
+@Import({
+  UserAdminQueryControllerDelegate.class,
+  UserAdminConsultantControllerDelegate.class,
+  UserAdminAskerControllerDelegate.class,
+  UserAdminAccountControllerDelegate.class
+})
 @AutoConfigureMockMvc(addFilters = false)
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 class UserAdminControllerIT {
@@ -108,8 +114,6 @@ class UserAdminControllerIT {
   private RoleAuthorizationAuthorityMapper roleAuthorizationAuthorityMapper;
 
   @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
-
-  @MockitoBean private AppointmentService appointmentService;
 
   @MockitoBean private AdminUserFacade adminUserFacade;
 

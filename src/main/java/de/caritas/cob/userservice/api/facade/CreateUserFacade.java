@@ -22,12 +22,13 @@ import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -60,10 +61,11 @@ import org.springframework.web.client.RestClientException;
 @Slf4j
 public class CreateUserFacade {
   private final @NonNull UserVerifier userVerifier;
-  private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityAccountCreator identityAccountCreator;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
-  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityDummyEmailUpdater identityDummyEmailUpdater;
+  private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull UserService userService;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @NonNull AgencyVerifier agencyVerifier;
@@ -109,8 +111,19 @@ public class CreateUserFacade {
       userVerifier.checkIfUsernameIsAvailable(userDTO);
       agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
 
-      CreatedIdentity response = identityClient.createUser(userDTO);
-      String identityUserId = CreatedIdentity.requireUserId(response);
+      var createdIdentity =
+          identityAccountCreator.createAccount(
+              new IdentityAccountCreation(
+                  userDTO.getUsername(),
+                  userDTO.getEmail(),
+                  userDTO.getTenantId(),
+                  null,
+                  null,
+                  isNull(userDTO.getPreferredLanguage())
+                      ? null
+                      : userDTO.getPreferredLanguage().toString()));
+      String identityUserId = isNull(createdIdentity) ? null : createdIdentity.userId();
+      checkIfUserIdNotNull(identityUserId);
       provisioningAttempt = provisioningCompensator.begin(ProvisioningWorkflow.REGISTERED_USER);
       ProvisioningAttempt activeAttempt = provisioningAttempt;
       activeAttempt.register(
@@ -326,7 +339,7 @@ public class CreateUserFacade {
 
   private void updateKeycloakRoleAndPassword(String userId, UserDTO userDTO, UserRole role) {
     checkIfUserIdNotNull(userId);
-    identityClient.updateRole(userId, role);
+    identityRoleUpdater.assignRoles(userId, List.of(role.getValue()));
     identityPasswordUpdater.updatePassword(userId, userDTO.getPassword());
   }
 

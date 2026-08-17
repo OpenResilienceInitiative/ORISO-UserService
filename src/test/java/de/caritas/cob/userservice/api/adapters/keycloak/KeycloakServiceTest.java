@@ -30,7 +30,6 @@ import com.google.common.collect.Maps;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
-import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -43,13 +42,14 @@ import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreation;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import jakarta.ws.rs.BadRequestException;
@@ -60,6 +60,7 @@ import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -146,23 +147,6 @@ public class KeycloakServiceTest {
   public void tearDown() {
     logCaptor.detach();
     authLogCaptor.detach();
-  }
-
-  @Test
-  public void changePassword_Should_ReturnTrue_When_KeycloakPasswordChangeWasSuccessful() {
-    var usersResource = mock(UsersResource.class);
-    var userResource = mock(UserResource.class);
-    when(usersResource.get(USER_ID)).thenReturn(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    assertTrue(keycloakService.changePassword(USER_ID, NEW_PW));
-  }
-
-  @Test
-  public void
-      changePassword_Should_ReturnFalseAndLogError_When_KeycloakPasswordChangeFailsWithException() {
-    assertFalse(keycloakService.changePassword(USER_ID, NEW_PW));
-    assertTrue(logCaptor.contains(Level.INFO, "Could not change password for user with id"));
   }
 
   @Test
@@ -500,10 +484,11 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    CreatedIdentity keycloakUser = this.keycloakService.createUser(userDTO);
+    IdentityAccountCreated createdIdentity =
+        this.keycloakService.createAccount(accountCreation(userDTO));
 
-    assertThat(keycloakUser, notNullValue());
-    assertThat(keycloakUser.getUserId(), is(USER_ID));
+    assertThat(createdIdentity, notNullValue());
+    assertThat(createdIdentity.userId(), is(USER_ID));
   }
 
   @Test
@@ -523,10 +508,10 @@ public class KeycloakServiceTest {
     when(this.keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    CreatedIdentity keycloakUser = this.keycloakService.createUser(userDTO);
+    IdentityAccountCreated createdIdentity =
+        this.keycloakService.createAccount(accountCreation(userDTO));
 
-    assertThat(keycloakUser, notNullValue());
-    assertThat(keycloakUser.getUserId(), is(USER_ID));
+    assertThat(createdIdentity, notNullValue());
 
     ArgumentCaptor<UserRepresentation> argumentCaptor =
         ArgumentCaptor.forClass(UserRepresentation.class);
@@ -562,9 +547,9 @@ public class KeycloakServiceTest {
     when(userResource.toRepresentation()).thenReturn(storedRepresentation);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
-    var keycloakUser = this.keycloakService.createUser(userDTO);
+    var createdIdentity = this.keycloakService.createAccount(accountCreation(userDTO));
 
-    assertThat(keycloakUser.getUserId(), is(USER_ID));
+    assertThat(createdIdentity.userId(), is(USER_ID));
 
     var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
     verify(userResource).update(representationCaptor.capture());
@@ -591,9 +576,9 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    var keycloakUser = keycloakService.createUser(userDTO);
+    var createdIdentity = keycloakService.createAccount(accountCreation(userDTO));
 
-    assertThat(keycloakUser.getUserId(), is(USER_ID));
+    assertThat(createdIdentity.userId(), is(USER_ID));
 
     var argumentCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
     verify(usersResource).create(argumentCaptor.capture());
@@ -632,7 +617,7 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     try {
-      this.keycloakService.createUser(userDTO);
+      this.keycloakService.createAccount(accountCreation(userDTO));
     } catch (CustomValidationHttpStatusException e) {
       assertThat(e.getCustomHttpHeaders(), notNullValue());
       assertThat(e.getCustomHttpHeaders().get("X-Reason").get(0), is(EMAIL_NOT_AVAILABLE.name()));
@@ -655,7 +640,7 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     try {
-      this.keycloakService.createUser(userDTO);
+      this.keycloakService.createAccount(accountCreation(userDTO));
     } catch (CustomValidationHttpStatusException e) {
       assertThat(e.getCustomHttpHeaders(), notNullValue());
       assertThat(
@@ -678,7 +663,7 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     try {
-      this.keycloakService.createUser(userDTO);
+      this.keycloakService.createAccount(accountCreation(userDTO));
     } catch (CustomValidationHttpStatusException e) {
       assertThat(e.getCustomHttpHeaders(), notNullValue());
       assertThat(
@@ -705,7 +690,7 @@ public class KeycloakServiceTest {
           when(keycloakClient.getUsersResource()).thenReturn(usersResource);
           UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
 
-          this.keycloakService.createUser(userDTO);
+          this.keycloakService.createAccount(accountCreation(userDTO));
         });
   }
 
@@ -727,7 +712,7 @@ public class KeycloakServiceTest {
     CustomValidationHttpStatusException exception =
         assertThrows(
             CustomValidationHttpStatusException.class,
-            () -> this.keycloakService.createUser(userDTO));
+            () -> this.keycloakService.createAccount(accountCreation(userDTO)));
 
     assertThat(
         exception.getCustomHttpHeaders().get("X-Reason").get(0), is(EMAIL_NOT_AVAILABLE.name()));
@@ -748,7 +733,8 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
 
     assertThrows(
-        InternalServerErrorException.class, () -> this.keycloakService.createUser(userDTO));
+        InternalServerErrorException.class,
+        () -> this.keycloakService.createAccount(accountCreation(userDTO)));
   }
 
   @Test
@@ -812,7 +798,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void updateRole_Should_throwKeycloakException_When_roleCouldNotBeUpdated() {
+  public void assignRoles_Should_throwKeycloakException_When_roleCouldNotBeUpdated() {
     assertThrows(
         KeycloakException.class,
         () -> {
@@ -836,12 +822,12 @@ public class KeycloakServiceTest {
           when(realmResource.roles()).thenReturn(rolesResource);
           when(keycloakClient.getRealmResource()).thenReturn(realmResource);
 
-          this.keycloakService.updateRole("user", "role");
+          this.keycloakService.assignRoles("user", List.of("role"));
         });
   }
 
   @Test
-  public void updateRole_Should_updateRole_When_roleUpdateIsValid() {
+  public void assignRoles_Should_updateRole_When_roleUpdateIsValid() {
     String validRole = "role";
 
     UserResource userResource = mock(UserResource.class);
@@ -868,13 +854,13 @@ public class KeycloakServiceTest {
     when(realmResource.roles()).thenReturn(rolesResource);
     when(keycloakClient.getRealmResource()).thenReturn(realmResource);
 
-    this.keycloakService.updateRole("user", validRole);
+    this.keycloakService.assignRoles("user", List.of(validRole));
 
     verify(roleScopeResource, times(1)).add(any());
   }
 
   @Test
-  public void updateRole_Should_RefreshAdminSessionAndRetry_When_Unauthorized() {
+  public void assignRoles_Should_RefreshAdminSessionAndRetry_When_Unauthorized() {
     var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
     keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
     String validRole = "role";
@@ -900,7 +886,7 @@ public class KeycloakServiceTest {
         .thenThrow(new NotAuthorizedException("Bearer"))
         .thenReturn(realmResource);
 
-    keycloakService.updateRole("user", validRole);
+    keycloakService.assignRoles("user", List.of(validRole));
 
     verify(keycloakClient).refreshAdminSession();
     verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
@@ -909,40 +895,118 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void removeRole_Should_removeRole_When_rolePresent() {
-    String validRole = "role";
+  public void removeRolesIfPresent_Should_doNothing_When_requestIsEmpty() {
+    this.keycloakService.removeRolesIfPresent("user", List.of());
 
+    verifyNoInteractions(keycloakClient);
+  }
+
+  @Test
+  public void removeRolesIfPresent_Should_removeAllPresentRolesWithOneCompleteReadAndOneWrite() {
     UserResource userResource = mock(UserResource.class);
     UsersResource usersResource = mock(UsersResource.class);
     when(usersResource.get(anyString())).thenReturn(userResource);
     RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
-    RoleRepresentation keycloakRoleMock = mock(RoleRepresentation.class);
-    when(keycloakRoleMock.getName()).thenReturn(validRole);
-    when(roleScopeResource.listAll()).thenReturn(singletonList(keycloakRoleMock));
-    when(roleScopeResource.listAll()).thenReturn(singletonList(keycloakRoleMock));
+    RoleRepresentation consultantRole = mock(RoleRepresentation.class);
+    RoleRepresentation groupChatRole = mock(RoleRepresentation.class);
+    RoleRepresentation unrelatedRole = mock(RoleRepresentation.class);
+    when(consultantRole.getName()).thenReturn("consultant");
+    when(groupChatRole.getName()).thenReturn("group-chat-consultant");
+    when(unrelatedRole.getName()).thenReturn("user");
+    when(roleScopeResource.listAll())
+        .thenReturn(List.of(consultantRole, groupChatRole, unrelatedRole));
     RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
     when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
     when(userResource.roles()).thenReturn(roleMappingResource);
 
-    RoleRepresentation roleRepresentation = new EasyRandom().nextObject(RoleRepresentation.class);
-    roleRepresentation.setName("role");
-    RoleResource roleResource = mock(RoleResource.class);
-    when(roleResource.toRepresentation()).thenReturn(roleRepresentation);
-    RolesResource rolesResource = mock(RolesResource.class);
-    when(rolesResource.get(any())).thenReturn(roleResource);
-
     RealmResource realmResource = mock(RealmResource.class);
     when(realmResource.users()).thenReturn(usersResource);
-    when(realmResource.roles()).thenReturn(rolesResource);
     when(keycloakClient.getRealmResource()).thenReturn(realmResource);
 
-    this.keycloakService.removeRoleIfPresent("user", validRole);
+    this.keycloakService.removeRolesIfPresent(
+        "user", List.of("consultant", "group-chat-consultant", "consultant"));
 
-    verify(roleScopeResource, times(1)).remove(any());
+    verify(roleScopeResource).listAll();
+    verify(roleScopeResource).remove(List.of(consultantRole, groupChatRole));
+    verify(realmResource, never()).roles();
   }
 
   @Test
-  public void updateRole_Should_updateUserWithProvidedRole() {
+  public void removeRolesIfPresent_Should_remove_When_assignedRoleDiffersOnlyByCase() {
+    // Keycloak realm role names are not case-normalised. Matching exactly meant a role stored
+    // as "CONSULTANT" could never be revoked, while the assignment path already lower-cased.
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.get(anyString())).thenReturn(userResource);
+    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
+    RoleRepresentation assignedRole = mock(RoleRepresentation.class);
+    when(assignedRole.getName()).thenReturn("CONSULTANT");
+    when(roleScopeResource.listAll()).thenReturn(singletonList(assignedRole));
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
+    when(userResource.roles()).thenReturn(roleMappingResource);
+    RealmResource realmResource = mock(RealmResource.class);
+    when(realmResource.users()).thenReturn(usersResource);
+    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+
+    this.keycloakService.removeRolesIfPresent("user", Set.of("consultant"));
+
+    verify(roleScopeResource).remove(List.of(assignedRole));
+  }
+
+  @Test
+  public void removeRolesIfPresent_Should_notWrite_When_requestedRolesAreAbsent() {
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.get(anyString())).thenReturn(userResource);
+    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
+    RoleRepresentation assignedRole = mock(RoleRepresentation.class);
+    when(assignedRole.getName()).thenReturn("user");
+    when(roleScopeResource.listAll()).thenReturn(singletonList(assignedRole));
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
+    when(userResource.roles()).thenReturn(roleMappingResource);
+    RealmResource realmResource = mock(RealmResource.class);
+    when(realmResource.users()).thenReturn(usersResource);
+    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+
+    this.keycloakService.removeRolesIfPresent("user", Set.of("consultant"));
+
+    verify(roleScopeResource).listAll();
+    verify(roleScopeResource, never()).remove(any());
+  }
+
+  @Test
+  public void removeRolesIfPresent_Should_refreshAndRetryCompleteBatchOnce_When_unauthorized() {
+    var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
+    keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.get(anyString())).thenReturn(userResource);
+    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
+    RoleRepresentation consultantRole = mock(RoleRepresentation.class);
+    when(consultantRole.getName()).thenReturn("consultant");
+    when(roleScopeResource.listAll()).thenReturn(singletonList(consultantRole));
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
+    when(userResource.roles()).thenReturn(roleMappingResource);
+    RealmResource realmResource = mock(RealmResource.class);
+    when(realmResource.users()).thenReturn(usersResource);
+    when(keycloakClient.getRealmResource())
+        .thenThrow(new NotAuthorizedException("Bearer"))
+        .thenReturn(realmResource);
+
+    this.keycloakService.removeRolesIfPresent("user", Set.of("consultant"));
+
+    verify(keycloakClient).refreshAdminSession();
+    verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
+    verify(keycloakClient, times(2)).getRealmResource();
+    verify(roleScopeResource).listAll();
+    verify(roleScopeResource).remove(singletonList(consultantRole));
+  }
+
+  @Test
+  public void assignRoles_Should_updateUserWithProvidedRole() {
     UserRole validRole = UserRole.USER;
 
     UserResource userResource = mock(UserResource.class);
@@ -969,7 +1033,7 @@ public class KeycloakServiceTest {
     when(realmResource.roles()).thenReturn(rolesResource);
     when(keycloakClient.getRealmResource()).thenReturn(realmResource);
 
-    this.keycloakService.updateRole("user", validRole);
+    this.keycloakService.assignRoles("user", List.of(validRole.getValue()));
 
     verify(roleScopeResource, times(1)).add(any());
     verify(rolesResource, times(1)).get(validRole.getValue());
@@ -1006,7 +1070,7 @@ public class KeycloakServiceTest {
 
   @Test
   public void updateDummyMail_id_dto_Should_callServicesCorrectly() {
-    UserResource userResource = mock(UserResource.class);
+    UserResource userResource = givenUserResourceWithRepresentation(new UserRepresentation());
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     when(this.userHelper.getDummyEmail(anyString())).thenReturn("dummy");
@@ -1024,7 +1088,11 @@ public class KeycloakServiceTest {
   @Test
   public void updateDummyMail_Should_MapProviderNeutralIdentityMetadata() {
     setField(keycloakService, "multiTenancyEnabled", true);
-    UserResource userResource = mock(UserResource.class);
+    var existingRepresentation = new UserRepresentation();
+    existingRepresentation.setEnabled(false);
+    existingRepresentation.setEmailVerified(false);
+    existingRepresentation.singleAttribute("unrelated", "preserved");
+    UserResource userResource = givenUserResourceWithRepresentation(existingRepresentation);
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
@@ -1038,6 +1106,10 @@ public class KeycloakServiceTest {
     assertThat(representation.getUsername(), is("decoded-user"));
     assertThat(representation.getEmail(), is("dummy"));
     assertThat(representation.getAttributes().get("tenantId").get(0), is("42"));
+    assertThat(representation.getAttributes().get("unrelated").get(0), is("preserved"));
+    assertThat(representation.isEnabled(), is(false));
+    assertThat(representation.isEmailVerified(), is(false));
+    assertThat(representation, is(existingRepresentation));
     setField(keycloakService, "multiTenancyEnabled", false);
   }
 
@@ -1085,7 +1157,9 @@ public class KeycloakServiceTest {
     verify(usersResource).get("userId");
     verify(userResource).toRepresentation();
     verify(usersResource, never()).search(any(), any(), any());
-    verify(userResource).update(any());
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    assertThat(representationCaptor.getValue().getEmail(), is("email"));
   }
 
   @Test
@@ -1135,56 +1209,6 @@ public class KeycloakServiceTest {
 
     assertTrue(
         logCaptor.contains(Level.ERROR, "Keycloak error: User could not be removed/rolled back:"));
-  }
-
-  @Test
-  public void userHasAuthority_Should_returnTrue_When_userHasAuthority() {
-    RoleRepresentation roleRepresentation = mock(RoleRepresentation.class);
-    when(roleRepresentation.getName()).thenReturn("user");
-    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
-    when(roleScopeResource.listAll()).thenReturn(singletonList(roleRepresentation));
-    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
-    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
-    UserResource userResource = mock(UserResource.class);
-    when(userResource.roles()).thenReturn(roleMappingResource);
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    boolean hasAuthority =
-        this.keycloakService.userHasAuthority("user", AuthorityValue.USER_DEFAULT);
-
-    assertThat(hasAuthority, is(true));
-  }
-
-  @Test
-  public void userHasAuthority_Should_returnThrowKeycloakException_When_userHasNoRoles() {
-    assertThrows(
-        KeycloakException.class,
-        () -> {
-          UserResource userResource = mock(UserResource.class);
-          UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-          when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-          this.keycloakService.userHasAuthority("user", "authority");
-        });
-  }
-
-  @Test
-  public void userHasAuthority_Should_returnFalse_When_userHasNotAuthority() {
-    RoleRepresentation roleRepresentation = mock(RoleRepresentation.class);
-    when(roleRepresentation.getName()).thenReturn("user");
-    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
-    when(roleScopeResource.listAll()).thenReturn(singletonList(roleRepresentation));
-    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
-    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
-    UserResource userResource = mock(UserResource.class);
-    when(userResource.roles()).thenReturn(roleMappingResource);
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    boolean hasAuthority = this.keycloakService.userHasAuthority("user", AuthorityValue.USER_ADMIN);
-
-    assertThat(hasAuthority, is(false));
   }
 
   @Test
@@ -1240,7 +1264,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void changeLanguage_ShouldNotChangeLanguageIfLanguageExistInKeycloak() {
+  public void updateLocale_ShouldNotChangeLanguageIfLanguageExistInKeycloak() {
     // given
     UserRepresentation userRepresentation = givenUserRepresentation("email");
     UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
@@ -1251,7 +1275,7 @@ public class KeycloakServiceTest {
     when(userRepresentation.getAttributes()).thenReturn(attributeMap);
 
     // when
-    this.keycloakService.changeLanguage("userId", "de");
+    this.keycloakService.updateLocale("userId", "de");
 
     // then
     verify(userResource, Mockito.never()).update(userRepresentation);
@@ -1264,7 +1288,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void changeLanguage_ShouldChangeLanguageIfLanguageDoesNotExistInKeycloak() {
+  public void updateLocale_ShouldChangeLanguageIfLanguageDoesNotExistInKeycloak() {
     // given
     UserRepresentation userRepresentation = givenUserRepresentation("email");
     UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
@@ -1275,7 +1299,7 @@ public class KeycloakServiceTest {
     when(userRepresentation.getAttributes()).thenReturn(attributeMap);
 
     // when
-    this.keycloakService.changeLanguage("userId", "de");
+    this.keycloakService.updateLocale("userId", "de");
 
     // then
     verify(userResource).update(userRepresentation);
@@ -1294,7 +1318,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void changeLanguage_ShouldChangeLanguageIfLocaleAttributeDoesNotExistInKeycloak() {
+  public void updateLocale_ShouldChangeLanguageIfLocaleAttributeDoesNotExistInKeycloak() {
     // given
     UserRepresentation userRepresentation = givenUserRepresentation("email");
     UserResource userResource = givenUserResourceWithRepresentation(userRepresentation);
@@ -1304,7 +1328,7 @@ public class KeycloakServiceTest {
     when(userRepresentation.getAttributes()).thenReturn(attributeMap);
 
     // when
-    this.keycloakService.changeLanguage("userId", "de");
+    this.keycloakService.updateLocale("userId", "de");
 
     // then
     verify(userResource).update(userRepresentation);
@@ -1613,33 +1637,6 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void userHasRole_Should_ReturnTrue_When_UserHasRole() {
-    UserResource userResource = givenUserResourceWithRealmRoles("user");
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    assertThat(keycloakService.userHasRole(USER_ID, "user"), is(true));
-  }
-
-  @Test
-  public void userHasRole_Should_ReturnFalse_When_UserDoesNotHaveRole() {
-    UserResource userResource = givenUserResourceWithRealmRoles("consultant");
-    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    assertThat(keycloakService.userHasRole(USER_ID, "user"), is(false));
-  }
-
-  @Test
-  public void userHasRole_Should_ThrowKeycloakException_When_LookupFails() {
-    UsersResource usersResource = mock(UsersResource.class);
-    when(usersResource.get(any())).thenThrow(new RuntimeException("boom"));
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-
-    assertThrows(KeycloakException.class, () -> keycloakService.userHasRole(USER_ID, "user"));
-  }
-
-  @Test
   public void findAllByUserId_Should_ReturnRoleNames_When_LookupSucceeds() {
     UserResource userResource = givenUserResourceWithRealmRoles("user", "consultant");
     UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
@@ -1763,6 +1760,56 @@ public class KeycloakServiceTest {
     keycloakService.ensureRoles(USER_ID, List.of());
 
     verifyNoInteractions(keycloakClient);
+  }
+
+  @Test
+  public void ensureRoles_Should_NotAddRole_When_AssignedRoleDiffersOnlyByCase() {
+    UserResource userResource = givenUserResourceWithRealmRoles("CONSULTANT");
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.ensureRoles(USER_ID, List.of("consultant"));
+
+    verify(keycloakClient, never()).getRealmResource();
+  }
+
+  @Test
+  public void assignRoles_Should_NotCallKeycloak_When_NoRolesAreRequested() {
+    keycloakService.assignRoles(USER_ID, List.of());
+
+    verifyNoInteractions(keycloakClient);
+  }
+
+  @Test
+  public void assignRoles_Should_DeduplicateAndAddRolesInOneCall() {
+    var realmResource = mock(RealmResource.class);
+    var rolesResource = mock(RolesResource.class);
+    var consultantRoleResource = mock(RoleResource.class);
+    var groupChatRoleResource = mock(RoleResource.class);
+    var consultantRole = new RoleRepresentation();
+    consultantRole.setName("consultant");
+    var groupChatRole = new RoleRepresentation();
+    groupChatRole.setName("group-chat-consultant");
+    when(consultantRoleResource.toRepresentation()).thenReturn(consultantRole);
+    when(groupChatRoleResource.toRepresentation()).thenReturn(groupChatRole);
+    when(rolesResource.get("consultant")).thenReturn(consultantRoleResource);
+    when(rolesResource.get("group-chat-consultant")).thenReturn(groupChatRoleResource);
+    when(realmResource.roles()).thenReturn(rolesResource);
+
+    UserResource userResource =
+        givenUserResourceWithRealmRoles("consultant", "group-chat-consultant");
+    RoleScopeResource assignedRoles = userResource.roles().realmLevel();
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(realmResource.users()).thenReturn(usersResource);
+    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+
+    keycloakService.assignRoles(
+        USER_ID, List.of("consultant", "group-chat-consultant", "consultant"));
+
+    verify(assignedRoles).add(List.of(consultantRole, groupChatRole));
+    verify(assignedRoles, times(1)).listAll();
+    verify(rolesResource, times(1)).get("consultant");
+    verify(rolesResource, times(1)).get("group-chat-consultant");
   }
 
   @Test
@@ -2036,10 +2083,20 @@ public class KeycloakServiceTest {
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     givenPostCreateAttributeUpdate(usersResource, response, USER_ID);
 
-    var keycloakUser = keycloakService.createUser(userDTO);
+    var createdIdentity = keycloakService.createAccount(accountCreation(userDTO));
 
-    assertThat(keycloakUser.getUserId(), is(USER_ID));
+    assertThat(createdIdentity.userId(), is(USER_ID));
     setField(keycloakService, "multiTenancyEnabled", false);
+  }
+
+  private IdentityAccountCreation accountCreation(UserDTO userDTO) {
+    return new IdentityAccountCreation(
+        userDTO.getUsername(),
+        userDTO.getEmail(),
+        userDTO.getTenantId(),
+        null,
+        null,
+        userDTO.getPreferredLanguage() == null ? null : userDTO.getPreferredLanguage().toString());
   }
 
   @Test

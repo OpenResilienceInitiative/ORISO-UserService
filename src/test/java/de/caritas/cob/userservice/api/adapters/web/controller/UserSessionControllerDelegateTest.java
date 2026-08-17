@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.session.ConsultantSessionDetailService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -57,6 +58,7 @@ class UserSessionControllerDelegateTest {
 
   @Mock private UserAccountService userAccountProvider;
   @Mock private SessionService sessionService;
+  @Mock private ConsultantSessionDetailService consultantSessionDetailService;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private SessionListFacade sessionListFacade;
   @Mock private AssignEnquiryFacade assignEnquiryFacade;
@@ -410,7 +412,8 @@ class UserSessionControllerDelegateTest {
     var consultant = consultant();
     var sessionDto = new ConsultantSessionDTO().id(1L);
     when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
-    when(sessionService.fetchSessionForConsultant(1L, consultant)).thenReturn(sessionDto);
+    when(consultantSessionDetailService.fetchSessionForConsultant(1L, consultant))
+        .thenReturn(sessionDto);
 
     var response = delegate.fetchSessionForConsultant(1L);
 

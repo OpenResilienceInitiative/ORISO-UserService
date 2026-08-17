@@ -59,3 +59,8 @@ if missing_e2e:
     print(f"Missing critical E2E reports: {', '.join(missing_e2e)}", file=sys.stderr)
     sys.exit(1)
 PY
+
+python3 scripts/ci/verify-test-inventory.py \
+  --suite integration \
+  --reports target/surefire-reports \
+  --classification documentation/user-service-historical-failure-classification.json

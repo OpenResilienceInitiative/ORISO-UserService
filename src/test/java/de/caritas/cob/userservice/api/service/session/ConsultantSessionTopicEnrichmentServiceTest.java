@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.session;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -27,13 +28,40 @@ class ConsultantSessionTopicEnrichmentServiceTest {
   @Mock TopicService topicService;
 
   @Test
-  void enrichSessionWithMainTopicData_Should_EnrichSessionWithTopicDataFromTopicService() {
+  void enrichSessionWithTopicData_Should_LoadTopicsOnceForMainTopicAndTopicList() {
+    givenAllTopicsMap();
+    var session =
+        new ConsultantSessionDTO()
+            .mainTopic(new SessionTopicDTO().id(1L))
+            .topics(List.of(new SessionTopicDTO().id(2L)));
+
+    sessionTopicEnrichmentService.enrichSessionWithTopicData(session);
+
+    verify(topicService, times(1)).getAllTopicsMap();
+    assertThat(session.getMainTopic().getName()).isEqualTo("first topic");
+    assertThat(session.getTopics())
+        .singleElement()
+        .extracting(SessionTopicDTO::getName)
+        .isEqualTo("second topic");
+  }
+
+  @Test
+  void enrichSessionWithTopicData_Should_NotLoadTopicsWithoutTopicIdentifiers() {
+    var session = new ConsultantSessionDTO().mainTopic(null).topics(Collections.emptyList());
+
+    sessionTopicEnrichmentService.enrichSessionWithTopicData(session);
+
+    verify(topicService, never()).getAllTopicsMap();
+  }
+
+  @Test
+  void enrichSessionWithTopicData_Should_EnrichMainTopicFromTopicService() {
     // given
     givenAllTopicsMap();
     var session = new ConsultantSessionDTO().mainTopic(new SessionTopicDTO().id(1L));
 
     // when
-    sessionTopicEnrichmentService.enrichSessionWithMainTopicData(session);
+    sessionTopicEnrichmentService.enrichSessionWithTopicData(session);
 
     // then
     assertThat(session.getMainTopic().getId()).isEqualTo(1);
@@ -42,14 +70,13 @@ class ConsultantSessionTopicEnrichmentServiceTest {
   }
 
   @Test
-  void
-      enrichSessionWithMainTopicData_Should_NotEnrichSessionWithTopicDataFromTopicServiceIfNoMatchingTopicFound() {
+  void enrichSessionWithTopicData_Should_NotEnrichMainTopicIfNoMatchingTopicIsFound() {
     // given
     givenAllTopicsMap();
     var session = new ConsultantSessionDTO().mainTopic(new SessionTopicDTO().id(3L));
 
     // when
-    sessionTopicEnrichmentService.enrichSessionWithMainTopicData(session);
+    sessionTopicEnrichmentService.enrichSessionWithTopicData(session);
 
     // then
     assertThat(session.getMainTopic().getId()).isEqualTo(3);
@@ -58,13 +85,12 @@ class ConsultantSessionTopicEnrichmentServiceTest {
   }
 
   @Test
-  void
-      enrichSessionWithMainTopicData_Should_NotEnrichSessionWithTopicDataFromTopicServiceIfTopicIsNull() {
+  void enrichSessionWithTopicData_Should_NotLoadTopicDataIfMainTopicIsNull() {
     // given
     var session = new ConsultantSessionDTO().mainTopic(null);
 
     // when
-    sessionTopicEnrichmentService.enrichSessionWithMainTopicData(session);
+    sessionTopicEnrichmentService.enrichSessionWithTopicData(session);
 
     // then
     verify(topicService, never()).getAllTopics();
@@ -72,13 +98,12 @@ class ConsultantSessionTopicEnrichmentServiceTest {
   }
 
   @Test
-  void
-      enrichSessionWithMainTopicData_Should_NotEnrichSessionWithTopicDataFromTopicServiceIfTopicIdNotSet() {
+  void enrichSessionWithTopicData_Should_NotLoadTopicDataIfMainTopicIdIsNotSet() {
     // given
     var session = new ConsultantSessionDTO().mainTopic(new SessionTopicDTO());
 
     // when
-    sessionTopicEnrichmentService.enrichSessionWithMainTopicData(session);
+    sessionTopicEnrichmentService.enrichSessionWithTopicData(session);
 
     // then
     verify(topicService, never()).getAllTopics();
@@ -86,7 +111,7 @@ class ConsultantSessionTopicEnrichmentServiceTest {
   }
 
   @Test
-  void enrichSessionWithTopicsData_Should_EnrichSessionWithTopicDataFromTopicService() {
+  void enrichSessionWithTopicData_Should_EnrichTopicListFromTopicService() {
     // given
     givenAllTopicsMap();
     var session =
@@ -94,7 +119,7 @@ class ConsultantSessionTopicEnrichmentServiceTest {
             .topics(List.of(new SessionTopicDTO().id(1L), new SessionTopicDTO().id(2L)));
 
     // when
-    sessionTopicEnrichmentService.enrichSessionWithTopicsData(session);
+    sessionTopicEnrichmentService.enrichSessionWithTopicData(session);
 
     // then
     assertThat(session.getTopics().get(0).getId()).isEqualTo(1);
@@ -107,8 +132,7 @@ class ConsultantSessionTopicEnrichmentServiceTest {
   }
 
   @Test
-  void
-      enrichSessionWithTopicsData_Should_NotEnrichSessionWithTopicDataFromTopicServiceIfNoMatchingTopicFound() {
+  void enrichSessionWithTopicData_Should_DropUnmatchedTopicListEntries() {
     // given
     givenAllTopicsMap();
     var session =
@@ -120,7 +144,7 @@ class ConsultantSessionTopicEnrichmentServiceTest {
                     new SessionTopicDTO().id(3L)));
 
     // when
-    sessionTopicEnrichmentService.enrichSessionWithTopicsData(session);
+    sessionTopicEnrichmentService.enrichSessionWithTopicData(session);
 
     // then
     assertThat(session.getTopics()).size().isEqualTo(2);
@@ -129,13 +153,12 @@ class ConsultantSessionTopicEnrichmentServiceTest {
   }
 
   @Test
-  void
-      enrichSessionWithTopicsData_Should_NotEnrichSessionWithTopicDataFromTopicServiceIfTopicsAreNull() {
+  void enrichSessionWithTopicData_Should_NotLoadTopicDataIfTopicListIsNull() {
     // given
     var session = new ConsultantSessionDTO().topics(null);
 
     // when
-    sessionTopicEnrichmentService.enrichSessionWithTopicsData(session);
+    sessionTopicEnrichmentService.enrichSessionWithTopicData(session);
 
     // then
     verify(topicService, never()).getAllTopics();
@@ -143,13 +166,12 @@ class ConsultantSessionTopicEnrichmentServiceTest {
   }
 
   @Test
-  void
-      enrichSessionWithTopicsData_Should_NotEnrichSessionWithTopicDataFromTopicServiceIfTopicsAreEmpty() {
+  void enrichSessionWithTopicData_Should_NotLoadTopicDataIfTopicListIsEmpty() {
     // given
     var session = new ConsultantSessionDTO().topics(Collections.emptyList());
 
     // when
-    sessionTopicEnrichmentService.enrichSessionWithTopicsData(session);
+    sessionTopicEnrichmentService.enrichSessionWithTopicData(session);
 
     // then
     verify(topicService, never()).getAllTopics();

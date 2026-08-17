@@ -9,8 +9,6 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_LI
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_WITHOUT_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_DTO_SUCHT;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
-import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_SESSION_RESPONSE_DTO_LIST_U25;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -112,8 +110,6 @@ class CreateSessionFacadeTest {
     assertThrows(
         InternalServerErrorException.class,
         () -> {
-          when(sessionService.getSessionsForUserId(USER_ID))
-              .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
           when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
           when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
               .thenThrow(new InternalServerErrorException(MESSAGE));
@@ -132,8 +128,6 @@ class CreateSessionFacadeTest {
     assertThrows(
         InternalServerErrorException.class,
         () -> {
-          when(sessionService.getSessionsForUserId(USER_ID))
-              .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
           when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
           when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
               .thenThrow(new InternalServerErrorException(MESSAGE));
@@ -156,8 +150,6 @@ class CreateSessionFacadeTest {
     assertThrows(
         InternalServerErrorException.class,
         () -> {
-          when(sessionService.getSessionsForUserId(USER_ID))
-              .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
           when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
           when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
               .thenReturn(SESSION_WITHOUT_CONSULTANT);
@@ -178,8 +170,6 @@ class CreateSessionFacadeTest {
     assertThrows(
         BadRequestException.class,
         () -> {
-          when(sessionService.getSessionsForUserId(USER_ID))
-              .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
           when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(null);
 
           createSessionFacade.createUserSession(
@@ -190,8 +180,6 @@ class CreateSessionFacadeTest {
   @Test
   public void createUserSession_Should_ReturnSessionId_OnSuccess() {
 
-    when(sessionService.getSessionsForUserId(USER_ID))
-        .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
     when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
     when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
         .thenReturn(SESSION_WITHOUT_CONSULTANT);
@@ -206,8 +194,6 @@ class CreateSessionFacadeTest {
   @Test
   public void createUserSession_Should_CreateSessionData() {
 
-    when(sessionService.getSessionsForUserId(USER_ID))
-        .thenReturn(USER_SESSION_RESPONSE_DTO_LIST_U25);
     when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(AGENCY_DTO_U25);
     when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
         .thenReturn(SESSION_WITHOUT_CONSULTANT);

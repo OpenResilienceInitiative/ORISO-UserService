@@ -63,29 +63,59 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
     def test_current_matrix_only_inventory_is_reconciled(self):
         reconciliation = self.classification["inventoryReconciliation"]
         repaired = reconciliation["repairedPreCutover"]
-        current = reconciliation["matrixOnlyCurrent"]
-        delta = reconciliation["matrixOnlyDelta"]
+        self.assertIn("matrixOnlyCutover", reconciliation)
+        self.assertIn("matrixOnlyCutoverDelta", reconciliation)
+        self.assertIn("verifiedCurrent", reconciliation)
+        self.assertIn("sinceCutoverDelta", reconciliation)
+        cutover = reconciliation["matrixOnlyCutover"]
+        cutover_delta = reconciliation["matrixOnlyCutoverDelta"]
+        current = reconciliation["verifiedCurrent"]
+        current_delta = reconciliation["sinceCutoverDelta"]
 
         self.assertEqual(
             repaired["unit"] + repaired["integration"],
             repaired["primaryTotal"],
         )
         self.assertEqual(
+            cutover["unit"] + cutover["integration"],
+            cutover["primaryTotal"],
+        )
+        self.assertEqual(
+            cutover["unit"] - repaired["unit"],
+            cutover_delta["unit"],
+        )
+        self.assertEqual(
+            cutover["integration"] - repaired["integration"],
+            cutover_delta["integration"],
+        )
+        self.assertEqual(
+            cutover["primaryTotal"] - repaired["primaryTotal"],
+            cutover_delta["primaryTotal"],
+        )
+        self.assertEqual(
             current["unit"] + current["integration"],
             current["primaryTotal"],
         )
         self.assertEqual(
-            current["unit"] - repaired["unit"],
-            delta["unit"],
+            current["unit"] - cutover["unit"],
+            current_delta["unit"],
         )
         self.assertEqual(
-            current["integration"] - repaired["integration"],
-            delta["integration"],
+            current["integration"] - cutover["integration"],
+            current_delta["integration"],
         )
         self.assertEqual(
-            current["primaryTotal"] - repaired["primaryTotal"],
-            delta["primaryTotal"],
+            current["primaryTotal"] - cutover["primaryTotal"],
+            current_delta["primaryTotal"],
         )
+        required_suite = self.classification["currentRequiredSuite"]
+        self.assertEqual(required_suite["unitTests"], current["unit"])
+        self.assertEqual(required_suite["integrationTests"], current["integration"])
+        self.assertEqual(
+            "1ecca61a2459b4ae88f3f72031c7d50cc77453cf",
+            current["verifiedApplicationHead"],
+        )
+        self.assertEqual(2, len(current["localEvidence"]))
         self.assertEqual(40, reconciliation["sourceDiff"]["deletedJUnitTestClasses"])
         self.assertEqual(29, reconciliation["sourceDiff"]["addedJUnitTestClasses"])
         self.assertEqual(
@@ -100,12 +130,36 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
             "scripts/ci/run-required-integration-tests.sh",
             current["command"],
         )
-        self.assertGreaterEqual(current["integrationReports"], 75)
-        self.assertGreaterEqual(current["integrationTests"], 830)
+        self.assertEqual(3994, current.get("unitTests"))
+        self.assertEqual(454, current["unitReports"])
+        self.assertEqual(96, current["integrationReports"])
+        self.assertEqual(895, current["integrationTests"])
         self.assertEqual(0, current["failures"])
         self.assertEqual(0, current["errors"])
-        self.assertEqual(2, current["skipped"])
+        self.assertEqual(14, current["skipped"])
         self.assertFalse(current["quarantine"])
+
+    def test_every_environment_bound_skip_has_a_required_execution_lane(self):
+        current = self.classification["currentRequiredSuite"]
+        environment_bound = current["environmentBoundSkippedTests"]
+
+        self.assertEqual(current["integrationSkipped"], len(environment_bound))
+        self.assertEqual(
+            len(environment_bound),
+            len({entry["testId"] for entry in environment_bound}),
+        )
+        for entry in environment_bound:
+            self.assertTrue(entry["testId"])
+            self.assertTrue(entry["environmentVariable"])
+            workflow = ROOT / entry["requiredWorkflow"]
+            self.assertTrue(workflow.is_file(), workflow)
+            if entry.get("executionStatus") == "known-gap":
+                self.assertTrue(entry.get("knownGapReason"))
+                continue
+            workflow_source = workflow.read_text()
+            test_class = entry["testId"].split("#", 1)[0].rsplit(".", 1)[-1]
+            self.assertIn(test_class, workflow_source)
+            self.assertIn(entry["environmentVariable"], workflow_source)
 
     def test_stability_document_links_the_counted_classification(self):
         stability_document = (

@@ -23,10 +23,11 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreated;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountCreator;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
-import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
-import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import jakarta.ws.rs.NotFoundException;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
@@ -42,9 +43,10 @@ class CreateAdminServiceTest {
 
   @InjectMocks private CreateAdminService createAdminService;
 
-  @Mock private IdentityClient identityClient;
-  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
+  @Mock private IdentityAccountCreator identityAccountCreator;
   @Mock private IdentityAccountRemover identityAccountRemover;
+  @Mock private IdentityPasswordUpdater identityPasswordUpdater;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
 
   @Mock private UserAccountInputValidator userAccountInputValidator;
 
@@ -78,12 +80,30 @@ class CreateAdminServiceTest {
 
   @Test
   void createNewAgencyAdmin_ShouldRollbackUser_WhenRoleAssignmentFails() {
-    CreatedIdentity keycloakResponse = new CreatedIdentity();
-    keycloakResponse.setUserId("kc-user-id");
-    when(identityClient.createUser(any(), anyString(), anyString())).thenReturn(keycloakResponse);
+    var createdIdentity = new IdentityAccountCreated("kc-user-id");
+    when(identityAccountCreator.createAccount(any())).thenReturn(createdIdentity);
     doThrow(new RuntimeException("role assignment failed"))
-        .when(identityClient)
-        .updateRole(anyString(), any(UserRole.class));
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), any());
+
+    CreateAdminDTO createAdminDTO = easyRandom.nextObject(CreateAdminDTO.class);
+    createAdminDTO.setUsername("valid_username");
+    createAdminDTO.setEmail("valid@email.com");
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
+
+    verify(identityAccountRemover).rollbackUser("kc-user-id");
+  }
+
+  @Test
+  void createNewAgencyAdmin_ShouldRollbackUser_WhenCreatedUserResponseValidationFails() {
+    var createdIdentity = new IdentityAccountCreated("kc-user-id");
+    when(identityAccountCreator.createAccount(any())).thenReturn(createdIdentity);
+    doThrow(new RuntimeException("response validation failed"))
+        .when(userAccountInputValidator)
+        .validateIdentityAccountCreated(createdIdentity);
 
     CreateAdminDTO createAdminDTO = easyRandom.nextObject(CreateAdminDTO.class);
     createAdminDTO.setUsername("valid_username");
@@ -98,12 +118,11 @@ class CreateAdminServiceTest {
 
   @Test
   void createNewAgencyAdmin_ShouldThrowRoleNotFoundReason_AndRollbackUser_WhenRealmRoleIsMissing() {
-    CreatedIdentity keycloakResponse = new CreatedIdentity();
-    keycloakResponse.setUserId("kc-user-id");
-    when(identityClient.createUser(any(), anyString(), anyString())).thenReturn(keycloakResponse);
+    var createdIdentity = new IdentityAccountCreated("kc-user-id");
+    when(identityAccountCreator.createAccount(any())).thenReturn(createdIdentity);
     doThrow(new NotFoundException("HTTP 404 Not Found"))
-        .when(identityClient)
-        .updateRole(anyString(), any(UserRole.class));
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), any());
 
     CreateAdminDTO createAdminDTO = easyRandom.nextObject(CreateAdminDTO.class);
     createAdminDTO.setUsername("valid_username");

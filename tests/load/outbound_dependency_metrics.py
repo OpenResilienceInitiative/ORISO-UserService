@@ -14,6 +14,7 @@ from urllib.request import urlopen
 CALLS_METRIC = "userservice.outbound.http.calls"
 LATENCY_METRIC = "userservice.outbound.http.latency"
 PAYLOAD_METRIC = "userservice.outbound.http.payload"
+FALLBACK_METRIC = "userservice.dependency.fallbacks"
 
 
 def metric_measurements(
@@ -69,6 +70,14 @@ def capture_snapshot(
                         "direction": "response",
                     },
                 ),
+                "fallbacks": metric_measurements(
+                    base_url,
+                    FALLBACK_METRIC,
+                    {
+                        "dependency": "agency-service",
+                        "operation": "consultant-agency-batch",
+                    },
+                ),
             }
             for base_url in base_urls
         },
@@ -108,6 +117,7 @@ def compare_snapshots(
     max_calls_per_consultant_read: float,
     max_mean_latency_ms: float,
     max_response_bytes_per_call: float,
+    expected_fallback: bool = False,
 ) -> tuple[dict[str, Any], list[str]]:
     targets = sorted(set(before.get("targets", {})) | set(after.get("targets", {})))
     outbound_calls = sum(
@@ -133,6 +143,9 @@ def compare_snapshots(
         (_measurement(after, target, "response_payload", "MAX") for target in targets),
         default=0.0,
     )
+    fallback_count = sum(
+        _delta(before, after, target, "fallbacks", "COUNT") for target in targets
+    )
     operations = load_result.get("summary", {}).get("operations", {})
     consultant_reads = sum(
         int(summary.get("requests", 0))
@@ -147,6 +160,9 @@ def compare_snapshots(
         latency_total_seconds * 1000 / latency_count if latency_count else 0.0
     )
     response_bytes_per_call = response_bytes / payload_count if payload_count else 0.0
+    fallbacks_per_consultant_read = (
+        fallback_count / consultant_reads if consultant_reads else 0.0
+    )
     report = {
         "targets": targets,
         "consultant_reads": consultant_reads,
@@ -159,6 +175,8 @@ def compare_snapshots(
         "response_bytes": int(response_bytes),
         "response_bytes_per_call": round(response_bytes_per_call, 2),
         "response_bytes_max": int(max_response_bytes),
+        "fallbacks": int(fallback_count),
+        "fallbacks_per_consultant_read": round(fallbacks_per_consultant_read, 4),
     }
 
     violations: list[str] = []
@@ -171,10 +189,25 @@ def compare_snapshots(
             "outbound latency measurements do not match call attempts "
             f"({latency_count:g} != {outbound_calls:g})"
         )
-    if payload_count != outbound_calls:
+    if not expected_fallback and payload_count != outbound_calls:
         violations.append(
             "known response-payload measurements do not match successful calls "
             f"({payload_count:g} != {outbound_calls:g})"
+        )
+    if expected_fallback and payload_count > outbound_calls:
+        violations.append(
+            "response-payload measurements exceeded call attempts "
+            f"({payload_count:g} > {outbound_calls:g})"
+        )
+    if expected_fallback and fallback_count != outbound_calls:
+        violations.append(
+            "application fallback measurements do not match failed call attempts "
+            f"({fallback_count:g} != {outbound_calls:g})"
+        )
+    if not expected_fallback and fallback_count != 0:
+        violations.append(
+            "healthy dependency run unexpectedly used the application fallback "
+            f"({fallback_count:g} fallbacks)"
         )
     if calls_per_consultant_read > max_calls_per_consultant_read:
         violations.append(
@@ -219,6 +252,7 @@ def parse_args() -> argparse.Namespace:
     compare.add_argument("--max-calls-per-consultant-read", type=float, default=1.0)
     compare.add_argument("--max-mean-latency-ms", type=float, default=500.0)
     compare.add_argument("--max-response-bytes-per-call", type=float, default=4096.0)
+    compare.add_argument("--expected-fallback", action="store_true")
     return parser.parse_args()
 
 
@@ -238,6 +272,7 @@ def main() -> int:
         max_calls_per_consultant_read=args.max_calls_per_consultant_read,
         max_mean_latency_ms=args.max_mean_latency_ms,
         max_response_bytes_per_call=args.max_response_bytes_per_call,
+        expected_fallback=args.expected_fallback,
     )
     print(json.dumps({"report": report, "violations": violations}, indent=2))
     return int(bool(violations))

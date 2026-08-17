@@ -5,7 +5,7 @@ import static de.caritas.cob.userservice.api.conversation.model.ConversationList
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.conversation.model.ConversationListType;
 import de.caritas.cob.userservice.api.conversation.model.PageableListRequest;
-import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.session.ConsultantSessionQueryService;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import lombok.NonNull;
@@ -16,14 +16,14 @@ import org.springframework.stereotype.Service;
 public class RegisteredEnquiryConversationListProvider extends DefaultConversationListProvider {
 
   private final @NonNull UserAccountService userAccountProvider;
-  private final @NonNull SessionService sessionService;
+  private final @NonNull ConsultantSessionQueryService consultantSessionQueryService;
 
   public RegisteredEnquiryConversationListProvider(
       @NonNull UserAccountService userAccountProvider,
       @NonNull ConsultantSessionEnricher consultantSessionEnricher,
-      @NonNull SessionService sessionService) {
+      @NonNull ConsultantSessionQueryService consultantSessionQueryService) {
     super(consultantSessionEnricher);
-    this.sessionService = sessionService;
+    this.consultantSessionQueryService = consultantSessionQueryService;
     this.userAccountProvider = userAccountProvider;
   }
 
@@ -31,10 +31,11 @@ public class RegisteredEnquiryConversationListProvider extends DefaultConversati
   @Override
   public ConsultantSessionListResponseDTO buildConversations(PageableListRequest request) {
     var consultant = this.userAccountProvider.retrieveValidatedConsultant();
-    // SessionService already returns the correct union of agency-scoped and topic-scoped
+    // The query service already returns the correct union of agency-scoped and topic-scoped
     // registered enquiries. Re-filtering by the consultant's topics here would wrongly drop
     // legitimate agency-matched enquiries whose mainTopicId is outside the consultant's topics.
-    var registeredEnquiries = sessionService.getRegisteredEnquiriesForConsultant(consultant);
+    var registeredEnquiries =
+        consultantSessionQueryService.getRegisteredEnquiriesForConsultant(consultant);
 
     return buildConversations(request, consultant, registeredEnquiries);
   }
