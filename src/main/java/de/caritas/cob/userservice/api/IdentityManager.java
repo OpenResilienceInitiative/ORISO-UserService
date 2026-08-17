@@ -122,8 +122,6 @@ public class IdentityManager implements IdentityManaging {
    */
   @Override
   public boolean hasRole(String userId, UserRole role) {
-    return identityRoleLookup.findAllByUserId(userId).stream()
-        .filter(java.util.Objects::nonNull)
-        .anyMatch(roleName -> roleName.equalsIgnoreCase(role.getValue()));
+    return identityRoleLookup.findAllByUserId(userId).stream().anyMatch(role.getValue()::equals);
   }
 }
