@@ -234,6 +234,9 @@ class CaseHandoverServiceTest {
       String language, String expectedTitle, String expectedDescription) {
     session.setLanguageCode(LanguageCode.getByCode(language));
     ArgumentCaptor<String> description = ArgumentCaptor.forClass(String.class);
+    when(eventNotificationService.buildCaseHandoverParams(
+            eq(session), anyString(), isNull(), isNull(), isNull()))
+        .thenReturn("{\"audience\":\"asker\"}");
 
     caseHandoverService.requestAccess(
         123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
@@ -248,7 +251,39 @@ class CaseHandoverServiceTest {
             eq(EventNotificationService.CATEGORY_SYSTEM),
             eq(expectedTitle),
             eq(expectedDescription),
-            isNull(),
+            eq("{\"audience\":\"asker\"}"),
+            anyString(),
+            eq(123L),
+            eq(7L));
+    verify(eventNotificationService)
+        .buildCaseHandoverParams(eq(session), anyString(), isNull(), isNull(), isNull());
+  }
+
+  @Test
+  void requestAccess_fallsBackToGermanClientCopyWhenLanguageIsMissing() {
+    session.setLanguageCode(null);
+    when(eventNotificationService.buildCaseHandoverParams(
+            eq(session), anyString(), isNull(), isNull(), isNull()))
+        .thenReturn("{\"audience\":\"asker\"}");
+
+    caseHandoverService.requestAccess(
+        123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
+
+    verify(matrixSessionSystemMessageService)
+        .postCaseHandoverGrantedMessage(
+            eq(session),
+            eq("Requesting Counsellor"),
+            eq(
+                "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter."));
+    verify(eventNotificationService)
+        .createEvent(
+            eq("asker"),
+            eq("case.handover.granted"),
+            eq(EventNotificationService.CATEGORY_SYSTEM),
+            eq("Neue Beratungsperson hat deinen Fall übernommen"),
+            eq(
+                "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter."),
+            eq("{\"audience\":\"asker\"}"),
             anyString(),
             eq(123L),
             eq(7L));
