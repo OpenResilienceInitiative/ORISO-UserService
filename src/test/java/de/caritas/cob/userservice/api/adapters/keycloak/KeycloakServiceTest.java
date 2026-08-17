@@ -135,6 +135,7 @@ public class KeycloakServiceTest {
     setField(keycloakService, "keycloakAuthClient", realAuthClient);
     setField(keycloakService, "usernameTranscoder", usernameTranscoder);
     setField(keycloakService, "multiTenancyEnabled", false);
+    setField(keycloakService, "genericKeycloakError", "An unexpected Keycloak error occurred");
     logCaptor = LogbackCaptor.forClass(KeycloakService.class);
     authLogCaptor = LogbackCaptor.forClass(KeycloakAuthClient.class);
     when(usernameTranscoder.decodeUsername(any()))
@@ -776,25 +777,26 @@ public class KeycloakServiceTest {
 
   @Test
   public void createUser_Should_ThrowInternalServerException_When_errorIsUnknown() {
-    assertThrows(
-        InternalServerErrorException.class,
-        () -> {
-          // The configured duplicated-account markers must be stubbed (non-null) because
-          // production lower-cases them unconditionally; see the production NPE flag in
-          // KeycloakService#handleCreateKeycloakUserError lines 417/423.
-          givenADuplicatedEmailErrorMessage();
-          givenADuplicatedUserErrorMessage();
-          UsersResource usersResource = mock(UsersResource.class);
-          Response response = mock(Response.class);
-          when(usersResource.create(any())).thenReturn(response);
-          // An error body matching neither the duplicated-email nor the duplicated-username
-          // marker must fall through to a generic InternalServerErrorException.
-          when(response.readEntity(String.class)).thenReturn("unexpected keycloak failure");
-          when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-          UserDTO userDTO = new EasyRandom().nextObject(UserDTO.class);
+    givenADuplicatedEmailErrorMessage();
+    givenADuplicatedUserErrorMessage();
+    var usersResource = mock(UsersResource.class);
+    var response = mock(Response.class);
+    var rawProviderDetail = "sensitive provider detail";
+    when(response.getStatus()).thenReturn(HttpStatus.INTERNAL_SERVER_ERROR.value());
+    when(response.readEntity(String.class)).thenReturn(rawProviderDetail);
+    when(usersResource.create(any())).thenReturn(response);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    var userDTO = new EasyRandom().nextObject(UserDTO.class);
 
-          this.keycloakService.createUser(userDTO);
-        });
+    var exception =
+        assertThrows(
+            InternalServerErrorException.class, () -> this.keycloakService.createUser(userDTO));
+
+    assertFalse(exception.getMessage().contains(rawProviderDetail));
+    assertFalse(
+        logCaptor.messages(Level.WARN).stream()
+            .anyMatch(message -> message.contains(rawProviderDetail)));
+    assertTrue(logCaptor.contains(Level.WARN, "Keycloak create-user failed. status=500"));
   }
 
   @Test

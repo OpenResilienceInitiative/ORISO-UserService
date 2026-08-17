@@ -127,7 +127,7 @@ public class KeycloakService
   private OutboundHttpMetrics outboundHttpMetrics;
 
   @Value("${api.error.keycloakError}")
-  private String keycloakError;
+  private String genericKeycloakError;
 
   @Value("${multitenancy.enabled}")
   private Boolean multiTenancyEnabled;
@@ -392,11 +392,8 @@ public class KeycloakService
           return new CreatedIdentity(createdUserId);
         }
         handleCreateKeycloakUserError(response);
+        throw new InternalServerErrorException(genericKeycloakError);
       }
-      throw new InternalServerErrorException(
-          String.format(
-              "Could not create Keycloak account for: %s %nKeycloak error: %s",
-              user, keycloakError));
     }
     throw new IllegalStateException("Unreachable Keycloak create-user retry state");
   }
@@ -424,13 +421,7 @@ public class KeycloakService
       throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
-    // Preserve prior behavior but include status/raw details to avoid opaque 500s.
-    keycloakError =
-        !rawResponse.isBlank()
-            ? String.format("Keycloak create-user failed with status %s: %s", status, rawResponse)
-            : String.format("Keycloak create-user failed with status %s", status);
-
-    log.warn("Keycloak create-user failed. status={}, rawResponse={}", status, rawResponse);
+    log.warn("Keycloak create-user failed. status={}", status);
   }
 
   /**
