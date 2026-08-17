@@ -64,6 +64,29 @@ public class CaseHandoverService {
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
 
   /**
+   * Client-safe handover text deliberately carries no reason-derived wording. The internal policy
+   * reason may describe illness, absence, emergencies, or staffing changes and therefore must stay
+   * on staff and audit surfaces. Unknown languages deliberately fall back to German; every
+   * currently supported language has an explicit entry.
+   */
+  private static final Map<String, String> CLIENT_SAFE_HANDOVER_TEMPLATES =
+      Map.of(
+          "de",
+          "{{newAdvisor}} hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.",
+          "en",
+          "{{newAdvisor}} has taken over your case and will continue your counselling from now on.",
+          "fr",
+          "{{newAdvisor}} a repris votre dossier et poursuivra désormais votre accompagnement.",
+          "ru",
+          "{{newAdvisor}} принял(а) ваше дело и с этого момента продолжит консультирование.",
+          "tr",
+          "{{newAdvisor}} vakanızı devraldı ve bundan sonra danışmanlığınıza devam edecek.",
+          "uk",
+          "{{newAdvisor}} перейняв(-ла) вашу справу й відтепер продовжуватиме консультування.",
+          "ti",
+          "{{newAdvisor}} ጉዳይካ ተረኪቡ ካብ ሕጂ ንደሓር ምኽሪ ክቕጽል እዩ።");
+
+  /**
    * Default client-facing notification templates per reason and language (de/en/tr/uk). Source:
    * vault doc "Case Handover — System-Benachrichtigungen & Rechtstexte (Entwurf)"; tr/uk are
    * machine-drafted pending native review. {@code {{newAdvisor}}} is substituted at send time.
@@ -739,7 +762,7 @@ public class CaseHandoverService {
     Session session = request.getSession();
     Consultant requester = request.getRequesterConsultant();
     String requesterName = resolveConsultantName(requester);
-    String clientDescription = postGrantedChatSystemMessage(request, session, requesterName);
+    String clientDescription = postGrantedChatSystemMessage(session, requesterName);
     // #1010 task 1a: the explanation is counsellor-written free text that can reference case
     // content. It is no longer copied into the notification, which kept it in plaintext for good;
     // the handover-request API serves it on demand instead.
@@ -756,9 +779,7 @@ public class CaseHandoverService {
           "case.handover.granted",
           EventNotificationService.CATEGORY_SYSTEM,
           "New counsellor took over your case",
-          isBlank(clientDescription)
-              ? String.format("%s took over your case.", requesterName)
-              : clientDescription,
+          clientDescription,
           clientParams,
           buildAskerSessionActionPath(session),
           session.getId(),
@@ -786,11 +807,10 @@ public class CaseHandoverService {
    * Posts the designed in-chat system notification ("new counsellor took over your case") into the
    * session's Matrix room. Emission failures must never fail the handover itself.
    */
-  private String postGrantedChatSystemMessage(
-      CaseHandoverRequest request, Session session, String requesterName) {
+  private String postGrantedChatSystemMessage(Session session, String requesterName) {
     String description = null;
     try {
-      description = resolveClientNotificationDescription(request, requesterName);
+      description = resolveClientNotificationDescription(session, requesterName);
       matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
           session, requesterName, description);
     } catch (RuntimeException exception) {
@@ -802,24 +822,11 @@ public class CaseHandoverService {
     return description;
   }
 
-  private String resolveClientNotificationDescription(
-      CaseHandoverRequest request, String requesterName) {
-    var reasonCode = normalizeReasonCode(request.getReasonCode());
-    Map<String, String> templates =
-        caseHandoverReasonPolicyRepository
-            .findById(reasonCode)
-            .map(CaseHandoverReasonPolicy::getClientNotificationTemplates)
-            .filter(map -> map != null && !map.isEmpty())
-            .orElseGet(() -> DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(reasonCode));
-    if (templates == null || templates.isEmpty()) {
-      return null;
-    }
-    var language = resolveSessionLanguage(request.getSession());
+  private String resolveClientNotificationDescription(Session session, String requesterName) {
+    var language = resolveSessionLanguage(session);
     var template =
-        templates.getOrDefault(
-            language,
-            templates.getOrDefault(
-                "de", templates.getOrDefault("en", templates.values().iterator().next())));
+        CLIENT_SAFE_HANDOVER_TEMPLATES.getOrDefault(
+            language, CLIENT_SAFE_HANDOVER_TEMPLATES.get("de"));
     return template.replace("{{newAdvisor}}", requesterName);
   }
 

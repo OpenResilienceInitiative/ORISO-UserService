@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
@@ -44,6 +43,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
@@ -156,7 +156,7 @@ class CaseHandoverServiceTest {
   }
 
   @Test
-  void requestAccess_usesOnlyLocalizedClientTemplateForAskerNotification() {
+  void requestAccess_usesOnlyGenericLocalizedTextForAskerNotification() {
     when(eventNotificationService.buildCaseHandoverParams(
             eq(session), anyString(), isNull(), isNull(), isNull()))
         .thenReturn("{\"audience\":\"asker\"}");
@@ -170,7 +170,8 @@ class CaseHandoverServiceTest {
             eq("case.handover.granted"),
             eq(EventNotificationService.CATEGORY_SYSTEM),
             anyString(),
-            contains("erkrankt"),
+            eq(
+                "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter."),
             eq("{\"audience\":\"asker\"}"),
             anyString(),
             eq(123L),
@@ -179,8 +180,15 @@ class CaseHandoverServiceTest {
 
   @Test
   void requestAccess_keepsPendingConsentReasonOutOfAskerNotification() {
+    when(caseHandoverRequestRepository.save(any(CaseHandoverRequest.class)))
+        .thenAnswer(
+            invocation -> {
+              CaseHandoverRequest saved = invocation.getArgument(0);
+              saved.setId(88L);
+              return saved;
+            });
     when(eventNotificationService.buildCaseHandoverParams(
-            eq(session), anyString(), isNull(), isNull(), isNull()))
+            eq(session), anyString(), isNull(), isNull(), eq(88L)))
         .thenReturn("{\"audience\":\"asker\"}");
 
     caseHandoverService.requestAccess(
@@ -197,22 +205,51 @@ class CaseHandoverServiceTest {
             anyString(),
             eq(123L),
             eq(7L));
+    verify(eventNotificationService)
+        .buildCaseHandoverParams(eq(session), anyString(), isNull(), isNull(), eq(88L));
   }
 
   @ParameterizedTest
-  @ValueSource(strings = {"de", "en", "fr", "ru", "tr", "uk", "ti"})
-  void requestAccess_providesSafeClientDescriptionForEverySupportedLanguage(String language) {
+  @CsvSource({
+    "de, 'Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.'",
+    "en, 'Requesting Counsellor has taken over your case and will continue your counselling from now on.'",
+    "fr, 'Requesting Counsellor a repris votre dossier et poursuivra désormais votre accompagnement.'",
+    "ru, 'Requesting Counsellor принял(а) ваше дело и с этого момента продолжит консультирование.'",
+    "tr, 'Requesting Counsellor vakanızı devraldı ve bundan sonra danışmanlığınıza devam edecek.'",
+    "uk, 'Requesting Counsellor перейняв(-ла) вашу справу й відтепер продовжуватиме консультування.'",
+    "ti, 'Requesting Counsellor ጉዳይካ ተረኪቡ ካብ ሕጂ ንደሓር ምኽሪ ክቕጽል እዩ።'"
+  })
+  void requestAccess_providesSafeClientDescriptionForEverySupportedLanguage(
+      String language, String expectedDescription) {
     session.setLanguageCode(LanguageCode.getByCode(language));
     ArgumentCaptor<String> description = ArgumentCaptor.forClass(String.class);
 
     caseHandoverService.requestAccess(
-        123L, "OTHER_EMERGENCY", "Client disclosed sensitive information.");
+        123L, "COUNSELLOR_IS_ILL", "Client disclosed sensitive information.");
 
     verify(matrixSessionSystemMessageService)
         .postCaseHandoverGrantedMessage(eq(session), anyString(), description.capture());
-    assertFalse(description.getValue().isBlank());
-    assertFalse(description.getValue().contains("Other emergency"));
-    assertFalse(description.getValue().contains("Client disclosed sensitive information"));
+    assertEquals(expectedDescription, description.getValue());
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "COUNSELLOR_ON_HOLIDAY",
+        "OTHER_EMERGENCY",
+        "COUNSELLOR_IS_ILL",
+        "COUNSELLOR_LEFT"
+      })
+  void requestAccess_neverDerivesClientDescriptionFromInternalReason(String reasonCode) {
+    ArgumentCaptor<String> description = ArgumentCaptor.forClass(String.class);
+
+    caseHandoverService.requestAccess(123L, reasonCode, "Client disclosed sensitive information.");
+
+    verify(matrixSessionSystemMessageService)
+        .postCaseHandoverGrantedMessage(eq(session), anyString(), description.capture());
+    assertEquals(
+        "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.",
+        description.getValue());
   }
 
   /** The reason stays — it is a configured label, not free text — and moves into params. */
@@ -456,6 +493,7 @@ class CaseHandoverServiceTest {
     assertTrue(status.isCanViewContent());
     assertNull(status.getReasonCode());
     assertNull(status.getReasonLabel());
+    assertNull(status.getPolicyAuthority());
     assertEquals(requester, session.getConsultant());
     assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
     assertEquals("ACCESS_GRANTED", request.getAuditOutcome());
@@ -491,6 +529,9 @@ class CaseHandoverServiceTest {
 
     assertEquals("CLIENT_CONSENT_DECLINED", status.getStatus());
     assertFalse(status.isCanViewContent());
+    assertNull(status.getReasonCode());
+    assertNull(status.getReasonLabel());
+    assertNull(status.getPolicyAuthority());
     assertEquals(previous, session.getConsultant());
     assertEquals(CaseHandoverRequest.Status.CLIENT_CONSENT_DECLINED, request.getStatus());
     assertEquals("CLIENT_CONSENT_DECLINED", request.getAuditOutcome());
@@ -510,6 +551,9 @@ class CaseHandoverServiceTest {
     assertEquals("DENIED", status.getStatus());
     assertFalse(status.isCanViewContent());
     assertEquals("ALREADY_ANSWERED", status.getAuditOutcome());
+    assertNull(status.getReasonCode());
+    assertNull(status.getReasonLabel());
+    assertNull(status.getPolicyAuthority());
     assertEquals(other, session.getConsultant());
     assertEquals(CaseHandoverRequest.Status.DENIED, request.getStatus());
     assertEquals("ALREADY_ANSWERED", request.getAuditOutcome());
