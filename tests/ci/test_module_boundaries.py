@@ -175,7 +175,10 @@ class ModuleBoundaryContractTest(unittest.TestCase):
         identity_client = (
             ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
         )
-        source = identity_client.read_text()
+        # The port split removed the broad client outright. An absent file satisfies
+        # the rule by construction; keep the assertion so the rule still bites if the
+        # client is ever reintroduced.
+        source = read_if_exists(identity_client)
 
         for forbidden in ("userHasRole", "userHasAuthority"):
             self.assertNotIn(
