@@ -536,8 +536,8 @@ public class KeycloakServiceTest {
             createdResponse);
     retryOrder.verify(keycloakClient).getUsersResource();
     retryOrder.verify(staleUsersResource).create(any());
-    retryOrder.verify(unauthorizedResponse).close();
     retryOrder.verify(keycloakClient).refreshAdminSession();
+    retryOrder.verify(unauthorizedResponse).close();
     retryOrder.verify(keycloakClient).getUsersResource();
     retryOrder.verify(refreshedUsersResource).create(any());
     retryOrder.verify(keycloakClient).getUsersResource();
@@ -583,8 +583,8 @@ public class KeycloakServiceTest {
             secondUnauthorizedResponse);
     retryOrder.verify(keycloakClient).getUsersResource();
     retryOrder.verify(staleUsersResource).create(any());
-    retryOrder.verify(firstUnauthorizedResponse).close();
     retryOrder.verify(keycloakClient).refreshAdminSession();
+    retryOrder.verify(firstUnauthorizedResponse).close();
     retryOrder.verify(keycloakClient).getUsersResource();
     retryOrder.verify(refreshedUsersResource).create(any());
     retryOrder.verify(secondUnauthorizedResponse).close();
