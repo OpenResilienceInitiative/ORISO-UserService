@@ -42,6 +42,7 @@ public class CaseHandoverRequest implements TenantAware {
   public enum Status {
     PENDING,
     PENDING_CLIENT_CONSENT,
+    GRANTED_PENDING_CLIENT_OPTOUT,
     GRANTED,
     DENIED,
     CLIENT_CONSENT_DECLINED,
@@ -85,6 +86,10 @@ public class CaseHandoverRequest implements TenantAware {
 
   @Column(name = "client_consent_required", nullable = false)
   private Boolean clientConsentRequired;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "client_consent_mode", nullable = false, length = 20)
+  private CaseHandoverConsentMode clientConsent;
 
   @Column(name = "policy_authority", nullable = false, length = 255)
   private String policyAuthority;

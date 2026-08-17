@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -156,6 +157,23 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void listReasons_mapsTheExplicitTenantOptOutWithoutInventingAnApprovalRole() {
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(
+            tenantPolicies(
+                "Rat benötigt",
+                180,
+                de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .CaseHandoverConsentValue.OPT_OUT,
+                Set.of()));
+
+    var reason = caseHandoverService.listReasons(7L).get(0);
+
+    assertEquals(CaseHandoverConsentMode.OPT_OUT, reason.getClientConsent());
+    assertFalse(reason.isClientConsentRequired());
+  }
+
+  @Test
   void listReasons_doesNotHideInvalidTenantPolicyBehindTheLegacyFallback() {
     when(caseHandoverPolicyCacheService.getEffective(7L))
         .thenReturn(tenantPolicies("Rat benötigt", 10));
@@ -183,9 +201,96 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void requestAccess_optOutGrantsCoAccessImmediatelyAndLeavesTheClientDecisionOpen() {
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(
+            tenantPolicies(
+                "Rat benötigt",
+                180,
+                de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .CaseHandoverConsentValue.OPT_OUT,
+                Set.of()));
+
+    var status =
+        caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Zweitmeinung");
+
+    assertEquals("GRANTED_PENDING_CLIENT_OPTOUT", status.getStatus());
+    assertTrue(status.isCanViewContent());
+    assertEquals(CaseHandoverConsentMode.OPT_OUT, status.getClientConsent());
+    ArgumentCaptor<CaseHandoverRequest> request =
+        ArgumentCaptor.forClass(CaseHandoverRequest.class);
+    verify(caseHandoverRequestRepository).save(request.capture());
+    assertEquals(
+        CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT, request.getValue().getStatus());
+    assertEquals(CaseHandoverConsentMode.OPT_OUT, request.getValue().getClientConsent());
+    assertEquals(LocalDateTime.of(2026, 8, 16, 13, 0), request.getValue().getExpiresAt());
+  }
+
+  @Test
+  void resolveClientConsent_optOutDeclineImmediatelyRevokesCoAccess() {
+    var request =
+        CaseHandoverRequest.builder()
+            .id(101L)
+            .session(session)
+            .requesterConsultant(requester)
+            .previousConsultant(previous)
+            .reasonCode("COUNSELLOR_ASKED_FOR_ADVICE")
+            .reasonLabel("Rat benötigt")
+            .explanation("Zweitmeinung")
+            .status(CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT)
+            .accessType(CaseHandoverRequest.AccessType.CO_ACCESS)
+            .clientConsent(CaseHandoverConsentMode.OPT_OUT)
+            .clientConsentRequired(false)
+            .policyAuthority("tenant-service-resolved")
+            .auditOutcome("ACCESS_GRANTED_PENDING_CLIENT_OPTOUT")
+            .createdAt(LocalDateTime.of(2026, 8, 16, 10, 0))
+            .tenantId(7L)
+            .build();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(101L, 123L))
+        .thenReturn(Optional.of(request));
+
+    var status = caseHandoverService.resolveClientConsent(123L, 101L, false);
+
+    assertEquals("CLIENT_CONSENT_DECLINED", status.getStatus());
+    assertFalse(status.isCanViewContent());
+    assertEquals("CLIENT_CONSENT_DECLINED", status.getAuditOutcome());
+  }
+
+  @Test
+  void resolveClientConsent_optOutDeclineDoesNotReverseACompletedTakeover() {
+    session.setConsultant(requester);
+    var request =
+        CaseHandoverRequest.builder()
+            .id(102L)
+            .session(session)
+            .requesterConsultant(requester)
+            .previousConsultant(previous)
+            .reasonCode("COUNSELLOR_IS_ILL")
+            .reasonLabel("Unplanned absence")
+            .explanation("Vertretung")
+            .status(CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT)
+            .accessType(CaseHandoverRequest.AccessType.TAKEOVER)
+            .clientConsent(CaseHandoverConsentMode.OPT_OUT)
+            .clientConsentRequired(false)
+            .policyAuthority("tenant-service-resolved")
+            .auditOutcome("ACCESS_GRANTED_PENDING_CLIENT_OPTOUT")
+            .createdAt(LocalDateTime.of(2026, 8, 16, 10, 0))
+            .tenantId(7L)
+            .build();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(102L, 123L))
+        .thenReturn(Optional.of(request));
+
+    var status = caseHandoverService.resolveClientConsent(123L, 102L, false);
+
+    assertEquals("GRANTED", status.getStatus());
+    assertEquals("CLIENT_OPTOUT_DECLINED_AFTER_TAKEOVER", status.getAuditOutcome());
+    assertEquals(requester, session.getConsultant());
+  }
+
+  @Test
   void requestAccess_grantsAndActivatesCounsellor_WhenPolicyDoesNotRequireClientConsent() {
     CaseHandoverStatus status =
-        caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+        caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
 
     assertEquals("GRANTED", status.getStatus());
     assertTrue(status.isCanViewContent());
@@ -448,7 +553,7 @@ class CaseHandoverServiceTest {
         .thenReturn("requester-token");
     when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
 
-    caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
 
     verify(matrixSynapseService)
         .inviteUserToRoom("!room:matrix", "@requester:matrix", "previous-token");
@@ -479,7 +584,7 @@ class CaseHandoverServiceTest {
     when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
 
     CaseHandoverStatus status =
-        caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+        caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
 
     assertEquals("GRANTED", status.getStatus());
     assertEquals(requester, session.getConsultant());
@@ -502,7 +607,7 @@ class CaseHandoverServiceTest {
         InternalServerErrorException.class,
         () ->
             caseHandoverService.requestAccess(
-                123L, "OTHER_EMERGENCY", "Colleague is unavailable."));
+                123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable."));
 
     assertEquals(previous, session.getConsultant());
     verify(sessionRepository, never()).save(session);
@@ -517,7 +622,7 @@ class CaseHandoverServiceTest {
         .thenReturn("token");
     when(matrixSynapseService.joinRoom("!room:matrix", "token")).thenReturn(true);
 
-    caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
 
     verify(matrixSessionSystemMessageService)
         .postCaseHandoverGrantedMessage(
@@ -559,7 +664,7 @@ class CaseHandoverServiceTest {
         ArgumentCaptor.forClass(CaseHandoverRequest.class);
 
     CaseHandoverStatus status =
-        caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Urgent cover.");
+        caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Urgent cover.");
 
     assertEquals("TAKEOVER", status.getAccessType());
     assertNull(status.getExpiresAt());
@@ -681,10 +786,11 @@ class CaseHandoverServiceTest {
   void requestAccess_deniesAndKeepsContentLocked_WhenPolicyDoesNotAllowReason() {
     when(caseHandoverReasonPolicyRepository.findByEnabledTrueOrderByDisplayOrderAscCodeAsc())
         .thenReturn(
-            List.of(reasonPolicy("OTHER_EMERGENCY", "Other emergency", false, false, true, 30)));
+            List.of(
+                reasonPolicy("COUNSELLOR_IS_ILL", "Unplanned absence", false, false, true, 40)));
 
     CaseHandoverStatus status =
-        caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Needs cover.");
+        caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Needs cover.");
 
     assertEquals("DENIED", status.getStatus());
     assertFalse(status.isCanViewContent());
@@ -701,7 +807,7 @@ class CaseHandoverServiceTest {
         .thenReturn(List.of(grantedRequest(other)));
 
     CaseHandoverStatus status =
-        caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Needs cover.");
+        caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Needs cover.");
 
     assertEquals("DENIED", status.getStatus());
     assertFalse(status.isCanViewContent());
@@ -786,7 +892,7 @@ class CaseHandoverServiceTest {
     verify(caseHandoverRequestRepository).save(captor.capture());
     CaseHandoverRequest saved = captor.getValue();
     assertEquals("COUNSELLOR_IS_ILL", saved.getReasonCode());
-    assertEquals("Absence", saved.getReasonLabel());
+    assertEquals("Unplanned absence", saved.getReasonLabel());
     assertEquals("Illness cover.", saved.getExplanation());
     assertEquals("ACCESS_GRANTED", saved.getAuditOutcome());
     assertEquals(previous, saved.getPreviousConsultant());
@@ -1238,8 +1344,8 @@ class CaseHandoverServiceTest {
         .session(session)
         .requesterConsultant(consultant)
         .previousConsultant(previous)
-        .reasonCode("OTHER_EMERGENCY")
-        .reasonLabel("Other emergency")
+        .reasonCode("COUNSELLOR_IS_ILL")
+        .reasonLabel("Unplanned absence")
         .explanation("Already handled.")
         .status(CaseHandoverRequest.Status.GRANTED)
         .clientConsentRequired(false)
@@ -1272,6 +1378,21 @@ class CaseHandoverServiceTest {
 
   private de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies
       tenantPolicies(String germanLabel, int durationMinutes) {
+    return tenantPolicies(
+        germanLabel,
+        durationMinutes,
+        de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverConsentValue
+            .OPT_IN,
+        Set.of("CLIENT"));
+  }
+
+  private de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies
+      tenantPolicies(
+          String germanLabel,
+          int durationMinutes,
+          de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverConsentValue
+              consentValue,
+          Set<String> approvalRoleValues) {
     var mode =
         de.caritas.cob.userservice.tenantadminservice.generated.web.model.PermissionPolicyMode
             .ENFORCED;
@@ -1295,7 +1416,12 @@ class CaseHandoverServiceTest {
     var roles =
         new de.caritas.cob.userservice.tenantadminservice.generated.web.model
                 .StringListPermissionPolicy(null)
-            .value(java.util.Set.of("CLIENT"))
+            .value(approvalRoleValues)
+            .mode(mode);
+    var consent =
+        new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                .ConsentPermissionPolicy(null)
+            .value(consentValue)
             .mode(mode);
     var duration =
         new de.caritas.cob.userservice.tenantadminservice.generated.web.model
@@ -1311,7 +1437,15 @@ class CaseHandoverServiceTest {
             .labels(labels)
             .enabled(enabled)
             .accessAllowed(enabled)
-            .clientConsentRequired(enabled)
+            .clientConsent(consent)
+            .clientConsentRequired(
+                new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                        .BooleanPermissionPolicy(null)
+                    .value(
+                        consentValue
+                            == de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                                .CaseHandoverConsentValue.OPT_IN)
+                    .mode(mode))
             .approvalRoles(roles)
             .clientNotificationTemplates(templates)
             .maxAccessDurationMinutes(duration);
