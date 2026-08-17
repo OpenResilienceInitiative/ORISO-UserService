@@ -508,27 +508,42 @@ public class KeycloakServiceTest {
   @Test
   public void createUser_ShouldRefreshAdminSessionAndRetryOnce_WhenFirstResponseIsUnauthorized() {
     var userDTO = new EasyRandom().nextObject(UserDTO.class);
-    var usersResource = mock(UsersResource.class);
+    var staleUsersResource = mock(UsersResource.class);
+    var refreshedUsersResource = mock(UsersResource.class);
     var unauthorizedResponse = mock(Response.class);
     var createdResponse = mock(Response.class);
     var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
     when(unauthorizedResponse.getStatus()).thenReturn(HttpStatus.UNAUTHORIZED.value());
     when(unauthorizedResponse.readEntity(String.class)).thenReturn("");
     when(createdResponse.getStatus()).thenReturn(HttpStatus.CREATED.value());
-    when(usersResource.create(any())).thenReturn(unauthorizedResponse, createdResponse);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(staleUsersResource.create(any())).thenReturn(unauthorizedResponse);
+    when(refreshedUsersResource.create(any())).thenReturn(createdResponse);
+    when(keycloakClient.getUsersResource())
+        .thenReturn(staleUsersResource, refreshedUsersResource, refreshedUsersResource);
     var createdUserResource =
-        givenPostCreateAttributeUpdate(usersResource, createdResponse, USER_ID);
+        givenPostCreateAttributeUpdate(refreshedUsersResource, createdResponse, USER_ID);
     keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
 
     var createdIdentity = keycloakService.createUser(userDTO);
 
     assertThat(createdIdentity.getUserId(), is(USER_ID));
-    var retryOrder = Mockito.inOrder(usersResource, keycloakClient);
-    retryOrder.verify(usersResource).create(any());
+    var retryOrder =
+        Mockito.inOrder(
+            keycloakClient,
+            staleUsersResource,
+            refreshedUsersResource,
+            unauthorizedResponse,
+            createdResponse);
+    retryOrder.verify(keycloakClient).getUsersResource();
+    retryOrder.verify(staleUsersResource).create(any());
+    retryOrder.verify(unauthorizedResponse).close();
     retryOrder.verify(keycloakClient).refreshAdminSession();
-    retryOrder.verify(usersResource).create(any());
-    verify(usersResource, times(2)).create(any());
+    retryOrder.verify(keycloakClient).getUsersResource();
+    retryOrder.verify(refreshedUsersResource).create(any());
+    retryOrder.verify(keycloakClient).getUsersResource();
+    retryOrder.verify(createdResponse).close();
+    verify(staleUsersResource).create(any());
+    verify(refreshedUsersResource).create(any());
     verify(keycloakClient, times(1)).refreshAdminSession();
     verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
 
@@ -543,7 +558,8 @@ public class KeycloakServiceTest {
   @Test
   public void createUser_ShouldFailAfterOneRetry_WhenBothResponsesAreUnauthorized() {
     var userDTO = new EasyRandom().nextObject(UserDTO.class);
-    var usersResource = mock(UsersResource.class);
+    var staleUsersResource = mock(UsersResource.class);
+    var refreshedUsersResource = mock(UsersResource.class);
     var firstUnauthorizedResponse = mock(Response.class);
     var secondUnauthorizedResponse = mock(Response.class);
     var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
@@ -551,18 +567,29 @@ public class KeycloakServiceTest {
     when(firstUnauthorizedResponse.readEntity(String.class)).thenReturn("");
     when(secondUnauthorizedResponse.getStatus()).thenReturn(HttpStatus.UNAUTHORIZED.value());
     when(secondUnauthorizedResponse.readEntity(String.class)).thenReturn("");
-    when(usersResource.create(any()))
-        .thenReturn(firstUnauthorizedResponse, secondUnauthorizedResponse);
-    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(staleUsersResource.create(any())).thenReturn(firstUnauthorizedResponse);
+    when(refreshedUsersResource.create(any())).thenReturn(secondUnauthorizedResponse);
+    when(keycloakClient.getUsersResource()).thenReturn(staleUsersResource, refreshedUsersResource);
     keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
 
     assertThrows(InternalServerErrorException.class, () -> keycloakService.createUser(userDTO));
 
-    var retryOrder = Mockito.inOrder(usersResource, keycloakClient);
-    retryOrder.verify(usersResource).create(any());
+    var retryOrder =
+        Mockito.inOrder(
+            keycloakClient,
+            staleUsersResource,
+            refreshedUsersResource,
+            firstUnauthorizedResponse,
+            secondUnauthorizedResponse);
+    retryOrder.verify(keycloakClient).getUsersResource();
+    retryOrder.verify(staleUsersResource).create(any());
+    retryOrder.verify(firstUnauthorizedResponse).close();
     retryOrder.verify(keycloakClient).refreshAdminSession();
-    retryOrder.verify(usersResource).create(any());
-    verify(usersResource, times(2)).create(any());
+    retryOrder.verify(keycloakClient).getUsersResource();
+    retryOrder.verify(refreshedUsersResource).create(any());
+    retryOrder.verify(secondUnauthorizedResponse).close();
+    verify(staleUsersResource).create(any());
+    verify(refreshedUsersResource).create(any());
     verify(keycloakClient, times(1)).refreshAdminSession();
     verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
   }
