@@ -222,7 +222,7 @@
   "currentRequiredSuite": {
     "command": "scripts/ci/run-required-integration-tests.sh",
     "unitTests": 4074,
-    "unitReports": 458,
+    "unitReports": 457,
     "unitSkipped": 0,
     "integrationReports": 99,
     "integrationTests": 913,

@@ -131,7 +131,7 @@ class HistoricalFailureClassificationContractTest(unittest.TestCase):
             current["command"],
         )
         self.assertEqual(4074, current.get("unitTests"))
-        self.assertEqual(458, current["unitReports"])
+        self.assertEqual(457, current["unitReports"])
         self.assertEqual(99, current["integrationReports"])
         self.assertEqual(913, current["integrationTests"])
         self.assertEqual(0, current["failures"])
