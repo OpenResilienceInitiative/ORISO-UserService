@@ -95,6 +95,21 @@ class EventNotificationServiceTest {
     assertThat(parsed.get("caseHandoverRequestId").asLong()).isEqualTo(88L);
   }
 
+  @Test
+  void buildCaseHandoverParams_marksTheExistingConsentCardAsOptOutVariant() throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverParams(
+                sessionMock(),
+                "Dr. Muster",
+                "COUNSELLOR_ASKED_FOR_ADVICE",
+                "Rat benötigt",
+                88L,
+                "OPT_OUT"));
+
+    assertThat(parsed.get("clientConsent").asText()).isEqualTo("OPT_OUT");
+  }
+
   /**
    * The params object is the replacement for the stored English sentence, so it must stay a set of
    * known keys. Nothing here may become a channel for the free text task 1a removed.
@@ -285,6 +300,7 @@ class EventNotificationServiceTest {
             "senderDisplayName",
             "contentClass",
             "recipientRole",
+            "clientConsent",
             "threadRootId",
             "mentioned",
             "seriesId",

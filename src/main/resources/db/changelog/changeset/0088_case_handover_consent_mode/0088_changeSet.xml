@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.2.xsd">
+
+  <changeSet id="0088_case_handover_consent_mode" author="oriso">
+    <addColumn tableName="case_handover_reason_policy">
+      <column name="client_consent_mode" type="VARCHAR(20)" defaultValue="NONE">
+        <constraints nullable="false" />
+      </column>
+    </addColumn>
+    <addColumn tableName="case_handover_request">
+      <column name="client_consent_mode" type="VARCHAR(20)" defaultValue="NONE">
+        <constraints nullable="false" />
+      </column>
+    </addColumn>
+    <sql>
+      UPDATE case_handover_reason_policy
+      SET client_consent_mode = CASE WHEN client_consent_required = 1 THEN 'OPT_IN' ELSE 'NONE' END;
+      UPDATE case_handover_request
+      SET client_consent_mode = CASE WHEN client_consent_required = 1 THEN 'OPT_IN' ELSE 'NONE' END;
+      UPDATE case_handover_reason_policy
+      SET enabled = 0, access_allowed = 0
+      WHERE code = 'OTHER_EMERGENCY';
+    </sql>
+    <rollback>
+      <dropColumn tableName="case_handover_request" columnName="client_consent_mode" />
+      <dropColumn tableName="case_handover_reason_policy" columnName="client_consent_mode" />
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

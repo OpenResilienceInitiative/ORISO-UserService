@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType;
@@ -68,6 +69,11 @@ public class CaseHandoverService {
   private static final String OUTCOME_ACCESS_GRANTED = "ACCESS_GRANTED";
   private static final String OUTCOME_ACCESS_DENIED = "ACCESS_DENIED";
   private static final String OUTCOME_PENDING_CLIENT_CONSENT = "PENDING_CLIENT_CONSENT";
+  private static final String OUTCOME_ACCESS_GRANTED_PENDING_CLIENT_OPTOUT =
+      "ACCESS_GRANTED_PENDING_CLIENT_OPTOUT";
+  private static final String OUTCOME_CLIENT_OPTOUT_CONFIRMED = "CLIENT_OPTOUT_CONFIRMED";
+  private static final String OUTCOME_CLIENT_OPTOUT_DECLINED_AFTER_TAKEOVER =
+      "CLIENT_OPTOUT_DECLINED_AFTER_TAKEOVER";
   private static final String OUTCOME_CLIENT_CONSENT_DECLINED = "CLIENT_CONSENT_DECLINED";
   private static final String OUTCOME_ACCESS_EXPIRED = "ACCESS_EXPIRED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
@@ -139,6 +145,7 @@ public class CaseHandoverService {
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_ASKED_FOR_ADVICE"))
               .label("Advice needed")
+              .clientConsent(CaseHandoverConsentMode.OPT_IN)
               .clientConsentRequired(true)
               .accessAllowed(true)
               .enabled(true)
@@ -150,7 +157,8 @@ public class CaseHandoverService {
               .code("COUNSELLOR_ON_HOLIDAY")
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_ON_HOLIDAY"))
-              .label("Leave")
+              .label("Planned absence")
+              .clientConsent(CaseHandoverConsentMode.NONE)
               .clientConsentRequired(false)
               .accessAllowed(true)
               .enabled(true)
@@ -162,9 +170,10 @@ public class CaseHandoverService {
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("OTHER_EMERGENCY"))
               .label("Other emergency")
+              .clientConsent(CaseHandoverConsentMode.NONE)
               .clientConsentRequired(false)
-              .accessAllowed(true)
-              .enabled(true)
+              .accessAllowed(false)
+              .enabled(false)
               .displayOrder(30)
               .policyAuthority(POLICY_AUTHORITY)
               .build(),
@@ -172,7 +181,8 @@ public class CaseHandoverService {
               .code("COUNSELLOR_IS_ILL")
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_IS_ILL"))
-              .label("Absence")
+              .label("Unplanned absence")
+              .clientConsent(CaseHandoverConsentMode.NONE)
               .clientConsentRequired(false)
               .accessAllowed(true)
               .enabled(true)
@@ -184,6 +194,7 @@ public class CaseHandoverService {
               .clientNotificationTemplates(
                   DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_LEFT"))
               .label("Counsellor does not work here anymore")
+              .clientConsent(CaseHandoverConsentMode.NONE)
               .clientConsentRequired(false)
               .accessAllowed(true)
               .enabled(true)
@@ -310,6 +321,7 @@ public class CaseHandoverService {
           .sessionId(sessionId)
           .status(Status.GRANTED.name())
           .canViewContent(true)
+          .clientConsent(CaseHandoverConsentMode.NONE)
           .clientConsentRequired(false)
           .policyAuthority(POLICY_AUTHORITY)
           .auditOutcome(OUTCOME_ACTIVE_OWNER)
@@ -323,6 +335,7 @@ public class CaseHandoverService {
                 .sessionId(sessionId)
                 .status(OUTCOME_NOT_REQUESTED)
                 .canViewContent(false)
+                .clientConsent(CaseHandoverConsentMode.NONE)
                 .clientConsentRequired(false)
                 .policyAuthority(POLICY_AUTHORITY)
                 .auditOutcome(OUTCOME_NOT_REQUESTED)
@@ -396,10 +409,20 @@ public class CaseHandoverService {
           session, requester, reason, normalizedExplanation, OUTCOME_ACCESS_DENIED, now);
     }
 
-    boolean clientConsentRequired = reason.isClientConsentRequired();
-    Status status = clientConsentRequired ? Status.PENDING_CLIENT_CONSENT : Status.GRANTED;
+    CaseHandoverConsentMode clientConsent = effectiveClientConsent(reason);
+    boolean clientConsentRequired = clientConsent == CaseHandoverConsentMode.OPT_IN;
+    Status status =
+        switch (clientConsent) {
+          case OPT_IN -> Status.PENDING_CLIENT_CONSENT;
+          case OPT_OUT -> Status.GRANTED_PENDING_CLIENT_OPTOUT;
+          case NONE -> Status.GRANTED;
+        };
     String auditOutcome =
-        clientConsentRequired ? OUTCOME_PENDING_CLIENT_CONSENT : OUTCOME_ACCESS_GRANTED;
+        switch (clientConsent) {
+          case OPT_IN -> OUTCOME_PENDING_CLIENT_CONSENT;
+          case OPT_OUT -> OUTCOME_ACCESS_GRANTED_PENDING_CLIENT_OPTOUT;
+          case NONE -> OUTCOME_ACCESS_GRANTED;
+        };
 
     CaseHandoverRequest request =
         CaseHandoverRequest.builder()
@@ -410,6 +433,7 @@ public class CaseHandoverService {
             .reasonLabel(reason.getLabel())
             .explanation(normalizedExplanation)
             .status(status)
+            .clientConsent(clientConsent)
             .clientConsentRequired(clientConsentRequired)
             .policyAuthority(reason.getPolicyAuthority())
             .auditOutcome(auditOutcome)
@@ -423,7 +447,7 @@ public class CaseHandoverService {
 
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
 
-    if (status == Status.GRANTED) {
+    if (hasGrantedAccess(status)) {
       ensureRequesterJoinedMatrixRoom(session, requester, session.getConsultant());
       if (request.getAccessType() == AccessType.TAKEOVER) {
         session.setConsultant(requester);
@@ -431,6 +455,9 @@ public class CaseHandoverService {
         sessionRepository.save(session);
       }
       notifyGranted(saved);
+      if (status == Status.GRANTED_PENDING_CLIENT_OPTOUT) {
+        notifyPendingConsent(saved);
+      }
     } else {
       notifyPendingConsent(saved);
     }
@@ -451,13 +478,19 @@ public class CaseHandoverService {
       throw new ForbiddenException("Current user is not allowed to decide this request");
     }
 
-    if (request.getStatus() != Status.PENDING_CLIENT_CONSENT) {
+    boolean optOutDecision = request.getStatus() == Status.GRANTED_PENDING_CLIENT_OPTOUT;
+    if (request.getStatus() != Status.PENDING_CLIENT_CONSENT && !optOutDecision) {
       return toStatus(request);
     }
 
     LocalDateTime now = LocalDateTime.now(clock);
     request.setResolvedAt(now);
     if (approved) {
+      if (optOutDecision) {
+        request.setStatus(Status.GRANTED);
+        request.setAuditOutcome(OUTCOME_CLIENT_OPTOUT_CONFIRMED);
+        return toStatus(caseHandoverRequestRepository.save(request));
+      }
       if (hasAlreadyGrantedOrTakenOver(session, request)) {
         request.setStatus(Status.DENIED);
         request.setAuditOutcome(OUTCOME_ALREADY_ANSWERED);
@@ -493,8 +526,19 @@ public class CaseHandoverService {
       return toStatus(saved);
     }
 
-    request.setStatus(Status.CLIENT_CONSENT_DECLINED);
-    request.setAuditOutcome(OUTCOME_CLIENT_CONSENT_DECLINED);
+    if (optOutDecision && effectiveAccessType(request) == AccessType.CO_ACCESS) {
+      if (!removeCoAccessRequesterFromMatrixRoom(request)) {
+        throw new InternalServerErrorException("Could not revoke declined Case Handover access");
+      }
+      request.setStatus(Status.CLIENT_CONSENT_DECLINED);
+      request.setAuditOutcome(OUTCOME_CLIENT_CONSENT_DECLINED);
+    } else if (optOutDecision) {
+      request.setStatus(Status.GRANTED);
+      request.setAuditOutcome(OUTCOME_CLIENT_OPTOUT_DECLINED_AFTER_TAKEOVER);
+    } else {
+      request.setStatus(Status.CLIENT_CONSENT_DECLINED);
+      request.setAuditOutcome(OUTCOME_CLIENT_CONSENT_DECLINED);
+    }
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
     notifyConsentDeclined(saved);
     return toStatus(saved);
@@ -641,16 +685,25 @@ public class CaseHandoverService {
   }
 
   private boolean isOpenOrGranted(CaseHandoverRequest request) {
-    return List.of(Status.PENDING, Status.PENDING_CLIENT_CONSENT, Status.GRANTED)
+    return List.of(
+                Status.PENDING,
+                Status.PENDING_CLIENT_CONSENT,
+                Status.GRANTED_PENDING_CLIENT_OPTOUT,
+                Status.GRANTED)
             .contains(request.getStatus())
         && !isExpired(request);
   }
 
   private Optional<CaseHandoverRequest> latestGrantedForOtherRequester(
       Long sessionId, Consultant requester) {
-    return caseHandoverRequestRepository
-        .findBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, Status.GRANTED)
-        .stream()
+    return java.util.stream.Stream.concat(
+            caseHandoverRequestRepository
+                .findBySessionIdAndStatusOrderByCreatedAtDesc(sessionId, Status.GRANTED)
+                .stream(),
+            caseHandoverRequestRepository
+                .findBySessionIdAndStatusOrderByCreatedAtDesc(
+                    sessionId, Status.GRANTED_PENDING_CLIENT_OPTOUT)
+                .stream())
         .filter(request -> !isExpired(request))
         .filter(
             request ->
@@ -702,10 +755,17 @@ public class CaseHandoverService {
   }
 
   private CaseHandoverReason toReason(CaseHandoverReasonPolicy policy) {
+    CaseHandoverConsentMode consent =
+        policy.getClientConsent() != null
+            ? policy.getClientConsent()
+            : (Boolean.TRUE.equals(policy.getClientConsentRequired())
+                ? CaseHandoverConsentMode.OPT_IN
+                : CaseHandoverConsentMode.NONE);
     return CaseHandoverReason.builder()
         .code(policy.getCode())
         .label(policy.getLabel())
-        .clientConsentRequired(Boolean.TRUE.equals(policy.getClientConsentRequired()))
+        .clientConsent(consent)
+        .clientConsentRequired(consent == CaseHandoverConsentMode.OPT_IN)
         .accessAllowed(!Boolean.FALSE.equals(policy.getAccessAllowed()))
         .enabled(Boolean.TRUE.equals(policy.getEnabled()))
         .displayOrder(policy.getDisplayOrder())
@@ -730,8 +790,7 @@ public class CaseHandoverService {
         policy.getApprovalRoles() == null || policy.getApprovalRoles().getValue() == null
             ? Set.of()
             : Set.copyOf(policy.getApprovalRoles().getValue());
-    boolean clientConsentRequired =
-        booleanValue(policy.getClientConsentRequired(), false) || approvalRoles.contains("CLIENT");
+    CaseHandoverConsentMode clientConsent = clientConsent(policy, approvalRoles);
     Integer duration =
         ADVICE_NEEDED.equals(code) && policy.getMaxAccessDurationMinutes() != null
             ? validateMaxAccessDuration(code, policy.getMaxAccessDurationMinutes().getValue())
@@ -739,7 +798,8 @@ public class CaseHandoverService {
     return CaseHandoverReason.builder()
         .code(code)
         .label(localizedValue(labels, language, code))
-        .clientConsentRequired(clientConsentRequired)
+        .clientConsent(clientConsent)
+        .clientConsentRequired(clientConsent == CaseHandoverConsentMode.OPT_IN)
         .accessAllowed(booleanValue(policy.getAccessAllowed(), false))
         .enabled(booleanValue(policy.getEnabled(), false))
         .displayOrder(displayOrder(code))
@@ -755,6 +815,19 @@ public class CaseHandoverService {
           policy,
       boolean fallback) {
     return policy == null || policy.getValue() == null ? fallback : policy.getValue();
+  }
+
+  private CaseHandoverConsentMode clientConsent(
+      de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverReasonPolicy
+          policy,
+      Set<String> approvalRoles) {
+    if (policy.getClientConsent() != null && policy.getClientConsent().getValue() != null) {
+      return CaseHandoverConsentMode.valueOf(policy.getClientConsent().getValue().getValue());
+    }
+    return booleanValue(policy.getClientConsentRequired(), false)
+            || approvalRoles.contains("CLIENT")
+        ? CaseHandoverConsentMode.OPT_IN
+        : CaseHandoverConsentMode.NONE;
   }
 
   private Map<String, String> valueOf(
@@ -795,7 +868,9 @@ public class CaseHandoverService {
         existingPolicy != null ? existingPolicy : new CaseHandoverReasonPolicy();
     policy.setCode(code);
     policy.setLabel(label);
-    policy.setClientConsentRequired(reason.isClientConsentRequired());
+    CaseHandoverConsentMode clientConsent = effectiveClientConsent(reason);
+    policy.setClientConsent(clientConsent);
+    policy.setClientConsentRequired(clientConsent == CaseHandoverConsentMode.OPT_IN);
     policy.setAccessAllowed(isAccessAllowed(reason));
     policy.setEnabled(reason.isEnabled());
     policy.setDisplayOrder(reason.getDisplayOrder() != null ? reason.getDisplayOrder() : 100);
@@ -846,6 +921,15 @@ public class CaseHandoverService {
     return !Boolean.FALSE.equals(reason.getAccessAllowed());
   }
 
+  private CaseHandoverConsentMode effectiveClientConsent(CaseHandoverReason reason) {
+    if (reason.getClientConsent() != null) {
+      return reason.getClientConsent();
+    }
+    return reason.isClientConsentRequired()
+        ? CaseHandoverConsentMode.OPT_IN
+        : CaseHandoverConsentMode.NONE;
+  }
+
   private AccessType accessType(String reasonCode) {
     return ADVICE_NEEDED.equals(reasonCode) ? AccessType.CO_ACCESS : AccessType.TAKEOVER;
   }
@@ -867,9 +951,13 @@ public class CaseHandoverService {
 
   private LocalDateTime expiresAt(
       CaseHandoverReason reason, Status status, LocalDateTime grantedAt) {
-    return status == Status.GRANTED && accessType(reason.getCode()) == AccessType.CO_ACCESS
+    return hasGrantedAccess(status) && accessType(reason.getCode()) == AccessType.CO_ACCESS
         ? grantedAt.plusMinutes(maxAccessDurationMinutes(reason))
         : null;
+  }
+
+  private boolean hasGrantedAccess(Status status) {
+    return status == Status.GRANTED || status == Status.GRANTED_PENDING_CLIENT_OPTOUT;
   }
 
   private Integer validateMaxAccessDuration(String reasonCode, Integer durationMinutes) {
@@ -886,7 +974,7 @@ public class CaseHandoverService {
   }
 
   private boolean isExpired(CaseHandoverRequest request) {
-    return request.getStatus() == Status.GRANTED
+    return hasGrantedAccess(request.getStatus())
         && effectiveAccessType(request) == AccessType.CO_ACCESS
         && request.getExpiresAt() != null
         && !request.getExpiresAt().isAfter(LocalDateTime.now(clock));
@@ -915,9 +1003,13 @@ public class CaseHandoverService {
   @Transactional
   public int expireCoAccess() {
     LocalDateTime now = LocalDateTime.now(clock);
-    List<CaseHandoverRequest> expired =
+    List<CaseHandoverRequest> expired = new ArrayList<>();
+    expired.addAll(
         caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
-            Status.GRANTED, AccessType.CO_ACCESS, now);
+            Status.GRANTED, AccessType.CO_ACCESS, now));
+    expired.addAll(
+        caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
+            Status.GRANTED_PENDING_CLIENT_OPTOUT, AccessType.CO_ACCESS, now));
     List<CaseHandoverRequest> revoked = new ArrayList<>();
     expired.forEach(
         request -> {
@@ -952,6 +1044,7 @@ public class CaseHandoverService {
             .reasonLabel(reason.getLabel())
             .explanation(explanation)
             .status(Status.DENIED)
+            .clientConsent(effectiveClientConsent(reason))
             .clientConsentRequired(reason.isClientConsentRequired())
             .policyAuthority(reason.getPolicyAuthority())
             .auditOutcome(auditOutcome)
@@ -970,9 +1063,15 @@ public class CaseHandoverService {
         .requestId(request.getId())
         .sessionId(request.getSession().getId())
         .status(expired ? Status.EXPIRED.name() : request.getStatus().name())
-        .canViewContent(request.getStatus() == Status.GRANTED && !expired)
+        .canViewContent(hasGrantedAccess(request.getStatus()) && !expired)
         .reasonCode(request.getReasonCode())
         .reasonLabel(request.getReasonLabel())
+        .clientConsent(
+            request.getClientConsent() != null
+                ? request.getClientConsent()
+                : (Boolean.TRUE.equals(request.getClientConsentRequired())
+                    ? CaseHandoverConsentMode.OPT_IN
+                    : CaseHandoverConsentMode.NONE))
         .clientConsentRequired(Boolean.TRUE.equals(request.getClientConsentRequired()))
         .policyAuthority(request.getPolicyAuthority())
         .auditOutcome(request.getAuditOutcome())
@@ -1200,7 +1299,8 @@ public class CaseHandoverService {
             requesterName,
             request.getReasonCode(),
             request.getReasonLabel(),
-            request.getId()),
+            request.getId(),
+            request.getClientConsent() == null ? null : request.getClientConsent().name()),
         buildAskerSessionActionPath(session) + "?caseHandoverRequestId=" + request.getId(),
         session.getId(),
         session.getTenantId());
@@ -1321,6 +1421,7 @@ public class CaseHandoverService {
   public static class CaseHandoverReason {
     private String code;
     private String label;
+    private CaseHandoverConsentMode clientConsent;
     private boolean clientConsentRequired;
     private Boolean accessAllowed;
     private boolean enabled;
@@ -1340,6 +1441,7 @@ public class CaseHandoverService {
     private boolean canViewContent;
     private String reasonCode;
     private String reasonLabel;
+    private CaseHandoverConsentMode clientConsent;
     private boolean clientConsentRequired;
     private String policyAuthority;
     private String auditOutcome;

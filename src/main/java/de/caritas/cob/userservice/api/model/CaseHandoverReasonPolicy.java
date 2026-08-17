@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.model;
 
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
+import jakarta.persistence.EnumType;
+import jakarta.persistence.Enumerated;
 import jakarta.persistence.Id;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
@@ -32,6 +34,10 @@ public class CaseHandoverReasonPolicy {
 
   @Column(name = "client_consent_required", nullable = false)
   private Boolean clientConsentRequired;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "client_consent_mode", nullable = false, length = 20)
+  private CaseHandoverConsentMode clientConsent;
 
   @Column(name = "access_allowed", nullable = false)
   private Boolean accessAllowed;
