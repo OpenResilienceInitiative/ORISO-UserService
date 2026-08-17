@@ -517,7 +517,8 @@ public class KeycloakServiceTest {
     when(createdResponse.getStatus()).thenReturn(HttpStatus.CREATED.value());
     when(usersResource.create(any())).thenReturn(unauthorizedResponse, createdResponse);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
-    givenPostCreateAttributeUpdate(usersResource, createdResponse, USER_ID);
+    var createdUserResource =
+        givenPostCreateAttributeUpdate(usersResource, createdResponse, USER_ID);
     keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
 
     var createdIdentity = keycloakService.createUser(userDTO);
@@ -530,6 +531,13 @@ public class KeycloakServiceTest {
     verify(usersResource, times(2)).create(any());
     verify(keycloakClient, times(1)).refreshAdminSession();
     verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(createdUserResource).update(representationCaptor.capture());
+    var attributes = representationCaptor.getValue().getAttributes();
+    assertThat(attributes.get("userId").get(0), is(USER_ID));
+    assertThat(attributes.get("username").get(0), is(userDTO.getUsername()));
+    assertThat(attributes.get("userName").get(0), is(userDTO.getUsername()));
   }
 
   @Test
