@@ -523,6 +523,10 @@ public class KeycloakServiceTest {
     var createdIdentity = keycloakService.createUser(userDTO);
 
     assertThat(createdIdentity.getUserId(), is(USER_ID));
+    var retryOrder = Mockito.inOrder(usersResource, keycloakClient);
+    retryOrder.verify(usersResource).create(any());
+    retryOrder.verify(keycloakClient).refreshAdminSession();
+    retryOrder.verify(usersResource).create(any());
     verify(usersResource, times(2)).create(any());
     verify(keycloakClient, times(1)).refreshAdminSession();
     verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
@@ -546,6 +550,10 @@ public class KeycloakServiceTest {
 
     assertThrows(InternalServerErrorException.class, () -> keycloakService.createUser(userDTO));
 
+    var retryOrder = Mockito.inOrder(usersResource, keycloakClient);
+    retryOrder.verify(usersResource).create(any());
+    retryOrder.verify(keycloakClient).refreshAdminSession();
+    retryOrder.verify(usersResource).create(any());
     verify(usersResource, times(2)).create(any());
     verify(keycloakClient, times(1)).refreshAdminSession();
     verify(outboundHttpMetrics).recordRetry("keycloak", "admin-session-refresh");
