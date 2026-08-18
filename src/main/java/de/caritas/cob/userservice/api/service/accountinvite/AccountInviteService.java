@@ -30,6 +30,7 @@ import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -508,7 +509,7 @@ public class AccountInviteService {
     // the public Admin route, everyone else accepts on the public App route.
     String acceptUrl = inviteAcceptUrlBuilder.buildAcceptUrl(invite.getTargetRole(), rawToken);
     String subject = render(template.getSubject(), invite, acceptUrl);
-    String body = render(template.getBody(), invite, acceptUrl);
+    String body = renderBody(template.getBody(), invite, acceptUrl);
 
     InviteMailSendReceipt receipt;
     try {
@@ -654,6 +655,49 @@ public class AccountInviteService {
       return 20;
     }
     return Math.min(size, 100);
+  }
+
+  /** The action-link token standing alone on its own line, including that line's break. */
+  private static final Pattern ACTION_LINK_TOKEN_LINE =
+      Pattern.compile("(?m)^[ \\t]*\\{\\{inviteLink\\}\\}[ \\t]*(\\r?\\n)?");
+
+  /** A run of three or more line breaks, left behind when a token line is lifted out. */
+  private static final Pattern BLANK_LINE_RUN = Pattern.compile("(\\r?\\n){3,}");
+
+  /** The action-link token sitting inside a sentence, with the space in front of it. */
+  private static final Pattern ACTION_LINK_TOKEN_INLINE =
+      Pattern.compile("[ \\t]*\\{\\{inviteLink\\}\\}");
+
+  /**
+   * Renders a template <em>body</em>. Same substitution as {@link #render}, minus the action link.
+   *
+   * <p>The branded layout renders the invite link itself — as a CTA button and, underneath it, a
+   * visible copy-paste line carrying the plain URL (in the HTML part and in the text/plain
+   * alternative alike). A body that <em>also</em> inlined {@code {{inviteLink}}} therefore produced
+   * the same URL twice in the received mail, which is what the annotated screenshots show. The
+   * layout owns the action link; the body must not carry it.
+   *
+   * <p>Enforcing it here rather than in the composer is deliberate: the send path and the Admin
+   * preview share this code, so an author cannot compose a mail whose link is duplicated, and
+   * templates saved before this rule existed — including the shipped default — are repaired on
+   * render instead of needing a migration.
+   *
+   * <p>Removal is line-aware. A token alone on its line takes the line with it, so the sentence
+   * that introduced it runs straight into the button. A token inside a sentence takes the space in
+   * front of it, leaving the author's own wording otherwise untouched: {@code "Hier: {{inviteLink}}
+   * — viel Erfolg"} becomes {@code "Hier: — viel Erfolg"}. The dangling colon is the author's text
+   * and is not invented away.
+   */
+  public static String renderBody(String value, AccountInvite invite, String acceptUrl) {
+    if (value == null) {
+      return "";
+    }
+    String withoutActionLink = ACTION_LINK_TOKEN_LINE.matcher(value).replaceAll("");
+    withoutActionLink = ACTION_LINK_TOKEN_INLINE.matcher(withoutActionLink).replaceAll("");
+    // Lifting a line out of "text\n\n{{inviteLink}}\n\ntext" would otherwise leave a
+    // triple break — a visible hole exactly where the link used to be.
+    withoutActionLink = BLANK_LINE_RUN.matcher(withoutActionLink).replaceAll("\n\n");
+    return render(withoutActionLink, invite, acceptUrl);
   }
 
   /**
