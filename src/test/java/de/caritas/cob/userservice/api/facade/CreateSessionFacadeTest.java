@@ -362,6 +362,28 @@ class CreateSessionFacadeTest {
     assertEquals(SESSION_WITHOUT_CONSULTANT.getId(), result);
   }
 
+  /**
+   * An empty topic list is the agency reporting nothing, not the agency declaring that it serves
+   * nothing - a deployment without topics in registration and the degraded lookup both look like
+   * this. Agency search inner-joins agency_topic, so an agency without topic rows can never be
+   * offered to an advice seeker anyway; rejecting here would only break registration.
+   */
+  @Test
+  void createUserSession_Should_CreateSession_When_AgencyReportsNoTopics() {
+    when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(agencyServingTopics());
+    when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
+        .thenReturn(SESSION_WITHOUT_CONSULTANT);
+
+    var result =
+        createSessionFacade.createUserSession(
+            userDtoWithMainTopic(MAIN_TOPIC_ID_NOT_SERVED_BY_AGENCY),
+            USER,
+            CONSULTING_TYPE_SETTINGS_SUCHT,
+            validationConstraints);
+
+    assertEquals(SESSION_WITHOUT_CONSULTANT.getId(), result);
+  }
+
   private static UserDTO userDtoWithMainTopic(Long mainTopicId) {
     var userDto = new UserDTO();
     userDto.setUsername(USER_DTO_SUCHT.getUsername());

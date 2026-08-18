@@ -211,16 +211,19 @@ public class CreateSessionFacade {
    * exactly what agency search prevents by only listing agencies for the selected topic. Reject the
    * pairing here as well (ORISO-Frontend#1143).
    *
-   * <p>A registration without a main topic keeps working, and so does one where the agency lookup
-   * degraded to an unverified stub: a {@code null} topic list means "topics unknown", not "topics
-   * empty", and failing closed on missing data would take registration down with the agency
-   * service.
+   * <p>Only a known, non-empty topic list is treated as an authority. An absent or empty list means
+   * "this agency reports no topics", which is not the same statement as "this agency serves no
+   * topics": the agency lookup can degrade to an unverified stub, and a deployment that does not
+   * run topics in registration populates nothing. Enforcing on that would fail closed on missing
+   * data and take registration down with it, while adding no protection - agency search already
+   * inner-joins {@code agency_topic}, so an agency without topic rows cannot be offered to an
+   * advice seeker in the first place.
    */
   private void verifyAgencyServesMainTopic(UserDTO userDTO, AgencyDTO agencyDTO) {
     var mainTopicId = userDTO.getMainTopicId();
     var agencyTopicIds = agencyDTO.getTopicIds();
 
-    if (isNull(mainTopicId) || isNull(agencyTopicIds)) {
+    if (isNull(mainTopicId) || isNull(agencyTopicIds) || agencyTopicIds.isEmpty()) {
       return;
     }
 
