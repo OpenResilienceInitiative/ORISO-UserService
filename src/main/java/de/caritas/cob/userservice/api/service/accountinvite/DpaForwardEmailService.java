@@ -36,7 +36,7 @@ public class DpaForwardEmailService {
       throw new BadRequestException("tenantId, recipientEmail and expiresAt are required");
     }
 
-    URI signLink = parseUri(command.signLink(), "signLink");
+    URI signLink = resolveSignLink(command.signLink());
     if (!hasSameOrigin(signLink, permittedAppOrigin)
         || signLink.getPath() == null
         || !signLink.getPath().startsWith("/dpa-sign/")) {
@@ -59,6 +59,29 @@ public class DpaForwardEmailService {
     } catch (org.springframework.web.client.HttpClientErrorException.NotFound exception) {
       return "Ihrer Organisation";
     }
+  }
+
+  /**
+   * TenantService's forward endpoint (TS#191) answers with a RELATIVE {@code signUrl}
+   * ("/dpa-sign/<token>"); the Admin frontend resolves it against the app origin for display, but
+   * this mail path received it verbatim and rejected every forward with "signLink is invalid"
+   * (found in E2E run e2e-20260818-2024). A relative link is resolved against the configured origin
+   * — which by construction satisfies the same-origin gate below; absolute links keep the strict
+   * parse + origin check.
+   */
+  private URI resolveSignLink(String value) {
+    if (isBlank(value)) {
+      throw new BadRequestException("signLink is required");
+    }
+    String trimmed = value.trim();
+    if (trimmed.startsWith("/") && !trimmed.startsWith("//")) {
+      try {
+        return permittedAppOrigin.resolve(trimmed);
+      } catch (IllegalArgumentException exception) {
+        throw new BadRequestException("signLink is invalid");
+      }
+    }
+    return parseUri(trimmed, "signLink");
   }
 
   private static URI parseUri(String value, String field) {

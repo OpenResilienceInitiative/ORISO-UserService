@@ -54,6 +54,49 @@ class DpaForwardEmailServiceTest {
   }
 
   @Test
+  void sendSigningLink_relativeSignLink_resolvesAgainstConfiguredOriginAndDelivers() {
+    // TenantService (TS#191) answers the forward with a RELATIVE signUrl
+    // ("/dpa-sign/<token>"); the onboarding wizard forward-mail path hands it
+    // through unchanged. The mail must resolve it against the configured app
+    // origin instead of rejecting every forward with "signLink is invalid"
+    // (E2E run e2e-20260818-2024: forward mail always answered 400).
+    when(tenantService.getRestrictedTenantData(84L))
+        .thenReturn(new RestrictedTenantDTO().id(84L).name("E2E Full Gate 202607191747"));
+
+    service.sendSigningLink(
+        new DpaForwardEmailService.DpaForwardEmailCommand(
+            84L,
+            "bart.simpson@oriso.org",
+            "/dpa-sign/single-use-token",
+            LocalDateTime.parse("2026-08-03T13:27:28.243207790")));
+
+    verify(dpaSigningEmailDispatchService)
+        .send(
+            "bart.simpson@oriso.org",
+            "E2E Full Gate 202607191747",
+            "https://app.oriso-dev.site/dpa-sign/single-use-token",
+            LocalDateTime.parse("2026-08-03T13:27:28.243207790"));
+  }
+
+  @Test
+  void sendSigningLink_relativeLinkOutsideDpaSignPath_rejectsWithoutSending() {
+    assertThatThrownBy(
+            () ->
+                service.sendSigningLink(
+                    new DpaForwardEmailService.DpaForwardEmailCommand(
+                        84L,
+                        "bart.simpson@oriso.org",
+                        "/admin/tenant-onboarding/not-a-sign-link",
+                        LocalDateTime.parse("2026-08-03T13:27:28.243207790"))))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("signLink");
+
+    verifyNoInteractions(tenantService);
+    verify(dpaSigningEmailDispatchService, org.mockito.Mockito.never())
+        .send(anyString(), anyString(), anyString(), any(LocalDateTime.class));
+  }
+
+  @Test
   void sendSigningLink_foreignOrigin_rejectsWithoutSending() {
     assertThatThrownBy(
             () ->
