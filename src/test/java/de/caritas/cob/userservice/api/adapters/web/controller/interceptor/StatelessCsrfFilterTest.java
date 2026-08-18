@@ -101,6 +101,33 @@ public class StatelessCsrfFilterTest {
   }
 
   @Test
+  void dpaSignedNoticeHintShouldNotRequireCsrf() throws IOException, ServletException {
+    // TenantService posts this data-free hint server-to-server after a forwarded DPA signature
+    // lands; it carries neither the browser CSRF cookie nor the header pair. Without the
+    // exemption the hint dies here and the forwarder's promised notification mail is never sent
+    // (found in E2E run e2e-20260818-2024: "CSRF rejected request:
+    // uri=/users/tenants/30/dpa-signed-notices").
+    when(request.getRequestURI()).thenReturn("/service/users/tenants/30/dpa-signed-notices");
+    when(request.getMethod()).thenReturn("POST");
+
+    csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(filterChain).doFilter(request, response);
+    verifyNoMoreInteractions(accessDeniedHandler);
+  }
+
+  @Test
+  void otherTenantSubresourcesStillRequireCsrf() throws IOException, ServletException {
+    when(request.getRequestURI()).thenReturn("/service/users/tenants/30/dpa-signed-notices-extra");
+    when(request.getMethod()).thenReturn("POST");
+    when(request.getCookies()).thenReturn(null);
+
+    csrfFilter.doFilterInternal(request, response, filterChain);
+
+    verify(accessDeniedHandler, times(1)).handle(any(), any(), any());
+  }
+
+  @Test
   public void doFilterInternal_Should_executeFilterChain_When_requestHasCsrfWhitelistHeader()
       throws IOException, ServletException {
     when(request.getRequestURI()).thenReturn("uri");

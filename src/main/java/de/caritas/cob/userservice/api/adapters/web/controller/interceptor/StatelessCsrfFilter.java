@@ -121,6 +121,14 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
         if (lowerUri.matches(".*/users/account-invites/[^/]+/accept$")) {
           return true;
         }
+        // The DPA signed-notice hint is posted server-to-server by TenantService after a
+        // forwarded signature lands (ORISO-UserService#1005): no browser session, no CSRF
+        // cookie/header pair. The hint carries no data — all facts are re-read through the
+        // authenticated technical-user client and an exactly-once ledger absorbs spoofed hints
+        // (see SecurityConfig). Keep the exemption exact; sibling endpoints stay protected.
+        if (lowerUri.matches(".*/users/tenants/[0-9]+/dpa-signed-notices$")) {
+          return true;
+        }
       }
       // Invite-link redeem is a public bootstrap endpoint too — anyone opening the shared link
       // hits it before any session / CSRF cookie exists.
