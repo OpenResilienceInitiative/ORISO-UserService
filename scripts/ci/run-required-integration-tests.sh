@@ -6,8 +6,11 @@ maven_wrapper="${ORISO_MAVEN_WRAPPER:-./mvnw}"
 
 # Real-MariaDB contracts are owned by the separately required mariadb-contract job. Excluding them
 # from discovery here prevents JUnit's environment conditions from manufacturing skipped reports.
-# SupportRoomMigrationConvergenceIT deliberately stays outside the refactor CI contract (3bfa3d06)
-# and is likewise excluded instead of being reported as a green skip.
+# SupportRoomMigrationConvergenceIT is excluded here for the same reason: it is @EnabledIf...
+# LIQUIBASE_IT_DB_URL and is run by the mariadb-contract job. An earlier revision justified the
+# exclusion with 3bfa3d06 ("Keep support migration outside refactor CI"), but that commit is on
+# feature/user-service-refactor only and never reached pre-dev, so on this branch the exclusion
+# would have removed the test from required CI entirely instead of moving it.
 mariadb_owned_tests=(
   DatabaseChangelogDriftIT
   AdminStatisticsRepositoryMariaDbIT
