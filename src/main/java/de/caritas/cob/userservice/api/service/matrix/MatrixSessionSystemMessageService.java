@@ -157,6 +157,18 @@ public class MatrixSessionSystemMessageService {
     return resolveMatrixCredentials(session);
   }
 
+  /**
+   * Builds the room event payload. Only client-safe keys belong here.
+   *
+   * <p>Do not add {@code reasonLabel} or {@code explanation} back, however symmetric it looks next
+   * to the staff-facing API. This payload becomes a Matrix room event: it is persisted in room
+   * history and readable by the advice seeker's client, so anything placed here is disclosed
+   * durably and cannot be taken back by a later deploy. Until pre-dev #1051 both keys were written
+   * here, which put the internal handover reason and the counsellor's free-text explanation into
+   * rooms the asker can read; two such events are still present in pre-dev room history. The reason
+   * is staff-only — the asker is told that access was granted and for how long, never why. See
+   * CaseHandoverService#toClientStatus for the same boundary.
+   */
   private String buildCaseHandoverGrantedBody(String newAdvisorName, String description) {
     var payload = new java.util.LinkedHashMap<String, String>();
     payload.put("type", CASE_HANDOVER_GRANTED_TYPE);
