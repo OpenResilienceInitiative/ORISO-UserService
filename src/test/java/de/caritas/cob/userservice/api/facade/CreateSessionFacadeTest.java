@@ -3,8 +3,11 @@ package de.caritas.cob.userservice.api.facade;
 import static de.caritas.cob.userservice.api.testHelper.ExceptionConstants.INTERNAL_SERVER_ERROR_EXCEPTION;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_DTO_U25;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_ID;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.AGENCY_NAME;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.CITY;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_SETTINGS_SUCHT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.MESSAGE;
+import static de.caritas.cob.userservice.api.testHelper.TestConstants.POSTCODE;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_LIST;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.SESSION_WITHOUT_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
@@ -75,6 +78,9 @@ class CreateSessionFacadeTest {
   @Mock private AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
 
   @Mock private DirectSessionMatrixRoomService directSessionMatrixRoomService;
+
+  private static final Long TOPIC_ID_SERVED_BY_AGENCY = 3L;
+  private static final Long MAIN_TOPIC_ID_NOT_SERVED_BY_AGENCY = 1L;
 
   List<NewSessionValidationConstraint> validationConstraints =
       Lists.newArrayList(NewSessionValidationConstraint.ONE_SESSION_PER_CONSULTING_TYPE);
@@ -277,5 +283,106 @@ class CreateSessionFacadeTest {
 
     assertThat(result.getStatus(), is(HttpStatus.CREATED));
     assertThat(result.getSessionId(), is(session.getId()));
+  }
+
+  /**
+   * ORISO-Frontend#1143: an advice seeker must not be able to open an enquiry at a counselling
+   * centre that does not serve the selected topic. The agency id and the main topic id arrive as
+   * two independent request fields, so the pairing has to be verified server side.
+   */
+  @Test
+  void
+      createUserSession_Should_ThrowBadRequestAndNotPersistSession_When_AgencyDoesNotServeMainTopic() {
+    var userDto = userDtoWithMainTopic(MAIN_TOPIC_ID_NOT_SERVED_BY_AGENCY);
+    when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0))
+        .thenReturn(agencyServingTopics(TOPIC_ID_SERVED_BY_AGENCY));
+
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            createSessionFacade.createUserSession(
+                userDto, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints));
+
+    verify(sessionService, never()).initializeSession(any(), any(), any(Boolean.class));
+    verify(sessionService, never()).saveSession(any());
+  }
+
+  @Test
+  void createUserSession_Should_CreateSession_When_AgencyServesMainTopic() {
+    var userDto = userDtoWithMainTopic(TOPIC_ID_SERVED_BY_AGENCY);
+    when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0))
+        .thenReturn(
+            agencyServingTopics(TOPIC_ID_SERVED_BY_AGENCY, MAIN_TOPIC_ID_NOT_SERVED_BY_AGENCY));
+    when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
+        .thenReturn(SESSION_WITHOUT_CONSULTANT);
+
+    var result =
+        createSessionFacade.createUserSession(
+            userDto, USER, CONSULTING_TYPE_SETTINGS_SUCHT, validationConstraints);
+
+    assertEquals(SESSION_WITHOUT_CONSULTANT.getId(), result);
+  }
+
+  @Test
+  void createUserSession_Should_CreateSession_When_RegistrationCarriesNoMainTopic() {
+    when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0))
+        .thenReturn(agencyServingTopics(TOPIC_ID_SERVED_BY_AGENCY));
+    when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
+        .thenReturn(SESSION_WITHOUT_CONSULTANT);
+
+    var result =
+        createSessionFacade.createUserSession(
+            userDtoWithMainTopic(null),
+            USER,
+            CONSULTING_TYPE_SETTINGS_SUCHT,
+            validationConstraints);
+
+    assertEquals(SESSION_WITHOUT_CONSULTANT.getId(), result);
+  }
+
+  /**
+   * The agency lookup can degrade to an unverified stub (see obtainVerifiedAgency); that stub knows
+   * no topics. Registration must keep working there instead of failing closed on missing data.
+   */
+  @Test
+  void createUserSession_Should_CreateSession_When_AgencyTopicsAreUnknown() {
+    var agencyWithoutTopics = agencyServingTopics();
+    agencyWithoutTopics.setTopicIds(null);
+    when(agencyVerifier.getVerifiedAgency(AGENCY_ID, 0)).thenReturn(agencyWithoutTopics);
+    when(sessionService.initializeSession(any(), any(), any(Boolean.class)))
+        .thenReturn(SESSION_WITHOUT_CONSULTANT);
+
+    var result =
+        createSessionFacade.createUserSession(
+            userDtoWithMainTopic(MAIN_TOPIC_ID_NOT_SERVED_BY_AGENCY),
+            USER,
+            CONSULTING_TYPE_SETTINGS_SUCHT,
+            validationConstraints);
+
+    assertEquals(SESSION_WITHOUT_CONSULTANT.getId(), result);
+  }
+
+  private static UserDTO userDtoWithMainTopic(Long mainTopicId) {
+    var userDto = new UserDTO();
+    userDto.setUsername(USER_DTO_SUCHT.getUsername());
+    userDto.setPostcode(USER_DTO_SUCHT.getPostcode());
+    userDto.setAgencyId(AGENCY_ID);
+    userDto.setPassword(USER_DTO_SUCHT.getPassword());
+    userDto.setTermsAccepted("true");
+    userDto.setConsultingType("0");
+    userDto.setMainTopicId(mainTopicId);
+    return userDto;
+  }
+
+  private static AgencyDTO agencyServingTopics(Long... topicIds) {
+    return new AgencyDTO()
+        .id(AGENCY_ID)
+        .name(AGENCY_NAME)
+        .postcode(POSTCODE)
+        .city(CITY)
+        .teamAgency(false)
+        .offline(false)
+        .consultingType(0)
+        .topicIds(Lists.newArrayList(topicIds));
   }
 }

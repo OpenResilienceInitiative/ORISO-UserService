@@ -74,6 +74,7 @@ public class CreateSessionFacade {
     }
 
     var agencyDTO = obtainVerifiedAgency(userDTO, extendedConsultingTypeResponseDTO);
+    verifyAgencyServesMainTopic(userDTO, agencyDTO);
 
     if (validationConstraints.contains(
         NewSessionValidationConstraint.ONE_SESSION_PER_TOPIC_ID_AND_AGENCY_ID)) {
@@ -201,6 +202,37 @@ public class CreateSessionFacade {
     }
 
     return agencyDTO;
+  }
+
+  /**
+   * The agency id and the main topic id reach us as two independent request fields, so a client can
+   * pair a topic with an agency that never offered it. Registration then puts the advice seeker's
+   * disclosure in front of a counselling centre that is not responsible for the subject, which is
+   * exactly what agency search prevents by only listing agencies for the selected topic. Reject the
+   * pairing here as well (ORISO-Frontend#1143).
+   *
+   * <p>A registration without a main topic keeps working, and so does one where the agency lookup
+   * degraded to an unverified stub: a {@code null} topic list means "topics unknown", not "topics
+   * empty", and failing closed on missing data would take registration down with the agency
+   * service.
+   */
+  private void verifyAgencyServesMainTopic(UserDTO userDTO, AgencyDTO agencyDTO) {
+    var mainTopicId = userDTO.getMainTopicId();
+    var agencyTopicIds = agencyDTO.getTopicIds();
+
+    if (isNull(mainTopicId) || isNull(agencyTopicIds)) {
+      return;
+    }
+
+    if (!agencyTopicIds.contains(mainTopicId)) {
+      log.warn(
+          "Rejected enquiry for agency {} with topic {}; the agency serves topics {}.",
+          agencyDTO.getId(),
+          mainTopicId,
+          agencyTopicIds);
+      throw new BadRequestException(
+          String.format("Agency %s does not serve topic %s", agencyDTO.getId(), mainTopicId));
+    }
   }
 
   private void checkIfAlreadyRegisteredToTopicAndSameAgency(
