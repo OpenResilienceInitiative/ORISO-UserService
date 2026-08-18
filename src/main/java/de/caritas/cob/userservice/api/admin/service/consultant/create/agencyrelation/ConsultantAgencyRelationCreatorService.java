@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembershipService;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Optional;
@@ -27,11 +28,13 @@ import java.util.Set;
 import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /** Creator class to generate new {@link ConsultantAgency} instances. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ConsultantAgencyRelationCreatorService {
 
   private final @NonNull ConsultantAgencyService consultantAgencyService;
@@ -43,6 +46,7 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull ConsultantAgencyRelationFinalizer consultantAgencyRelationFinalizer;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
+  private final @NonNull AgencyLateJoinerMembershipService agencyLateJoinerMembershipService;
 
   /**
    * Creates a new {@link ConsultantAgency} based on the {@link ImportRecord} and agency ids.
@@ -136,6 +140,31 @@ public class ConsultantAgencyRelationCreatorService {
     if (isTeamAgencyButNotTeamConsultant(agency, consultant)) {
       consultant.setTeamConsultant(true);
       consultantRepository.save(consultant);
+    }
+
+    backfillExistingEnquiryRooms(consultant, agency.getId());
+  }
+
+  /**
+   * US#1060: the agency's counsellors are joined into an enquiry room when the room is created
+   * (US#905), which leaves everyone who joins the agency later outside the rooms that already exist
+   * — and a non-member never receives the room from Matrix {@code /sync}, so those open initial
+   * requests stay invisible to them. Assigning the agency is the only moment we learn about the new
+   * counsellor, so the backfill happens here.
+   *
+   * <p>Best effort by design: the relation is already persisted at this point and is the source of
+   * truth. A Synapse outage must degrade to "membership repaired later", never to a failed
+   * assignment request.
+   */
+  private void backfillExistingEnquiryRooms(Consultant consultant, Long agencyId) {
+    try {
+      agencyLateJoinerMembershipService.joinConsultantIntoOpenEnquiryRooms(consultant, agencyId);
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not backfill consultant {} into the open enquiry rooms of agency {}: {}",
+          consultant.getId(),
+          agencyId,
+          ex.getMessage());
     }
   }
 
