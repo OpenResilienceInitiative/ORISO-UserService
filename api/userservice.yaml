@@ -2091,7 +2091,13 @@ components:
           example: 1539184948
         messagesRead:
           type: boolean
-          example: false
+          deprecated: true
+          description:
+            'Always true since the Matrix-native session list refactor: read
+            state is derived client-side from the Matrix room
+            (OpenResilienceInitiative/ORISO-Frontend#1147). Do not consume;
+            kept only for API compatibility until removal.'
+          example: true
         isTeamSession:
           type: boolean
           example: false
@@ -2339,7 +2345,13 @@ components:
           example: 1539184948
         messagesRead:
           type: boolean
-          example: false
+          deprecated: true
+          description:
+            'Always true since the Matrix-native session list refactor: read
+            state is derived client-side from the Matrix room
+            (OpenResilienceInitiative/ORISO-Frontend#1147). Do not consume;
+            kept only for API compatibility until removal.'
+          example: true
         matrixRoomId:
           type: string
           example: "!aBcDeF123:matrix.example"
