@@ -74,6 +74,80 @@ public class CaseHandoverService {
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
   private static final String CO_ACCESS_EXPIRY_TASK = "case-handover-co-access-expiry";
 
+  private record ClientHandoverCopy(
+      String grantedTitle,
+      String grantedDescription,
+      String pendingTitle,
+      String pendingDescription,
+      String coAccessTitle,
+      String coAccessDescription) {}
+
+  /**
+   * Built-in client-safe copy used until the tenant-scoped effective policy cache in
+   * ORISO-UserService#201 becomes the canonical source. No entry contains reason-derived wording;
+   * internal illness, absence, emergency, and staffing details stay on staff and audit surfaces.
+   * Unknown languages deliberately fall back to German, while every currently supported language
+   * has an explicit entry. fr/ru/tr/uk/ti copy requires native-speaker review before final release.
+   */
+  private static final Map<String, ClientHandoverCopy> CLIENT_SAFE_HANDOVER_COPY =
+      Map.of(
+          "de",
+          new ClientHandoverCopy(
+              "Neue Beratungsperson hat deinen Fall übernommen",
+              "{{newAdvisor}} hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.",
+              "Zugriffsanfrage einer Beratungsperson",
+              "{{newAdvisor}} bittet um Zugriff auf deinen Fall. Deine Zustimmung ist erforderlich.",
+              "Zeitlich begrenzte Falleinsicht erteilt",
+              "{{newAdvisor}} erhält für {{duration}} einen zeitlich begrenzten Einblick in deinen Fall. Deine bisherige Beratungsperson bleibt für dich zuständig."),
+          "en",
+          new ClientHandoverCopy(
+              "New counsellor took over your case",
+              "{{newAdvisor}} has taken over your case and will continue your counselling from now on.",
+              "Counsellor access request",
+              "{{newAdvisor}} requested access to your case. Your consent is required.",
+              "Time-limited case review granted",
+              "{{newAdvisor}} gets time-limited insight into your case for {{duration}}. Your current counsellor remains responsible for you."),
+          "fr",
+          new ClientHandoverCopy(
+              "Un nouveau conseiller ou une nouvelle conseillère a repris votre dossier",
+              "{{newAdvisor}} a repris votre dossier et poursuivra désormais votre accompagnement.",
+              "Demande d’accès d’un conseiller ou d’une conseillère",
+              "{{newAdvisor}} demande l’accès à votre dossier. Votre consentement est requis.",
+              "Consultation temporaire du dossier accordée",
+              "{{newAdvisor}} bénéficie d’un accès limité à votre dossier pendant {{duration}}. Votre conseiller ou conseillère actuelle reste responsable de votre suivi."),
+          "ru",
+          new ClientHandoverCopy(
+              "Новый консультант принял ваше дело",
+              "{{newAdvisor}} принял(а) ваше дело и с этого момента продолжит консультирование.",
+              "Запрос консультанта на доступ",
+              "{{newAdvisor}} запросил(а) доступ к вашему делу. Требуется ваше согласие.",
+              "Предоставлен временный доступ к делу",
+              "{{newAdvisor}} получает ограниченный по времени доступ к вашему делу на {{duration}}. Ваш нынешний консультант продолжает вести вашу консультацию."),
+          "tr",
+          new ClientHandoverCopy(
+              "Yeni bir danışman vakanızı devraldı",
+              "{{newAdvisor}} vakanızı devraldı ve bundan sonra danışmanlığınıza devam edecek.",
+              "Danışman erişim talebi",
+              "{{newAdvisor}} vakanıza erişim istedi. Onayınız gerekiyor.",
+              "Süreli dosya erişimi verildi",
+              "{{newAdvisor}} vakanıza {{duration}} boyunca süreli erişim sağlar. Mevcut danışmanınız size destek vermeye devam eder."),
+          "uk",
+          new ClientHandoverCopy(
+              "Новий консультант перейняв вашу справу",
+              "{{newAdvisor}} перейняв(-ла) вашу справу й відтепер продовжуватиме консультування.",
+              "Запит консультанта на доступ",
+              "{{newAdvisor}} запитує доступ до вашої справи. Потрібна ваша згода.",
+              "Надано тимчасовий доступ до справи",
+              "{{newAdvisor}} отримує обмежений у часі доступ до вашої справи на {{duration}}. Ваш нинішній консультант і надалі відповідає за вашу справу."),
+          "ti",
+          new ClientHandoverCopy(
+              "ሓድሽ ኣማኻሪ ጉዳይካ ተረኪቡ",
+              "{{newAdvisor}} ጉዳይካ ተረኪቡ ካብ ሕጂ ንደሓር ምኽሪ ክቕጽል እዩ።",
+              "ናይ ኣማኻሪ ናይ ምእታው ሕቶ",
+              "{{newAdvisor}} ናብ ጉዳይካ ክኣቱ ሓቲቱ። ፍቓድካ የድሊ።",
+              "ግዜኡ ዝተወሰነ ናይ ጉዳይ ምርኣይ ተፈቒዱ",
+              "{{newAdvisor}} ንጉዳይካ ን{{duration}} ግዜኡ ዝተወሰነ ምርኣይ ይረክብ። ህሉው ኣማኻሪኻ ንዓኻ ሓላፍነት ይቕጽል።"));
+
   /**
    * Default client-facing notification templates per reason and language (de/en/tr/uk). Source:
    * vault doc "Case Handover — System-Benachrichtigungen & Rechtstexte (Entwurf)"; tr/uk are
@@ -452,7 +526,7 @@ public class CaseHandoverService {
     }
 
     if (request.getStatus() != Status.PENDING_CLIENT_CONSENT) {
-      return toStatus(request);
+      return toClientStatus(request);
     }
 
     LocalDateTime now = LocalDateTime.now(clock);
@@ -462,11 +536,15 @@ public class CaseHandoverService {
         request.setStatus(Status.DENIED);
         request.setAuditOutcome(OUTCOME_ALREADY_ANSWERED);
         CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
-        return toStatus(saved);
+        return toClientStatus(saved);
       }
 
       request.setStatus(Status.GRANTED);
       request.setAuditOutcome(OUTCOME_ACCESS_GRANTED);
+      // The reason code is authoritative for the access type: whatever accessType the request
+      // carried is recomputed here and overwritten. A test that sets accessType directly is
+      // therefore testing nothing -- drive the access type through the reason code instead.
+      // Pinned by resolveClientConsent_reasonCodeIsAuthoritativeForAccessType.
       request.setAccessType(accessType(request.getReasonCode()));
       if (request.getAccessType() == AccessType.CO_ACCESS) {
         Integer capturedDuration = request.getMaxAccessDurationMinutes();
@@ -490,14 +568,14 @@ public class CaseHandoverService {
       }
       CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
       notifyGranted(saved);
-      return toStatus(saved);
+      return toClientStatus(saved);
     }
 
     request.setStatus(Status.CLIENT_CONSENT_DECLINED);
     request.setAuditOutcome(OUTCOME_CLIENT_CONSENT_DECLINED);
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
     notifyConsentDeclined(saved);
-    return toStatus(saved);
+    return toClientStatus(saved);
   }
 
   private Consultant retrieveCurrentConsultant() {
@@ -983,11 +1061,49 @@ public class CaseHandoverService {
         .build();
   }
 
+  /**
+   * Asker-facing projection. It mirrors {@link #toStatus}, including the demo branch's expiry
+   * semantics and the access-type/expiry fields the advice seeker needs in order to understand what
+   * they consented to, but deliberately omits the staff-only reason fields — reasonCode,
+   * reasonLabel and policyAuthority — that pre-dev #1051 removed from every asker surface. The
+   * access type is client-safe (the asker consents to it); the reason behind it is not.
+   */
+  private CaseHandoverStatus toClientStatus(CaseHandoverRequest request) {
+    boolean expired = isExpired(request);
+    AccessType accessType = effectiveAccessType(request);
+    return CaseHandoverStatus.builder()
+        .requestId(request.getId())
+        .sessionId(request.getSession().getId())
+        .status(expired ? Status.EXPIRED.name() : request.getStatus().name())
+        .canViewContent(request.getStatus() == Status.GRANTED && !expired)
+        .clientConsentRequired(Boolean.TRUE.equals(request.getClientConsentRequired()))
+        .auditOutcome(request.getAuditOutcome())
+        .createdAt(request.getCreatedAt())
+        .resolvedAt(request.getResolvedAt())
+        .accessType(accessType.name())
+        .expiresAt(request.getExpiresAt())
+        .build();
+  }
+
   private void notifyGranted(CaseHandoverRequest request) {
     Session session = request.getSession();
     Consultant requester = request.getRequesterConsultant();
     String requesterName = resolveConsultantName(requester);
-    postGrantedChatSystemMessage(request, session, requesterName);
+    boolean coAccess = effectiveAccessType(request) == AccessType.CO_ACCESS;
+    ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
+    // pre-dev #1051 keeps the reason staff-only. The demo's CO_ACCESS grant is a distinct
+    // client-facing event, so it gets its own client-safe wording rather than falling back to
+    // the takeover copy -- the duration travels, the reason does not.
+    String clientTitle = coAccess ? clientCopy.coAccessTitle() : clientCopy.grantedTitle();
+    String clientDescription =
+        coAccess
+            ? renderClientCopy(
+                clientCopy.coAccessDescription(),
+                requesterName,
+                formatDuration(
+                    request.getMaxAccessDurationMinutes(), resolveSessionLanguage(session)))
+            : renderClientCopy(clientCopy.grantedDescription(), requesterName);
+    postGrantedChatSystemMessage(session, requesterName, clientDescription);
     // #1010 task 1a: the explanation is counsellor-written free text that can reference case
     // content. It is no longer copied into the notification, which kept it in plaintext for good;
     // the handover-request API serves it on demand instead.
@@ -995,20 +1111,17 @@ public class CaseHandoverService {
         eventNotificationService.buildCaseHandoverParams(
             session, requesterName, request.getReasonCode(), request.getReasonLabel(), null);
 
-    boolean coAccess = effectiveAccessType(request) == AccessType.CO_ACCESS;
     if (session.getUser() != null && session.getUser().getUserId() != null) {
+      String clientParams =
+          eventNotificationService.buildCaseHandoverParams(
+              session, requesterName, null, null, null);
       eventNotificationService.createEvent(
           session.getUser().getUserId(),
           "case.handover.granted",
           EventNotificationService.CATEGORY_SYSTEM,
-          coAccess ? "Time-limited case review granted" : "New counsellor took over your case",
-          coAccess
-              ? String.format(
-                  "%s may read this session for %d minutes. Reason: %s",
-                  requesterName, request.getMaxAccessDurationMinutes(), request.getReasonLabel())
-              : String.format(
-                  "%s took over your case. Reason: %s", requesterName, request.getReasonLabel()),
-          params,
+          clientTitle,
+          clientDescription,
+          clientParams,
           buildAskerSessionActionPath(session),
           session.getId(),
           session.getTenantId());
@@ -1043,11 +1156,10 @@ public class CaseHandoverService {
    * session's Matrix room. Emission failures must never fail the handover itself.
    */
   private void postGrantedChatSystemMessage(
-      CaseHandoverRequest request, Session session, String requesterName) {
+      Session session, String requesterName, String description) {
     try {
-      var description = resolveClientNotificationDescription(request, requesterName);
       matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
-          session, requesterName, request.getReasonLabel(), request.getExplanation(), description);
+          session, requesterName, description);
     } catch (RuntimeException exception) {
       log.warn(
           "Case-handover system message for session {} could not be posted: {}",
@@ -1056,26 +1168,22 @@ public class CaseHandoverService {
     }
   }
 
-  private String resolveClientNotificationDescription(
-      CaseHandoverRequest request, String requesterName) {
-    var reasonCode = normalizeReasonCode(request.getReasonCode());
-    Map<String, String> templates =
-        Optional.ofNullable(
-                findReason(request.getSession(), reasonCode, true).getClientNotificationTemplates())
-            .filter(map -> !map.isEmpty())
-            .orElseGet(() -> DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(reasonCode));
-    if (templates == null || templates.isEmpty()) {
-      return null;
-    }
-    var language = resolveSessionLanguage(request.getSession());
-    var template =
-        templates.getOrDefault(
-            language,
-            templates.getOrDefault(
-                "de", templates.getOrDefault("en", templates.values().iterator().next())));
-    return template
-        .replace("{{newAdvisor}}", requesterName)
-        .replace("{{duration}}", formatDuration(request.getMaxAccessDurationMinutes(), language));
+  private ClientHandoverCopy resolveClientHandoverCopy(Session session) {
+    var language = resolveSessionLanguage(session);
+    return CLIENT_SAFE_HANDOVER_COPY.getOrDefault(language, CLIENT_SAFE_HANDOVER_COPY.get("de"));
+  }
+
+  private String renderClientCopy(String template, String requesterName) {
+    return template.replace("{{newAdvisor}}", requesterName);
+  }
+
+  /**
+   * Co-access copy additionally carries the granted duration. The duration is a fact about the
+   * access itself, not about why it was requested, so it stays client-safe; the reason does not
+   * travel with it.
+   */
+  private String renderClientCopy(String template, String requesterName, String duration) {
+    return renderClientCopy(template, requesterName).replace("{{duration}}", duration);
   }
 
   private String formatDuration(Integer durationMinutes, String language) {
@@ -1185,22 +1293,18 @@ public class CaseHandoverService {
       return;
     }
     String requesterName = resolveConsultantName(request.getRequesterConsultant());
-    // #1010 task 1a: no explanation free text in the stored notification — the client reads it
-    // from the handover request itself, which the action path and params already point at.
+    ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
+    // The request id remains so the advice seeker can answer the consent prompt. The configured
+    // reason and counsellor-written explanation stay staff-only and are never copied into the
+    // advice seeker's notification payload.
     eventNotificationService.createEvent(
         session.getUser().getUserId(),
         "case.handover.consent.requested",
         EventNotificationService.CATEGORY_SYSTEM,
-        "Counsellor access request",
-        String.format(
-            "%s requested access to your case. Reason: %s",
-            requesterName, request.getReasonLabel()),
+        clientCopy.pendingTitle(),
+        renderClientCopy(clientCopy.pendingDescription(), requesterName),
         eventNotificationService.buildCaseHandoverParams(
-            session,
-            requesterName,
-            request.getReasonCode(),
-            request.getReasonLabel(),
-            request.getId()),
+            session, requesterName, null, null, request.getId()),
         buildAskerSessionActionPath(session) + "?caseHandoverRequestId=" + request.getId(),
         session.getId(),
         session.getTenantId());

@@ -405,12 +405,13 @@ public class KeycloakService
       throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
-    log.warn("Keycloak create-user failed. status={}, rawResponse={}", status, rawResponse);
+    // pre-dev #1044 ("sanitize create-user failures"): the raw provider body may carry the
+    // applicant's own data and Keycloak internals, so it must reach neither the thrown message
+    // nor the WARN log. The status still travels, which keeps the 500 diagnosable without
+    // leaking the body -- the detail is returned rather than stashed on this singleton bean.
+    log.warn("Keycloak create-user failed. status={}", status);
 
-    // Preserve prior behavior but include status/raw details to avoid opaque 500s.
-    return !rawResponse.isBlank()
-        ? String.format("Keycloak create-user failed with status %s: %s", status, rawResponse)
-        : String.format("Keycloak create-user failed with status %s", status);
+    return String.format("Keycloak create-user failed with status %s", status);
   }
 
   /**
