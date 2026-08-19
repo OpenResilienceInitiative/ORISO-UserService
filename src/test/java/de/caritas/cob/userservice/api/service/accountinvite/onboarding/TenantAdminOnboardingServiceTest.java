@@ -11,7 +11,9 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -515,6 +517,79 @@ class TenantAdminOnboardingServiceTest {
     // then: the wizard shares the link manually
     assertNotNull(result.signUrl());
     assertNotNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  /**
+   * Option A: a mail that cannot be delivered must NOT fail the call. The sign link is already
+   * minted and live, and every burnt link is capped for 14 days — failing here is what locked the
+   * owner out with five unusable links and no mail.
+   */
+  @Test
+  void forwardDpa_returnsTheLinkAndFlagsIt_When_theMailCannotBeSent() {
+    // given the mail service rejects the send
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+    doThrow(new BadRequestException("signLink is invalid"))
+        .when(dpaForwardEmailService)
+        .sendSigningLink(any());
+
+    // when
+    var result = service.forwardDpa(RAW_TOKEN, "legal@example.org");
+
+    // then the caller still gets the link, marked as undelivered
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
+    assertFalse(result.mailSent());
+    // and the forward is RECORDED: the link is live, so the proof of it must survive the failure
+    assertNotNull(invite.getDpaForwardedAt());
+    verify(accountInviteRepository).save(invite);
+    // exactly one link was minted - a failed send must never cost a second slot
+    verify(publicDpaForwardClient, times(1)).createForwardSignLink(any(), any());
+  }
+
+  @Test
+  void forwardDpa_flagsTheMailAsSent_When_deliverySucceeds() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    var result = service.forwardDpa(RAW_TOKEN, "legal@example.org");
+
+    assertTrue(result.mailSent());
+    verify(publicDpaForwardClient, times(1)).createForwardSignLink(any(), any());
+  }
+
+  /** No recipient means nothing was ever meant to be delivered, so the flag stays clear. */
+  @Test
+  void forwardDpa_reportsNoMail_When_noRecipientIsGiven() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    assertFalse(service.forwardDpa(RAW_TOKEN, null).mailSent());
+  }
+
+  /**
+   * The degradation is scoped to the mail alone. A throttled mint produced no link at all, so there
+   * is nothing to hand back and the throttle must still reach the caller as 429.
+   */
+  @Test
+  void forwardDpa_stillFails_When_theMintIsThrottled() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenThrow(
+            new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "throttled"));
+
+    assertThrows(
+        org.springframework.web.server.ResponseStatusException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+    assertNull(invite.getDpaForwardedAt());
     verify(dpaForwardEmailService, never()).sendSigningLink(any());
   }
 

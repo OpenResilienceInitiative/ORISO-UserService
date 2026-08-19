@@ -305,21 +305,41 @@ public class TenantAdminOnboardingService {
     invite.setUpdateDate(now);
     accountInviteRepository.save(invite);
 
+    // Only the MAIL degrades, and only after the link exists. Everything that can go wrong before
+    // this point still fails the call: an unknown or dead invite (404/410), a missing reservation,
+    // a throttled or rejected mint (429/410/409). Those produce no link, so there is nothing to
+    // hand back. Once the link IS minted it is live for 14 days and counts against the cap of five
+    // outstanding links, so failing here would burn a slot for nothing — which is exactly how an
+    // onboarding ended up with five unusable links and no mail. The caller gets the link with
+    // mailSent=false and shares it manually.
+    boolean mailSent = false;
     if (!isBlank(recipientEmail)) {
-      dpaForwardEmailService.sendSigningLink(
-          new DpaForwardEmailCommand(
-              invite.getTenantId(),
-              recipientEmail,
-              signInvite.getSignLink(),
-              parseExpiry(signInvite.getExpiresAt())));
+      try {
+        dpaForwardEmailService.sendSigningLink(
+            new DpaForwardEmailCommand(
+                invite.getTenantId(),
+                recipientEmail,
+                signInvite.getSignLink(),
+                parseExpiry(signInvite.getExpiresAt())));
+        mailSent = true;
+      } catch (RuntimeException exception) {
+        // Swallowed deliberately, never silently: the link is the deliverable, the mail is the
+        // convenience. The address is not logged (PII) - the invite id identifies the case.
+        log.warn(
+            "DPA_FORWARD mail could not be delivered for invite {} (reserved tenant {}); the sign"
+                + " link was created and is returned for manual sharing",
+            invite.getId(),
+            invite.getTenantId(),
+            exception);
+      }
     }
     log.info(
         "DPA forwarded from the onboarding wizard for invite {} (reserved tenant {}); mail sent:"
             + " {}",
         invite.getId(),
         invite.getTenantId(),
-        !isBlank(recipientEmail));
-    return new DpaForwardResult(signInvite.getSignLink(), signInvite.getExpiresAt());
+        mailSent);
+    return new DpaForwardResult(signInvite.getSignLink(), signInvite.getExpiresAt(), mailSent);
   }
 
   private static LocalDateTime parseExpiry(String expiresAt) {
@@ -574,5 +594,10 @@ public class TenantAdminOnboardingService {
    * The sign link created for the authorised signer (raw token embedded — show/copy, never log)
    * plus its expiry as reported by TenantService (ISO local date-time string).
    */
-  public record DpaForwardResult(String signUrl, String expiresAt) {}
+  /**
+   * @param mailSent whether the DPA_FORWARD mail actually reached the mail service. False both when
+   *     no recipient was requested and when delivery failed — the link is live either way, so the
+   *     caller must offer it for manual sharing.
+   */
+  public record DpaForwardResult(String signUrl, String expiresAt, boolean mailSent) {}
 }

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -398,7 +399,7 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07"));
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", true));
     var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
     request.recipientEmail = "legal@example.org";
 
@@ -408,6 +409,25 @@ class TenantAdminOnboardingControllerTest {
     assertNotNull(response.getBody());
     assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
     assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
+    assertTrue(response.getBody().mailSent);
+  }
+
+  /** Option A: an undelivered mail still answers 200 with the link, flagged as not sent. */
+  @Test
+  void forwardDpa_returnsTheLinkFlaggedUnsent_When_theMailCouldNotBeDelivered() {
+    when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
+        .thenReturn(
+            new TenantAdminOnboardingService.DpaForwardResult(
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+    var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
+    request.recipientEmail = "legal@example.org";
+
+    var response = controller.forwardDpa("raw-token", request);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertFalse(response.getBody().mailSent);
   }
 
   @Test
@@ -415,7 +435,7 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa(eq("raw-token"), eq(null)))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07"));
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
 
     var response = controller.forwardDpa("raw-token", null);
 

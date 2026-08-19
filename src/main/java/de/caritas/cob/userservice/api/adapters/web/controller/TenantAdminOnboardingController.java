@@ -126,10 +126,18 @@ public class TenantAdminOnboardingController {
     /** Link expiry as ISO local date-time string (14-day validity window). */
     public String expiresAt;
 
+    /**
+     * Whether the DPA_FORWARD mail actually went out. Stated positively on purpose: a client that
+     * does not know this field yet reads it as absent/false and then shows the copyable link, which
+     * is the safe outcome. The inverse ("mailFailed") would let an omission read as success.
+     */
+    public boolean mailSent;
+
     static DpaForwardResponseDTO from(TenantAdminOnboardingService.DpaForwardResult result) {
       DpaForwardResponseDTO dto = new DpaForwardResponseDTO();
       dto.signUrl = result.signUrl();
       dto.expiresAt = result.expiresAt();
+      dto.mailSent = result.mailSent();
       return dto;
     }
   }
