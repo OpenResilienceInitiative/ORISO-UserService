@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -22,6 +23,8 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
@@ -63,6 +66,7 @@ class AccountInviteServiceTest {
   @Mock private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @Mock private InviteMailDispatchService inviteMailDispatchService;
   @Mock private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
+  @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
 
   @InjectMocks private AccountInviteService service;
 
@@ -407,6 +411,103 @@ class AccountInviteServiceTest {
         new CreateAccountInviteCommand(
             AccountInviteTargetRole.COUNSELLOR, 7L, "   ", "A", "B", null, null, null);
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+  }
+
+  // --- P3 (#Problem 3): duplicate recipient e-mail is refused at invite CREATION time, not only
+  // at redemption. Both invite kinds and both creation paths ("send now" / "add to list") funnel
+  // through createInvite, so a single guard here covers all of them.
+
+  @Test
+  void createInvite_Should_ThrowEmailNotAvailable_When_RecipientEmailBelongsToRegisteredUser() {
+    when(identityEmailOwnerLookup.findByEmail("taken@example.org"))
+        .thenReturn(Optional.of(new IdentityEmailOwner("existing-user")));
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "taken@example.org",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class)
+        .satisfies(
+            thrown -> {
+              var ex = (CustomValidationHttpStatusException) thrown;
+              assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(ex.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("EMAIL_NOT_AVAILABLE");
+            });
+
+    verifyNoInteractions(accountInviteRepository);
+  }
+
+  @Test
+  void createInvite_Should_ThrowEmailNotAvailable_When_TenantAdminRecipientEmailIsRegistered() {
+    when(identityEmailOwnerLookup.findByEmail("taken@example.org"))
+        .thenReturn(Optional.of(new IdentityEmailOwner("existing-user")));
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            7L,
+            "taken@example.org",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+
+    // The guard runs before any tenant-ID reservation, so nothing has to be compensated.
+    verifyNoInteractions(tenantIdAllocationClient);
+    verifyNoInteractions(accountInviteRepository);
+  }
+
+  @Test
+  void createInvite_Should_NormalizeRecipientEmail_When_CheckingAvailability() {
+    when(identityEmailOwnerLookup.findByEmail("taken@example.org"))
+        .thenReturn(Optional.of(new IdentityEmailOwner("existing-user")));
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "  Taken@Example.ORG  ",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+  }
+
+  @Test
+  void createInvite_Should_Succeed_When_RecipientEmailIsUnknownToIdentityProvider() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(identityEmailOwnerLookup.findByEmail("free@example.org")).thenReturn(Optional.empty());
+    when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                7L,
+                "free@example.org",
+                "A",
+                "B",
+                null,
+                null,
+                null));
+
+    assertThat(invite.getRecipientEmail()).isEqualTo("free@example.org");
   }
 
   @Test
