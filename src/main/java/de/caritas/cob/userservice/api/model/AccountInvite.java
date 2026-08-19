@@ -106,6 +106,14 @@ public class AccountInvite {
   @Builder.Default
   private TwoFactorGateStatus twoFactorStatus = TwoFactorGateStatus.NOT_REQUIRED;
 
+  /**
+   * When the onboarding wizard forwarded the DPA to an authorised signer (ORISO-Admin#722):
+   * server-side proof that the registration may proceed without an own DPA acceptance, and the
+   * recipient anchor for the DPA_SIGNED_NOTICE of a pre-account forward (ORISO-UserService#1005).
+   */
+  @Column(name = "dpa_forwarded_at", columnDefinition = "datetime")
+  private LocalDateTime dpaForwardedAt;
+
   @Column(name = "accepted_at", columnDefinition = "datetime")
   private LocalDateTime acceptedAt;
 

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -389,5 +390,71 @@ class TenantAdminOnboardingControllerTest {
                 Arrays.asList(
                     "/users/account-invites/{token}/onboarding/two-factor",
                     "/service/users/account-invites/{token}/onboarding/two-factor")));
+  }
+
+  // --- DPA forward from the wizard (ORISO-Admin#722) ---
+
+  @Test
+  void forwardDpa_passesTheRecipientAndReturnsTheSignLink() {
+    when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
+        .thenReturn(
+            new TenantAdminOnboardingService.DpaForwardResult(
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", true));
+    var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
+    request.recipientEmail = "legal@example.org";
+
+    var response = controller.forwardDpa("raw-token", request);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
+    assertTrue(response.getBody().mailSent);
+  }
+
+  /** Option A: an undelivered mail still answers 200 with the link, flagged as not sent. */
+  @Test
+  void forwardDpa_returnsTheLinkFlaggedUnsent_When_theMailCouldNotBeDelivered() {
+    when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
+        .thenReturn(
+            new TenantAdminOnboardingService.DpaForwardResult(
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+    var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
+    request.recipientEmail = "legal@example.org";
+
+    var response = controller.forwardDpa("raw-token", request);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertFalse(response.getBody().mailSent);
+  }
+
+  @Test
+  void forwardDpa_toleratesAnAbsentBody() {
+    when(onboardingService.forwardDpa(eq("raw-token"), eq(null)))
+        .thenReturn(
+            new TenantAdminOnboardingService.DpaForwardResult(
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+
+    var response = controller.forwardDpa("raw-token", null);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(onboardingService).forwardDpa("raw-token", null);
+  }
+
+  @Test
+  void forwardDpa_isAnonymousAndMappedOnBothPrefixes() throws Exception {
+    Method forwardDpa =
+        TenantAdminOnboardingController.class.getMethod(
+            "forwardDpa", String.class, TenantAdminOnboardingController.DpaForwardRequestDTO.class);
+
+    assertNull(forwardDpa.getAnnotation(PreAuthorize.class));
+    assertTrue(
+        Arrays.asList(forwardDpa.getAnnotation(PostMapping.class).value())
+            .containsAll(
+                Arrays.asList(
+                    "/users/account-invites/{token}/onboarding/dpa-forward",
+                    "/service/users/account-invites/{token}/onboarding/dpa-forward")));
   }
 }

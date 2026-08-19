@@ -11,7 +11,9 @@ import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -70,6 +72,11 @@ class TenantAdminOnboardingServiceTest {
   @Mock private IdentityProfileLookup identityProfileLookup;
   @Mock private TenantCreationClient tenantCreationClient;
   @Mock private OperatorDpaContentClient operatorDpaContentClient;
+  @Mock private PublicDpaForwardClient publicDpaForwardClient;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService
+      dpaForwardEmailService;
 
   /**
    * The read paths drive their short database-only transactions through a {@link
@@ -94,6 +101,8 @@ class TenantAdminOnboardingServiceTest {
             identityProfileLookup,
             tenantCreationClient,
             operatorDpaContentClient,
+            publicDpaForwardClient,
+            dpaForwardEmailService,
             new UsernameTranscoder(),
             transactionManager);
   }
@@ -402,23 +411,229 @@ class TenantAdminOnboardingServiceTest {
         .build();
   }
 
-  @Test
-  void registerTenantAdmin_dpaNotAccepted_throwsBadRequest() {
-    var command =
-        new RegisterTenantAdminCommand(
-            "Beispiel gGmbH",
-            "beispiel",
-            null,
-            false,
-            null,
-            null,
-            null,
-            null,
-            "s3cretPassword",
-            RESERVED_TENANT_ID,
-            RESERVATION_TOKEN);
+  private static RegisterTenantAdminCommand commandWithoutAcceptance() {
+    return new RegisterTenantAdminCommand(
+        "Beispiel gGmbH",
+        "beispiel",
+        null,
+        false,
+        null,
+        null,
+        null,
+        null,
+        "s3cretPassword",
+        RESERVED_TENANT_ID,
+        RESERVATION_TOKEN);
+  }
 
-    assertThrows(BadRequestException.class, () -> service.registerTenantAdmin(RAW_TOKEN, command));
+  @Test
+  void registerTenantAdmin_dpaNeitherAcceptedNorForwarded_throwsBadRequest() {
+    // an invite that never forwarded cannot register without accepting — the client's word alone
+    // is not enough (ORISO-Admin#722)
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH))
+        .thenReturn(Optional.of(tenantAdminInvite(AccountInviteStatus.EMAIL_SENT)));
+
+    assertThrows(
+        BadRequestException.class,
+        () -> service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance()));
+    verify(tenantCreationClient, never()).createTenant(any());
+  }
+
+  @Test
+  void registerTenantAdmin_dpaForwardedEarlier_createsTenantWithoutAcceptance() {
+    // given an invite that forwarded the DPA in wizard step 1
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardedAt(LocalDateTime.now().minusMinutes(5));
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdmin(any(CreateAdminDTO.class)))
+        .thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    // when
+    var result = service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance());
+
+    // then: the tenant is created, but WITHOUT an acceptance signature — the DPA stays pending
+    assertEquals(RESERVED_TENANT_ID, result.tenantId());
+    var captor = ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(captor.capture());
+    assertNull(captor.getValue().getOnboardingDpaAcceptance());
+    // no operator DPA lookup is needed when nothing is accepted
+    verify(operatorDpaContentClient, never()).fetchPublishedDpa();
+  }
+
+  // --- DPA forward from the wizard (ORISO-Admin#722) ---
+
+  private static de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO
+      signInvite() {
+    return new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
+        .token("RAWSIGNTOKEN")
+        .signLink("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN")
+        .expiresAt("2026-08-29T14:31:07");
+  }
+
+  @Test
+  void forwardDpa_recordsTheForwardAndSendsTheMail_When_aRecipientIsGiven() {
+    // given
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    // when
+    var result = service.forwardDpa(RAW_TOKEN, "legal@example.org");
+
+    // then
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
+    assertEquals("2026-08-29T14:31:07", result.expiresAt());
+    // the forward is proven server-side, which is what unlocks registration without acceptance
+    assertNotNull(invite.getDpaForwardedAt());
+    verify(accountInviteRepository).save(invite);
+    var captor =
+        ArgumentCaptor.forClass(
+            de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService
+                .DpaForwardEmailCommand.class);
+    verify(dpaForwardEmailService).sendSigningLink(captor.capture());
+    assertEquals("legal@example.org", captor.getValue().recipientEmail());
+    assertEquals(RESERVED_TENANT_ID, captor.getValue().tenantId());
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", captor.getValue().signLink());
+  }
+
+  @Test
+  void forwardDpa_returnsTheLinkWithoutSendingMail_When_noRecipientIsGiven() {
+    // given
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    // when
+    var result = service.forwardDpa(RAW_TOKEN, null);
+
+    // then: the wizard shares the link manually
+    assertNotNull(result.signUrl());
+    assertNotNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  /**
+   * Option A: a mail that cannot be delivered must NOT fail the call. The sign link is already
+   * minted and live, and every burnt link is capped for 14 days — failing here is what locked the
+   * owner out with five unusable links and no mail.
+   */
+  @Test
+  void forwardDpa_returnsTheLinkAndFlagsIt_When_theMailCannotBeSent() {
+    // given the mail service rejects the send
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+    doThrow(new BadRequestException("signLink is invalid"))
+        .when(dpaForwardEmailService)
+        .sendSigningLink(any());
+
+    // when
+    var result = service.forwardDpa(RAW_TOKEN, "legal@example.org");
+
+    // then the caller still gets the link, marked as undelivered
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
+    assertFalse(result.mailSent());
+    // and the forward is RECORDED: the link is live, so the proof of it must survive the failure
+    assertNotNull(invite.getDpaForwardedAt());
+    verify(accountInviteRepository).save(invite);
+    // exactly one link was minted - a failed send must never cost a second slot
+    verify(publicDpaForwardClient, times(1)).createForwardSignLink(any(), any());
+  }
+
+  @Test
+  void forwardDpa_flagsTheMailAsSent_When_deliverySucceeds() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    var result = service.forwardDpa(RAW_TOKEN, "legal@example.org");
+
+    assertTrue(result.mailSent());
+    verify(publicDpaForwardClient, times(1)).createForwardSignLink(any(), any());
+  }
+
+  /** No recipient means nothing was ever meant to be delivered, so the flag stays clear. */
+  @Test
+  void forwardDpa_reportsNoMail_When_noRecipientIsGiven() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    assertFalse(service.forwardDpa(RAW_TOKEN, null).mailSent());
+  }
+
+  /**
+   * The degradation is scoped to the mail alone. A throttled mint produced no link at all, so there
+   * is nothing to hand back and the throttle must still reach the caller as 429.
+   */
+  @Test
+  void forwardDpa_stillFails_When_theMintIsThrottled() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenThrow(
+            new org.springframework.web.server.ResponseStatusException(
+                org.springframework.http.HttpStatus.TOO_MANY_REQUESTS, "throttled"));
+
+    assertThrows(
+        org.springframework.web.server.ResponseStatusException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+    assertNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_rejectsAConsumedInvite() {
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH))
+        .thenReturn(Optional.of(tenantAdminInvite(AccountInviteStatus.ACCEPTED)));
+
+    assertThrows(
+        AccountInviteLinkException.class, () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+    verify(publicDpaForwardClient, never()).createForwardSignLink(any(), any());
+  }
+
+  @Test
+  void forwardDpa_rejectsAnExpiredInvite() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setExpiresAt(LocalDateTime.now().minusDays(1));
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    assertThrows(AccountInviteLinkException.class, () -> service.forwardDpa(RAW_TOKEN, null));
+    verify(publicDpaForwardClient, never()).createForwardSignLink(any(), any());
+  }
+
+  @Test
+  void forwardDpa_doesNotRecordTheForward_When_theLinkCreationFails() {
+    // given TenantService rejects the reservation pair
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenThrow(new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED));
+
+    // when / then: no forward is claimed, so registration still requires an acceptance
+    assertThrows(AccountInviteLinkException.class, () -> service.forwardDpa(RAW_TOKEN, null));
+    assertNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_rejectsAnInviteWithoutAReservation() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setTenantIdReservationToken(null);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    assertThrows(InternalServerErrorException.class, () -> service.forwardDpa(RAW_TOKEN, null));
   }
 
   @Test
