@@ -30,6 +30,9 @@ public class PublicDpaForwardClient {
    * @throws AccountInviteLinkException CONSUMED — the TenantService no longer accepts the
    *     reservation pair (410)
    * @throws ResponseStatusException 409 — no governing DPA is published to forward yet
+   * @throws ResponseStatusException 429 — the onboarding already has the maximum number of
+   *     outstanding sign links. This is a deliberate, recoverable throttle answer, so it is passed
+   *     through with its own status instead of collapsing into a 500 the Admin cannot phrase.
    */
   public DpaSignInviteDTO createForwardSignLink(Long reservedTenantId, String reservationToken) {
     try {
@@ -45,6 +48,11 @@ public class PublicDpaForwardClient {
       throw new ResponseStatusException(
           HttpStatus.CONFLICT,
           "No data processing agreement is published by the platform operator yet");
+    } catch (HttpClientErrorException.TooManyRequests exception) {
+      throw new ResponseStatusException(
+          HttpStatus.TOO_MANY_REQUESTS,
+          "Too many outstanding signature links for this onboarding; wait for one to be used or to"
+              + " expire");
     }
   }
 }
