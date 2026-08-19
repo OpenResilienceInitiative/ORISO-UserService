@@ -56,6 +56,17 @@ public class AccountInviteService {
   private static final List<AccountInviteStatus> ACTIVE_TENANT_INVITE_STATUSES =
       List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
 
+  /**
+   * The invite states in which a recipient can still redeem the invite, and in which its address is
+   * therefore taken. Everything else in {@link AccountInviteStatus} is terminal and must leave the
+   * address free again: {@code ACCEPTED} is already covered by the identity probe (and must not be
+   * blocked here as well, or deleting the identity would leave the address permanently
+   * un-invitable), while {@code EXPIRED}, {@code REVOKED} and {@code SUPERSEDED} are exactly the
+   * cases in which an admin needs to invite the same person once more.
+   */
+  private static final List<AccountInviteStatus> ADDRESS_HOLDING_INVITE_STATUSES =
+      List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
+
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull InviteEmailTemplateRepository templateRepository;
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
@@ -164,12 +175,32 @@ public class AccountInviteService {
    * <p>The address is normalized the same way {@link CounsellorInviteProvisioningService}
    * normalizes it when it later creates the identity, so the guard tests exactly the value that
    * would collide.
+   *
+   * <p>Two sources have to be consulted, because neither sees the other's half of the funnel:
+   *
+   * <ol>
+   *   <li>the identity provider, which owns every address that already has an account, and
+   *   <li>the invite table, which owns every address that is merely <em>promised</em> to somebody.
+   *       An identity is created only at accept time, so an invite sitting in {@code DRAFT} or
+   *       {@code EMAIL_SENT} is invisible to the identity probe — which is how a second invite for
+   *       the same address used to be created without complaint. To the admin, and to the owner's
+   *       wording of the rule, such an address is just as "already there" as a registered one.
+   * </ol>
+   *
+   * <p>Deliberately not backed by a database constraint — see {@link
+   * AccountInviteRepository#countNonTerminalInvitesForRecipientEmail} for why the rule is not
+   * expressible as one.
    */
   private void verifyRecipientEmailAvailable(String recipientEmail) {
     String normalized = recipientEmail.trim().toLowerCase(Locale.ROOT);
-    if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()) {
+    if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()
+        || accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+                normalized, ADDRESS_HOLDING_INVITE_STATUSES, LocalDateTime.now())
+            > 0) {
       // 409 + X-Reason: EMAIL_NOT_AVAILABLE — distinguishable from the bare 400 of a malformed
-      // address and from the reason-less 409 of a taken tenant ID.
+      // address and from the reason-less 409 of a taken tenant ID. Both sources answer with the
+      // SAME reason on purpose: the admin renders one inline field error for it, and a second
+      // code would degrade to a generic toast.
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }

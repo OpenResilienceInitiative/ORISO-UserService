@@ -226,10 +226,20 @@ public class KeycloakService
     updateEmail(userId, userHelper.getDummyEmail(userId));
   }
 
+  /**
+   * Exact-owner lookup on top of Keycloak's fuzzy user search, which also matches on username,
+   * first and last name — hence the re-filter on the e-mail field itself.
+   *
+   * <p>The comparison ignores case: callers normalize the probe to lower case, but a stored record
+   * need not be lower-cased (imported or externally federated users routinely are not). A
+   * case-sensitive comparison would discard exactly the hit that Keycloak's own case-insensitive
+   * search just returned and report the address as free — the same duplicate-address defect the
+   * callers use this method to prevent.
+   */
   @Override
   public Optional<IdentityEmailOwner> findByEmail(String email) {
     return keycloakClient.getUsersResource().search(email, 0, Integer.MAX_VALUE).stream()
-        .filter(userRepresentation -> email.equals(userRepresentation.getEmail()))
+        .filter(userRepresentation -> email.equalsIgnoreCase(userRepresentation.getEmail()))
         .findFirst()
         .map(userRepresentation -> new IdentityEmailOwner(userRepresentation.getUsername()));
   }
