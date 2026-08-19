@@ -4,13 +4,16 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
@@ -29,6 +32,7 @@ import java.time.ZoneId;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 import lombok.NonNull;
@@ -62,6 +66,7 @@ public class AccountInviteService {
   private final @NonNull InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   private final @NonNull InviteMailDispatchService inviteMailDispatchService;
   private final @NonNull InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
+  private final @NonNull IdentityEmailOwnerLookup identityEmailOwnerLookup;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand command) {
@@ -75,6 +80,7 @@ public class AccountInviteService {
       throw new BadRequestException("recipientEmail is required");
     }
     validateAllocationModes(command);
+    verifyRecipientEmailAvailable(command.recipientEmail());
     if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
         && command.tenantId() != null
         && isTenantIdTaken(command.tenantId())) {
@@ -137,6 +143,35 @@ public class AccountInviteService {
         tenantIdAllocationClient.release(tenantReservation.tenantId());
       }
       throw exception;
+    }
+  }
+
+  /**
+   * P3: refuses an invite whose recipient address already belongs to a registered identity.
+   *
+   * <p>Before this guard the collision only surfaced at redemption time — the invitee filled in the
+   * whole registration, signed and forwarded the contract and only then hit the dead-end
+   * "invitation already used" page, with all that work lost. The check therefore belongs at the
+   * front of the funnel, on the admin's create call.
+   *
+   * <p>Role-agnostic on purpose: counsellor and tenant-admin invites both run through {@code
+   * createInvite}, and so do both creation paths ("send directly" posts a templateId, "add to list"
+   * does not). One guard covers all four combinations.
+   *
+   * <p>No separate availability endpoint is exposed: the check rides on the existing, admin-only
+   * create call, so it never becomes an unauthenticated user-enumeration oracle.
+   *
+   * <p>The address is normalized the same way {@link CounsellorInviteProvisioningService}
+   * normalizes it when it later creates the identity, so the guard tests exactly the value that
+   * would collide.
+   */
+  private void verifyRecipientEmailAvailable(String recipientEmail) {
+    String normalized = recipientEmail.trim().toLowerCase(Locale.ROOT);
+    if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()) {
+      // 409 + X-Reason: EMAIL_NOT_AVAILABLE — distinguishable from the bare 400 of a malformed
+      // address and from the reason-less 409 of a taken tenant ID.
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
   }
 
