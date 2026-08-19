@@ -75,4 +75,12 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
 
   List<AccountInvite> findAllByAcceptedByUserIdAndTwoFactorStatus(
       String acceptedByUserId, TwoFactorGateStatus twoFactorStatus);
+
+  /**
+   * Newest onboarding invite of the tenant that forwarded the DPA from the pre-account wizard — the
+   * recipient anchor for its DPA_SIGNED_NOTICE (ORISO-UserService#1005).
+   */
+  Optional<AccountInvite>
+      findFirstByTenantIdAndTargetRoleAndDpaForwardedAtIsNotNullOrderByDpaForwardedAtDesc(
+          Long tenantId, AccountInviteTargetRole targetRole);
 }
