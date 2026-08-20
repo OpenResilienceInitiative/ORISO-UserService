@@ -27,7 +27,6 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -153,9 +152,7 @@ public class DpaSignedNoticeService {
       InviteMailDispatchService inviteMailDispatchService,
       TenantService tenantService,
       PlatformTransactionManager transactionManager,
-      // No default on purpose: a baked-in fallback silently mails people into the wrong
-      // environment, which is worse than refusing to start. The property is set per environment.
-      @Value("${account.invite.admin.frontend.base-url}") String adminFrontendBaseUrl) {
+      AdminPanelUrl adminPanelUrlProvider) {
     this.signatureReadClient = signatureReadClient;
     this.noticeRepository = noticeRepository;
     this.adminRepository = adminRepository;
@@ -167,7 +164,7 @@ public class DpaSignedNoticeService {
     this.requiresNewTransaction = new TransactionTemplate(transactionManager);
     this.requiresNewTransaction.setPropagationBehavior(
         TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-    this.adminPanelUrl = normalizeBaseUrl(adminFrontendBaseUrl) + "/admin";
+    this.adminPanelUrl = adminPanelUrlProvider.value();
   }
 
   /**
@@ -452,37 +449,6 @@ public class DpaSignedNoticeService {
     }
     var pattern = "de".equalsIgnoreCase(language) ? "dd.MM.yyyy HH:mm 'Uhr'" : "yyyy-MM-dd HH:mm";
     return parsed.format(DateTimeFormatter.ofPattern(pattern));
-  }
-
-  private static String normalizeBaseUrl(String value) {
-    if (isBlank(value)) {
-      throw new IllegalStateException(
-          "account.invite.admin.frontend.base-url must be configured; the DPA signed-notice links"
-              + " administrators into the Admin panel and must not guess an environment");
-    }
-    var base = value.trim();
-    // "https://", "/admin" and "mailto:..." all pass a blank check and then mail unusable links,
-    // so the shape is validated at startup rather than discovered by a recipient.
-    java.net.URI parsed;
-    try {
-      parsed = java.net.URI.create(base);
-    } catch (IllegalArgumentException malformed) {
-      throw new IllegalStateException(
-          "account.invite.admin.frontend.base-url is not a valid URL: " + base, malformed);
-    }
-    if (parsed.getScheme() == null
-        || !(parsed.getScheme().equalsIgnoreCase("http")
-            || parsed.getScheme().equalsIgnoreCase("https"))
-        || isBlank(parsed.getHost())) {
-      throw new IllegalStateException(
-          "account.invite.admin.frontend.base-url must be an absolute http(s) URL with a host,"
-              + " but was: "
-              + base);
-    }
-    while (base.endsWith("/")) {
-      base = base.substring(0, base.length() - 1);
-    }
-    return base;
   }
 
   private record Recipient(String email, String language) {}

@@ -8,9 +8,9 @@ import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
+import de.caritas.cob.userservice.api.service.notification.AdminPanelUrl;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -55,11 +55,10 @@ public class InviteEmailPreviewService {
   private final @NonNull InviteMailDispatchService inviteMailDispatchService;
 
   /**
-   * The same Admin panel URL the notice actually links to. Hardcoding a sample here would let the
-   * preview show an operator a different URL than delivery uses — the class of defect that made us
-   * take the baked-in fallback out of the notice service.
+   * The same Admin panel URL the delivered notice carries. Injected as the shared component rather
+   * than re-derived here, so a preview can never advertise a different destination than delivery.
    */
-  private final @Value("${account.invite.admin.frontend.base-url}") String adminPanelUrl;
+  private final @NonNull AdminPanelUrl adminPanelUrl;
 
   @Transactional(readOnly = true)
   public InviteEmailPreview preview(PreviewCommand command) {
@@ -140,7 +139,7 @@ public class InviteEmailPreviewService {
             "signerName", SAMPLE_FIRST_NAME + " " + SAMPLE_LAST_NAME,
             "signerPosition", "Geschäftsführung",
             "signerPositionSuffix", " (Geschäftsführung)",
-            "adminUrl", adminPanelUrl);
+            "adminUrl", adminPanelUrl.value());
     var rendered = value;
     for (var entry : samples.entrySet()) {
       rendered = rendered.replace("{{" + entry.getKey() + "}}", entry.getValue());

@@ -93,7 +93,7 @@ class DpaSignedNoticeServiceTest {
             inviteMailDispatchService,
             tenantService,
             transactionManager,
-            "https://admin.example.org");
+            new AdminPanelUrl("https://admin.example.org"));
     // the endpoint dispatches asynchronously; run it inline so these tests keep asserting the
     // work itself rather than the hand-off
     service.useExecutor(Runnable::run);
