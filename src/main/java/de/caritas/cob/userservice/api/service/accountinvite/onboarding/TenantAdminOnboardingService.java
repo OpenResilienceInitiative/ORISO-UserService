@@ -290,8 +290,9 @@ public class TenantAdminOnboardingService {
    * the link back to share manually. Only an EMAIL_SENT, unexpired invite may forward — the DPA
    * step is only reachable in that state.
    */
-  // noRollbackFor mirrors registerTenantAdmin: the EXPIRED transition must survive the link-death
-  // exception, or an expired invite would be re-offered the forward on every retry.
+  // noRollbackFor mirrors registerTenantAdmin: the EXPIRED transition below must survive the
+  // link-death exception. No other write happens before an AccountInviteLinkException can be
+  // thrown here, so nothing partial can commit.
   @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public DpaForwardResult forwardDpa(String rawToken, String recipientEmail) {
     AccountInvite invite = findTenantAdminInvite(rawToken);
