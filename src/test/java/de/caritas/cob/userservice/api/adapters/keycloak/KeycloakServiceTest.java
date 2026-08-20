@@ -1622,6 +1622,26 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void findByEmail_Should_ReturnTypedOwner_When_StoredRecordDiffersOnlyInCase() {
+    // Callers probe with a normalized (lower-cased) address, and Keycloak's own search is
+    // case-insensitive — so it hands back the record. A case-sensitive equals() filter would
+    // then throw that hit away again and report the address as free, which is precisely the
+    // duplicate the caller is trying to prevent.
+    var probe = "mail@example.com";
+    UserRepresentation userRepresentation = mock(UserRepresentation.class);
+    when(userRepresentation.getEmail()).thenReturn("Mail@Example.COM");
+    when(userRepresentation.getUsername()).thenReturn(USERNAME);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.search(probe, 0, Integer.MAX_VALUE))
+        .thenReturn(singletonList(userRepresentation));
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    var result = keycloakService.findByEmail(probe);
+
+    assertThat(result, is(Optional.of(new IdentityEmailOwner(USERNAME))));
+  }
+
+  @Test
   public void findByEmail_Should_ReturnEmpty_When_NoMatchFound() {
     var email = "mail@example.com";
     UsersResource usersResource = mock(UsersResource.class);

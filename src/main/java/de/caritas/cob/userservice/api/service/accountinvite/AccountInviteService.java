@@ -4,13 +4,16 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
@@ -29,6 +32,7 @@ import java.time.ZoneId;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 import lombok.NonNull;
@@ -52,6 +56,17 @@ public class AccountInviteService {
   private static final List<AccountInviteStatus> ACTIVE_TENANT_INVITE_STATUSES =
       List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
 
+  /**
+   * The invite states in which a recipient can still redeem the invite, and in which its address is
+   * therefore taken. Everything else in {@link AccountInviteStatus} is terminal and must leave the
+   * address free again: {@code ACCEPTED} is already covered by the identity probe (and must not be
+   * blocked here as well, or deleting the identity would leave the address permanently
+   * un-invitable), while {@code EXPIRED}, {@code REVOKED} and {@code SUPERSEDED} are exactly the
+   * cases in which an admin needs to invite the same person once more.
+   */
+  private static final List<AccountInviteStatus> ADDRESS_HOLDING_INVITE_STATUSES =
+      List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
+
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull InviteEmailTemplateRepository templateRepository;
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
@@ -62,6 +77,7 @@ public class AccountInviteService {
   private final @NonNull InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   private final @NonNull InviteMailDispatchService inviteMailDispatchService;
   private final @NonNull InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
+  private final @NonNull IdentityEmailOwnerLookup identityEmailOwnerLookup;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand command) {
@@ -75,6 +91,7 @@ public class AccountInviteService {
       throw new BadRequestException("recipientEmail is required");
     }
     validateAllocationModes(command);
+    verifyRecipientEmailAvailable(command.recipientEmail());
     if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
         && command.tenantId() != null
         && isTenantIdTaken(command.tenantId())) {
@@ -137,6 +154,55 @@ public class AccountInviteService {
         tenantIdAllocationClient.release(tenantReservation.tenantId());
       }
       throw exception;
+    }
+  }
+
+  /**
+   * P3: refuses an invite whose recipient address already belongs to a registered identity.
+   *
+   * <p>Before this guard the collision only surfaced at redemption time — the invitee filled in the
+   * whole registration, signed and forwarded the contract and only then hit the dead-end
+   * "invitation already used" page, with all that work lost. The check therefore belongs at the
+   * front of the funnel, on the admin's create call.
+   *
+   * <p>Role-agnostic on purpose: counsellor and tenant-admin invites both run through {@code
+   * createInvite}, and so do both creation paths ("send directly" posts a templateId, "add to list"
+   * does not). One guard covers all four combinations.
+   *
+   * <p>No separate availability endpoint is exposed: the check rides on the existing, admin-only
+   * create call, so it never becomes an unauthenticated user-enumeration oracle.
+   *
+   * <p>The address is normalized the same way {@link CounsellorInviteProvisioningService}
+   * normalizes it when it later creates the identity, so the guard tests exactly the value that
+   * would collide.
+   *
+   * <p>Two sources have to be consulted, because neither sees the other's half of the funnel:
+   *
+   * <ol>
+   *   <li>the identity provider, which owns every address that already has an account, and
+   *   <li>the invite table, which owns every address that is merely <em>promised</em> to somebody.
+   *       An identity is created only at accept time, so an invite sitting in {@code DRAFT} or
+   *       {@code EMAIL_SENT} is invisible to the identity probe — which is how a second invite for
+   *       the same address used to be created without complaint. To the admin, and to the owner's
+   *       wording of the rule, such an address is just as "already there" as a registered one.
+   * </ol>
+   *
+   * <p>Deliberately not backed by a database constraint — see {@link
+   * AccountInviteRepository#countNonTerminalInvitesForRecipientEmail} for why the rule is not
+   * expressible as one.
+   */
+  private void verifyRecipientEmailAvailable(String recipientEmail) {
+    String normalized = recipientEmail.trim().toLowerCase(Locale.ROOT);
+    if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()
+        || accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+                normalized, ADDRESS_HOLDING_INVITE_STATUSES, LocalDateTime.now())
+            > 0) {
+      // 409 + X-Reason: EMAIL_NOT_AVAILABLE — distinguishable from the bare 400 of a malformed
+      // address and from the reason-less 409 of a taken tenant ID. Both sources answer with the
+      // SAME reason on purpose: the admin renders one inline field error for it, and a second
+      // code would degrade to a generic toast.
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
   }
 
