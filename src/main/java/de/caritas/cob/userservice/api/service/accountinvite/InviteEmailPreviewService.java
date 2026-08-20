@@ -84,12 +84,24 @@ public class InviteEmailPreviewService {
             .build();
     String acceptUrl = inviteAcceptUrlBuilder.buildAcceptUrl(targetRoleFor(kind), SAMPLE_TOKEN);
 
-    String renderedSubject = AccountInviteService.render(subject, sampleInvite, acceptUrl);
-    String renderedBody = AccountInviteService.render(body, sampleInvite, acceptUrl);
+    // DPA_SIGNED_NOTICE speaks a different placeholder dialect than the invite mails and carries
+    // no accept link at all: rendered through the invite renderer an operator would see raw
+    // {{tenantName}} / {{signerName}} left standing and a counsellor accept URL that this mail
+    // never contains. Sample values keep the preview truthful about what is actually sent.
+    String renderedSubject =
+        kind == InviteEmailTemplateKind.DPA_SIGNED_NOTICE
+            ? renderSignedNoticeSample(subject)
+            : AccountInviteService.render(subject, sampleInvite, acceptUrl);
+    String renderedBody =
+        kind == InviteEmailTemplateKind.DPA_SIGNED_NOTICE
+            ? renderSignedNoticeSample(body)
+            : AccountInviteService.render(body, sampleInvite, acceptUrl);
 
+    // the signed notice links to the Admin panel, not to an invite accept route
+    String primaryAction = kind == InviteEmailTemplateKind.DPA_SIGNED_NOTICE ? null : acceptUrl;
     BrandedEmail mail =
         inviteMailDispatchService.renderBrandedMail(
-            renderedSubject, renderedBody, acceptUrl, safe.tenantId(), language);
+            renderedSubject, renderedBody, primaryAction, safe.tenantId(), language);
 
     return new InviteEmailPreview(
         template == null ? null : template.getId(),
@@ -100,6 +112,27 @@ public class InviteEmailPreviewService {
         mail.html(),
         mail.plainText(),
         acceptUrl);
+  }
+
+  /** Sample values for the DPA_SIGNED_NOTICE dialect (see DpaSignedNoticeService placeholders). */
+  static String renderSignedNoticeSample(String value) {
+    if (value == null) {
+      return "";
+    }
+    var samples =
+        java.util.Map.of(
+            "tenantName", "Träger Nord e.V.",
+            "dpaVersion", "01.07.2026 12:00 Uhr",
+            "signedAt", "14.08.2026 09:15 Uhr",
+            "signerName", SAMPLE_FIRST_NAME + " " + SAMPLE_LAST_NAME,
+            "signerPosition", "Geschäftsführung",
+            "signerPositionSuffix", " (Geschäftsführung)",
+            "adminUrl", "https://admin.example.org/admin");
+    var rendered = value;
+    for (var entry : samples.entrySet()) {
+      rendered = rendered.replace("{{" + entry.getKey() + "}}", entry.getValue());
+    }
+    return rendered;
   }
 
   private InviteEmailTemplate findTemplate(Long templateId) {

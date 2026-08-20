@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -91,7 +92,7 @@ class DpaSignedNoticeServiceTest {
             inviteMailDispatchService,
             tenantService,
             transactionManager,
-            "https://app.oriso.org");
+            "https://admin.example.org");
   }
 
   private static Admin forwardingAdmin() {
@@ -138,7 +139,7 @@ class DpaSignedNoticeServiceTest {
             eq("toni@example.org"),
             subject.capture(),
             body.capture(),
-            eq("https://app.oriso.org/admin"),
+            eq("https://admin.example.org/admin"),
             eq(TENANT_ID),
             eq("en"));
     // the account language wins
@@ -171,6 +172,41 @@ class DpaSignedNoticeServiceTest {
     verify(inviteMailDispatchService)
         .send(eq("wizard.admin@example.org"), any(), any(), any(), eq(TENANT_ID), eq("de"));
     verify(adminRepository, never()).findById(anyString());
+  }
+
+  @Test
+  void onSignatureHint_releasesTheClaim_When_renderingFailsBeforeDispatch() {
+    // the claim is committed in its own transaction and its unique key is what makes the notice
+    // exactly-once — a claim stranded by a PRE-dispatch failure would not just lose this attempt,
+    // it would make every later hint lose the race and the notice would never be sent
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(templateRepository.findByKindAndActiveTrueOrderByCreateDateDesc(
+            InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
+        .thenThrow(new IllegalStateException("template store unavailable"));
+
+    service.onSignatureHint(TENANT_ID);
+
+    verify(noticeRepository).delete(any(DpaSignedNotice.class));
+    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void onSignatureHint_keepsSignaturesApart_When_theProviderOmitsTheDpaVersion() {
+    // pre-dev's provider contract has no dpaVersion on the signature shape, so it is absent for
+    // every signature today; keying on "unknown" would collapse them all onto one ledger row and
+    // silently treat later signatures as duplicates
+    var signature = forwardedSignature("kc-admin-1").dpaVersion(null);
+    when(signatureReadClient.readSignatures(TENANT_ID)).thenReturn(List.of(signature));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+
+    service.onSignatureHint(TENANT_ID);
+
+    var captor = ArgumentCaptor.forClass(DpaSignedNotice.class);
+    verify(noticeRepository, org.mockito.Mockito.atLeastOnce()).save(captor.capture());
+    var key = captor.getAllValues().get(0).getDpaVersion();
+    assertNotEquals("unknown", key);
+    assertTrue(key.contains(signature.getSignedAt()));
   }
 
   @Test

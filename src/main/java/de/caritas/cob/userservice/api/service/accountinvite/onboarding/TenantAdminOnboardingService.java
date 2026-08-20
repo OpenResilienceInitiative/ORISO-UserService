@@ -348,14 +348,24 @@ public class TenantAdminOnboardingService {
     return new DpaForwardResult(signInvite.getSignLink(), signInvite.getExpiresAt());
   }
 
+  /**
+   * The validity window TenantService actually issued. Never invented: the mail tells the signer
+   * how long they have to sign a legal document, and a guessed window is one the link does not
+   * honour — the API response would also be free to state a different one. A missing or unparseable
+   * value means the provider broke its contract, which is worth failing on rather than papering
+   * over.
+   */
   private static LocalDateTime parseExpiry(String expiresAt) {
     if (isBlank(expiresAt)) {
-      return LocalDateTime.now().plusDays(14);
+      throw new InternalServerErrorException(
+          "TenantService returned a DPA sign link without an expiry; refusing to state a validity"
+              + " window the link may not honour");
     }
     try {
       return LocalDateTime.parse(expiresAt);
     } catch (java.time.format.DateTimeParseException exception) {
-      return LocalDateTime.now().plusDays(14);
+      throw new InternalServerErrorException(
+          "TenantService returned an unparseable DPA sign link expiry: " + expiresAt);
     }
   }
 

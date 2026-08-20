@@ -33,7 +33,8 @@ import lombok.ToString;
 @NoArgsConstructor
 @AllArgsConstructor
 @Builder
-@ToString
+// recipientEmail is personal data and entity toString reaches logs (same rule as AccountInvite)
+@ToString(exclude = {"recipientEmail"})
 public class DpaSignedNotice {
 
   @Id

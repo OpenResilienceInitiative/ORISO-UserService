@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.service.notification;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
-import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
@@ -115,8 +114,9 @@ public class DpaSignedNoticeService {
       InviteMailDispatchService inviteMailDispatchService,
       TenantService tenantService,
       PlatformTransactionManager transactionManager,
-      @Value("${account.invite.admin.frontend.base-url:https://app.oriso.org}")
-          String adminFrontendBaseUrl) {
+      // No default on purpose: a baked-in fallback silently mails people into the wrong
+      // environment, which is worse than refusing to start. The property is set per environment.
+      @Value("${account.invite.admin.frontend.base-url}") String adminFrontendBaseUrl) {
     this.signatureReadClient = signatureReadClient;
     this.noticeRepository = noticeRepository;
     this.adminRepository = adminRepository;
@@ -196,7 +196,7 @@ public class DpaSignedNoticeService {
   /** Claims the exactly-once ledger row; empty when another hint already claimed it. */
   private Optional<DpaSignedNotice> claimNotice(
       Long tenantId, DpaSignatureDTO signature, Recipient recipient) {
-    var dpaVersion = signature.getDpaVersion() == null ? "unknown" : signature.getDpaVersion();
+    var dpaVersion = dedupKeyFor(signature);
     try {
       return Optional.ofNullable(
           requiresNewTransaction.execute(
@@ -216,17 +216,23 @@ public class DpaSignedNoticeService {
 
   private void sendNotice(
       Long tenantId, DpaSignatureDTO signature, Recipient recipient, DpaSignedNotice claim) {
-    var language = recipient.language();
-    var template = findActiveTemplate(language);
-    var placeholders = buildPlaceholders(tenantId, signature, language);
-    var subject =
-        render(
-            template.map(InviteEmailTemplate::getSubject).orElse(defaultSubject(language)),
-            placeholders);
-    var body =
-        render(
-            template.map(InviteEmailTemplate::getBody).orElse(defaultBody(language)), placeholders);
+    // Everything from here until the mail is handed over must be compensated on failure. The claim
+    // is already committed in its own transaction, and its unique key is what makes the notice
+    // exactly-once — so a claim left behind with sent_at still null does not merely lose THIS
+    // attempt, it makes every later hint lose the race and the notice is never sent at all.
+    // Loading a template, resolving the tenant name and rendering all reach out or can throw.
     try {
+      var language = recipient.language();
+      var template = findActiveTemplate(language);
+      var placeholders = buildPlaceholders(tenantId, signature, language);
+      var subject =
+          render(
+              template.map(InviteEmailTemplate::getSubject).orElse(defaultSubject(language)),
+              placeholders);
+      var body =
+          render(
+              template.map(InviteEmailTemplate::getBody).orElse(defaultBody(language)),
+              placeholders);
       inviteMailDispatchService.send(
           recipient.email(), subject, body, adminPanelUrl, tenantId, language);
       requiresNewTransaction.executeWithoutResult(
@@ -235,14 +241,47 @@ public class DpaSignedNoticeService {
             noticeRepository.save(claim);
           });
       log.info("DPA signed-notice sent for tenant {}", tenantId);
-    } catch (SmtpSendException exception) {
-      // compensate the claim so a later hint can retry the notice
+    } catch (RuntimeException failure) {
+      // Every failure, not only SmtpSendException: a template load, the tenant-name lookup or the
+      // rendering can fail too, and a stranded claim silently disables the notice forever.
+      releaseClaim(claim, tenantId, failure);
+    }
+  }
+
+  /** Frees the exactly-once claim so a later hint can retry; never masks the original failure. */
+  private void releaseClaim(DpaSignedNotice claim, Long tenantId, RuntimeException failure) {
+    try {
       requiresNewTransaction.executeWithoutResult(tx -> noticeRepository.delete(claim));
       log.warn(
-          "DPA signed-notice for tenant {} could not be handed to the SMTP server — claim"
-              + " released for retry",
-          tenantId);
+          "DPA signed-notice for tenant {} failed before dispatch — claim released for retry",
+          tenantId,
+          failure);
+    } catch (RuntimeException compensationFailure) {
+      // The claim is stuck: no notice will ever be sent for this tenant/version, so this line is
+      // the only trace it existed. Logged loudly rather than swallowed.
+      log.error(
+          "DPA signed-notice for tenant {} failed AND its claim could not be released; no notice"
+              + " will be sent for this signature",
+          tenantId,
+          compensationFailure);
     }
+  }
+
+  /**
+   * Exactly-once key for a signature. Prefers the DPA version, but that field is absent from the
+   * provider contract currently deployed on pre-dev, so the signature timestamp is the fallback —
+   * it is what the provider actually returns today and it still separates one signature from the
+   * next. Only when neither is present do signatures collapse onto a shared key, and that would
+   * mean a signature carrying no identifying facts at all.
+   */
+  private static String dedupKeyFor(DpaSignatureDTO signature) {
+    if (!isBlank(signature.getDpaVersion())) {
+      return signature.getDpaVersion();
+    }
+    if (!isBlank(signature.getSignedAt())) {
+      return "signedAt:" + signature.getSignedAt();
+    }
+    return "unknown";
   }
 
   private Optional<InviteEmailTemplate> findActiveTemplate(String language) {
@@ -329,7 +368,12 @@ public class DpaSignedNoticeService {
   }
 
   private static String normalizeBaseUrl(String value) {
-    var base = isBlank(value) ? "https://app.oriso.org" : value.trim();
+    if (isBlank(value)) {
+      throw new IllegalStateException(
+          "account.invite.admin.frontend.base-url must be configured; the DPA signed-notice links"
+              + " administrators into the Admin panel and must not guess an environment");
+    }
+    var base = value.trim();
     while (base.endsWith("/")) {
       base = base.substring(0, base.length() - 1);
     }

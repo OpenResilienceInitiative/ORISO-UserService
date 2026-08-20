@@ -40,11 +40,17 @@ public class PublicDpaForwardClient {
                   .reservedTenantId(reservedTenantId)
                   .tenantIdReservationToken(reservationToken));
     } catch (HttpClientErrorException.Gone exception) {
+      log.info(
+          "TenantService rejected the reservation pair for tenant {} as no longer usable",
+          reservedTenantId,
+          exception);
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
     } catch (HttpClientErrorException.Conflict exception) {
+      // keep the upstream cause: without it the reason the operator DPA lookup failed is lost
       throw new ResponseStatusException(
           HttpStatus.CONFLICT,
-          "No data processing agreement is published by the platform operator yet");
+          "No data processing agreement is published by the platform operator yet",
+          exception);
     }
   }
 }
