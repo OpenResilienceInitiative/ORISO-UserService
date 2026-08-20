@@ -57,6 +57,15 @@ public class AdminPanelUrl {
               + " but was: "
               + base);
     }
+    // A query or fragment would swallow the path we append: "https://host?source=x" + "/admin"
+    // becomes "…?source=x/admin", which is a wrong-but-plausible link — exactly the kind this
+    // class exists to stop reaching a recipient.
+    if (parsed.getRawQuery() != null || parsed.getRawFragment() != null) {
+      throw new IllegalStateException(
+          "account.invite.admin.frontend.base-url must carry no query or fragment, because the"
+              + " Admin panel path is appended to it, but was: "
+              + base);
+    }
     while (base.endsWith("/")) {
       base = base.substring(0, base.length() - 1);
     }
