@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -93,6 +94,9 @@ class DpaSignedNoticeServiceTest {
             tenantService,
             transactionManager,
             "https://admin.example.org");
+    // the endpoint dispatches asynchronously; run it inline so these tests keep asserting the
+    // work itself rather than the hand-off
+    service.useExecutor(Runnable::run);
   }
 
   private static Admin forwardingAdmin() {
@@ -279,6 +283,42 @@ class DpaSignedNoticeServiceTest {
 
     verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
     verify(noticeRepository, never()).save(any());
+  }
+
+  @Test
+  void onSignatureHint_stillAnswers_When_theDispatchQueueIsFull() {
+    // the 202 must hold by construction at the boundary: a saturated queue is shed, never raised
+    service.useExecutor(
+        task -> {
+          throw new java.util.concurrent.RejectedExecutionException("queue full");
+        });
+
+    assertDoesNotThrow(() -> service.onSignatureHint(TENANT_ID));
+    verify(signatureReadClient, never()).readSignatures(any());
+  }
+
+  @Test
+  void onSignatureHint_stillAnswers_When_theExecutorIsShutDown() {
+    // a shut-down executor throws IllegalStateException, NOT RejectedExecutionException — the
+    // hole the same pattern had elsewhere in this codebase
+    service.useExecutor(
+        task -> {
+          throw new IllegalStateException("executor shut down");
+        });
+
+    assertDoesNotThrow(() -> service.onSignatureHint(TENANT_ID));
+  }
+
+  @Test
+  void onSignatureHint_stillAnswers_When_aCollaboratorThrows() {
+    // e.g. NotAuthorizedException escaping the locale lookup: the boundary contains it, so the
+    // endpoint keeps its documented 202 without every collaborator being individually defensive
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(identityLocaleLookup.findLocaleById(anyString()))
+        .thenThrow(new IllegalStateException("token expired"));
+
+    assertDoesNotThrow(() -> service.onSignatureHint(TENANT_ID));
   }
 
   @Test

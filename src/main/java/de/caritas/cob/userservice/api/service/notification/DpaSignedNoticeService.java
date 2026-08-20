@@ -15,12 +15,17 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
+import jakarta.annotation.PreDestroy;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -91,6 +96,40 @@ public class DpaSignedNoticeService {
 
       {{adminUrl}}""";
 
+  /**
+   * Bounded dispatcher for the PUBLIC hint endpoint, modelled on {@code PasswordResetService}: an
+   * anonymous route must not let request floods accumulate work in memory, and here each request
+   * would otherwise perform a technical-user login and an upstream read BEFORE the ledger can
+   * deduplicate — so arbitrary tenant ids amplify authentication and upstream traffic. Overflow is
+   * rejected and shed; the HTTP answer is 202 either way, which keeps the constant response that
+   * prevents disclosure while also bounding the work.
+   */
+  private final ThreadPoolExecutor defaultNoticeExecutor =
+      new ThreadPoolExecutor(
+          1,
+          2,
+          30L,
+          TimeUnit.SECONDS,
+          new ArrayBlockingQueue<>(200),
+          runnable -> {
+            Thread thread = new Thread(runnable, "dpa-signed-notice-dispatch");
+            thread.setDaemon(true);
+            return thread;
+          },
+          new ThreadPoolExecutor.AbortPolicy());
+
+  /** Seam: tests substitute a synchronous executor. */
+  private Executor noticeExecutor = defaultNoticeExecutor;
+
+  void useExecutor(Executor executor) {
+    this.noticeExecutor = executor;
+  }
+
+  @PreDestroy
+  void shutdownNoticeExecutor() {
+    defaultNoticeExecutor.shutdown();
+  }
+
   private final TenantDpaSignatureReadClient signatureReadClient;
   private final DpaSignedNoticeRepository noticeRepository;
   private final AdminRepository adminRepository;
@@ -139,6 +178,38 @@ public class DpaSignedNoticeService {
     if (tenantId == null) {
       return;
     }
+    try {
+      noticeExecutor.execute(() -> processHint(tenantId));
+    } catch (RuntimeException dispatchFailure) {
+      // Every RuntimeException, not only RejectedExecutionException: a saturated queue rejects,
+      // but an executor already shut down during deployment throws IllegalStateException, and
+      // both must still leave the caller with 202.
+      log.warn(
+          "DPA signed-notice hint for tenant {} was shed at dispatch ({})",
+          tenantId,
+          dispatchFailure.getClass().getSimpleName());
+    }
+  }
+
+  /**
+   * The actual work, off the request thread. Everything it can throw — an upstream read, a
+   * technical-user login, the locale lookup, rendering, SMTP — is contained here by design: the
+   * endpoint's 202 must not depend on each collaborator being individually defensive, because the
+   * next collaborator added will not know that rule.
+   */
+  private void processHint(Long tenantId) {
+    try {
+      dispatchNotice(tenantId);
+    } catch (RuntimeException failure) {
+      log.warn(
+          "DPA signed-notice for tenant {} could not be processed; it stays eligible for a later"
+              + " hint",
+          tenantId,
+          failure);
+    }
+  }
+
+  private void dispatchNotice(Long tenantId) {
     Optional<DpaSignatureDTO> forwardedSignature = findLatestForwardedSignature(tenantId);
     if (forwardedSignature.isEmpty()) {
       log.debug("DPA signed-notice hint for tenant {} matched no forwarded signature", tenantId);
