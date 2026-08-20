@@ -531,6 +531,30 @@ class TenantAdminOnboardingServiceTest {
     // no link minted, and above all no mail sent
     verify(publicDpaForwardClient, never()).createForwardSignLink(any(), any());
     verify(dpaForwardEmailService, never()).sendSigningLink(any());
+    // a refused attempt must not cost anything either: the count is untouched and nothing is
+    // written, so a flood cannot push an already-exhausted invite further out of reach
+    assertEquals(
+        TenantAdminOnboardingService.MAX_DPA_FORWARDS_PER_INVITE, invite.getDpaForwardCount());
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void forwardDpa_doesNotSpendAnAttempt_When_theLinkCouldNotBeMinted() {
+    // an upstream failure must not burn one of the three forwards a Träger gets - otherwise a
+    // TenantService outage silently exhausts a legitimate invitation
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardCount(1);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenThrow(new InternalServerErrorException("TenantService unavailable"));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    assertEquals(1, invite.getDpaForwardCount());
+    verify(accountInviteRepository, never()).save(any());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
   }
 
   @Test

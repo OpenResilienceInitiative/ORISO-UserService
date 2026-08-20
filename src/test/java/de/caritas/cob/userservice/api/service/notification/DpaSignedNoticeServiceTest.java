@@ -2,7 +2,7 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertNotEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
@@ -206,11 +206,36 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
+    // one signature only proves the key is not the literal "unknown"; a fallback that derived a
+    // single fixed key for EVERY signature would pass that. Two signatures with different
+    // timestamps must claim two different ledger keys.
+    var second = forwardedSignature("kc-admin-1").dpaVersion(null).signedAt("2026-09-02T11:00:00");
+    when(signatureReadClient.readSignatures(TENANT_ID)).thenReturn(List.of(second));
+    service.onSignatureHint(TENANT_ID);
+
     var captor = ArgumentCaptor.forClass(DpaSignedNotice.class);
     verify(noticeRepository, org.mockito.Mockito.atLeastOnce()).save(captor.capture());
-    var key = captor.getAllValues().get(0).getDpaVersion();
-    assertNotEquals("unknown", key);
-    assertTrue(key.contains(signature.getSignedAt()));
+    var keys =
+        captor.getAllValues().stream().map(DpaSignedNotice::getDpaVersion).distinct().toList();
+    assertFalse(keys.contains("unknown"));
+    assertEquals(2, keys.size(), "each signature must claim its own ledger key");
+  }
+
+  @Test
+  void onSignatureHint_keepsTheClaim_When_theMailWasSentButSentAtCouldNotBeRecorded() {
+    // the compensation window: releasing the claim AFTER a successful handoff would let a later
+    // hint mail the same administrator a second notice about the same signature, and for a
+    // message about a signed contract a duplicate is worse than a missing timestamp
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(noticeRepository.save(any(DpaSignedNotice.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0)) // the claim
+        .thenThrow(new IllegalStateException("connection lost")); // recording sent_at
+
+    service.onSignatureHint(TENANT_ID);
+
+    verify(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any());
+    verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
   }
 
   @Test

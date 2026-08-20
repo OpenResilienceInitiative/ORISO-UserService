@@ -4,4 +4,4 @@
 -- address the body carries. Without a bound that is an unauthenticated mail relay that delivers a
 -- valid signing link for someone else's tenant to an arbitrary recipient.
 ALTER TABLE account_invite
-  ADD COLUMN dpa_forward_count INT NOT NULL DEFAULT 0 AFTER dpa_forwarded_at;
+  ADD COLUMN IF NOT EXISTS dpa_forward_count INT NOT NULL DEFAULT 0 AFTER dpa_forwarded_at;

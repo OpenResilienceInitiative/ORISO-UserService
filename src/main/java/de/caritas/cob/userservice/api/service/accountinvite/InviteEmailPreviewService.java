@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispa
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -52,6 +53,13 @@ public class InviteEmailPreviewService {
   private final @NonNull InviteEmailTemplateRepository templateRepository;
   private final @NonNull InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   private final @NonNull InviteMailDispatchService inviteMailDispatchService;
+
+  /**
+   * The same Admin panel URL the notice actually links to. Hardcoding a sample here would let the
+   * preview show an operator a different URL than delivery uses — the class of defect that made us
+   * take the baked-in fallback out of the notice service.
+   */
+  private final @Value("${account.invite.admin.frontend.base-url}") String adminPanelUrl;
 
   @Transactional(readOnly = true)
   public InviteEmailPreview preview(PreviewCommand command) {
@@ -120,7 +128,7 @@ public class InviteEmailPreviewService {
   }
 
   /** Sample values for the DPA_SIGNED_NOTICE dialect (see DpaSignedNoticeService placeholders). */
-  static String renderSignedNoticeSample(String value) {
+  String renderSignedNoticeSample(String value) {
     if (value == null) {
       return "";
     }
@@ -132,7 +140,7 @@ public class InviteEmailPreviewService {
             "signerName", SAMPLE_FIRST_NAME + " " + SAMPLE_LAST_NAME,
             "signerPosition", "Geschäftsführung",
             "signerPositionSuffix", " (Geschäftsführung)",
-            "adminUrl", "https://admin.example.org/admin");
+            "adminUrl", adminPanelUrl);
     var rendered = value;
     for (var entry : samples.entrySet()) {
       rendered = rendered.replace("{{" + entry.getKey() + "}}", entry.getValue());

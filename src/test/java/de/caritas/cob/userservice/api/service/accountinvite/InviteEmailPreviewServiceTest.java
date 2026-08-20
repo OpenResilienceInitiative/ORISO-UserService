@@ -68,7 +68,8 @@ class InviteEmailPreviewServiceTest {
             "smtp-user",
             "smtp-pass");
     previewService =
-        new InviteEmailPreviewService(templateRepository, acceptUrlBuilder, dispatchService);
+        new InviteEmailPreviewService(
+            templateRepository, acceptUrlBuilder, dispatchService, "https://admin.example.org");
 
     when(restTemplate.getForObject(anyString(), any()))
         .thenReturn(

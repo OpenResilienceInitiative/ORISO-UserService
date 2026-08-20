@@ -306,16 +306,32 @@ public class DpaSignedNoticeService {
               placeholders);
       inviteMailDispatchService.send(
           recipient.email(), subject, body, adminPanelUrl, tenantId, language);
+    } catch (RuntimeException beforeDispatch) {
+      // Every failure up to the handoff, not only SmtpSendException: a template load, the
+      // tenant-name lookup or the rendering can fail too, and a stranded claim silently disables
+      // the notice forever.
+      releaseClaim(claim, tenantId, beforeDispatch);
+      return;
+    }
+
+    // Past the handoff the mail is out of our hands, so the claim must NEVER be released here:
+    // releasing it would let a later hint mail the same administrator a second notice about the
+    // same signature, and for a message about a signed contract a duplicate is worse than a
+    // missing timestamp. Only the sent_at bookkeeping can be lost, and the claim keeps doing its
+    // real job - blocking a second send.
+    try {
       requiresNewTransaction.executeWithoutResult(
           tx -> {
             claim.setSentAt(LocalDateTime.now());
             noticeRepository.save(claim);
           });
       log.info("DPA signed-notice sent for tenant {}", tenantId);
-    } catch (RuntimeException failure) {
-      // Every failure, not only SmtpSendException: a template load, the tenant-name lookup or the
-      // rendering can fail too, and a stranded claim silently disables the notice forever.
-      releaseClaim(claim, tenantId, failure);
+    } catch (RuntimeException afterDispatch) {
+      log.error(
+          "DPA signed-notice for tenant {} was sent but its sent_at could not be recorded; the"
+              + " claim is kept so the notice is not sent twice",
+          tenantId,
+          afterDispatch);
     }
   }
 
@@ -445,6 +461,24 @@ public class DpaSignedNoticeService {
               + " administrators into the Admin panel and must not guess an environment");
     }
     var base = value.trim();
+    // "https://", "/admin" and "mailto:..." all pass a blank check and then mail unusable links,
+    // so the shape is validated at startup rather than discovered by a recipient.
+    java.net.URI parsed;
+    try {
+      parsed = java.net.URI.create(base);
+    } catch (IllegalArgumentException malformed) {
+      throw new IllegalStateException(
+          "account.invite.admin.frontend.base-url is not a valid URL: " + base, malformed);
+    }
+    if (parsed.getScheme() == null
+        || !(parsed.getScheme().equalsIgnoreCase("http")
+            || parsed.getScheme().equalsIgnoreCase("https"))
+        || isBlank(parsed.getHost())) {
+      throw new IllegalStateException(
+          "account.invite.admin.frontend.base-url must be an absolute http(s) URL with a host,"
+              + " but was: "
+              + base);
+    }
     while (base.endsWith("/")) {
       base = base.substring(0, base.length() - 1);
     }
