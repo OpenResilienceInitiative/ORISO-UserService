@@ -61,6 +61,49 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   boolean existsByTenantIdAndTargetRoleAndStatusIn(
       Long tenantId, AccountInviteTargetRole targetRole, Collection<AccountInviteStatus> statuses);
 
+  /**
+   * P3 duplicate-address guard: counts the invites that still hold {@code recipientEmail}, i.e. the
+   * ones a recipient could still redeem. The identity probe cannot see these — a Keycloak user is
+   * only created when an invite is accepted, so a DRAFT or EMAIL_SENT invite is invisible there.
+   *
+   * <p>Deliberately not a derived query:
+   *
+   * <ul>
+   *   <li>{@code LOWER(...)} is explicit because {@code recipient_email} is persisted trimmed but
+   *       case-preserving, and the two databases involved disagree on the default: MariaDB's {@code
+   *       utf8mb4_*_ci} collation compares case-insensitively, H2 (tests) does not. The guard must
+   *       not depend on which one it runs against.
+   *   <li>The expiry clause reflects that expiry is materialized lazily — {@code EXPIRED} is only
+   *       stamped when someone opens the link (see {@code AccountInviteService#acceptInvite}), so a
+   *       never-opened invite stays {@code EMAIL_SENT} forever. Without the date check a lapsed
+   *       invite would permanently block its address, leaving the admin no way to re-invite.
+   * </ul>
+   *
+   * <p>The caller passes the non-terminal statuses; terminal ones ({@code ACCEPTED}, {@code
+   * EXPIRED}, {@code REVOKED}, {@code SUPERSEDED}) must never block a fresh invite.
+   *
+   * <p><b>Why this stays advisory instead of becoming a unique constraint.</b> The rule above is
+   * not expressible as one. MariaDB has no partial indexes, so it would have to become a persisted
+   * generated column plus a unique index — and that column cannot contain {@code NOW()}, so it
+   * could not carry the expiry clause. The resulting constraint would be strictly harsher than the
+   * rule it is meant to enforce and would reject the legitimate re-invite after a lapsed invite,
+   * with no way for an admin to recover as long as expiry stays lazily materialized. On top of
+   * that, rows violating it already exist in the wild (two Pre-Dev addresses each hold two
+   * unaccepted invites), so the changeset would need a destructive data migration before it could
+   * even apply, and Liquibase does not run in the test profile — the migration would ship with no
+   * test coverage at all. A constraint becomes worth revisiting once invite expiry is swept
+   * eagerly; until then the service-side guard is the enforcement point.
+   */
+  @Query(
+      "SELECT COUNT(i) FROM AccountInvite i"
+          + " WHERE LOWER(i.recipientEmail) = :recipientEmail"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  long countNonTerminalInvitesForRecipientEmail(
+      @Param("recipientEmail") String recipientEmail,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
   @Query(
       "SELECT i FROM AccountInvite i"
           + " WHERE (:tenantId IS NULL OR i.tenantId = :tenantId)"
