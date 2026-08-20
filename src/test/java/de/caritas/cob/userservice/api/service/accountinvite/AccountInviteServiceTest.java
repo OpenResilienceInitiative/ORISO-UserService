@@ -112,7 +112,8 @@ class AccountInviteServiceTest {
         ArgumentCaptor.forClass(InviteEmailDelivery.class);
     verify(deliveryRepository).save(deliveryCaptor.capture());
     assertThat(deliveryCaptor.getValue().getSubjectSnapshot()).isEqualTo("Welcome Ada");
-    assertThat(deliveryCaptor.getValue().getBodySnapshot()).contains(result.rawToken());
+    // The action link reaches the recipient through the layout CTA, not the body.
+    assertThat(deliveryCaptor.getValue().getBodySnapshot()).doesNotContain(result.rawToken());
     assertThat(deliveryCaptor.getValue().getRecipientSnapshot()).isEqualTo("owner@example.org");
     assertThat(deliveryCaptor.getValue().getStatus()).isEqualTo(InviteEmailDeliveryStatus.SENT);
   }
@@ -1100,7 +1101,66 @@ class AccountInviteServiceTest {
         .buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, result.rawToken());
     assertThat(result.acceptUrl())
         .isEqualTo("https://app.oriso.org/account-invite/" + result.rawToken());
-    assertThat(result.delivery().getBodySnapshot()).isEqualTo("Link: " + result.acceptUrl());
+    // The body no longer carries the link: the branded layout renders it as a button
+    // plus a visible copy-paste line, so a body that also inlined it produced the same
+    // URL twice in the received mail.
+    assertThat(result.delivery().getBodySnapshot()).isEqualTo("Link:");
+    assertThat(result.delivery().getBodySnapshot()).doesNotContain(result.acceptUrl());
+  }
+
+  @Test
+  void sendInvite_Should_dropTheActionLinkLine_soTheLayoutRendersTheLinkExactlyOnce() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("a@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(20L)
+            .subject("s")
+            .body("Bitte schliessen Sie die Einrichtung ab:\n\n{{inviteLink}}\n\nViele Gruesse")
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    givenSuccessfulDispatch();
+
+    var result = service.sendInvite(new SendInviteCommand(1L, 20L));
+
+    // The whole line goes, not just the token, so the sentence runs straight into the
+    // CTA button instead of leaving a hole where the raw URL used to be.
+    assertThat(result.delivery().getBodySnapshot())
+        .isEqualTo("Bitte schliessen Sie die Einrichtung ab:\n\nViele Gruesse");
+    assertThat(result.delivery().getBodySnapshot()).doesNotContain(result.acceptUrl());
+  }
+
+  @Test
+  void sendInvite_Should_stillHandTheActionUrlToTheLayout_soTheCtaSurvives() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("a@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    givenSuccessfulDispatch();
+
+    var result = service.sendInvite(new SendInviteCommand(1L, 20L));
+
+    // Removing the token from the body must not remove the link from the mail: the
+    // dispatcher still receives the accept URL as the primary action.
+    verify(inviteMailDispatchService)
+        .send(any(), any(), any(), eq(result.acceptUrl()), any(), any());
   }
 
   @Test
@@ -1129,7 +1189,40 @@ class AccountInviteServiceTest {
 
     assertThat(result.acceptUrl())
         .isEqualTo("https://app.oriso.org/admin/tenant-onboarding/" + result.rawToken());
-    assertThat(result.delivery().getBodySnapshot()).contains("/admin/tenant-onboarding/");
+    // Body-only assertion inverted with the duplicate-link fix: the URL reaches the
+    // recipient through the layout's CTA, not through the authored body.
+    assertThat(result.delivery().getBodySnapshot()).doesNotContain("/admin/tenant-onboarding/");
+  }
+
+  @Test
+  void renderBody_Should_defineExactlyWhatHappensToAnInlineActionLinkToken() {
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).recipientEmail("a@example.org").firstName("Ada").build();
+
+    // Alone on its line: the line goes with it, so the introducing sentence runs
+    // straight into the CTA button.
+    assertThat(
+            AccountInviteService.renderBody(
+                "Hallo {{firstName}},\n\n{{inviteLink}}\n\nViele Gruesse", invite, "https://x/t"))
+        .isEqualTo("Hallo Ada,\n\nViele Gruesse");
+
+    // Inside a sentence: the token and the space before it go; the author's own
+    // wording is left alone, dangling colon and all. We remove a link, we do not
+    // rewrite prose.
+    assertThat(
+            AccountInviteService.renderBody(
+                "Hier: {{inviteLink}} — viel Erfolg", invite, "https://x/t"))
+        .isEqualTo("Hier: — viel Erfolg");
+
+    // A body that never used the token is untouched.
+    assertThat(AccountInviteService.renderBody("Hallo {{firstName}}", invite, "https://x/t"))
+        .isEqualTo("Hallo Ada");
+
+    // Whatever the shape, the URL never reaches the body.
+    assertThat(
+            AccountInviteService.renderBody(
+                "a {{inviteLink}} b\n{{inviteLink}}\n", invite, "https://x/t"))
+        .doesNotContain("https://x/t");
   }
 
   @Test

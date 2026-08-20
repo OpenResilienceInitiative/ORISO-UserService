@@ -228,7 +228,6 @@ public class ConsultantAgencyRelationCreatorServiceTest {
                 LogService::logInfo));
 
     verify(identityRoleLookup).findAllByUserId("consultant Id");
-    verify(identityClient, never()).userHasRole(anyString(), anyString());
     verify(consultantAgencyService, never()).saveConsultantAgency(any());
   }
 
@@ -267,7 +266,6 @@ public class ConsultantAgencyRelationCreatorServiceTest {
         LogService::logInfo);
 
     verify(identityRoleLookup).findAllByUserId("consultant Id");
-    verify(identityClient, never()).userHasRole(anyString(), anyString());
     verify(consultantAgencyService).saveConsultantAgency(any(ConsultantAgency.class));
   }
 

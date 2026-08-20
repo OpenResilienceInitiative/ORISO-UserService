@@ -71,16 +71,10 @@ public class MatrixSessionSystemMessageService {
    *
    * @param session the handed-over session (room + participants)
    * @param newAdvisorName display name of the consultant who took over
-   * @param reasonLabel the selected handover reason label
-   * @param explanation the free-text explanation given by the requester
    * @param description localized client-facing template text (nullable)
    */
   public void postCaseHandoverGrantedMessage(
-      Session session,
-      String newAdvisorName,
-      String reasonLabel,
-      String explanation,
-      String description) {
+      Session session, String newAdvisorName, String description) {
     if (session == null || session.getId() == null) {
       return;
     }
@@ -93,7 +87,7 @@ public class MatrixSessionSystemMessageService {
       return;
     }
 
-    var body = buildCaseHandoverGrantedBody(newAdvisorName, reasonLabel, explanation, description);
+    var body = buildCaseHandoverGrantedBody(newAdvisorName, description);
     if (body == null) {
       return;
     }
@@ -163,8 +157,7 @@ public class MatrixSessionSystemMessageService {
     return resolveMatrixCredentials(session);
   }
 
-  private String buildCaseHandoverGrantedBody(
-      String newAdvisorName, String reasonLabel, String explanation, String description) {
+  private String buildCaseHandoverGrantedBody(String newAdvisorName, String description) {
     var payload = new java.util.LinkedHashMap<String, String>();
     payload.put("type", CASE_HANDOVER_GRANTED_TYPE);
     if (isNotBlank(newAdvisorName)) {
@@ -172,12 +165,6 @@ public class MatrixSessionSystemMessageService {
     }
     if (isNotBlank(description)) {
       payload.put("description", description);
-    }
-    if (isNotBlank(reasonLabel)) {
-      payload.put("reasonLabel", reasonLabel);
-    }
-    if (isNotBlank(explanation)) {
-      payload.put("explanation", explanation);
     }
     try {
       return SYSTEM_NOTIFICATION_PREFIX + OBJECT_MAPPER.writeValueAsString(payload);

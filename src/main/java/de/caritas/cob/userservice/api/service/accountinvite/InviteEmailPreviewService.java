@@ -33,9 +33,9 @@ public class InviteEmailPreviewService {
   /** Obvious non-token: a preview must never render something that looks like a live link. */
   static final String SAMPLE_TOKEN = "SAMPLE-PREVIEW-TOKEN";
 
-  static final String SAMPLE_EMAIL = "erika.musterfrau@example.org";
-  static final String SAMPLE_FIRST_NAME = "Erika";
-  static final String SAMPLE_LAST_NAME = "Musterfrau";
+  static final String SAMPLE_EMAIL = "maren.muster@example.org";
+  static final String SAMPLE_FIRST_NAME = "Maren";
+  static final String SAMPLE_LAST_NAME = "Muster";
   static final String SAMPLE_SUBJECT = "Ihre Einladung zu ORISO";
   static final String SAMPLE_BODY =
       """
@@ -88,6 +88,11 @@ public class InviteEmailPreviewService {
     // no accept link at all: rendered through the invite renderer an operator would see raw
     // {{tenantName}} / {{signerName}} left standing and a counsellor accept URL that this mail
     // never contains. Sample values keep the preview truthful about what is actually sent.
+    //
+    // The invite path keeps pre-dev's renderBody, which lifts the {{inviteLink}} token line out of
+    // the body because the layout renders that action as a button. The notice has no such token —
+    // its link is {{adminUrl}} inline in the prose — so it needs neither the stripping nor a
+    // primary action.
     String renderedSubject =
         kind == InviteEmailTemplateKind.DPA_SIGNED_NOTICE
             ? renderSignedNoticeSample(subject)
@@ -95,7 +100,7 @@ public class InviteEmailPreviewService {
     String renderedBody =
         kind == InviteEmailTemplateKind.DPA_SIGNED_NOTICE
             ? renderSignedNoticeSample(body)
-            : AccountInviteService.render(body, sampleInvite, acceptUrl);
+            : AccountInviteService.renderBody(body, sampleInvite, acceptUrl);
 
     // the signed notice links to the Admin panel, not to an invite accept route
     String primaryAction = kind == InviteEmailTemplateKind.DPA_SIGNED_NOTICE ? null : acceptUrl;
