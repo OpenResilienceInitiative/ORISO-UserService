@@ -114,6 +114,15 @@ public class AccountInvite {
   @Column(name = "dpa_forwarded_at", columnDefinition = "datetime")
   private LocalDateTime dpaForwardedAt;
 
+  /**
+   * How often this invite has forwarded the DPA. The forward endpoint is anonymous and mails a live
+   * signing link to a caller-supplied address, so the count is what bounds it
+   * (ORISO-UserService#1005).
+   */
+  @Column(name = "dpa_forward_count", nullable = false)
+  @Builder.Default
+  private int dpaForwardCount = 0;
+
   @Column(name = "accepted_at", columnDefinition = "datetime")
   private LocalDateTime acceptedAt;
 

@@ -519,6 +519,35 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
+  void forwardDpa_refusesOnceTheInviteSpentItsForwardBudget() {
+    // the route is anonymous and each call mails a LIVE signing link to a caller-supplied address,
+    // so an unbounded endpoint is a mail relay for someone else's tenant
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardCount(TenantAdminOnboardingService.MAX_DPA_FORWARDS_PER_INVITE);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    assertThrows(
+        BadRequestException.class, () -> service.forwardDpa(RAW_TOKEN, "attacker@example.org"));
+    // no link minted, and above all no mail sent
+    verify(publicDpaForwardClient, never()).createForwardSignLink(any(), any());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_countsEachForwardAgainstTheBudget() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardCount(1);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    service.forwardDpa(RAW_TOKEN, "legal@example.org");
+
+    assertEquals(2, invite.getDpaForwardCount());
+    verify(accountInviteRepository).save(invite);
+  }
+
+  @Test
   void forwardDpa_rejectsAConsumedInvite() {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH))
         .thenReturn(Optional.of(tenantAdminInvite(AccountInviteStatus.ACCEPTED)));
@@ -529,13 +558,18 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
-  void forwardDpa_rejectsAnExpiredInvite() {
+  void forwardDpa_rejectsAnExpiredInvite_andPreservesTheExpiredState() {
     var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     invite.setExpiresAt(LocalDateTime.now().minusDays(1));
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
 
     assertThrows(AccountInviteLinkException.class, () -> service.forwardDpa(RAW_TOKEN, null));
     verify(publicDpaForwardClient, never()).createForwardSignLink(any(), any());
+    // the persistence half is the whole reason forwardDpa carries noRollbackFor: without it the
+    // link-death exception rolls the EXPIRED transition back and the next call re-offers the
+    // forward. Asserting only the throw leaves that annotation untested.
+    assertEquals(AccountInviteStatus.EXPIRED, invite.getStatus());
+    verify(accountInviteRepository).save(invite);
   }
 
   @Test

@@ -53,6 +53,13 @@ public class TenantAdminOnboardingService {
 
   private static final int MIN_PASSWORD_LENGTH = 8;
 
+  /**
+   * How often one invitation may forward the DPA. Small on purpose: a real forward needs one, a
+   * mistyped recipient address needs a second, and anything beyond that is far more likely to be
+   * abuse of an anonymous endpoint that mails live signing links than a genuine need.
+   */
+  static final int MAX_DPA_FORWARDS_PER_INVITE = 3;
+
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull CreateAdminService createAdminService;
@@ -267,6 +274,14 @@ public class TenantAdminOnboardingService {
    * endpoint, which validates the invite's tenant-ID reservation pair fail-closed
    * (ORISO-TenantService#179).
    *
+   * <p>Bounded at {@value #MAX_DPA_FORWARDS_PER_INVITE} forwards per invitation, after which the
+   * call answers 400 and the wizard should tell the administrator to request a new invitation. The
+   * budget exists because this route is anonymous — the invite token in the path is the only
+   * credential — and every call mints a fresh sign token and mails a live signing link to whatever
+   * address the request carries; unbounded, that is a mail relay for someone else's tenant. It is
+   * consumed by attempts that actually created a link, so a rejected recipient address does not
+   * cost the administrator a retry.
+   *
    * <p>The forward is recorded on the invite ({@code dpaForwardedAt}): it is the server-side proof
    * that lets {@link #registerTenantAdmin} accept a registration without an own DPA acceptance, and
    * the anchor for resolving the DPA_SIGNED_NOTICE recipient of a pre-account forward
@@ -275,7 +290,9 @@ public class TenantAdminOnboardingService {
    * the link back to share manually. Only an EMAIL_SENT, unexpired invite may forward — the DPA
    * step is only reachable in that state.
    */
-  @Transactional
+  // noRollbackFor mirrors registerTenantAdmin: the EXPIRED transition must survive the link-death
+  // exception, or an expired invite would be re-offered the forward on every retry.
+  @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public DpaForwardResult forwardDpa(String rawToken, String recipientEmail) {
     AccountInvite invite = findTenantAdminInvite(rawToken);
     LocalDateTime now = LocalDateTime.now();
@@ -283,11 +300,26 @@ public class TenantAdminOnboardingService {
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
       throw linkDeathException(invite);
     }
-    expireIfPastExpiry(invite, now);
+    AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
+    if (expired != null) {
+      // noRollbackFor (see above) keeps the EXPIRED transition this just persisted.
+      throw expired;
+    }
     if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
       throw new InternalServerErrorException(
           "Invite holds no authoritative tenant-ID reservation — re-issue the invite after"
               + " deploying the TenantService allocation endpoints (TEN-INV-U1)");
+    }
+
+    if (invite.getDpaForwardCount() >= MAX_DPA_FORWARDS_PER_INVITE) {
+      // Anonymous route, and every call mails a live signing link to a caller-supplied address:
+      // unbounded, this is a mail relay that delivers a valid signature link for someone else's
+      // tenant to any recipient, and each new link also kills the legitimate signer's outstanding
+      // one. The budget is per invite and is never replenished.
+      throw new BadRequestException(
+          "This invitation has already forwarded the data processing agreement "
+              + MAX_DPA_FORWARDS_PER_INVITE
+              + " times; ask the platform operator for a new invitation");
     }
 
     var signInvite =
@@ -295,6 +327,7 @@ public class TenantAdminOnboardingService {
             invite.getTenantId(), invite.getTenantIdReservationToken());
 
     invite.setDpaForwardedAt(now);
+    invite.setDpaForwardCount(invite.getDpaForwardCount() + 1);
     invite.setUpdateDate(now);
     accountInviteRepository.save(invite);
 
