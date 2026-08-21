@@ -68,7 +68,12 @@ class InviteEmailPreviewServiceTest {
             "smtp-user",
             "smtp-pass");
     previewService =
-        new InviteEmailPreviewService(templateRepository, acceptUrlBuilder, dispatchService);
+        new InviteEmailPreviewService(
+            templateRepository,
+            acceptUrlBuilder,
+            dispatchService,
+            new de.caritas.cob.userservice.api.service.notification.AdminPanelUrl(
+                "https://admin.configured.example"));
 
     when(restTemplate.getForObject(anyString(), any()))
         .thenReturn(
@@ -185,5 +190,25 @@ class InviteEmailPreviewServiceTest {
     previewService.preview(new PreviewCommand(null, null, null, null, 21L));
 
     verify(emailBrandingResolver).resolve(21L);
+  }
+
+  @Test
+  void preview_Should_renderTheConfiguredAdminUrl_ForTheSignedNotice() {
+    // supplying a URL and never asserting it appears is the shape that made the previous version
+    // of this test unable to fail: a preview ignoring the configured value entirely would pass.
+    // The host asserted here is deliberately not one any other path defaults to.
+    var preview =
+        previewService.preview(
+            new InviteEmailPreviewService.PreviewCommand(
+                null,
+                InviteEmailTemplateKind.DPA_SIGNED_NOTICE,
+                "Signed",
+                "Continue here: {{adminUrl}}",
+                null,
+                "de"));
+
+    assertThat(preview.plainText()).contains("https://admin.configured.example/admin");
+    // and the notice must not advertise an invite accept link it never carries
+    assertThat(preview.plainText()).doesNotContain("/account-invite");
   }
 }

@@ -5,7 +5,9 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -441,6 +443,27 @@ class TenantAdminOnboardingControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     verify(onboardingService).forwardDpa("raw-token", null);
+  }
+
+  @Test
+  void forwardDpa_isTenantAdminOnly_andDoesNotDispatchByRole() {
+    // forwardDpa is the only public onboarding endpoint here that does NOT branch on the token's
+    // role: forwarding a DPA is meaningless for a counsellor invite, which has no tenant to sign
+    // for. This pins that difference so a refactor cannot quietly route counsellor tokens into
+    // tenant-admin forwarding; the service-level lookup stays the enforcement point (it answers
+    // 404 for a non-tenant-admin token).
+    when(onboardingService.forwardDpa("raw-token", null))
+        .thenReturn(
+            new TenantAdminOnboardingService.DpaForwardResult(
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07"));
+
+    controller.forwardDpa("raw-token", null);
+
+    verify(onboardingService).forwardDpa("raw-token", null);
+    // the role probe the other three endpoints run is deliberately absent here — there is no
+    // counsellor counterpart to dispatch to (CounsellorOnboardingService has no forwardDpa at
+    // all), so the role check would only add a second lookup with no branch to take
+    verify(accountInviteService, never()).findTargetRoleByToken(any());
   }
 
   @Test

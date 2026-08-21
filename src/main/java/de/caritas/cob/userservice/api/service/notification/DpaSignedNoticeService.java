@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.service.notification;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
-import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.DpaSignedNotice;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
@@ -16,14 +15,18 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
+import jakarta.annotation.PreDestroy;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Comparator;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ArrayBlockingQueue;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -92,6 +95,40 @@ public class DpaSignedNoticeService {
 
       {{adminUrl}}""";
 
+  /**
+   * Bounded dispatcher for the PUBLIC hint endpoint, modelled on {@code PasswordResetService}: an
+   * anonymous route must not let request floods accumulate work in memory, and here each request
+   * would otherwise perform a technical-user login and an upstream read BEFORE the ledger can
+   * deduplicate — so arbitrary tenant ids amplify authentication and upstream traffic. Overflow is
+   * rejected and shed; the HTTP answer is 202 either way, which keeps the constant response that
+   * prevents disclosure while also bounding the work.
+   */
+  private final ThreadPoolExecutor defaultNoticeExecutor =
+      new ThreadPoolExecutor(
+          1,
+          2,
+          30L,
+          TimeUnit.SECONDS,
+          new ArrayBlockingQueue<>(200),
+          runnable -> {
+            Thread thread = new Thread(runnable, "dpa-signed-notice-dispatch");
+            thread.setDaemon(true);
+            return thread;
+          },
+          new ThreadPoolExecutor.AbortPolicy());
+
+  /** Seam: tests substitute a synchronous executor. */
+  private Executor noticeExecutor = defaultNoticeExecutor;
+
+  void useExecutor(Executor executor) {
+    this.noticeExecutor = executor;
+  }
+
+  @PreDestroy
+  void shutdownNoticeExecutor() {
+    defaultNoticeExecutor.shutdown();
+  }
+
   private final TenantDpaSignatureReadClient signatureReadClient;
   private final DpaSignedNoticeRepository noticeRepository;
   private final AdminRepository adminRepository;
@@ -115,8 +152,7 @@ public class DpaSignedNoticeService {
       InviteMailDispatchService inviteMailDispatchService,
       TenantService tenantService,
       PlatformTransactionManager transactionManager,
-      @Value("${account.invite.admin.frontend.base-url:https://app.oriso.org}")
-          String adminFrontendBaseUrl) {
+      AdminPanelUrl adminPanelUrlProvider) {
     this.signatureReadClient = signatureReadClient;
     this.noticeRepository = noticeRepository;
     this.adminRepository = adminRepository;
@@ -128,7 +164,7 @@ public class DpaSignedNoticeService {
     this.requiresNewTransaction = new TransactionTemplate(transactionManager);
     this.requiresNewTransaction.setPropagationBehavior(
         TransactionDefinition.PROPAGATION_REQUIRES_NEW);
-    this.adminPanelUrl = normalizeBaseUrl(adminFrontendBaseUrl) + "/admin";
+    this.adminPanelUrl = adminPanelUrlProvider.value();
   }
 
   /**
@@ -139,6 +175,38 @@ public class DpaSignedNoticeService {
     if (tenantId == null) {
       return;
     }
+    try {
+      noticeExecutor.execute(() -> processHint(tenantId));
+    } catch (RuntimeException dispatchFailure) {
+      // Every RuntimeException, not only RejectedExecutionException: a saturated queue rejects,
+      // but an executor already shut down during deployment throws IllegalStateException, and
+      // both must still leave the caller with 202.
+      log.warn(
+          "DPA signed-notice hint for tenant {} was shed at dispatch ({})",
+          tenantId,
+          dispatchFailure.getClass().getSimpleName());
+    }
+  }
+
+  /**
+   * The actual work, off the request thread. Everything it can throw — an upstream read, a
+   * technical-user login, the locale lookup, rendering, SMTP — is contained here by design: the
+   * endpoint's 202 must not depend on each collaborator being individually defensive, because the
+   * next collaborator added will not know that rule.
+   */
+  private void processHint(Long tenantId) {
+    try {
+      dispatchNotice(tenantId);
+    } catch (RuntimeException failure) {
+      log.warn(
+          "DPA signed-notice for tenant {} could not be processed; it stays eligible for a later"
+              + " hint",
+          tenantId,
+          failure);
+    }
+  }
+
+  private void dispatchNotice(Long tenantId) {
     Optional<DpaSignatureDTO> forwardedSignature = findLatestForwardedSignature(tenantId);
     if (forwardedSignature.isEmpty()) {
       log.debug("DPA signed-notice hint for tenant {} matched no forwarded signature", tenantId);
@@ -196,7 +264,7 @@ public class DpaSignedNoticeService {
   /** Claims the exactly-once ledger row; empty when another hint already claimed it. */
   private Optional<DpaSignedNotice> claimNotice(
       Long tenantId, DpaSignatureDTO signature, Recipient recipient) {
-    var dpaVersion = signature.getDpaVersion() == null ? "unknown" : signature.getDpaVersion();
+    var dpaVersion = dedupKeyFor(signature);
     try {
       return Optional.ofNullable(
           requiresNewTransaction.execute(
@@ -216,33 +284,88 @@ public class DpaSignedNoticeService {
 
   private void sendNotice(
       Long tenantId, DpaSignatureDTO signature, Recipient recipient, DpaSignedNotice claim) {
-    var language = recipient.language();
-    var template = findActiveTemplate(language);
-    var placeholders = buildPlaceholders(tenantId, signature, language);
-    var subject =
-        render(
-            template.map(InviteEmailTemplate::getSubject).orElse(defaultSubject(language)),
-            placeholders);
-    var body =
-        render(
-            template.map(InviteEmailTemplate::getBody).orElse(defaultBody(language)), placeholders);
+    // Everything from here until the mail is handed over must be compensated on failure. The claim
+    // is already committed in its own transaction, and its unique key is what makes the notice
+    // exactly-once — so a claim left behind with sent_at still null does not merely lose THIS
+    // attempt, it makes every later hint lose the race and the notice is never sent at all.
+    // Loading a template, resolving the tenant name and rendering all reach out or can throw.
     try {
+      var language = recipient.language();
+      var template = findActiveTemplate(language);
+      var placeholders = buildPlaceholders(tenantId, signature, language);
+      var subject =
+          render(
+              template.map(InviteEmailTemplate::getSubject).orElse(defaultSubject(language)),
+              placeholders);
+      var body =
+          render(
+              template.map(InviteEmailTemplate::getBody).orElse(defaultBody(language)),
+              placeholders);
       inviteMailDispatchService.send(
           recipient.email(), subject, body, adminPanelUrl, tenantId, language);
+    } catch (RuntimeException beforeDispatch) {
+      // Every failure up to the handoff, not only SmtpSendException: a template load, the
+      // tenant-name lookup or the rendering can fail too, and a stranded claim silently disables
+      // the notice forever.
+      releaseClaim(claim, tenantId, beforeDispatch);
+      return;
+    }
+
+    // Past the handoff the mail is out of our hands, so the claim must NEVER be released here:
+    // releasing it would let a later hint mail the same administrator a second notice about the
+    // same signature, and for a message about a signed contract a duplicate is worse than a
+    // missing timestamp. Only the sent_at bookkeeping can be lost, and the claim keeps doing its
+    // real job - blocking a second send.
+    try {
       requiresNewTransaction.executeWithoutResult(
           tx -> {
             claim.setSentAt(LocalDateTime.now());
             noticeRepository.save(claim);
           });
       log.info("DPA signed-notice sent for tenant {}", tenantId);
-    } catch (SmtpSendException exception) {
-      // compensate the claim so a later hint can retry the notice
+    } catch (RuntimeException afterDispatch) {
+      log.error(
+          "DPA signed-notice for tenant {} was sent but its sent_at could not be recorded; the"
+              + " claim is kept so the notice is not sent twice",
+          tenantId,
+          afterDispatch);
+    }
+  }
+
+  /** Frees the exactly-once claim so a later hint can retry; never masks the original failure. */
+  private void releaseClaim(DpaSignedNotice claim, Long tenantId, RuntimeException failure) {
+    try {
       requiresNewTransaction.executeWithoutResult(tx -> noticeRepository.delete(claim));
       log.warn(
-          "DPA signed-notice for tenant {} could not be handed to the SMTP server — claim"
-              + " released for retry",
-          tenantId);
+          "DPA signed-notice for tenant {} failed before dispatch — claim released for retry",
+          tenantId,
+          failure);
+    } catch (RuntimeException compensationFailure) {
+      // The claim is stuck: no notice will ever be sent for this tenant/version, so this line is
+      // the only trace it existed. Logged loudly rather than swallowed.
+      log.error(
+          "DPA signed-notice for tenant {} failed AND its claim could not be released; no notice"
+              + " will be sent for this signature",
+          tenantId,
+          compensationFailure);
     }
+  }
+
+  /**
+   * Exactly-once key for a signature. Prefers the DPA version, but that field is absent from the
+   * provider contract currently deployed on pre-dev, so the signature timestamp is the fallback —
+   * it is what the provider actually returns today and it still separates one signature from the
+   * next. Only when neither is present do signatures collapse onto a shared key, and that would
+   * mean a signature carrying no identifying facts at all.
+   */
+  private static String dedupKeyFor(DpaSignatureDTO signature) {
+    if (!isBlank(signature.getDpaVersion())) {
+      return signature.getDpaVersion();
+    }
+    if (!isBlank(signature.getSignedAt())) {
+      return "signedAt:" + signature.getSignedAt();
+    }
+    return "unknown";
   }
 
   private Optional<InviteEmailTemplate> findActiveTemplate(String language) {
@@ -326,14 +449,6 @@ public class DpaSignedNoticeService {
     }
     var pattern = "de".equalsIgnoreCase(language) ? "dd.MM.yyyy HH:mm 'Uhr'" : "yyyy-MM-dd HH:mm";
     return parsed.format(DateTimeFormatter.ofPattern(pattern));
-  }
-
-  private static String normalizeBaseUrl(String value) {
-    var base = isBlank(value) ? "https://app.oriso.org" : value.trim();
-    while (base.endsWith("/")) {
-      base = base.substring(0, base.length() - 1);
-    }
-    return base;
   }
 
   private record Recipient(String email, String language) {}
