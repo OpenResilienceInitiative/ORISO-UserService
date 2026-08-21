@@ -108,6 +108,11 @@ public class ConsultantAgencyAdminUserServiceTest {
         .thenReturn(singletonList(session));
     when(this.consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(anyList()))
         .thenReturn(consultants);
+    // noOtherTeamAgency() now queries consultantAgencyRepository directly (not the lazy
+    // consultant.getConsultantAgencies() collection, see #1069) — give every consultant a second,
+    // non-team agency relation so agencyService.getAgency() is actually exercised.
+    when(this.consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(any()))
+        .thenAnswer(invocation -> singleOtherAgencyRelation());
     when(this.agencyService.getAgency(any())).thenReturn(agencyDTO);
 
     this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(1L);
@@ -131,10 +136,23 @@ public class ConsultantAgencyAdminUserServiceTest {
           when(this.consultantRepository.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(
                   anyList()))
               .thenReturn(consultants);
+          when(this.consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(any()))
+              .thenAnswer(invocation -> singleOtherAgencyRelation());
           when(this.agencyService.getAgency(any())).thenThrow(new InternalServerErrorException(""));
 
           this.consultantAgencyAdminService.removeConsultantsFromTeamSessionsByAgencyId(1L);
         });
+  }
+
+  /**
+   * A single {@link ConsultantAgency} relation to an agency other than the one (id 1L) being
+   * converted, so that noOtherTeamAgency()'s filter does not discard it and agencyService is
+   * actually invoked.
+   */
+  private static List<ConsultantAgency> singleOtherAgencyRelation() {
+    var otherRelation = new ConsultantAgency();
+    otherRelation.setAgencyId(2L);
+    return singletonList(otherRelation);
   }
 
   @Test
