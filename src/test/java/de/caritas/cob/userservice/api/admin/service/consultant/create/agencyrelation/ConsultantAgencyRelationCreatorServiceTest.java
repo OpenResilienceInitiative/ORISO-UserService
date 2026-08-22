@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembershipService;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.RolesDTO;
 import java.util.LinkedHashMap;
@@ -64,6 +65,92 @@ public class ConsultantAgencyRelationCreatorServiceTest {
 
   @Mock
   private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
+
+  @Mock private AgencyLateJoinerMembershipService agencyLateJoinerMembershipService;
+
+  /**
+   * US#1060: an agency assignment that stops at the database row leaves the counsellor locked out
+   * of every enquiry that arrived before them, because Matrix membership is what makes an enquiry
+   * visible at all (FE#811). The backfill therefore belongs to "the assignment is complete", not to
+   * a separate manual step.
+   */
+  @Test
+  void
+      completeConsultantAgencyAssigment_Should_backfillTheConsultantIntoExistingOpenEnquiryRooms() {
+    var consultant = new Consultant();
+    consultant.setId("consultant Id");
+    consultant.setStatus(ConsultantStatus.CREATED);
+    var agencyDTO = new AgencyDTO().id(2L).teamAgency(false);
+
+    when(consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.of(consultant));
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
+
+    var input =
+        new CreateConsultantAgencyDTOInputAdapter(
+            "consultant Id", new CreateConsultantAgencyDTO().agencyId(2L));
+
+    consultantAgencyRelationCreatorService.completeConsultantAgencyAssigment(
+        input, LogService::logInfo);
+
+    verify(agencyLateJoinerMembershipService).joinConsultantIntoOpenEnquiryRooms(consultant, 2L);
+  }
+
+  /**
+   * The route the admin UI actually takes (POST /consultants/{id}/agencies) persists the relation
+   * and completes the assignment in one call. Covering only the legacy two-step entry point would
+   * leave the endpoint that produced the bug report untested.
+   */
+  @Test
+  void createNewConsultantAgency_Should_backfillTheConsultantIntoExistingOpenEnquiryRooms() {
+    var consultant = new Consultant();
+    consultant.setId("consultant Id");
+    consultant.setTenantId(83L);
+    consultant.setStatus(ConsultantStatus.CREATED);
+    var agency = new AgencyDTO().id(280L).consultingType(0).teamAgency(false);
+    when(consultantRepository.findByIdAndDeleteDateIsNull("consultant Id"))
+        .thenReturn(Optional.of(consultant));
+    when(agencyService.getAgency(280L)).thenReturn(agency);
+    when(consultingTypeManager.getConsultingTypeSettings(0))
+        .thenReturn(new ExtendedConsultingTypeResponseDTO());
+    when(consultantAgencyService.saveConsultantAgency(any(ConsultantAgency.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    consultantAgencyRelationCreatorService.createNewConsultantAgency(
+        "consultant Id", new CreateConsultantAgencyDTO().agencyId(280L));
+
+    verify(agencyLateJoinerMembershipService).joinConsultantIntoOpenEnquiryRooms(consultant, 280L);
+  }
+
+  /**
+   * The relation in the database is the source of truth; a Synapse hiccup must not make the admin's
+   * assignment request fail after the row was already written.
+   */
+  @Test
+  void completeConsultantAgencyAssigment_Should_notFail_When_theEnquiryBackfillBlowsUp() {
+    var consultant = new Consultant();
+    consultant.setId("consultant Id");
+    consultant.setStatus(ConsultantStatus.CREATED);
+    var agencyDTO = new AgencyDTO().id(2L).teamAgency(false);
+
+    when(consultantRepository.findByIdAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.of(consultant));
+    when(agencyService.getAgency(eq(2L))).thenReturn(agencyDTO);
+    when(agencyLateJoinerMembershipService.joinConsultantIntoOpenEnquiryRooms(consultant, 2L))
+        .thenThrow(new RuntimeException("synapse unreachable"));
+
+    var input =
+        new CreateConsultantAgencyDTOInputAdapter(
+            "consultant Id", new CreateConsultantAgencyDTO().agencyId(2L));
+
+    assertDoesNotThrow(
+        () ->
+            consultantAgencyRelationCreatorService.completeConsultantAgencyAssigment(
+                input, LogService::logInfo));
+
+    verify(consultantAgencyRelationFinalizer)
+        .finalizeConsultantAgencyRelation(consultant, agencyDTO);
+  }
 
   @Test
   public void

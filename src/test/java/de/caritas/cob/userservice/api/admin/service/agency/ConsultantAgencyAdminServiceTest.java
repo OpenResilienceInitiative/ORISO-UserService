@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembershipService;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -43,6 +44,7 @@ class ConsultantAgencyAdminServiceTest {
   @Mock private AgencyService agencyService;
   @Mock private AgencyAdminService agencyAdminService;
   @Mock private ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
+  @Mock private AgencyLateJoinerMembershipService agencyLateJoinerMembershipService;
 
   // ---------------------------------------------------------------------------
   // findConsultantAgencies
@@ -219,6 +221,75 @@ class ConsultantAgencyAdminServiceTest {
         .save(any(ConsultantAgency.class));
     assertThat(relation1.getDeleteDate()).isNotNull();
     assertThat(relation2.getDeleteDate()).isNotNull();
+  }
+
+  // ---------------------------------------------------------------------------
+  // US#1060: the enquiry-room membership must follow the relation in both directions
+  // ---------------------------------------------------------------------------
+
+  /**
+   * The symmetric half of the late-joiner backfill: a counsellor detached from an agency keeps
+   * syncing that agency's open enquiries until their Matrix membership is revoked, so the
+   * revocation has to happen where the relation is marked deleted.
+   */
+  @Test
+  void markConsultantAgencyForDeletion_Should_RevokeOpenEnquiryRoomMembership() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    var relation = new ConsultantAgency();
+    relation.setConsultant(consultant);
+    relation.setAgencyId(10L);
+    when(consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull("c-1", 10L))
+        .thenReturn(List.of(relation));
+
+    consultantAgencyAdminService.markConsultantAgencyForDeletion("c-1", 10L);
+
+    verify(agencyLateJoinerMembershipService).removeConsultantFromOpenEnquiryRooms(consultant, 10L);
+  }
+
+  /**
+   * The admin UI's "edit consultant" screen does not detach a single agency, it submits the desired
+   * complete agency set and {@code ConsultantAdminFacade#setConsultantAgencies} turns the
+   * difference into this bulk call. Revocation therefore has to hold for every removed agency, not
+   * only for the single-agency endpoint.
+   */
+  @Test
+  void markConsultantAgenciesForDeletion_Should_RevokeMembershipForEveryRemovedAgency() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    var relation10 = new ConsultantAgency();
+    relation10.setConsultant(consultant);
+    relation10.setAgencyId(10L);
+    var relation20 = new ConsultantAgency();
+    relation20.setConsultant(consultant);
+    relation20.setAgencyId(20L);
+    when(consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull("c-1", 10L))
+        .thenReturn(List.of(relation10));
+    when(consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull("c-1", 20L))
+        .thenReturn(List.of(relation20));
+
+    consultantAgencyAdminService.markConsultantAgenciesForDeletion("c-1", List.of(10L, 20L));
+
+    verify(agencyLateJoinerMembershipService).removeConsultantFromOpenEnquiryRooms(consultant, 10L);
+    verify(agencyLateJoinerMembershipService).removeConsultantFromOpenEnquiryRooms(consultant, 20L);
+  }
+
+  @Test
+  void markConsultantAgencyForDeletion_Should_NotFail_When_MembershipRevocationBlowsUp() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    var relation = new ConsultantAgency();
+    relation.setConsultant(consultant);
+    relation.setAgencyId(10L);
+    when(consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull("c-1", 10L))
+        .thenReturn(List.of(relation));
+    when(agencyLateJoinerMembershipService.removeConsultantFromOpenEnquiryRooms(consultant, 10L))
+        .thenThrow(new RuntimeException("synapse unreachable"));
+
+    consultantAgencyAdminService.markConsultantAgencyForDeletion("c-1", 10L);
+
+    assertThat(relation.getDeleteDate()).isNotNull();
+    verify(consultantAgencyRepository).save(relation);
   }
 
   // ---------------------------------------------------------------------------

@@ -22,18 +22,21 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembershipService;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.beanutils.BeanUtils;
 import org.springframework.stereotype.Service;
 
 /** Service class to handle administrative operations on consultant-agencies. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class ConsultantAgencyAdminService {
 
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
@@ -43,6 +46,7 @@ public class ConsultantAgencyAdminService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull AgencyAdminService agencyAdminService;
   private final @NonNull ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
+  private final @NonNull AgencyLateJoinerMembershipService agencyLateJoinerMembershipService;
 
   /**
    * Returns all Agencies for the given consultantId.
@@ -250,6 +254,33 @@ public class ConsultantAgencyAdminService {
     this.agencyDeletionValidationService.validateAndMarkForDeletion(consultantAgency);
     consultantAgency.setDeleteDate(nowInUtc());
     this.consultantAgencyRepository.save(consultantAgency);
+    revokeOpenEnquiryRoomMembership(consultantAgency);
+  }
+
+  /**
+   * US#1060, symmetric half: since a counsellor is joined into the agency's open enquiry rooms when
+   * they are assigned, detaching them again has to take that membership back. Otherwise the
+   * counsellor keeps receiving the agency's open initial requests through Matrix {@code /sync} long
+   * after the relation was deleted.
+   *
+   * <p>Best effort — the deleted relation is already persisted and is the source of truth; a
+   * Synapse failure must not turn a successful detach into an error response.
+   */
+  private void revokeOpenEnquiryRoomMembership(ConsultantAgency consultantAgency) {
+    var consultant = consultantAgency.getConsultant();
+    if (consultant == null) {
+      return;
+    }
+    try {
+      agencyLateJoinerMembershipService.removeConsultantFromOpenEnquiryRooms(
+          consultant, consultantAgency.getAgencyId());
+    } catch (RuntimeException ex) {
+      log.warn(
+          "Could not revoke enquiry room membership of consultant {} in agency {}: {}",
+          consultant.getId(),
+          consultantAgency.getAgencyId(),
+          ex.getMessage());
+    }
   }
 
   /**

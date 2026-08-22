@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.AgencyLateJoinerMembershipService;
 import java.util.Collections;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -51,6 +52,8 @@ public class ConsultantAgencyAdminUserServiceTest {
   @Mock private AgencyAdminService agencyAdminService;
 
   @Mock private ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
+
+  @Mock private AgencyLateJoinerMembershipService agencyLateJoinerMembershipService;
 
   @Test
   public void
