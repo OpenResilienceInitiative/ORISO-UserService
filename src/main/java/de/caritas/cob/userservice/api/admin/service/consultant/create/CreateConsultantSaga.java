@@ -498,7 +498,7 @@ public class CreateConsultantSaga {
     var tenantId = createConsultantDTO.getTenantId();
     Integer allowedNumberOfUsers = resolveAllowedNumberOfUsers(tenantId);
     if (isNull(allowedNumberOfUsers)) {
-      log.error(
+      log.warn(
           "Tenant {} has no licensed user limit configured; refusing consultant creation.",
           tenantId);
       throw new CustomValidationHttpStatusException(
