@@ -16,6 +16,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -330,6 +331,20 @@ class CreateConsultantSagaTest {
 
     assertThat(
         ex.getCustomHttpHeaders().get("X-Reason").get(0), is(NUMBER_OF_LICENSES_EXCEEDED.name()));
+    verify(identityClient, never()).createUser(any(), anyString(), anyString());
+  }
+
+  @Test
+  void createNewConsultant_Should_throwBadRequest_When_tenantIdCannotBeResolvedAtAll() {
+    // Neither the body, the access token nor the tenant context carries a tenant, and the context
+    // is not the global one - so ensureTenantIdResolved returns without setting or throwing.
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTenantId(null);
+
+    assertThrows(BadRequestException.class, () -> createConsultantSaga.createNewConsultant(dto));
+
+    verifyNoInteractions(tenantAdminService);
     verify(identityClient, never()).createUser(any(), anyString(), anyString());
   }
 

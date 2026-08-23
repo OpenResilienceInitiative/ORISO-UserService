@@ -496,11 +496,17 @@ public class CreateConsultantSaga {
     }
 
     var tenantId = createConsultantDTO.getTenantId();
+    if (isNull(tenantId)) {
+      // ensureTenantIdResolved only throws for a superadmin (global) context, so a request whose
+      // tenant is in neither the body, the access token nor the tenant context reaches here with
+      // nothing resolved. Everything below is tenant-scoped: the lookup would be a doomed remote
+      // call with a null id, and its failure would then be misreported as a licensing problem.
+      throw new BadRequestException(
+          "TenantId could not be resolved for the consultant to be created");
+    }
+
     Integer allowedNumberOfUsers = resolveAllowedNumberOfUsers(tenantId);
     if (isNull(allowedNumberOfUsers)) {
-      log.warn(
-          "Tenant {} has no licensed user limit configured; refusing consultant creation.",
-          tenantId);
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED);
     }
@@ -517,15 +523,41 @@ public class CreateConsultantSaga {
   }
 
   /**
-   * Reads the tenant's licensed user limit, or {@code null} when the tenant does not carry one.
-   * Every hop here is optional in the contract, so none of them may be dereferenced blindly.
+   * Reads the tenant's licensed user limit, or {@code null} when there is no usable one. Every hop
+   * here is optional in the contract, so none of them may be dereferenced blindly - and each hop
+   * fails for a different reason, so each logs its own, rather than reporting an unreadable tenant
+   * as a missing cap.
+   *
+   * <p>Logged at WARN: this is an expected configuration gap, not a server fault, and the handler
+   * already logs the thrown exception at INFO. These lines stay because that INFO line carries no
+   * message - the cause would otherwise be unrecoverable from the logs.
    */
   private Integer resolveAllowedNumberOfUsers(Long tenantId) {
     TenantDTO tenant = tenantAdminService.getTenantById(tenantId);
-    if (isNull(tenant) || isNull(tenant.getLicensing())) {
+    if (isNull(tenant)) {
+      log.warn(
+          "TenantService returned no tenant {}; refusing consultant creation because its licensed"
+              + " user limit cannot be established.",
+          tenantId);
       return null;
     }
-    return tenant.getLicensing().getAllowedNumberOfUsers();
+
+    var licensing = tenant.getLicensing();
+    if (isNull(licensing)) {
+      log.warn(
+          "Tenant {} carries no licensing configuration; refusing consultant creation.", tenantId);
+      return null;
+    }
+
+    var allowedNumberOfUsers = licensing.getAllowedNumberOfUsers();
+    if (isNull(allowedNumberOfUsers)) {
+      log.warn(
+          "Tenant {} has licensing configured but no licensed user limit; refusing consultant"
+              + " creation.",
+          tenantId);
+      return null;
+    }
+    return allowedNumberOfUsers;
   }
 
   private void addGroupChatConsultantRole(
