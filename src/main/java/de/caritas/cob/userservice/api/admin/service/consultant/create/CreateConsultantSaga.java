@@ -475,23 +475,54 @@ public class CreateConsultantSaga {
     return userDto;
   }
 
+  /**
+   * Enforces the tenant's licensed user limit, when one is configured.
+   *
+   * <p>{@code TenantDTO.licensing} is optional in the tenant admin contract, so a tenant can
+   * legitimately come back without a licensing block, and {@code allowedNumberOfUsers} can be
+   * absent within it. This used to be guarded by a bare {@code assert}, which the JVM strips unless
+   * it is started with {@code -ea} - so in production the very next line dereferenced null and
+   * every consultant creation for such a tenant died with a {@link NullPointerException}, which the
+   * exception handler turns into an empty-bodied 500 that tells the admin nothing.
+   *
+   * <p>No configured limit means there is nothing to enforce, so creation proceeds and the missing
+   * configuration is logged instead of failing the admin's request.
+   */
   private void assertLicensesNotExceeded(CreateConsultantDTO createConsultantDTO) {
-    if (multiTenancyEnabled) {
-      TenantDTO tenantById = tenantAdminService.getTenantById(createConsultantDTO.getTenantId());
-      // Licenses are counted per tenant, so always scope the active-consultant count to the
-      // target tenant. Relying on the ambient tenant filter for the current context counts
-      // consultants across all tenants, which falsely triggers NUMBER_OF_LICENSES_EXCEEDED when a
-      // tenant admin creates a consultant.
-      long numberOfActiveConsultants =
-          consultantService.getNumberOfActiveConsultants(createConsultantDTO.getTenantId());
-
-      assert nonNull(tenantById.getLicensing());
-      Integer allowedNumberOfUsers = tenantById.getLicensing().getAllowedNumberOfUsers();
-      if (numberOfActiveConsultants >= allowedNumberOfUsers) {
-        throw new CustomValidationHttpStatusException(
-            HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED);
-      }
+    if (!multiTenancyEnabled) {
+      return;
     }
+
+    var tenantId = createConsultantDTO.getTenantId();
+    Integer allowedNumberOfUsers = resolveAllowedNumberOfUsers(tenantId);
+    if (isNull(allowedNumberOfUsers)) {
+      log.warn(
+          "Tenant {} has no licensed user limit configured; skipping licence enforcement for consultant creation.",
+          tenantId);
+      return;
+    }
+
+    // Licenses are counted per tenant, so always scope the active-consultant count to the
+    // target tenant. Relying on the ambient tenant filter for the current context counts
+    // consultants across all tenants, which falsely triggers NUMBER_OF_LICENSES_EXCEEDED when a
+    // tenant admin creates a consultant.
+    long numberOfActiveConsultants = consultantService.getNumberOfActiveConsultants(tenantId);
+    if (numberOfActiveConsultants >= allowedNumberOfUsers) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED);
+    }
+  }
+
+  /**
+   * Reads the tenant's licensed user limit, or {@code null} when the tenant does not carry one.
+   * Every hop here is optional in the contract, so none of them may be dereferenced blindly.
+   */
+  private Integer resolveAllowedNumberOfUsers(Long tenantId) {
+    TenantDTO tenant = tenantAdminService.getTenantById(tenantId);
+    if (isNull(tenant) || isNull(tenant.getLicensing())) {
+      return null;
+    }
+    return tenant.getLicensing().getAllowedNumberOfUsers();
   }
 
   private void addGroupChatConsultantRole(

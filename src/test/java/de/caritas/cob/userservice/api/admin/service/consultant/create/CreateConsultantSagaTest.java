@@ -333,6 +333,55 @@ class CreateConsultantSagaTest {
   }
 
   @Test
+  void createNewConsultant_Should_createConsultant_When_tenantCarriesNoLicensingBlock()
+      throws Exception {
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    TenantContext.setCurrentTenant(1L);
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTenantId(1L);
+    when(tenantAdminService.getTenantById(1L)).thenReturn(new TenantDTO());
+    stubHappyPath();
+
+    var response = createConsultantSaga.createNewConsultant(dto);
+
+    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    verify(consultantService, never()).getNumberOfActiveConsultants(1L);
+  }
+
+  @Test
+  void createNewConsultant_Should_createConsultant_When_tenantLicensingCarriesNoUserLimit()
+      throws Exception {
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    TenantContext.setCurrentTenant(1L);
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTenantId(1L);
+    when(tenantAdminService.getTenantById(1L))
+        .thenReturn(new TenantDTO().licensing(new Licensing()));
+    stubHappyPath();
+
+    var response = createConsultantSaga.createNewConsultant(dto);
+
+    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    verify(consultantService, never()).getNumberOfActiveConsultants(1L);
+  }
+
+  @Test
+  void createNewConsultant_Should_createConsultant_When_tenantLookupYieldsNothing()
+      throws Exception {
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    TenantContext.setCurrentTenant(1L);
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTenantId(1L);
+    when(tenantAdminService.getTenantById(1L)).thenReturn(null);
+    stubHappyPath();
+
+    var response = createConsultantSaga.createNewConsultant(dto);
+
+    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    verify(consultantService, never()).getNumberOfActiveConsultants(1L);
+  }
+
+  @Test
   void createNewConsultant_Should_throwBadRequest_When_superadminCreatesWithoutTenantId() {
     ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
     TenantContext.setCurrentTenant(0L);
