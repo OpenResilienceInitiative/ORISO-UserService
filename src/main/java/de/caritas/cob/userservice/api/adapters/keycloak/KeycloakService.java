@@ -384,14 +384,25 @@ public class KeycloakService
         }
         return new CreatedIdentity(createdUserId);
       }
-      handleCreateKeycloakUserError(response);
+      throw createUserFailure(user, response);
     }
-    throw new InternalServerErrorException(
-        String.format(
-            "Could not create Keycloak account for: %s %nKeycloak error: %s", user, keycloakError));
   }
 
-  private void handleCreateKeycloakUserError(Response response) {
+  /**
+   * Builds the failure for a non-201 Keycloak create-user response.
+   *
+   * <p>Returns the exception rather than throwing it, and rather than recording the detail in a
+   * field the caller reads afterwards. {@code keycloakError} is {@code @Value}-injected
+   * configuration on a singleton bean, so writing the current request's Keycloak response into it
+   * corrupted it for the life of the JVM and let concurrent failures read each other's detail -
+   * request A could be handed the raw Keycloak body belonging to request B, which carries B's
+   * username and e-mail. Nothing else needs the value to outlive the throw, so it does not.
+   *
+   * <p>The status and raw body go into the exception message as well as the log line: a 500 whose
+   * message is only the configured "unexpected Keycloak error" string is unactionable, and the
+   * message is what reaches the operator through the error report.
+   */
+  private RuntimeException createUserFailure(UserDTO user, Response response) {
     final int status = response.getStatus();
     String rawResponse = "";
 
@@ -406,21 +417,20 @@ public class KeycloakService
 
     if (errorMatchesMarker(combinedError, identityClientConfig.getErrorMessageDuplicatedEmail())
         || (status == HttpStatus.CONFLICT.value() && combinedError.contains("email"))) {
-      throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
+      return new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
     if (errorMatchesMarker(combinedError, identityClientConfig.getErrorMessageDuplicatedUsername())
         || (status == HttpStatus.CONFLICT.value() && combinedError.contains("username"))) {
-      throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
+      return new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
-    // Preserve prior behavior but include status/raw details to avoid opaque 500s.
-    keycloakError =
-        !rawResponse.isBlank()
-            ? String.format("Keycloak create-user failed with status %s: %s", status, rawResponse)
-            : String.format("Keycloak create-user failed with status %s", status);
-
     log.warn("Keycloak create-user failed. status={}, rawResponse={}", status, rawResponse);
+
+    return new InternalServerErrorException(
+        String.format(
+            "%s: could not create Keycloak account for %s. Keycloak responded with status %s: %s",
+            keycloakError, user, status, rawResponse.isBlank() ? "<empty body>" : rawResponse));
   }
 
   /**
