@@ -485,8 +485,10 @@ public class CreateConsultantSaga {
    * every consultant creation for such a tenant died with a {@link NullPointerException}, which the
    * exception handler turns into an empty-bodied 500 that tells the admin nothing.
    *
-   * <p>No configured limit means there is nothing to enforce, so creation proceeds and the missing
-   * configuration is logged instead of failing the admin's request.
+   * <p>Enforcement itself is unchanged: a tenant without a configured limit still cannot be given a
+   * new consultant. The only difference is that the refusal is now reported as a named {@code
+   * TENANT_LICENSING_NOT_CONFIGURED} 400, which the admin UI can render, instead of dying on a null
+   * dereference that reaches the operator as "Something went wrong".
    */
   private void assertLicensesNotExceeded(CreateConsultantDTO createConsultantDTO) {
     if (!multiTenancyEnabled) {
@@ -496,10 +498,11 @@ public class CreateConsultantSaga {
     var tenantId = createConsultantDTO.getTenantId();
     Integer allowedNumberOfUsers = resolveAllowedNumberOfUsers(tenantId);
     if (isNull(allowedNumberOfUsers)) {
-      log.warn(
-          "Tenant {} has no licensed user limit configured; skipping licence enforcement for consultant creation.",
+      log.error(
+          "Tenant {} has no licensed user limit configured; refusing consultant creation.",
           tenantId);
-      return;
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED);
     }
 
     // Licenses are counted per tenant, so always scope the active-consultant count to the

@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.config.auth.UserRole.CONSULTANT;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.GROUP_CHAT_CONSULTANT;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED;
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.PASSWORD_NOT_VALID;
+import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -333,51 +334,62 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void createNewConsultant_Should_createConsultant_When_tenantCarriesNoLicensingBlock()
-      throws Exception {
+  void createNewConsultant_Should_reportUnconfiguredLicensing_When_tenantCarriesNoLicensingBlock() {
     ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
     TenantContext.setCurrentTenant(1L);
     CreateConsultantDTO dto = validCreateConsultantDto();
     dto.setTenantId(1L);
     when(tenantAdminService.getTenantById(1L)).thenReturn(new TenantDTO());
-    stubHappyPath();
 
-    var response = createConsultantSaga.createNewConsultant(dto);
+    var ex =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> createConsultantSaga.createNewConsultant(dto));
 
-    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
-    verify(consultantService, never()).getNumberOfActiveConsultants(1L);
+    assertThat(
+        ex.getCustomHttpHeaders().get("X-Reason").get(0),
+        is(TENANT_LICENSING_NOT_CONFIGURED.name()));
+    assertThat(ex.getHttpStatus(), is(HttpStatus.BAD_REQUEST));
+    verify(identityClient, never()).createUser(any(), anyString(), anyString());
   }
 
   @Test
-  void createNewConsultant_Should_createConsultant_When_tenantLicensingCarriesNoUserLimit()
-      throws Exception {
+  void
+      createNewConsultant_Should_reportUnconfiguredLicensing_When_tenantLicensingCarriesNoUserLimit() {
     ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
     TenantContext.setCurrentTenant(1L);
     CreateConsultantDTO dto = validCreateConsultantDto();
     dto.setTenantId(1L);
     when(tenantAdminService.getTenantById(1L))
         .thenReturn(new TenantDTO().licensing(new Licensing()));
-    stubHappyPath();
 
-    var response = createConsultantSaga.createNewConsultant(dto);
+    var ex =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> createConsultantSaga.createNewConsultant(dto));
 
-    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
-    verify(consultantService, never()).getNumberOfActiveConsultants(1L);
+    assertThat(
+        ex.getCustomHttpHeaders().get("X-Reason").get(0),
+        is(TENANT_LICENSING_NOT_CONFIGURED.name()));
+    verify(identityClient, never()).createUser(any(), anyString(), anyString());
   }
 
   @Test
-  void createNewConsultant_Should_createConsultant_When_tenantLookupYieldsNothing()
-      throws Exception {
+  void createNewConsultant_Should_reportUnconfiguredLicensing_When_tenantLookupYieldsNothing() {
     ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
     TenantContext.setCurrentTenant(1L);
     CreateConsultantDTO dto = validCreateConsultantDto();
     dto.setTenantId(1L);
     when(tenantAdminService.getTenantById(1L)).thenReturn(null);
-    stubHappyPath();
 
-    var response = createConsultantSaga.createNewConsultant(dto);
+    var ex =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> createConsultantSaga.createNewConsultant(dto));
 
-    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    assertThat(
+        ex.getCustomHttpHeaders().get("X-Reason").get(0),
+        is(TENANT_LICENSING_NOT_CONFIGURED.name()));
     verify(consultantService, never()).getNumberOfActiveConsultants(1L);
   }
 
