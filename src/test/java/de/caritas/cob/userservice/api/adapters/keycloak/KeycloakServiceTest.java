@@ -10,6 +10,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -707,7 +708,7 @@ public class KeycloakServiceTest {
   }
 
   @Test
-  public void createUser_Should_carryKeycloakStatusAndBody_When_errorIsUnknown() {
+  public void createUser_Should_carryKeycloakStatusButNotBody_When_errorIsUnknown() {
     setField(keycloakService, "keycloakError", "An unexpected Keycloak error occurred");
     givenADuplicatedEmailErrorMessage();
     givenADuplicatedUserErrorMessage();
@@ -718,14 +719,16 @@ public class KeycloakServiceTest {
             InternalServerErrorException.class,
             () -> this.keycloakService.createUser(new EasyRandom().nextObject(UserDTO.class)));
 
-    // Without these an operator sees only the configured string and cannot tell a misconfigured
-    // realm from an unreachable one.
+    // Status still leaves the method so a 500 is at least attributable to Keycloak and to a status
+    // class rather than reverting to the empty configured-string message.
     assertThat(exception.getMessage(), containsString("503"));
-    assertThat(exception.getMessage(), containsString("realm temporarily unavailable"));
+    // The Keycloak response body echoes the submitted username and e-mail on validation errors, so
+    // it must not reach the operator-facing exception message.
+    assertThat(exception.getMessage(), not(containsString("realm temporarily unavailable")));
   }
 
   @Test
-  public void createUser_Should_reportAnEmptyKeycloakBody_When_errorIsUnknownAndBodyIsBlank() {
+  public void createUser_Should_carryKeycloakStatus_When_errorIsUnknownAndBodyIsBlank() {
     setField(keycloakService, "keycloakError", "An unexpected Keycloak error occurred");
     givenADuplicatedEmailErrorMessage();
     givenADuplicatedUserErrorMessage();
@@ -737,7 +740,6 @@ public class KeycloakServiceTest {
             () -> this.keycloakService.createUser(new EasyRandom().nextObject(UserDTO.class)));
 
     assertThat(exception.getMessage(), containsString("500"));
-    assertThat(exception.getMessage(), containsString("<empty body>"));
   }
 
   private void givenAFailingCreateUserResponse(int status, String body) {
