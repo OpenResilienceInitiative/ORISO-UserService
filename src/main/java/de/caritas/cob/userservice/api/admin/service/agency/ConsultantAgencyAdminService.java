@@ -201,9 +201,17 @@ public class ConsultantAgencyAdminService {
   }
 
   private boolean noOtherTeamAgency(Consultant consultant, Long agencyId) {
-    return consultant.getConsultantAgencies().stream()
+    // Deliberately query the repository instead of navigating consultant.getConsultantAgencies():
+    // this method runs outside of an open Hibernate session (changeAgencyType() is not
+    // @Transactional, and spring.jpa.open-in-view is disabled), so the lazy collection on a
+    // consultant loaded by an earlier, already-closed repository call would raise a
+    // LazyInitializationException. A fresh, explicit query is self-contained and always eager.
+    // Same pattern as ChatService's explicit ChatAgencyRepository lookups (see #288).
+    return consultantAgencyRepository
+        .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
+        .stream()
+        .filter(consultantAgency -> !agencyId.equals(consultantAgency.getAgencyId()))
         .map(this::toAgencyDto)
-        .filter(agencyDTO -> !agencyId.equals(agencyDTO.getId()))
         .noneMatch(AgencyDTO::getTeamAgency);
   }
 
