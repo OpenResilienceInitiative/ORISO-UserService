@@ -3,8 +3,10 @@ package de.caritas.cob.userservice.api.admin.service.agency;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -19,6 +21,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.ConsultantLeftAgencyEvent;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -29,6 +32,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.context.ApplicationEventPublisher;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -43,6 +47,7 @@ class ConsultantAgencyAdminServiceTest {
   @Mock private AgencyService agencyService;
   @Mock private AgencyAdminService agencyAdminService;
   @Mock private ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
+  @Mock private ApplicationEventPublisher eventPublisher;
 
   // ---------------------------------------------------------------------------
   // findConsultantAgencies
@@ -251,6 +256,71 @@ class ConsultantAgencyAdminServiceTest {
         .save(any(ConsultantAgency.class));
     assertThat(relation1.getDeleteDate()).isNotNull();
     assertThat(relation2.getDeleteDate()).isNotNull();
+  }
+
+  /**
+   * US#1060, the symmetric half: because a counsellor is joined into the agency's open enquiry
+   * rooms when they are assigned, detaching them has to take that membership back — otherwise they
+   * keep receiving the agency's open initial requests through Matrix {@code /sync} long after the
+   * relation was deleted. Announced only once the deletion is persisted.
+   */
+  @Test
+  void markConsultantAgencyForDeletion_Should_publishTheLeftAgencyEvent_afterMarkingItDeleted() {
+    var relation = detachableRelation("c-1", 10L);
+    when(consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull("c-1", 10L))
+        .thenReturn(List.of(relation));
+
+    consultantAgencyAdminService.markConsultantAgencyForDeletion("c-1", 10L);
+
+    var inOrder = inOrder(consultantAgencyRepository, eventPublisher);
+    inOrder.verify(consultantAgencyRepository).save(relation);
+    inOrder.verify(eventPublisher).publishEvent(new ConsultantLeftAgencyEvent("c-1", 10L));
+  }
+
+  /**
+   * A refused detach (last counsellor of an active agency) leaves the relation intact, so revoking
+   * the counsellor's room membership would lock them out of enquiries they still own.
+   */
+  @Test
+  void markConsultantAgencyForDeletion_Should_notPublish_When_theDeletionIsRejected() {
+    var relation = detachableRelation("c-1", 10L);
+    when(consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull("c-1", 10L))
+        .thenReturn(List.of(relation));
+    org.mockito.Mockito.doThrow(
+            new CustomValidationHttpStatusException(
+                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                    .HttpStatusExceptionReason
+                    .CONSULTANT_IS_THE_LAST_OF_AGENCY_AND_AGENCY_IS_STILL_ACTIVE))
+        .when(agencyDeletionValidationService)
+        .validateAndMarkForDeletion(relation);
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () -> consultantAgencyAdminService.markConsultantAgencyForDeletion("c-1", 10L));
+
+    verifyNoInteractions(eventPublisher);
+  }
+
+  @Test
+  void markConsultantAgenciesForDeletion_Should_publishOneEventPerAgency() {
+    when(consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull("c-1", 10L))
+        .thenReturn(List.of(detachableRelation("c-1", 10L)));
+    when(consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull("c-1", 20L))
+        .thenReturn(List.of(detachableRelation("c-1", 20L)));
+
+    consultantAgencyAdminService.markConsultantAgenciesForDeletion("c-1", List.of(10L, 20L));
+
+    verify(eventPublisher).publishEvent(new ConsultantLeftAgencyEvent("c-1", 10L));
+    verify(eventPublisher).publishEvent(new ConsultantLeftAgencyEvent("c-1", 20L));
+  }
+
+  private ConsultantAgency detachableRelation(String consultantId, Long agencyId) {
+    var consultant = new Consultant();
+    consultant.setId(consultantId);
+    var relation = new ConsultantAgency();
+    relation.setConsultant(consultant);
+    relation.setAgencyId(agencyId);
+    return relation;
   }
 
   // ---------------------------------------------------------------------------

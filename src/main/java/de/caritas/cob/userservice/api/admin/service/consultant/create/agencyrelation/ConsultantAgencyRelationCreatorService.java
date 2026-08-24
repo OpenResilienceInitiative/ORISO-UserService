@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.ConsultantJoinedAgencyEvent;
 import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Optional;
@@ -28,6 +29,7 @@ import java.util.Set;
 import java.util.function.Consumer;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 /** Creator class to generate new {@link ConsultantAgency} instances. */
@@ -45,6 +47,7 @@ public class ConsultantAgencyRelationCreatorService {
   private final @NonNull ConsultantAgencyRelationFinalizer consultantAgencyRelationFinalizer;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
+  private final @NonNull ApplicationEventPublisher eventPublisher;
 
   /**
    * Creates a new {@link ConsultantAgency} based on the {@link ImportRecord} and agency ids.
@@ -139,6 +142,14 @@ public class ConsultantAgencyRelationCreatorService {
       consultant.setTeamConsultant(true);
       consultantRepository.save(consultant);
     }
+
+    // US#1060: an agency assignment that stops at the database row leaves the counsellor locked
+    // out of every enquiry that arrived before them — Matrix membership is what makes an enquiry
+    // visible at all (FE#811). Announced rather than performed here: the membership fan-out has to
+    // wait for the commit, or a later rejected agency would roll the row back around a Matrix join
+    // that already happened. See AgencyMembershipSyncListener.
+    eventPublisher.publishEvent(
+        new ConsultantJoinedAgencyEvent(consultant.getId(), agency.getId()));
   }
 
   private void ensureConsultingTypeRoles(ConsultantAgencyCreationInput input, AgencyDTO agency) {
