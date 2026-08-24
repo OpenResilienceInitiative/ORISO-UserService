@@ -398,9 +398,9 @@ public class KeycloakService
    * request A could be handed the raw Keycloak body belonging to request B, which carries B's
    * username and e-mail. Nothing else needs the value to outlive the throw, so it does not.
    *
-   * <p>Only the HTTP status leaves this method - in the log line and in the exception message.
-   * The Keycloak response body echoes the submitted username and e-mail on validation errors, and
-   * the UserDTO carries both, so neither is safe to propagate to a log aggregator or to an
+   * <p>Only the HTTP status leaves this method - in the log line and in the exception message. The
+   * Keycloak response body echoes the submitted username and e-mail on validation errors, and the
+   * UserDTO carries both, so neither is safe to propagate to a log aggregator or to an
    * operator-facing error page. Duplicate detection still reads the body in-memory here but the
    * body does not outlive the method.
    */
