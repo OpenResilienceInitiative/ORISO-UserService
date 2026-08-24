@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -22,6 +23,8 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
@@ -63,6 +66,7 @@ class AccountInviteServiceTest {
   @Mock private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @Mock private InviteMailDispatchService inviteMailDispatchService;
   @Mock private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
+  @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
 
   @InjectMocks private AccountInviteService service;
 
@@ -407,6 +411,224 @@ class AccountInviteServiceTest {
         new CreateAccountInviteCommand(
             AccountInviteTargetRole.COUNSELLOR, 7L, "   ", "A", "B", null, null, null);
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+  }
+
+  // --- P3 (#Problem 3): duplicate recipient e-mail is refused at invite CREATION time, not only
+  // at redemption. Both invite kinds and both creation paths ("send now" / "add to list") funnel
+  // through createInvite, so a single guard here covers all of them.
+
+  @Test
+  void createInvite_Should_ThrowEmailNotAvailable_When_RecipientEmailBelongsToRegisteredUser() {
+    when(identityEmailOwnerLookup.findByEmail("taken@example.org"))
+        .thenReturn(Optional.of(new IdentityEmailOwner("existing-user")));
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "taken@example.org",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class)
+        .satisfies(
+            thrown -> {
+              var ex = (CustomValidationHttpStatusException) thrown;
+              assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(ex.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("EMAIL_NOT_AVAILABLE");
+            });
+
+    verifyNoInteractions(accountInviteRepository);
+  }
+
+  @Test
+  void createInvite_Should_ThrowEmailNotAvailable_When_TenantAdminRecipientEmailIsRegistered() {
+    when(identityEmailOwnerLookup.findByEmail("taken@example.org"))
+        .thenReturn(Optional.of(new IdentityEmailOwner("existing-user")));
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            7L,
+            "taken@example.org",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+
+    // The guard runs before any tenant-ID reservation, so nothing has to be compensated.
+    verifyNoInteractions(tenantIdAllocationClient);
+    verifyNoInteractions(accountInviteRepository);
+  }
+
+  @Test
+  void createInvite_Should_NormalizeRecipientEmail_When_CheckingAvailability() {
+    when(identityEmailOwnerLookup.findByEmail("taken@example.org"))
+        .thenReturn(Optional.of(new IdentityEmailOwner("existing-user")));
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "  Taken@Example.ORG  ",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+  }
+
+  @Test
+  void createInvite_Should_Succeed_When_RecipientEmailIsUnknownToIdentityProvider() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(identityEmailOwnerLookup.findByEmail("free@example.org")).thenReturn(Optional.empty());
+    when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                7L,
+                "free@example.org",
+                "A",
+                "B",
+                null,
+                null,
+                null));
+
+    assertThat(invite.getRecipientEmail()).isEqualTo("free@example.org");
+  }
+
+  // --- P3 gap closure: the identity probe alone is not enough. A Keycloak user only exists once
+  // an invite has been ACCEPTED, so an invite still sitting in DRAFT or EMAIL_SENT is invisible to
+  // it — and a second invite for the same address slipped through. A pending invite "holds" the
+  // address just as a registered account does, so it must produce the very same 409.
+
+  @Test
+  void createInvite_Should_ThrowEmailNotAvailable_When_ANonTerminalInviteAlreadyHoldsTheAddress() {
+    when(identityEmailOwnerLookup.findByEmail("pending@example.org")).thenReturn(Optional.empty());
+    when(accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+            eq("pending@example.org"), any(), any()))
+        .thenReturn(1L);
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "pending@example.org",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class)
+        .satisfies(
+            thrown -> {
+              var ex = (CustomValidationHttpStatusException) thrown;
+              // Identical contract to the registered-account case — the admin renders exactly one
+              // inline field error for EMAIL_NOT_AVAILABLE; a new reason code would fall through
+              // to a generic toast.
+              assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(ex.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("EMAIL_NOT_AVAILABLE");
+            });
+
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void createInvite_Should_ThrowEmailNotAvailable_When_TenantAdminAddressHasANonTerminalInvite() {
+    when(identityEmailOwnerLookup.findByEmail("pending@example.org")).thenReturn(Optional.empty());
+    when(accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+            eq("pending@example.org"), any(), any()))
+        .thenReturn(1L);
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            7L,
+            "pending@example.org",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+
+    // Still ahead of the role branch: no tenant-ID reservation to compensate, nothing persisted.
+    verifyNoInteractions(tenantIdAllocationClient);
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void createInvite_Should_MatchAPendingInviteCaseInsensitively() {
+    when(identityEmailOwnerLookup.findByEmail("pending@example.org")).thenReturn(Optional.empty());
+    // The probe receives the normalized address; the query lower-cases the stored column, so a
+    // row persisted as "Pending@Example.ORG" is found just the same.
+    when(accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+            eq("pending@example.org"), any(), any()))
+        .thenReturn(1L);
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "  Pending@Example.ORG  ",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+  }
+
+  @Test
+  void createInvite_Should_OnlyLetNonTerminalInviteStatusesBlockTheAddress() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(identityEmailOwnerLookup.findByEmail("reusable@example.org")).thenReturn(Optional.empty());
+    when(accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+            eq("reusable@example.org"), any(), any()))
+        .thenReturn(0L);
+    when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                7L,
+                "reusable@example.org",
+                "A",
+                "B",
+                null,
+                null,
+                null));
+
+    assertThat(invite.getRecipientEmail()).isEqualTo("reusable@example.org");
+    // ACCEPTED / EXPIRED / REVOKED / SUPERSEDED are never asked about: an accepted invite is
+    // already covered by the identity probe, and a revoked, expired or superseded one must leave
+    // the address free — otherwise a mistyped or withdrawn invite would strand the admin with no
+    // way to invite that person again.
+    verify(accountInviteRepository)
+        .countNonTerminalInvitesForRecipientEmail(
+            eq("reusable@example.org"),
+            eq(List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT)),
+            any());
   }
 
   @Test
