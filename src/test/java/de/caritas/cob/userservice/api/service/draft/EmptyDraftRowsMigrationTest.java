@@ -24,7 +24,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 /**
- * Replays the shipped Liquibase statement of changeset {@code 0083_empty_draft_rows} against an H2
+ * Replays the shipped Liquibase statement of changeset {@code 0087_empty_draft_rows} against an H2
  * database in MariaDB mode (the engine the testing profile uses), pinning the two properties the
  * migration has to have (#983).
  *
@@ -43,7 +43,7 @@ import org.junit.jupiter.api.Test;
 class EmptyDraftRowsMigrationTest {
 
   private static final Path MIGRATE_SQL =
-      Path.of("src/main/resources/db/changelog/changeset/0083_empty_draft_rows/migrate.sql");
+      Path.of("src/main/resources/db/changelog/changeset/0087_empty_draft_rows/migrate.sql");
 
   /** Shapes the migration is required to clear. */
   private static final List<String> ZERO_CONTENT_SAMPLES =

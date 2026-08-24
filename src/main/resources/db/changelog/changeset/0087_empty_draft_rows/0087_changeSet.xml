@@ -7,7 +7,7 @@
     <comment>#983: delete draft rows that carry no content (empty string, TipTap empty document,
       whitespace entities). Encrypted drafts are never matched.</comment>
     <sqlFile
-      path="db/changelog/changeset/0083_empty_draft_rows/migrate.sql"
+      path="db/changelog/changeset/0087_empty_draft_rows/migrate.sql"
       relativeToChangelogFile="false" splitStatements="false" stripComments="true"
       encoding="UTF-8"/>
     <rollback>

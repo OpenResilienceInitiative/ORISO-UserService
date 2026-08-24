@@ -28,7 +28,7 @@ class SupportRoomMigrationConvergenceIT {
   private static final String REPAIR_CHANGESET_ID = "0081-support-room-repair";
   private static final String REPAIR_CHANGESET_AUTHOR = "frank";
   private static final String REPAIR_CHANGESET_FILE =
-      "db/changelog/changeset/0081_support_room_repair/0081_changeSet.xml";
+      "db/changelog/changeset/0086_support_room_repair/0086_changeSet.xml";
 
   @Test
   void canonicalChangelogRepairsSupportRoomRemovedByDivergentMigration() throws Exception {
