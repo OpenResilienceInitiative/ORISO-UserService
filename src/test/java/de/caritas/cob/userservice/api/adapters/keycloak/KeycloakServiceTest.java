@@ -7,8 +7,10 @@ import static java.util.Collections.singletonList;
 import static org.apache.commons.lang3.RandomStringUtils.random;
 import static org.apache.commons.lang3.RandomStringUtils.randomAlphabetic;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
@@ -22,6 +24,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.util.ReflectionTestUtils.getField;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import ch.qos.logback.classic.Level;
@@ -684,6 +687,68 @@ public class KeycloakServiceTest {
       assertThat(
           e.getCustomHttpHeaders().get("X-Reason").get(0), is(USERNAME_NOT_AVAILABLE.name()));
     }
+  }
+
+  @Test
+  public void createUser_Should_leaveTheInjectedErrorTemplateIntact_When_keycloakFails() {
+    // keycloakError is @Value-injected configuration on a singleton. Recording the current
+    // request's Keycloak response in it destroyed the configured value for the life of the JVM and
+    // let concurrent failures read one another's detail.
+    var configuredTemplate = "An unexpected Keycloak error occurred";
+    setField(keycloakService, "keycloakError", configuredTemplate);
+    givenADuplicatedEmailErrorMessage();
+    givenADuplicatedUserErrorMessage();
+    givenAFailingCreateUserResponse(500, "realm temporarily unavailable");
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> this.keycloakService.createUser(new EasyRandom().nextObject(UserDTO.class)));
+
+    assertThat(getField(keycloakService, "keycloakError"), is(configuredTemplate));
+  }
+
+  @Test
+  public void createUser_Should_carryKeycloakStatusButNotBody_When_errorIsUnknown() {
+    setField(keycloakService, "keycloakError", "An unexpected Keycloak error occurred");
+    givenADuplicatedEmailErrorMessage();
+    givenADuplicatedUserErrorMessage();
+    givenAFailingCreateUserResponse(503, "realm temporarily unavailable");
+
+    var exception =
+        assertThrows(
+            InternalServerErrorException.class,
+            () -> this.keycloakService.createUser(new EasyRandom().nextObject(UserDTO.class)));
+
+    // Status still leaves the method so a 500 is at least attributable to Keycloak and to a status
+    // class rather than reverting to the empty configured-string message.
+    assertThat(exception.getMessage(), containsString("503"));
+    // The Keycloak response body echoes the submitted username and e-mail on validation errors, so
+    // it must not reach the operator-facing exception message.
+    assertThat(exception.getMessage(), not(containsString("realm temporarily unavailable")));
+  }
+
+  @Test
+  public void createUser_Should_carryKeycloakStatus_When_errorIsUnknownAndBodyIsBlank() {
+    setField(keycloakService, "keycloakError", "An unexpected Keycloak error occurred");
+    givenADuplicatedEmailErrorMessage();
+    givenADuplicatedUserErrorMessage();
+    givenAFailingCreateUserResponse(500, "");
+
+    var exception =
+        assertThrows(
+            InternalServerErrorException.class,
+            () -> this.keycloakService.createUser(new EasyRandom().nextObject(UserDTO.class)));
+
+    assertThat(exception.getMessage(), containsString("500"));
+  }
+
+  private void givenAFailingCreateUserResponse(int status, String body) {
+    UsersResource failingUsersResource = mock(UsersResource.class);
+    Response response = mock(Response.class);
+    when(response.getStatus()).thenReturn(status);
+    when(response.readEntity(String.class)).thenReturn(body);
+    when(failingUsersResource.create(any())).thenReturn(response);
+    when(keycloakClient.getUsersResource()).thenReturn(failingUsersResource);
   }
 
   @Test
