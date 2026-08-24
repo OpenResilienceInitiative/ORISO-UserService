@@ -398,9 +398,11 @@ public class KeycloakService
    * request A could be handed the raw Keycloak body belonging to request B, which carries B's
    * username and e-mail. Nothing else needs the value to outlive the throw, so it does not.
    *
-   * <p>The status and raw body go into the exception message as well as the log line: a 500 whose
-   * message is only the configured "unexpected Keycloak error" string is unactionable, and the
-   * message is what reaches the operator through the error report.
+   * <p>Only the HTTP status leaves this method - in the log line and in the exception message.
+   * The Keycloak response body echoes the submitted username and e-mail on validation errors, and
+   * the UserDTO carries both, so neither is safe to propagate to a log aggregator or to an
+   * operator-facing error page. Duplicate detection still reads the body in-memory here but the
+   * body does not outlive the method.
    */
   private RuntimeException createUserFailure(UserDTO user, Response response) {
     final int status = response.getStatus();
@@ -425,12 +427,10 @@ public class KeycloakService
       return new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
-    log.warn("Keycloak create-user failed. status={}, rawResponse={}", status, rawResponse);
+    log.warn("Keycloak create-user failed. status={}", status);
 
     return new InternalServerErrorException(
-        String.format(
-            "%s: could not create Keycloak account for %s. Keycloak responded with status %s: %s",
-            keycloakError, user, status, rawResponse.isBlank() ? "<empty body>" : rawResponse));
+        String.format("%s: Keycloak responded with status %s", keycloakError, status));
   }
 
   /**
