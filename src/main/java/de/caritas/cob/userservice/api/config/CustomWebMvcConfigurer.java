@@ -19,6 +19,7 @@ import org.springframework.web.servlet.config.annotation.ResourceHandlerRegistry
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 import tools.jackson.core.JacksonException;
 import tools.jackson.core.JsonGenerator;
+import tools.jackson.databind.DeserializationFeature;
 import tools.jackson.databind.SerializationContext;
 import tools.jackson.databind.ValueSerializer;
 import tools.jackson.databind.json.JsonMapper;
@@ -66,7 +67,18 @@ public class CustomWebMvcConfigurer implements WebMvcConfigurer {
 
     for (int index = 0; index < converters.size(); index++) {
       if (converters.get(index) instanceof JacksonJsonHttpMessageConverter converter) {
-        var mapper = (JsonMapper) converter.getMapper().rebuild().addModule(module).build();
+        // Jackson 3 enables FAIL_ON_NULL_FOR_PRIMITIVES for creator-bound
+        // properties; hand-written request DTOs (e.g. NewRegistrationDto's
+        // hidden primitive newUserAccount) rely on the Jackson 2 semantics
+        // where an absent field defaults the primitive instead of a 400.
+        var mapper =
+            (JsonMapper)
+                converter
+                    .getMapper()
+                    .rebuild()
+                    .addModule(module)
+                    .disable(DeserializationFeature.FAIL_ON_NULL_FOR_PRIMITIVES)
+                    .build();
         var replacement = new JacksonJsonHttpMessageConverter(mapper);
         replacement.setSupportedMediaTypes(converter.getSupportedMediaTypes());
         converters.set(index, replacement);
