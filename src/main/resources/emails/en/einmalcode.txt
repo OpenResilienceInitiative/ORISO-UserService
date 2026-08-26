@@ -1,7 +1,7 @@
 Your one-time code
 ==================
 
-Enter this code in the sign-in window.
+Enter this code in the sign-in window. It is valid for {{expiryMinutes}} minutes.
 
 Code: {{otpCode}}
 

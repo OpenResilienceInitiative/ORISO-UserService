@@ -267,6 +267,7 @@ public class CreateUserFacadeTest {
     verify(sessionService, never()).deleteSession(any(Session.class));
     verify(userService, never()).deleteUser(any(User.class));
     verify(identityAccountRemover, never()).rollbackUser(anyString());
+    verify(welcomeEmailService, times(1)).sendWelcomeEmail(any(User.class), anyString());
   }
 
   @Test

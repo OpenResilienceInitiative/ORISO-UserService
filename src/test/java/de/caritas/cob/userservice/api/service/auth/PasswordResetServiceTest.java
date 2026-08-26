@@ -72,7 +72,7 @@ class PasswordResetServiceTest {
         passwordResetService, "passwordResetExecutor", (Executor) Runnable::run);
     // Replace the real SMTP sender with a capturing seam — no network in tests.
     PasswordResetMailSender capturingSender =
-        (recipient, locale, resetUrl, smtpSettings, content) ->
+        (recipient, locale, resetUrl, smtpSettings) ->
             sentMails.add(new SentMail(recipient, locale, resetUrl));
     ReflectionTestUtils.setField(passwordResetService, "mailSender", capturingSender);
   }

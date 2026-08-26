@@ -3,8 +3,15 @@ package de.caritas.cob.userservice.api.service.email;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
 
@@ -148,22 +155,35 @@ class OrisoEmailRendererTest {
 
   @Test
   void everyTemplateInTheCatalogueRendersInEveryTone() {
-    for (String id :
-        new String[] {
-          "anmeldelink",
-          "einmalcode",
-          "email-geaendert",
-          "passwort-zuruecksetzen",
-          "team-aenderung",
-          "smtp-test",
-          "avv-unterschrift"
-        }) {
+    List<String> templateIds = catalogueTemplateIds();
+    assertThat(templateIds).as("catalogue.json mails").isNotEmpty();
+
+    for (String id : templateIds) {
       for (OrisoEmailRenderer.Tone tone : OrisoEmailRenderer.Tone.values()) {
         var email = renderer.render(id, tone, brand());
         assertThat(email.subject()).as("subject of %s/%s", id, tone).isNotBlank();
         assertThat(email.html()).as("html of %s/%s", id, tone).contains("<!DOCTYPE html>");
         assertThat(email.text()).as("text of %s/%s", id, tone).isNotBlank();
       }
+    }
+  }
+
+  /**
+   * Every mail id in catalogue.json, read independently of {@link OrisoEmailRenderer} — the point
+   * is to notice a template that catalogue.json lists but the classpath copy is missing, which a
+   * hand-picked subset id list cannot catch.
+   */
+  private static List<String> catalogueTemplateIds() {
+    try (InputStream in =
+        OrisoEmailRendererTest.class.getResourceAsStream("/emails/catalogue.json")) {
+      JsonNode mails = new ObjectMapper().readTree(in).path("mails");
+      List<String> ids = new ArrayList<>();
+      for (Iterator<String> it = mails.fieldNames(); it.hasNext(); ) {
+        ids.add(it.next());
+      }
+      return ids;
+    } catch (IOException e) {
+      throw new IllegalStateException("could not read emails/catalogue.json for the test", e);
     }
   }
 }

@@ -15,6 +15,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
+import org.springframework.web.util.HtmlUtils;
 
 /**
  * Renders a transactional e-mail from the ORISO e-mail design system.
@@ -181,11 +182,6 @@ public class OrisoEmailRenderer {
   }
 
   private static String escapeHtml(String value) {
-    return value
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("\"", "&quot;")
-        .replace("'", "&#39;");
+    return HtmlUtils.htmlEscape(value, StandardCharsets.UTF_8.name());
   }
 }

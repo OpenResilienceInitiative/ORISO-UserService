@@ -161,12 +161,19 @@ public class CreateUserFacade {
         log.error("Could not create registration statistics event", e);
       }
 
-      // The welcome mail carries the generated user name, which ORISO cannot
-      // recover. Sent after the account exists and deliberately not inside the
-      // provisioning try/rollback: a bounced mail must not undo a registration.
-      welcomeEmailService.sendWelcomeEmail(user, plainUsername);
-
       activeAttempt.complete();
+
+      // The welcome mail carries the generated user name, which ORISO cannot
+      // recover. Sent after the attempt is marked complete and guarded here:
+      // @Async submission throws synchronously when the executor queue is
+      // full, and neither that nor a later bounce may undo a registration
+      // that has already succeeded.
+      try {
+        welcomeEmailService.sendWelcomeEmail(user, plainUsername);
+      } catch (Exception e) {
+        log.error("Could not schedule welcome mail", e);
+      }
+
       return registration.getSessionId();
     } finally {
       compensateProvisioning(provisioningAttempt);

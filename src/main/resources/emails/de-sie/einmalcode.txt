@@ -1,7 +1,7 @@
 Ihr Einmalcode
 ==============
 
-Geben Sie diesen Code im Anmeldefenster ein.
+Geben Sie diesen Code im Anmeldefenster ein. Er ist {{expiryMinutes}} Minuten gültig.
 
 Code: {{otpCode}}
 

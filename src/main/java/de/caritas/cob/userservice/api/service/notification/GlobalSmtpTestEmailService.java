@@ -31,8 +31,18 @@ public class GlobalSmtpTestEmailService {
   private final @NonNull OrisoEmailRenderer emailRenderer;
   private final @NonNull OrisoEmailBrand emailBrand;
 
-  @Value("${system.notification.frontend.base-url:https://app.oriso.org}")
+  // No fallback: an admin-triggered diagnostic mail that silently links into the wrong
+  // deployment's app.oriso.org is worse than a startup failure that says so.
+  @Value("${system.notification.frontend.base-url}")
   private String appBaseUrl;
+
+  /** Seam so tests can capture the rendered message without opening an SMTP socket. */
+  @FunctionalInterface
+  interface SmtpTransport {
+    void send(MimeMessage message) throws Exception;
+  }
+
+  private SmtpTransport transport = Transport::send;
 
   public void sendTestEmail(GlobalSmtpTestEmailDTO dto) throws Exception {
     var credentials =
@@ -70,8 +80,19 @@ public class GlobalSmtpTestEmailService {
     message.setSubject(email.subject(), "UTF-8");
     message.setContent(OrisoEmailMime.alternative(email));
 
-    log.info("Sending global SMTP test email to {}", dto.getRecipientEmail());
-    Transport.send(message);
+    log.info("Sending global SMTP test email to {}", mask(dto.getRecipientEmail()));
+    transport.send(message);
+  }
+
+  /**
+   * {@code a***@example.com} — enough to confirm the right inbox in a log line, not the address.
+   */
+  private static String mask(String email) {
+    int at = email == null ? -1 : email.indexOf('@');
+    if (at <= 0) {
+      return "***";
+    }
+    return email.charAt(0) + "***" + email.substring(at);
   }
 
   private OrisoEmailRenderer.RenderedEmail renderSmtpTest(GlobalSmtpTestEmailDTO dto) {

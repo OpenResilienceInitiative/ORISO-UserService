@@ -56,10 +56,18 @@ public class OrisoEmailDispatcher {
     props.put("mail.smtp.auth", "true");
     props.put("mail.smtp.host", smtp.getHost());
     props.put("mail.smtp.port", String.valueOf(smtp.getPort()));
+    // Bounded, matching JakartaInviteMailTransport: an unresponsive SMTP host must not hang the
+    // calling thread indefinitely — that thread usually comes from a bounded @Async pool.
+    props.put("mail.smtp.connectiontimeout", "10000");
+    props.put("mail.smtp.timeout", "10000");
+    props.put("mail.smtp.writetimeout", "10000");
     if (smtp.isSecure()) {
       props.put("mail.smtp.ssl.enable", "true");
     } else {
       props.put("mail.smtp.starttls.enable", "true");
+      // Without this, a STARTTLS-stripping man-in-the-middle just gets a plaintext session
+      // instead of a failed connection.
+      props.put("mail.smtp.starttls.required", "true");
     }
 
     return Session.getInstance(

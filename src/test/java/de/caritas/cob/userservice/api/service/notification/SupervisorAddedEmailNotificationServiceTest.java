@@ -665,6 +665,27 @@ class SupervisorAddedEmailNotificationServiceTest {
     assertThat(service.askerStatementSupervisorLeft(LanguageCode.de))
         .doesNotContain("Frau Sandmann")
         .doesNotContain("#");
+
+    // The statement alone is not the guarantee — the surrounding card renders a case reference
+    // and a call-to-action link too, and both can leak the session on their own. Render an advice
+    // seeker's actual mail (null sessionId, app root as the CTA, exactly what the caller passes)
+    // and check the full output, not just the hand-authored sentence.
+    var email =
+        service.renderTeamChange(
+            LanguageCode.de,
+            statement,
+            "https://app.oriso.org",
+            "https://app.oriso.org",
+            null,
+            "#1c4f8f");
+
+    assertThat(email.html())
+        .doesNotContain("#4711")
+        .doesNotContain("/sessions/user/view/session/")
+        .doesNotContain("/sessions/consultant/sessionView/session/");
+    assertThat(email.text())
+        .doesNotContain("/sessions/user/view/session/")
+        .doesNotContain("/sessions/consultant/sessionView/session/");
   }
 
   @Test
@@ -673,6 +694,7 @@ class SupervisorAddedEmailNotificationServiceTest {
         service.renderTeamChange(
             LanguageCode.de,
             service.staffStatementSupervisorAdded(LanguageCode.de),
+            "https://app.oriso.org",
             "https://app.oriso.org/sessions/consultant/sessionView/session/4711",
             4711L,
             "#1c4f8f");
@@ -689,7 +711,12 @@ class SupervisorAddedEmailNotificationServiceTest {
   void teamChangeMailUsesTheDesignSystemSkeletonRatherThanTheOldInlineCard() {
     var email =
         service.renderTeamChange(
-            LanguageCode.de, "Etwas hat sich geändert.", "https://app.oriso.org", 1L, "#1c4f8f");
+            LanguageCode.de,
+            "Etwas hat sich geändert.",
+            "https://app.oriso.org",
+            "https://app.oriso.org",
+            1L,
+            "#1c4f8f");
 
     // The old inline card: a 620px table on #f6f7fb with an #e5e7eb border, in
     // Arial. Checked by its own fingerprints — "620" on its own is no use,
@@ -705,7 +732,12 @@ class SupervisorAddedEmailNotificationServiceTest {
   void aTenantColourThatCannotCarryWhiteTextDoesNotReachTheButton() {
     var email =
         service.renderTeamChange(
-            LanguageCode.de, "Etwas hat sich geändert.", "https://app.oriso.org", 1L, "#ffd400");
+            LanguageCode.de,
+            "Etwas hat sich geändert.",
+            "https://app.oriso.org",
+            "https://app.oriso.org",
+            1L,
+            "#ffd400");
 
     assertThat(email.html()).doesNotContain("#ffd400");
   }

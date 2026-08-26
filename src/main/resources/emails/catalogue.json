@@ -76,10 +76,8 @@
       "placeholders": [
         "{{expiryHours}}",
         "{{resetUrl}}",
-        "{{settingsUrl}}",
         "{{privacyUrl}}",
-        "{{imprintUrl}}",
-        "{{unsubscribeUrl}}"
+        "{{imprintUrl}}"
       ],
       "tones": {
         "de-sie": {

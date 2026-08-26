@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -514,8 +515,9 @@ class MagicLinkLoginServiceTest {
   @Test
   @SuppressWarnings("unchecked")
   void requestMagicLink_Should_AttemptSmtpSend_When_ValidSmtpSettingsReturned() {
-    // resolveGlobalSmtpSettings returns present → sendMagicLinkEmailSafely entered
-    // Transport.send fails (smtp.invalid) but exception is caught → no rethrow
+    // resolveGlobalSmtpSettings returns present → sendMagicLinkEmailSafely entered,
+    // renders through the real anmeldelink/DE_FORMAL path, then Transport.send fails
+    // (smtp.invalid) but the exception is caught → no rethrow.
     ReflectionTestUtils.setField(
         magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
     User user = validUserWithMagicLinkEnabled();
@@ -530,9 +532,21 @@ class MagicLinkLoginServiceTest {
                 "globalSmtpUsername", "user",
                 "globalSmtpPassword", "pass",
                 "globalSmtpFrom", "noreply@example.com"));
+    ApplicationSettingsSmtpCredentialsDTO credentials = new ApplicationSettingsSmtpCredentialsDTO();
+    credentials.setGlobalSmtpUsername("user");
+    credentials.setGlobalSmtpPassword("pass");
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(credentials));
+    Map<String, String> brandValues = new HashMap<>();
+    brandValues.put("appUrl", "https://app.oriso.org");
+    when(emailBrand.values(eq("https://app.oriso.org"), any())).thenReturn(brandValues);
+    when(emailRenderer.render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
+        .thenReturn(new OrisoEmailRenderer.RenderedEmail("subject", "<html></html>", "text"));
 
     assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
         .doesNotThrowAnyException();
+
+    verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
   }
 
   // ── consumeMagicLink — happy path returns provider-neutral session ────────

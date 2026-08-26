@@ -56,6 +56,13 @@ public class OrisoEmailBrand {
    * @param tenantThemeColor the tenant's {@code emailThemeColor}, or null
    */
   public Map<String, String> values(String appUrl, String tenantThemeColor) {
+    if (!isNotBlank(appUrl)) {
+      // Fail closed: a blank base turns every link in the mail into a bare path
+      // (e.g. "/profile/settings") with no origin to resolve against. That is
+      // not a degraded mail, it is a broken one, so this must not go out.
+      throw new IllegalStateException(
+          "appUrl must not be blank: every ORISO mail links back into the app");
+    }
     String base = trimTrailingSlash(appUrl);
     Map<String, String> values = new LinkedHashMap<>();
 

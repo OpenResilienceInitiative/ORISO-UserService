@@ -72,19 +72,21 @@ public class SupervisorAddedEmailNotificationService {
     }
     String appUrl = resolveAppFrontendUrl(tenantData);
     String themeColor = resolveThemeColor(smtpSettings);
-    String userChatUrl = buildSessionUrl(appUrl, sessionId, false);
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
     if (hasValidUserEmail(recipientUser)) {
+      // Neither the case reference nor a session-specific route reaches the advice seeker's
+      // copy: both name what happened as precisely as the anonymised statement text refuses to.
       sendEmailSafely(
           smtpSettings,
           recipientUser.getEmail(),
           renderTeamChange(
               languageCodeOf(recipientUser),
               askerStatementSupervisorJoined(languageCodeOf(recipientUser)),
-              userChatUrl,
-              sessionId,
+              appUrl,
+              appUrl,
+              null,
               themeColor));
     }
 
@@ -95,6 +97,7 @@ public class SupervisorAddedEmailNotificationService {
           renderTeamChange(
               languageCodeOf(supervisor),
               staffStatementSupervisorAdded(languageCodeOf(supervisor)),
+              appUrl,
               consultantChatUrl,
               sessionId,
               themeColor));
@@ -117,7 +120,6 @@ public class SupervisorAddedEmailNotificationService {
     }
     String appUrl = resolveAppFrontendUrl(tenantData);
     String themeColor = resolveThemeColor(smtpSettings);
-    String userChatUrl = buildSessionUrl(appUrl, sessionId, false);
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
@@ -128,8 +130,9 @@ public class SupervisorAddedEmailNotificationService {
           renderTeamChange(
               languageCodeOf(recipientUser),
               askerStatementSupervisorLeft(languageCodeOf(recipientUser)),
-              userChatUrl,
-              sessionId,
+              appUrl,
+              appUrl,
+              null,
               themeColor));
     }
 
@@ -140,6 +143,7 @@ public class SupervisorAddedEmailNotificationService {
           renderTeamChange(
               languageCodeOf(supervisor),
               staffStatementSupervisorRemoved(languageCodeOf(supervisor)),
+              appUrl,
               consultantChatUrl,
               sessionId,
               themeColor));
@@ -300,19 +304,25 @@ public class SupervisorAddedEmailNotificationService {
    * system's card written a second time, in string concatenation, where nobody could review it.
    */
   // Package-private so the anonymity rule can be asserted rather than assumed.
+  //
+  // appBaseUrl and ctaUrl are deliberately separate: appBaseUrl is always the plain app root,
+  // used to build the settings/privacy/imprint/unsubscribe links, so those never inherit a
+  // session-specific path. ctaUrl is where the button goes — the deep link into the session for
+  // a counsellor's copy (operational detail is fine there), but the same plain app root for an
+  // advice seeker's copy. A null sessionId renders as "—", the same "no reference" marker already
+  // used when a change has no session at all.
   OrisoEmailRenderer.RenderedEmail renderTeamChange(
       LanguageCode languageCode,
       String statement,
-      String linkUrl,
+      String appBaseUrl,
+      String ctaUrl,
       Long sessionId,
       String themeColor) {
-    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(linkUrl, themeColor));
+    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(appBaseUrl, themeColor));
     values.put("teamChangeStatement", statement);
     values.put("caseReference", sessionId == null ? "—" : "#" + sessionId);
     values.put("teamChangedAt", LocalDateTime.now().format(TIMESTAMP));
-    // The call to action leads to the session this change is about, not to the
-    // application root.
-    values.put("appUrl", linkUrl);
+    values.put("appUrl", ctaUrl);
     return emailRenderer.render("team-aenderung", OrisoEmailRenderer.Tone.of(languageCode), values);
   }
 

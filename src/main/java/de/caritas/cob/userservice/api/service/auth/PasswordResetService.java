@@ -282,8 +282,13 @@ public class PasswordResetService {
     return resolveAccount(username);
   }
 
+  /**
+   * Only "en" renders in its own tone; every other locale — including fr/ru/ti/tr, which exist in
+   * the content model but are withheld from this template set per ADR-022 until their translations
+   * are signed off — falls back to formal German rather than claiming support it cannot render.
+   */
   private String resolveLocale(String locale) {
-    return isNotBlank(locale) && EMAIL_CONTENT.containsKey(locale) ? locale : "de";
+    return "en".equalsIgnoreCase(locale) ? "en" : "de";
   }
 
   private void sendPasswordResetEmailSafely(
@@ -311,10 +316,9 @@ public class PasswordResetService {
 
     String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
     String resetUrl = buildResetFrontendUrl(oneTimeToken, frontendBaseUrl);
-    EmailContent content = EMAIL_CONTENT.get(locale);
 
     try {
-      mailSender.send(target.getEmail(), locale, resetUrl, smtpSettings, content);
+      mailSender.send(target.getEmail(), locale, resetUrl, smtpSettings);
     } catch (Exception ex) {
       // Do not leave a token behind for a mail that never went out, and never log PII (account id,
       // recipient, or the raw exception message) — record the exception class only.
@@ -331,11 +335,7 @@ public class PasswordResetService {
   }
 
   private void sendViaSmtp(
-      String recipient,
-      String locale,
-      String resetUrl,
-      GlobalSmtpSettings smtpSettings,
-      EmailContent content)
+      String recipient, String locale, String resetUrl, GlobalSmtpSettings smtpSettings)
       throws Exception {
     Properties props = new Properties();
     props.put("mail.smtp.auth", "true");
@@ -372,12 +372,7 @@ public class PasswordResetService {
    */
   @FunctionalInterface
   interface PasswordResetMailSender {
-    void send(
-        String recipient,
-        String locale,
-        String resetUrl,
-        GlobalSmtpSettings smtpSettings,
-        EmailContent content)
+    void send(String recipient, String locale, String resetUrl, GlobalSmtpSettings smtpSettings)
         throws Exception;
   }
 
@@ -534,51 +529,4 @@ public class PasswordResetService {
     String from;
     String emailThemeColor;
   }
-
-  @lombok.Value
-  static class EmailContent {
-    String subject;
-    String intro;
-    String linkLabel;
-    String expiry;
-  }
-
-  private static final Map<String, EmailContent> EMAIL_CONTENT =
-      Map.of(
-          "de",
-          new EmailContent(
-              "Passwort zurücksetzen",
-              "Es wurde eine Änderung der Anmeldeinformationen für Ihren Account Caritas Onlineberatung angefordert. Wenn Sie diese Änderung beantragt haben, klicken Sie auf den unten stehenden Link.",
-              "Link zum Zurücksetzen von Anmeldeinformationen",
-              "Die Gültigkeit des Links wird in 120 Minuten verfallen. Sollten Sie keine Änderung vollziehen wollen, können Sie diese Nachricht ignorieren."),
-          "en",
-          new EmailContent(
-              "Reset password",
-              "A change of login credentials for your Caritas Online Counselling account has been requested. If you requested this change, click the link below.",
-              "Link to reset login credentials",
-              "This link will expire in 120 minutes. If you do not want to make this change, you can ignore this message."),
-          "fr",
-          new EmailContent(
-              "Réinitialiser le mot de passe",
-              "Une modification des informations de connexion de votre compte Caritas Online-Beratung a été demandée. Si vous êtes à l'origine de cette demande, cliquez sur le lien ci-dessous.",
-              "Lien pour réinitialiser les informations de connexion",
-              "Ce lien expirera dans 120 minutes. Si vous ne souhaitez pas effectuer cette modification, vous pouvez ignorer ce message."),
-          "ru",
-          new EmailContent(
-              "Сброс пароля",
-              "Был запрошен сброс учётных данных для входа в ваш аккаунт Caritas Online-Beratung. Если вы запросили это изменение, перейдите по ссылке ниже.",
-              "Ссылка для сброса учётных данных",
-              "Срок действия ссылки истекает через 120 минут. Если вы не хотите вносить это изменение, просто проигнорируйте это письмо."),
-          "ti",
-          new EmailContent(
-              "ፓስዎርድ ዳግማይ ምቕማጥ",
-              "ንኣካውንትካ Caritas Online-Beratung ናይ መእተዊ ሓበሬታ ንምቕያር ተሓቲቱ ኣሎ። እዚ ለውጢ እዚ ንስኻ እንተኾንካ ሓቲትካዮ፣ ነቲ ኣብ ታሕቲ ዘሎ ሊንክ ጠውቕ።",
-              "ናይ መእተዊ ሓበሬታ ዳግማይ ንምቕማጥ ዝኸውን ሊንክ",
-              "ጽንዓት እዚ ሊንክ እዚ ኣብ 120 ደቓይቕ ክውዳእ እዩ። እዚ ለውጢ እዚ ክትገብር ዘይትደሊ እንተኾንካ፣ ነዚ መልእኽቲ እዚ ክትንዕቆ ትኽእል ኢኻ።"),
-          "tr",
-          new EmailContent(
-              "Şifreyi sıfırla",
-              "Caritas Online-Beratung hesabınız için oturum açma bilgilerinizde bir değişiklik talep edildi. Bu değişikliği siz talep ettiyseniz aşağıdaki bağlantıya tıklayın.",
-              "Oturum açma bilgilerini sıfırlama bağlantısı",
-              "Bu bağlantının geçerlilik süresi 120 dakika içinde dolacaktır. Bu değişikliği yapmak istemiyorsanız bu mesajı yok sayabilirsiniz."));
 }

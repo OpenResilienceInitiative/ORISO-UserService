@@ -470,7 +470,7 @@
       "components": [
         "templateCache"
       ],
-      "decision": "Retain locally and unbounded. The cache holds the generated e-mail templates read from the classpath, so it is immutable for the life of the process and bounded by the number of occasions times tone variants (22 x 3 x 2 files). Replicas cannot disagree, because every replica reads the same artefact out of the same image; a cold replica costs one resource read per template.",
+      "decision": "Retain locally for the life of the process, with bounded cardinality. The cache holds the generated e-mail templates read from the classpath, so it is immutable for the life of the process and bounded by the number of occasions times tone variants (22 x 3 x 2 files). Replicas cannot disagree, because every replica reads the same artefact out of the same image; a cold replica costs one resource read per template.",
       "signals": [
         "userservice.replica.local_state"
       ],
