@@ -60,6 +60,18 @@ class IdentityConfigTest {
   }
 
   @Test
+  void isProfileEmailUsableForMagicLinkShouldRejectDummyAddressesRegardlessOfCaseAndWhitespace() {
+    givenAValidIdentityConfig();
+    identityConfig.setEmailDummySuffix("@dummy.oriso.org");
+
+    // A dummy address must stay unusable even when it arrives un-normalized.
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org "));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("  u123@dummy.oriso.org"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@DUMMY.ORISO.ORG"));
+    assertTrue(identityConfig.isProfileEmailUsableForMagicLink(" real.user@example.org "));
+  }
+
+  @Test
   void isConsultantDisplayNameAllowedShouldReadTheConfiguredFlagNullSafely() {
     givenAValidIdentityConfig();
 
