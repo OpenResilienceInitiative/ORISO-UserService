@@ -33,9 +33,9 @@ public class InviteEmailPreviewService {
   /** Obvious non-token: a preview must never render something that looks like a live link. */
   static final String SAMPLE_TOKEN = "SAMPLE-PREVIEW-TOKEN";
 
-  static final String SAMPLE_EMAIL = "erika.musterfrau@example.org";
-  static final String SAMPLE_FIRST_NAME = "Erika";
-  static final String SAMPLE_LAST_NAME = "Musterfrau";
+  static final String SAMPLE_EMAIL = "maren.muster@example.org";
+  static final String SAMPLE_FIRST_NAME = "Maren";
+  static final String SAMPLE_LAST_NAME = "Muster";
   static final String SAMPLE_SUBJECT = "Ihre Einladung zu ORISO";
   static final String SAMPLE_BODY =
       """
@@ -85,7 +85,7 @@ public class InviteEmailPreviewService {
     String acceptUrl = inviteAcceptUrlBuilder.buildAcceptUrl(targetRoleFor(kind), SAMPLE_TOKEN);
 
     String renderedSubject = AccountInviteService.render(subject, sampleInvite, acceptUrl);
-    String renderedBody = AccountInviteService.render(body, sampleInvite, acceptUrl);
+    String renderedBody = AccountInviteService.renderBody(body, sampleInvite, acceptUrl);
 
     BrandedEmail mail =
         inviteMailDispatchService.renderBrandedMail(
