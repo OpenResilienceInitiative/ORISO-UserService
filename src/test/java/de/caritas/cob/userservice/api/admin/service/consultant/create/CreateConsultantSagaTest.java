@@ -384,6 +384,26 @@ class CreateConsultantSagaTest {
   }
 
   @Test
+  void createNewConsultant_Should_reportUnconfiguredLicensing_When_tenantServiceIsUnreachable() {
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    TenantContext.setCurrentTenant(1L);
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTenantId(1L);
+    when(tenantAdminService.getTenantById(1L))
+        .thenThrow(new org.springframework.web.client.RestClientException("tenant service down"));
+
+    var ex =
+        assertThrows(
+            CustomValidationHttpStatusException.class,
+            () -> createConsultantSaga.createNewConsultant(dto));
+
+    assertThat(
+        ex.getCustomHttpHeaders().get("X-Reason").get(0),
+        is(TENANT_LICENSING_NOT_CONFIGURED.name()));
+    verify(identityClient, never()).createUser(any(), anyString(), anyString());
+  }
+
+  @Test
   void createNewConsultant_Should_reportUnconfiguredLicensing_When_tenantLookupYieldsNothing() {
     ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
     TenantContext.setCurrentTenant(1L);

@@ -53,6 +53,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
 
 /** Creates consultants in the identity provider, Matrix and the application database. */
 @Service
@@ -515,7 +516,18 @@ public class CreateConsultantSaga {
           "TenantId could not be resolved for the consultant to be created");
     }
 
-    TenantDTO tenant = tenantAdminService.getTenantById(tenantId);
+    TenantDTO tenant;
+    try {
+      tenant = tenantAdminService.getTenantById(tenantId);
+    } catch (RestClientException exception) {
+      log.warn(
+          "TenantService could not be reached for tenant {}; refusing consultant creation because"
+              + " its licensed user limit cannot be established.",
+          tenantId,
+          exception);
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED);
+    }
     if (isNull(tenant)) {
       log.warn(
           "TenantService returned no tenant {}; refusing consultant creation because its licensed"
