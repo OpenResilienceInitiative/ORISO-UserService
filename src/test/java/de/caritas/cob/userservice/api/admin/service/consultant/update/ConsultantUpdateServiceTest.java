@@ -81,6 +81,9 @@ public class ConsultantUpdateServiceTest {
     Consultant consultant = consultantWithId("counsellor-1");
     Consultant standingSupervisor = consultantWithId("supervisor-1");
     standingSupervisor.setSupervisor(true);
+    // EasyRandom gives each consultant a random tenant; the standing assignment is tenant-scoped.
+    consultant.setTenantId(1L);
+    standingSupervisor.setTenantId(1L);
     when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
     when(this.consultantService.getConsultant("supervisor-1"))
         .thenReturn(Optional.of(standingSupervisor));
@@ -101,11 +104,35 @@ public class ConsultantUpdateServiceTest {
     Consultant consultant = consultantWithId("counsellor-1");
     Consultant notASupervisor = consultantWithId("colleague-1");
     notASupervisor.setSupervisor(false);
+    consultant.setTenantId(1L);
+    notASupervisor.setTenantId(1L);
     when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
     when(this.consultantService.getConsultant("colleague-1"))
         .thenReturn(Optional.of(notASupervisor));
     UpdateAdminConsultantDTO updateConsultant = updateDtoFor(consultant);
     updateConsultant.setAssignedSupervisorId("colleague-1");
+
+    assertThrows(
+        BadRequestException.class,
+        () -> this.consultantUpdateService.updateConsultant("counsellor-1", updateConsultant));
+    verify(this.consultantService, Mockito.never()).saveConsultant(any());
+  }
+
+  @Test
+  public void updateConsultant_Should_throwBadRequest_When_standingSupervisorIsFromAnotherTenant() {
+    // A platform admin sees consultants across tenants, so nothing else here stops a cross-tenant
+    // assignment. Storing one is worse than rejecting it: the attach is best-effort and swallows
+    // its failure, so the case would run unsupervised while the admin board shows a supervisor.
+    Consultant consultant = consultantWithId("counsellor-1");
+    consultant.setTenantId(1L);
+    Consultant foreignSupervisor = consultantWithId("supervisor-2");
+    foreignSupervisor.setSupervisor(true);
+    foreignSupervisor.setTenantId(2L);
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.getConsultant("supervisor-2"))
+        .thenReturn(Optional.of(foreignSupervisor));
+    UpdateAdminConsultantDTO updateConsultant = updateDtoFor(consultant);
+    updateConsultant.setAssignedSupervisorId("supervisor-2");
 
     assertThrows(
         BadRequestException.class,
