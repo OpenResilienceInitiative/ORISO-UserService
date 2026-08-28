@@ -18,6 +18,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
@@ -51,6 +52,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -66,6 +68,7 @@ class CaseHandoverServiceTest {
   @Mock private EventNotificationService eventNotificationService;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+  @Mock private SessionSupervisorFacade sessionSupervisorFacade;
 
   private Consultant requester;
   private Consultant previous;
@@ -129,6 +132,53 @@ class CaseHandoverServiceTest {
     verify(sessionRepository).save(session);
     verify(eventNotificationService, atLeastOnce())
         .createEvent(any(), any(), any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /**
+   * ADR-008 "Supervision (auto-assigned)": a takeover hands the case to a new owner, so the new
+   * owner's standing supervisor has to attach. Before this, only the enquiry-accept path did, and a
+   * case that changed hands silently ran unsupervised.
+   */
+  @Test
+  void requestAccess_attachesTheNewOwnersStandingSupervisor_WhenGranted() {
+    caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+
+    verify(sessionSupervisorFacade).attachStandingSupervisorIfAssigned(123L, requester);
+  }
+
+  @Test
+  void requestAccess_doesNotAttachAStandingSupervisor_WhenTheHandoverIsNotGranted() {
+    when(caseHandoverReasonPolicyRepository.findByEnabledTrueOrderByDisplayOrderAscCodeAsc())
+        .thenReturn(
+            List.of(reasonPolicy("OTHER_EMERGENCY", "Other emergency", false, false, true, 30)));
+
+    caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Needs cover.");
+
+    verify(sessionSupervisorFacade, never()).attachStandingSupervisorIfAssigned(any(), any());
+  }
+
+  /**
+   * The attach must not run inside this service's transaction. {@code addSupervisor} is itself
+   * transactional, so an exception it raises there (client opted out, supervisor already on the
+   * case, no Matrix user id) would mark the shared transaction rollback-only and kill the handover
+   * at commit — even though the facade swallows it. Deferring to after-commit is the whole point,
+   * so assert the deferral, not just the call.
+   */
+  @Test
+  void requestAccess_defersTheSupervisorAttachUntilTheHandoverHasCommitted() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+
+      verify(sessionSupervisorFacade, never()).attachStandingSupervisorIfAssigned(any(), any());
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(synchronization -> synchronization.afterCommit());
+
+      verify(sessionSupervisorFacade).attachStandingSupervisorIfAssigned(123L, requester);
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   /**
