@@ -268,13 +268,17 @@ public class AssignEnquiryFacade {
                 consultant.getUsername(),
                 existingRoomId);
 
-            // Remove agency service account from room (now only consultant + user remain)
+            // Remove the agency service account from the reused room. The room now retains the
+            // accepting consultant, the advice seeker, and the department's other counsellors as
+            // silent members (ADR-002 §1, seeded by #905 and reconciled on late-joiners by #1074).
+            // The agency service account was only needed for pre-assignment provisioning.
             boolean agencyRemoved =
                 sessionRoomGateway.removeUserFromRoom(
                     existingRoomId, agencyCredentials.getMatrixUserId(), agencyToken);
             if (agencyRemoved) {
               log.info(
-                  "Removed agency service account {} from room {} (only consultant + user remain)",
+                  "Removed agency service account {} from room {} (department counsellors remain"
+                      + " as silent members)",
                   agencyCredentials.getMatrixUserId(),
                   existingRoomId);
             } else {
