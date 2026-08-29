@@ -68,7 +68,27 @@ class IdentityConfigTest {
     assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org "));
     assertFalse(identityConfig.isProfileEmailUsableForMagicLink("  u123@dummy.oriso.org"));
     assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@DUMMY.ORISO.ORG"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("  u123@Dummy.Oriso.Org  "));
     assertTrue(identityConfig.isProfileEmailUsableForMagicLink(" real.user@example.org "));
+  }
+
+  @Test
+  void isProfileEmailUsableForMagicLinkShouldNormalizeTheConfiguredSuffixItself() {
+    givenAValidIdentityConfig();
+    // The configured side must be normalized too, not only the submitted address.
+    identityConfig.setEmailDummySuffix(" @DUMMY.oriso.org ");
+
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org"));
+    assertTrue(identityConfig.isProfileEmailUsableForMagicLink("real.user@example.org"));
+  }
+
+  @Test
+  void isProfileEmailUsableForMagicLinkShouldRejectEverything_WhenNoDummySuffixIsConfigured() {
+    givenAValidIdentityConfig();
+    // Without a configured suffix the dummy rule cannot be evaluated: fail closed.
+    identityConfig.setEmailDummySuffix(null);
+
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("real.user@example.org"));
   }
 
   @Test
