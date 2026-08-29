@@ -83,6 +83,33 @@ class IdentityConfigTest {
   }
 
   @Test
+  void isProfileEmailUsableForMagicLinkShouldRejectDummyAddressesWithUnicodeWhitespace() {
+    givenAValidIdentityConfig();
+    identityConfig.setEmailDummySuffix("@dummy.oriso.org");
+
+    // hasText() accepts Unicode whitespace, so normalization must strip it too.
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org\u2003"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("\u00a0u123@dummy.oriso.org"));
+  }
+
+  @Test
+  void isProfileEmailUsableForMagicLinkShouldStayLocaleIndependent_WhenDefaultLocaleIsTurkish() {
+    givenAValidIdentityConfig();
+    identityConfig.setEmailDummySuffix("@DUMMY.orIso.org");
+
+    // Turkish lowercasing maps I to a dotless i; Locale.ROOT must keep the
+    // comparison stable regardless of the JVM default locale.
+    java.util.Locale previous = java.util.Locale.getDefault();
+    java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR"));
+    try {
+      assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org"));
+      assertTrue(identityConfig.isProfileEmailUsableForMagicLink("real.user@example.org"));
+    } finally {
+      java.util.Locale.setDefault(previous);
+    }
+  }
+
+  @Test
   void isProfileEmailUsableForMagicLinkShouldRejectEverything_WhenNoDummySuffixIsConfigured() {
     givenAValidIdentityConfig();
     // Without a configured suffix the dummy rule cannot be evaluated: fail closed.
