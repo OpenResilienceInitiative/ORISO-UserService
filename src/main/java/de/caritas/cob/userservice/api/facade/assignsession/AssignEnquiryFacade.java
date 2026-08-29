@@ -277,8 +277,8 @@ public class AssignEnquiryFacade {
                     existingRoomId, agencyCredentials.getMatrixUserId(), agencyToken);
             if (agencyRemoved) {
               log.info(
-                  "Removed agency service account {} from room {} (department counsellors remain"
-                      + " as silent members)",
+                  "Removed agency service account {} from room {} (accepting consultant, advice"
+                      + " seeker and the department's other counsellors remain as silent members)",
                   agencyCredentials.getMatrixUserId(),
                   existingRoomId);
             } else {
