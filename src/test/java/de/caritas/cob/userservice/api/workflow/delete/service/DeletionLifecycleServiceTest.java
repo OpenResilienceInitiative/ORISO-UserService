@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.workflow.delete.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -112,6 +113,11 @@ class DeletionLifecycleServiceTest {
     assertThat(user.getDeletionPauseReason()).isNull();
     assertThat(user.getDeletionPausedBy()).isNull();
     assertThat(user.getDeletionPauseCreatedAt()).isNull();
+  }
+
+  @Test
+  void cancelUserDeletion_ShouldDoNothing_WhenUserIsNull() {
+    assertThatCode(() -> service.cancelUserDeletion(null)).doesNotThrowAnyException();
   }
 
   // ---------------------------------------------------------------------------

@@ -62,6 +62,7 @@ class UserAdminControllerAuthorizationIT {
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
   private static final String REACTIVATE_ASKER_PATH =
       "/service/useradmin/askers/deletion/reactivate";
+  private static final String REACTIVATE_ASKER_ALIAS_PATH = "/useradmin/askers/deletion/reactivate";
 
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -113,6 +114,28 @@ class UserAdminControllerAuthorizationIT {
         .andExpect(status().isNoContent());
 
     verify(askerUserAdminFacade).reactivateAsker(any());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void reactivateAskerAlias_Should_BindValidRequestAndReturnNoContent() throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_ALIAS_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isNoContent());
+
+    verify(askerUserAdminFacade).reactivateAsker(any());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void reactivateAskerAlias_Should_RejectInvalidRequestBeforeFacadeCall() throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_ALIAS_PATH).contentType(MediaType.APPLICATION_JSON).content("{}"))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(askerUserAdminFacade);
   }
 
   @Test
