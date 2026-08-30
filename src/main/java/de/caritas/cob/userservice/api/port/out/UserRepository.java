@@ -32,6 +32,8 @@ public interface UserRepository extends CrudRepository<User, String> {
   List<User> findAllByUsernameInAndDeleteDateIsNullOrderByCreateDateAsc(
       Collection<String> usernames);
 
+  List<User> findAllByUsernameInOrderByCreateDateAsc(Collection<String> usernames);
+
   /**
    * Find all users whose create date is older than given date and having no new registered session
    * after the given create date and no running sessions.

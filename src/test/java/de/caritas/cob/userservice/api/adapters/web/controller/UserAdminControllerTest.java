@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
@@ -377,6 +378,16 @@ class UserAdminControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     verify(askerUserAdminFacade).markAskerForDeletion("asker-1");
+  }
+
+  @Test
+  void reactivateAsker_shouldDelegateAndReturnNoContent() {
+    var request = new AskerReactivationRequestDTO();
+
+    var response = controller.reactivateAsker(request);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    verify(askerUserAdminFacade).reactivateAsker(request);
   }
 
   @Test

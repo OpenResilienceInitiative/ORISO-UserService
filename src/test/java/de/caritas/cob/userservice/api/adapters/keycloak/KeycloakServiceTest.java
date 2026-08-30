@@ -58,6 +58,7 @@ import jakarta.ws.rs.core.Response;
 import java.net.URI;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
@@ -73,6 +74,7 @@ import org.keycloak.admin.client.resource.RoleScopeResource;
 import org.keycloak.admin.client.resource.RolesResource;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
+import org.keycloak.representations.idm.CredentialRepresentation;
 import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.mockito.ArgumentCaptor;
@@ -1076,6 +1078,90 @@ public class KeycloakServiceTest {
     verify(keycloakClient, times(1)).getUsersResource();
     verify(usersResource, times(1)).get("userId");
     verify(userResource, times(1)).resetPassword(any());
+  }
+
+  @Test
+  void reactivateUser_shouldValidateResetPasswordAndEnableExactIdentity() {
+    setField(keycloakService, "multiTenancyEnabled", true);
+    var identity = softDeletedIdentity("40");
+    var userResource = mock(UserResource.class);
+    when(userResource.toRepresentation()).thenReturn(identity);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.reactivateUser(
+        USER_ID, "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L, NEW_PW);
+
+    verify(userResource).resetPassword(any(CredentialRepresentation.class));
+    verify(userResource).update(identity);
+    assertTrue(identity.isEnabled());
+  }
+
+  @Test
+  void reactivateUser_shouldFailClosedBeforeMutationWhenTenantDoesNotMatch() {
+    setField(keycloakService, "multiTenancyEnabled", true);
+    var identity = softDeletedIdentity("41");
+    var userResource = mock(UserResource.class);
+    when(userResource.toRepresentation()).thenReturn(identity);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class,
+        () ->
+            keycloakService.reactivateUser(
+                USER_ID, "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L, NEW_PW));
+
+    verify(userResource, never()).resetPassword(any());
+    verify(userResource, never()).update(any());
+  }
+
+  @Test
+  void reactivateUser_shouldReturnNotFoundWhenPersistedKeycloakIdentityIsGone() {
+    var userResource = mock(UserResource.class);
+    when(userResource.toRepresentation()).thenThrow(new NotFoundException());
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class,
+        () ->
+            keycloakService.reactivateUser(
+                USER_ID, "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L, NEW_PW));
+
+    verify(userResource, never()).resetPassword(any());
+    verify(userResource, never()).update(any());
+  }
+
+  @Test
+  void reactivateUser_shouldNotReportSuccessWhenEnableFailsAfterPasswordReset() {
+    var identity = softDeletedIdentity("40");
+    var userResource = mock(UserResource.class);
+    when(userResource.toRepresentation()).thenReturn(identity);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    doThrow(new IllegalStateException("Keycloak update failed"))
+        .when(userResource)
+        .update(identity);
+
+    assertThrows(
+        IllegalStateException.class,
+        () ->
+            keycloakService.reactivateUser(
+                USER_ID, "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L, NEW_PW));
+
+    verify(userResource).resetPassword(any(CredentialRepresentation.class));
+    verify(userResource).update(identity);
+  }
+
+  private UserRepresentation softDeletedIdentity(String tenantId) {
+    var identity = new UserRepresentation();
+    identity.setId(USER_ID);
+    identity.setUsername("marge.simpson@dreambau.de");
+    identity.setEmail("marge.simpson@dreambau.de");
+    identity.setEnabled(false);
+    identity.setAttributes(Map.of("tenantId", List.of(tenantId)));
+    return identity;
   }
 
   @Test

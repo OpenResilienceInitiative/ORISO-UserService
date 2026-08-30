@@ -381,6 +381,11 @@ public class SecurityConfig {
                     USER_ADMIN, RESTRICTED_AGENCY_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(
                     HttpMethod.POST,
+                    "/useradmin/askers/deletion/reactivate",
+                    "/service/useradmin/askers/deletion/reactivate")
+                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.POST,
                     "/useradmin/admins/{adminId:" + UUID_PATTERN + "}/grant-consultant-identity",
                     "/service/useradmin/admins/{adminId:"
                         + UUID_PATTERN

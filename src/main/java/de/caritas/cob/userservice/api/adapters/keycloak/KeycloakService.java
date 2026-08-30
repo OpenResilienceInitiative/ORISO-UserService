@@ -41,6 +41,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -98,6 +99,7 @@ public class KeycloakService
         IdentityPasswordUpdater,
         IdentityProfileLookup,
         IdentityProfileUpdater,
+        IdentityReactivator,
         IdentityRoleLookup,
         IdentityRoleUpdater,
         IdentitySecondFactor,
@@ -1008,5 +1010,53 @@ public class KeycloakService
     var userRepresentation = userResource.toRepresentation();
     userRepresentation.setEnabled(false);
     userResource.update(userRepresentation);
+  }
+
+  @Override
+  public void reactivateUser(
+      String userId,
+      String expectedUsername,
+      String expectedEmail,
+      Long expectedTenantId,
+      String password) {
+    var userResource = keycloakClient.getUsersResource().get(userId);
+    final UserRepresentation identity;
+    try {
+      identity = userResource.toRepresentation();
+    } catch (NotFoundException exception) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException(
+          "Identity for soft-deleted asker does not exist");
+    }
+    if (!matchesReactivationIdentity(
+        identity, userId, expectedUsername, expectedEmail, expectedTenantId)) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+          "Keycloak identity does not match the soft-deleted asker exactly");
+    }
+
+    updatePassword(userId, password);
+    identity.setEnabled(true);
+    userResource.update(identity);
+  }
+
+  private boolean matchesReactivationIdentity(
+      UserRepresentation identity,
+      String userId,
+      String expectedUsername,
+      String expectedEmail,
+      Long expectedTenantId) {
+    if (identity == null
+        || !userId.equals(identity.getId())
+        || !expectedUsername.equalsIgnoreCase(identity.getUsername())
+        || !expectedEmail.equalsIgnoreCase(identity.getEmail())) {
+      return false;
+    }
+    if (!TRUE.equals(multiTenancyEnabled)) {
+      return true;
+    }
+    var attributes = identity.getAttributes();
+    var tenantIds = attributes == null ? null : attributes.get(TENANT_ID_ATTRIBUTE);
+    return tenantIds != null
+        && tenantIds.size() == 1
+        && expectedTenantId.toString().equals(tenantIds.getFirst());
   }
 }

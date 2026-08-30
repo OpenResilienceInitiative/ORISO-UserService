@@ -91,6 +91,29 @@ class DeletionLifecycleServiceTest {
     assertThat(user.getDeletionReadOnlyUntil()).isEqualTo(existing);
   }
 
+  @Test
+  void cancelUserDeletion_ShouldAtomicallyClearEveryDeletionLifecycleField() {
+    User user = newUser();
+    LocalDateTime now = LocalDateTime.now(ZoneOffset.UTC);
+    user.setDeleteDate(now);
+    user.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+    user.setDeletionReadOnlyUntil(now.plusHours(48));
+    user.setDeletionPausedUntil(now.plusMonths(3));
+    user.setDeletionPauseReason("Mr. Burns changed his mind");
+    user.setDeletionPausedBy("monty");
+    user.setDeletionPauseCreatedAt(now);
+
+    service.cancelUserDeletion(user);
+
+    assertThat(user.getDeleteDate()).isNull();
+    assertThat(user.getDeletionLifecycleState()).isEqualTo(DeletionLifecycleState.ACTIVE);
+    assertThat(user.getDeletionReadOnlyUntil()).isNull();
+    assertThat(user.getDeletionPausedUntil()).isNull();
+    assertThat(user.getDeletionPauseReason()).isNull();
+    assertThat(user.getDeletionPausedBy()).isNull();
+    assertThat(user.getDeletionPauseCreatedAt()).isNull();
+  }
+
   // ---------------------------------------------------------------------------
   // beginConsultantDeletion
   // ---------------------------------------------------------------------------
