@@ -15,7 +15,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
@@ -34,6 +36,8 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationUpstreamException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
@@ -56,6 +60,7 @@ import jakarta.ws.rs.NotAuthorizedException;
 import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -1092,8 +1097,10 @@ public class KeycloakServiceTest {
     keycloakService.reactivateUser(
         USER_ID, "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L, NEW_PW);
 
-    verify(userResource).resetPassword(any(CredentialRepresentation.class));
-    verify(userResource).update(identity);
+    var order = inOrder(userResource);
+    order.verify(userResource).resetPassword(any(CredentialRepresentation.class));
+    order.verify(userResource).logout();
+    order.verify(userResource).update(identity);
     assertTrue(identity.isEnabled());
   }
 
@@ -1101,6 +1108,7 @@ public class KeycloakServiceTest {
   void reactivateUser_shouldFailClosedBeforeMutationWhenTenantDoesNotMatch() {
     setField(keycloakService, "multiTenancyEnabled", true);
     var identity = softDeletedIdentity("41");
+    identity.setEnabled(true);
     var userResource = mock(UserResource.class);
     when(userResource.toRepresentation()).thenReturn(identity);
     when(usersResource.get(USER_ID)).thenReturn(userResource);
@@ -1113,7 +1121,37 @@ public class KeycloakServiceTest {
                 USER_ID, "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L, NEW_PW));
 
     verify(userResource, never()).resetPassword(any());
+    verify(userResource, never()).logout();
     verify(userResource, never()).update(any());
+  }
+
+  @Test
+  void reactivateUser_shouldRepairExactUnexpectedlyEnabledIdentityOnPrivilegedRetry() {
+    setField(keycloakService, "multiTenancyEnabled", true);
+    var identity = softDeletedIdentity("40");
+    identity.setEnabled(true);
+    var observedEnabledStates = new ArrayList<Boolean>();
+    var userResource = mock(UserResource.class);
+    when(userResource.toRepresentation()).thenReturn(identity);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    doAnswer(
+            invocation -> {
+              observedEnabledStates.add(invocation.<UserRepresentation>getArgument(0).isEnabled());
+              return null;
+            })
+        .when(userResource)
+        .update(identity);
+
+    keycloakService.reactivateUser(
+        USER_ID, "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L, NEW_PW);
+
+    var order = inOrder(userResource);
+    order.verify(userResource).update(identity);
+    order.verify(userResource).logout();
+    order.verify(userResource).resetPassword(any(CredentialRepresentation.class));
+    order.verify(userResource).update(identity);
+    assertEquals(List.of(false, true), observedEnabledStates);
   }
 
   @Test
@@ -1141,17 +1179,84 @@ public class KeycloakServiceTest {
     when(usersResource.get(USER_ID)).thenReturn(userResource);
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     doThrow(new IllegalStateException("Keycloak update failed"))
+        .doNothing()
         .when(userResource)
         .update(identity);
 
     assertThrows(
-        IllegalStateException.class,
+        IdentityReactivationUpstreamException.class,
+        () ->
+            keycloakService.reactivateUser(
+                USER_ID, "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L, NEW_PW));
+
+    verify(userResource).resetPassword(any(CredentialRepresentation.class));
+    verify(userResource).logout();
+    verify(userResource, times(2)).update(identity);
+    assertFalse(identity.isEnabled());
+  }
+
+  @Test
+  void reactivateUser_shouldNotMutateIdentityWhenPasswordPolicyRejectsPassword() {
+    var identity = softDeletedIdentity("40");
+    var userResource = mock(UserResource.class);
+    when(userResource.toRepresentation()).thenReturn(identity);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    doThrow(new BadRequestException("Invalid password")).when(userResource).resetPassword(any());
+
+    assertThrows(
+        CustomValidationHttpStatusException.class,
+        () ->
+            keycloakService.reactivateUser(
+                USER_ID, "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L, NEW_PW));
+
+    verify(userResource, never()).logout();
+    verify(userResource, never()).update(any());
+    assertFalse(identity.isEnabled());
+  }
+
+  @Test
+  void reactivateUser_shouldKeepIdentityDisabledWhenSessionRevocationFails() {
+    var identity = softDeletedIdentity("40");
+    var userResource = mock(UserResource.class);
+    when(userResource.toRepresentation()).thenReturn(identity);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    doThrow(new IllegalStateException("Session logout failed")).when(userResource).logout();
+
+    assertThrows(
+        IdentityReactivationUpstreamException.class,
         () ->
             keycloakService.reactivateUser(
                 USER_ID, "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L, NEW_PW));
 
     verify(userResource).resetPassword(any(CredentialRepresentation.class));
     verify(userResource).update(identity);
+    assertFalse(identity.isEnabled());
+  }
+
+  @Test
+  void reactivateUser_shouldSurfaceFailedDisableCompensationAsFailedDependency() {
+    var identity = softDeletedIdentity("40");
+    var userResource = mock(UserResource.class);
+    when(userResource.toRepresentation()).thenReturn(identity);
+    when(usersResource.get(USER_ID)).thenReturn(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    doThrow(new IllegalStateException("Enable failed"))
+        .doThrow(new IllegalStateException("Disable compensation failed"))
+        .when(userResource)
+        .update(identity);
+
+    assertThrows(
+        IdentityReactivationCompensationException.class,
+        () ->
+            keycloakService.reactivateUser(
+                USER_ID, "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L, NEW_PW));
+
+    verify(userResource).resetPassword(any(CredentialRepresentation.class));
+    verify(userResource).logout();
+    verify(userResource, times(2)).update(identity);
+    assertFalse(identity.isEnabled());
   }
 
   private UserRepresentation softDeletedIdentity(String tenantId) {

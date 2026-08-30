@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
+import de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
 import lombok.NonNull;
@@ -20,6 +21,7 @@ public class DeleteUserAccountScheduler {
   private final @NonNull DeleteUserAccountService deleteUserAccountService;
   private final @NonNull TenantContextProvider tenantContextProvider;
   private final @NonNull ScheduledTaskClaimService taskClaimService;
+  private final @NonNull UserHardDeleteClaimService userHardDeleteClaimService;
 
   @Value("${user.account.deleteworkflow.claim.duration:PT12H}")
   private Duration claimDuration;
@@ -31,6 +33,7 @@ public class DeleteUserAccountScheduler {
       return;
     }
     tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
+    userHardDeleteClaimService.releaseInterruptedClaims();
     this.deleteUserAccountService.deleteUserAccounts();
   }
 }

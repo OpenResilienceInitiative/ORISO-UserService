@@ -5,5 +5,6 @@ public enum DeletionLifecycleState {
   ACTIVE,
   PENDING_DELETION,
   READ_ONLY_SAFEGUARD,
+  HARD_DELETE_IN_PROGRESS,
   HARD_DELETED
 }

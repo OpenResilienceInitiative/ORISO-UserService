@@ -6,12 +6,14 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -23,6 +25,7 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
@@ -191,6 +194,20 @@ public class AskerUserAdminFacadeTest {
   }
 
   @Test
+  void reactivateAsker_shouldRejectIdentityClaimedByHardDeleteWorkflow() {
+    var request = reactivationRequest();
+    var claimed =
+        deletedUser("user-1", "marge.simpson_at_dreambau.de", "marge.simpson@dreambau.de", 40L);
+    claimed.setDeletionLifecycleState(DeletionLifecycleState.HARD_DELETE_IN_PROGRESS);
+    when(userService.findUsersByUsernameIncludingDeleted(request.getUsername()))
+        .thenReturn(List.of(claimed));
+
+    assertThrows(ConflictException.class, () -> askerUserAdminFacade.reactivateAsker(request));
+
+    verifyNoInteractions(identityReactivator);
+  }
+
+  @Test
   void reactivateAsker_shouldFailClosedWhenMatchingIdentityIsAmbiguous() {
     var request = reactivationRequest();
     var first =
@@ -248,6 +265,104 @@ public class AskerUserAdminFacadeTest {
     completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
 
     verify(identityDeactivator).deactivateUser("user-1");
+  }
+
+  @Test
+  void reactivateAsker_shouldNotDeactivateIdentityWhenKeycloakReturnsNotFound() {
+    var request = reactivationRequest();
+    var user =
+        deletedUser("user-1", "marge.simpson_at_dreambau.de", "marge.simpson@dreambau.de", 40L);
+    when(userService.findUsersByUsernameIncludingDeleted(request.getUsername()))
+        .thenReturn(List.of(user));
+    doThrow(new NotFoundException("Keycloak identity is missing"))
+        .when(identityReactivator)
+        .reactivateUser(any(), any(), any(), any(), any());
+
+    assertThrows(NotFoundException.class, () -> askerUserAdminFacade.reactivateAsker(request));
+    completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+    verifyNoInteractions(identityDeactivator);
+  }
+
+  @Test
+  void reactivateAsker_shouldNotDeactivateIdentityWhenKeycloakReturnsConflict() {
+    var request = reactivationRequest();
+    var user =
+        deletedUser("user-1", "marge.simpson_at_dreambau.de", "marge.simpson@dreambau.de", 40L);
+    when(userService.findUsersByUsernameIncludingDeleted(request.getUsername()))
+        .thenReturn(List.of(user));
+    doThrow(new ConflictException("Keycloak identity does not match"))
+        .when(identityReactivator)
+        .reactivateUser(any(), any(), any(), any(), any());
+
+    assertThrows(ConflictException.class, () -> askerUserAdminFacade.reactivateAsker(request));
+    completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+    verifyNoInteractions(identityDeactivator);
+  }
+
+  @Test
+  void reactivateAsker_shouldNotDeactivateIdentityWhenKeycloakReactivationFails() {
+    var request = reactivationRequest();
+    var user =
+        deletedUser("user-1", "marge.simpson_at_dreambau.de", "marge.simpson@dreambau.de", 40L);
+    when(userService.findUsersByUsernameIncludingDeleted(request.getUsername()))
+        .thenReturn(List.of(user));
+    doThrow(new IllegalStateException("Password policy or enable failed"))
+        .when(identityReactivator)
+        .reactivateUser(any(), any(), any(), any(), any());
+
+    assertThrows(IllegalStateException.class, () -> askerUserAdminFacade.reactivateAsker(request));
+    completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+    verifyNoInteractions(identityDeactivator);
+  }
+
+  @Test
+  void reactivateAsker_shouldDeactivateIdentityExactlyOnceWhenDatabaseSaveFails() {
+    var request = reactivationRequest();
+    var user =
+        deletedUser("user-1", "marge.simpson_at_dreambau.de", "marge.simpson@dreambau.de", 40L);
+    when(userService.findUsersByUsernameIncludingDeleted(request.getUsername()))
+        .thenReturn(List.of(user));
+    when(userService.saveUser(user)).thenThrow(new IllegalStateException("Database save failed"));
+
+    assertThrows(IllegalStateException.class, () -> askerUserAdminFacade.reactivateAsker(request));
+    completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
+
+    verify(identityReactivator)
+        .reactivateUser(
+            "user-1",
+            "marge.simpson@dreambau.de",
+            "marge.simpson@dreambau.de",
+            40L,
+            "NewPassw0rd!");
+    verify(identityDeactivator, times(1)).deactivateUser("user-1");
+  }
+
+  @Test
+  void reactivateAsker_shouldLogRollbackCompensationFailureWithoutMaskingDatabaseFailure() {
+    var request = reactivationRequest();
+    var user =
+        deletedUser("user-1", "marge.simpson_at_dreambau.de", "marge.simpson@dreambau.de", 40L);
+    when(userService.findUsersByUsernameIncludingDeleted(request.getUsername()))
+        .thenReturn(List.of(user));
+    when(userService.saveUser(user)).thenThrow(new IllegalStateException("Database save failed"));
+    doThrow(new IllegalStateException("Keycloak disable failed"))
+        .when(identityDeactivator)
+        .deactivateUser("user-1");
+
+    assertThrows(IllegalStateException.class, () -> askerUserAdminFacade.reactivateAsker(request));
+    try (var logs = LogbackCaptor.forClass(AskerUserAdminFacade.class)) {
+      completeTransaction(TransactionSynchronization.STATUS_ROLLED_BACK);
+      assertThat(
+          logs.contains(
+              Level.ERROR,
+              "Could not disable Keycloak identity after asker reactivation rollback for userId=user-1"),
+          org.hamcrest.Matchers.is(true));
+    }
+
+    verify(identityDeactivator, times(1)).deactivateUser("user-1");
   }
 
   private static void completeTransaction(int status) {

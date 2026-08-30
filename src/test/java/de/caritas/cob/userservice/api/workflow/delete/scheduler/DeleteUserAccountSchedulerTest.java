@@ -7,6 +7,7 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
+import de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
@@ -27,6 +28,8 @@ public class DeleteUserAccountSchedulerTest {
 
   @Mock private ScheduledTaskClaimService taskClaimService;
 
+  @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
+
   @BeforeEach
   void setUp() {
     setField(deleteUserAccountScheduler, "claimDuration", Duration.ofHours(12));
@@ -39,6 +42,7 @@ public class DeleteUserAccountSchedulerTest {
     this.deleteUserAccountScheduler.performDeletionWorkflow();
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
+    verify(userHardDeleteClaimService).releaseInterruptedClaims();
     verify(this.deleteUserAccountService).deleteUserAccounts();
   }
 
@@ -48,6 +52,7 @@ public class DeleteUserAccountSchedulerTest {
 
     deleteUserAccountScheduler.performDeletionWorkflow();
 
-    verifyNoInteractions(tenantContextProvider, deleteUserAccountService);
+    verifyNoInteractions(
+        tenantContextProvider, userHardDeleteClaimService, deleteUserAccountService);
   }
 }

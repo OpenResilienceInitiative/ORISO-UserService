@@ -1,13 +1,18 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
+import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.EntityGraph;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
+import org.springframework.data.repository.query.Param;
 
 public interface UserRepository extends CrudRepository<User, String> {
 
@@ -32,7 +37,38 @@ public interface UserRepository extends CrudRepository<User, String> {
   List<User> findAllByUsernameInAndDeleteDateIsNullOrderByCreateDateAsc(
       Collection<String> usernames);
 
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<User> findAllByUsernameInOrderByCreateDateAsc(Collection<String> usernames);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT user FROM User user WHERE user.userId = :userId")
+  Optional<User> findByUserIdForUpdate(@Param("userId") String userId);
+
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE User user
+         SET user.deletionLifecycleState = :readyState
+       WHERE user.userId = :userId
+         AND user.deleteDate IS NOT NULL
+         AND user.deletionLifecycleState = :claimedState
+      """)
+  int releaseUserHardDeleteClaim(
+      @Param("userId") String userId,
+      @Param("claimedState") DeletionLifecycleState claimedState,
+      @Param("readyState") DeletionLifecycleState readyState);
+
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      """
+      UPDATE User user
+         SET user.deletionLifecycleState = :readyState
+       WHERE user.deleteDate IS NOT NULL
+         AND user.deletionLifecycleState = :claimedState
+      """)
+  int releaseInterruptedUserHardDeleteClaims(
+      @Param("claimedState") DeletionLifecycleState claimedState,
+      @Param("readyState") DeletionLifecycleState readyState);
 
   /**
    * Find all users whose create date is older than given date and having no new registered session

@@ -15,6 +15,8 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationUpstreamException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
@@ -1033,9 +1035,54 @@ public class KeycloakService
           "Keycloak identity does not match the soft-deleted asker exactly");
     }
 
-    updatePassword(userId, password);
-    identity.setEnabled(true);
-    userResource.update(identity);
+    boolean failClosedDisableRequired = false;
+    boolean sessionsWereRevoked = false;
+    try {
+      if (TRUE.equals(identity.isEnabled())) {
+        // A previous database-rollback compensation may have failed after Keycloak was enabled.
+        // Repair only the already-validated exact tuple and make a privileged retry fail closed.
+        identity.setEnabled(false);
+        failClosedDisableRequired = true;
+        userResource.update(identity);
+        userResource.logout();
+        sessionsWereRevoked = true;
+      }
+      updatePassword(userId, password);
+      failClosedDisableRequired = true;
+      if (!sessionsWereRevoked) {
+        userResource.logout();
+      }
+      identity.setEnabled(true);
+      userResource.update(identity);
+    } catch (CustomValidationHttpStatusException exception) {
+      throw exception;
+    } catch (RuntimeException exception) {
+      if (failClosedDisableRequired) {
+        ensureReactivationIdentityDisabled(userId, userResource, identity, exception);
+      }
+      throw new IdentityReactivationUpstreamException(
+          "Keycloak could not complete asker identity reactivation", exception);
+    }
+  }
+
+  private void ensureReactivationIdentityDisabled(
+      String userId,
+      UserResource userResource,
+      UserRepresentation identity,
+      RuntimeException reactivationFailure) {
+    identity.setEnabled(false);
+    try {
+      userResource.update(identity);
+    } catch (RuntimeException compensationFailure) {
+      log.error(
+          "Could not disable partially reactivated Keycloak identity {}",
+          userId,
+          compensationFailure);
+      throw new IdentityReactivationCompensationException(
+          "Keycloak identity reactivation and disable compensation both failed",
+          reactivationFailure,
+          compensationFailure);
+    }
   }
 
   private boolean matchesReactivationIdentity(

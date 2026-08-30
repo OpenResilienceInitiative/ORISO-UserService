@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleSta
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -25,6 +26,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 /** Wrapper facade to provide admin operations on asker accounts. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AskerUserAdminFacade {
 
   private final @NonNull IdentityDeactivator identityDeactivator;
@@ -100,13 +102,17 @@ public class AskerUserAdminFacade {
     if (DeletionLifecycleState.HARD_DELETED.equals(user.getDeletionLifecycleState())) {
       throw new NotFoundException("Hard-deleted asker identities cannot be reactivated");
     }
+    if (DeletionLifecycleState.HARD_DELETE_IN_PROGRESS.equals(user.getDeletionLifecycleState())) {
+      throw new ConflictException("Asker hard deletion is already in progress");
+    }
     if (user.getDeleteDate() == null) {
       throw new ConflictException("Asker identity is active and cannot be reactivated");
     }
 
-    registerIdentityRollbackCompensation(user.getUserId());
+    assertReactivationTransactionActive();
     identityReactivator.reactivateUser(
         user.getUserId(), username, email, request.getTenantId(), request.getPassword());
+    registerIdentityRollbackCompensation(user.getUserId());
     deletionLifecycleService.cancelUserDeletion(user);
     userService.saveUser(user);
   }
@@ -120,16 +126,28 @@ public class AskerUserAdminFacade {
     }
   }
 
-  private void registerIdentityRollbackCompensation(String userId) {
+  private void assertReactivationTransactionActive() {
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException("Identity reactivation requires an active transaction");
     }
+  }
+
+  private void registerIdentityRollbackCompensation(String userId) {
     TransactionSynchronizationManager.registerSynchronization(
         new TransactionSynchronization() {
           @Override
           public void afterCompletion(int status) {
             if (status != TransactionSynchronization.STATUS_COMMITTED) {
-              identityDeactivator.deactivateUser(userId);
+              try {
+                identityDeactivator.deactivateUser(userId);
+              } catch (RuntimeException exception) {
+                // The database remains soft-deleted, so the privileged operation is retryable. The
+                // external compensation failure must nevertheless be visible to operators.
+                log.error(
+                    "Could not disable Keycloak identity after asker reactivation rollback for userId={}",
+                    userId,
+                    exception);
+              }
             }
           }
         });

@@ -45,6 +45,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -110,6 +111,22 @@ class UserAdminControllerAuthorizationIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsBytes(reactivationRequest())))
         .andExpect(status().isNoContent());
+
+    verify(askerUserAdminFacade).reactivateAsker(any());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void reactivateAsker_Should_ReturnForbidden_When_userAdminCrossesTenantScope() throws Exception {
+    doThrow(new AccessDeniedException("cross-tenant request"))
+        .when(askerUserAdminFacade)
+        .reactivateAsker(any());
+
+    mvc.perform(
+            post(REACTIVATE_ASKER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isForbidden());
 
     verify(askerUserAdminFacade).reactivateAsker(any());
   }

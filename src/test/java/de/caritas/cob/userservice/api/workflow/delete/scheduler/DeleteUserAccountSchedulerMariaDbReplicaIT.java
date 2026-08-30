@@ -8,6 +8,7 @@ import static org.mockito.Mockito.verify;
 import de.caritas.cob.userservice.api.port.out.ScheduledTaskClaimRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
+import de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
 import java.util.concurrent.CountDownLatch;
@@ -104,8 +105,10 @@ class DeleteUserAccountSchedulerMariaDbReplicaIT {
 
   private DeleteUserAccountScheduler newScheduler(
       DeleteUserAccountService deletionService, TenantContextProvider tenantContextProvider) {
+    var userHardDeleteClaimService = mock(UserHardDeleteClaimService.class);
     var scheduler =
-        new DeleteUserAccountScheduler(deletionService, tenantContextProvider, taskClaimService);
+        new DeleteUserAccountScheduler(
+            deletionService, tenantContextProvider, taskClaimService, userHardDeleteClaimService);
     ReflectionTestUtils.setField(scheduler, "claimDuration", Duration.ofHours(12));
     return scheduler;
   }
