@@ -274,7 +274,10 @@ public class UserAccountService {
     if (user.getDeleteDate() == null) {
       return;
     }
-    if (user.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD) {
+    if (user.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD
+        || user.getDeletionLifecycleState() == DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED
+        || user.getDeletionLifecycleState() == DeletionLifecycleState.HARD_DELETE_IN_PROGRESS
+        || user.getDeletionLifecycleState() == DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE) {
       throw new ForbiddenException("Account is in read-only safeguard mode.");
     }
   }

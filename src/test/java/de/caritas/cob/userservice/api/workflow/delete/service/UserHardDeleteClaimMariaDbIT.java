@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairWriter;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
@@ -32,7 +33,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
-@Import({UserHardDeleteClaimService.class, DeletionLifecycleService.class})
+@Import({
+  UserHardDeleteClaimService.class,
+  DeletionLifecycleService.class,
+  IdentityReactivationRepairWriter.class
+})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class UserHardDeleteClaimMariaDbIT {
 
@@ -41,6 +46,7 @@ class UserHardDeleteClaimMariaDbIT {
 
   @Autowired private UserRepository userRepository;
   @Autowired private UserHardDeleteClaimService claimService;
+  @Autowired private IdentityReactivationRepairWriter repairWriter;
   @Autowired private PlatformTransactionManager transactionManager;
 
   private TransactionTemplate transactionTemplate;
@@ -131,6 +137,32 @@ class UserHardDeleteClaimMariaDbIT {
           assertThat(locked.getDeletionLifecycleState())
               .isEqualTo(DeletionLifecycleState.HARD_DELETE_IN_PROGRESS);
         });
+  }
+
+  @Test
+  void interruptedOrPartialHardDeleteNeverReturnsToReactivationEligibleReadOnlyState() {
+    assertThat(claimService.claim(USER_ID)).isPresent();
+
+    claimService.release(USER_ID);
+
+    User persisted = userRepository.findById(USER_ID).orElseThrow();
+    assertThat(persisted.getDeletionLifecycleState())
+        .isEqualTo(DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE);
+    assertThat(claimService.claim(USER_ID)).isPresent();
+  }
+
+  @Test
+  void rollbackRepairWriterDurablyBlocksAndThenResolvesReactivation() {
+    assertThat(repairWriter.markRepairRequired(USER_ID)).isTrue();
+
+    User blocked = userRepository.findById(USER_ID).orElseThrow();
+    assertThat(blocked.getDeletionLifecycleState())
+        .isEqualTo(DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED);
+
+    assertThat(repairWriter.resolveRepair(USER_ID)).isTrue();
+    User resolved = userRepository.findById(USER_ID).orElseThrow();
+    assertThat(resolved.getDeletionLifecycleState())
+        .isEqualTo(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
   }
 
   private User readyUser() {

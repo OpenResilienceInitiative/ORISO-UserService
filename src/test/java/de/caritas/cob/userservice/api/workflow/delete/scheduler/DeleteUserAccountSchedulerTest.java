@@ -5,6 +5,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairService;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
 import de.caritas.cob.userservice.api.workflow.delete.service.UserHardDeleteClaimService;
@@ -30,6 +31,8 @@ public class DeleteUserAccountSchedulerTest {
 
   @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
 
+  @Mock private IdentityReactivationRepairService identityReactivationRepairService;
+
   @BeforeEach
   void setUp() {
     setField(deleteUserAccountScheduler, "claimDuration", Duration.ofHours(12));
@@ -42,6 +45,7 @@ public class DeleteUserAccountSchedulerTest {
     this.deleteUserAccountScheduler.performDeletionWorkflow();
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
+    verify(identityReactivationRepairService).retryOutstandingRepairs();
     verify(userHardDeleteClaimService).releaseInterruptedClaims();
     verify(this.deleteUserAccountService).deleteUserAccounts();
   }
@@ -53,6 +57,9 @@ public class DeleteUserAccountSchedulerTest {
     deleteUserAccountScheduler.performDeletionWorkflow();
 
     verifyNoInteractions(
-        tenantContextProvider, userHardDeleteClaimService, deleteUserAccountService);
+        tenantContextProvider,
+        identityReactivationRepairService,
+        userHardDeleteClaimService,
+        deleteUserAccountService);
   }
 }

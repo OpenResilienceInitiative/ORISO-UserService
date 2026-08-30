@@ -67,21 +67,36 @@ class UserHardDeleteClaimServiceTest {
   }
 
   @Test
-  void releaseOnlyReturnsAnInProgressRetainedRowToRetryableReadOnlyState() {
+  void releaseMovesAnInProgressRetainedRowToNonReactivatablePartialFailureState() {
     claimService.release("user-1");
 
     verify(userRepository)
         .releaseUserHardDeleteClaim(
             "user-1",
             DeletionLifecycleState.HARD_DELETE_IN_PROGRESS,
-            DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+            DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE);
+  }
+
+  @Test
+  void claimRetriesPartialHardDeleteWithoutMakingItReactivationEligible() {
+    User user = deletedUser();
+    user.setDeletionLifecycleState(DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE);
+    when(userRepository.findByUserIdForUpdate("user-1")).thenReturn(Optional.of(user));
+    when(deletionLifecycleService.normalizeUserLifecycle(user)).thenReturn(user);
+    when(userRepository.save(user)).thenReturn(user);
+
+    User claimed = claimService.claim("user-1").orElseThrow();
+
+    assertEquals(
+        DeletionLifecycleState.HARD_DELETE_IN_PROGRESS, claimed.getDeletionLifecycleState());
+    verify(userRepository).save(user);
   }
 
   @Test
   void releaseInterruptedClaimsRecoversOnlyAfterSchedulerOwnsGlobalLease() {
     when(userRepository.releaseInterruptedUserHardDeleteClaims(
             DeletionLifecycleState.HARD_DELETE_IN_PROGRESS,
-            DeletionLifecycleState.READ_ONLY_SAFEGUARD))
+            DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE))
         .thenReturn(2);
 
     assertEquals(2, claimService.releaseInterruptedClaims());

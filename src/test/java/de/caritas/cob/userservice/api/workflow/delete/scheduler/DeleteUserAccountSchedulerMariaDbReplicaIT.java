@@ -5,6 +5,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairService;
 import de.caritas.cob.userservice.api.port.out.ScheduledTaskClaimRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteUserAccountService;
@@ -106,9 +107,14 @@ class DeleteUserAccountSchedulerMariaDbReplicaIT {
   private DeleteUserAccountScheduler newScheduler(
       DeleteUserAccountService deletionService, TenantContextProvider tenantContextProvider) {
     var userHardDeleteClaimService = mock(UserHardDeleteClaimService.class);
+    var identityReactivationRepairService = mock(IdentityReactivationRepairService.class);
     var scheduler =
         new DeleteUserAccountScheduler(
-            deletionService, tenantContextProvider, taskClaimService, userHardDeleteClaimService);
+            deletionService,
+            tenantContextProvider,
+            taskClaimService,
+            userHardDeleteClaimService,
+            identityReactivationRepairService);
     ReflectionTestUtils.setField(scheduler, "claimDuration", Duration.ofHours(12));
     return scheduler;
   }

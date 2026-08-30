@@ -25,6 +25,9 @@ public interface UserRepository extends CrudRepository<User, String> {
 
   List<User> findAllByDeleteDateNotNull();
 
+  List<User> findAllByDeletionLifecycleStateOrderByCreateDateAsc(
+      DeletionLifecycleState deletionLifecycleState);
+
   List<User> findAllByDeleteDateIsNull();
 
   /**

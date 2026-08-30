@@ -72,8 +72,9 @@ public class DeleteUserAccountService {
     try {
       return performUserDeletion(user);
     } finally {
-      // If the final database action deleted the row this is a no-op. Otherwise the retained row is
-      // made retryable after a partial downstream failure.
+      // If the final database action deleted the row this is a no-op. Otherwise at least one
+      // irreversible step may already have completed, so the retained row is retryable for hard
+      // deletion but can never become reactivation-eligible again.
       userHardDeleteClaimService.release(user.getUserId());
     }
   }

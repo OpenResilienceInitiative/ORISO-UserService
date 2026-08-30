@@ -4,8 +4,10 @@ import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
+import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -14,6 +16,8 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -31,6 +35,7 @@ public class AskerUserAdminFacade {
 
   private final @NonNull IdentityDeactivator identityDeactivator;
   private final @NonNull IdentityReactivator identityReactivator;
+  private final @NonNull IdentityReactivationRepairService identityReactivationRepairService;
   private final @NonNull UserService userService;
   private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
@@ -105,6 +110,14 @@ public class AskerUserAdminFacade {
     if (DeletionLifecycleState.HARD_DELETE_IN_PROGRESS.equals(user.getDeletionLifecycleState())) {
       throw new ConflictException("Asker hard deletion is already in progress");
     }
+    if (DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE.equals(
+        user.getDeletionLifecycleState())) {
+      throw new ConflictException("Asker hard deletion has already completed destructive steps");
+    }
+    if (DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED.equals(
+        user.getDeletionLifecycleState())) {
+      throw new ConflictException("Asker identity rollback repair is still pending");
+    }
     if (user.getDeleteDate() == null) {
       throw new ConflictException("Asker identity is active and cannot be reactivated");
     }
@@ -112,9 +125,23 @@ public class AskerUserAdminFacade {
     assertReactivationTransactionActive();
     identityReactivator.reactivateUser(
         user.getUserId(), username, email, request.getTenantId(), request.getPassword());
-    registerIdentityRollbackCompensation(user.getUserId());
-    deletionLifecycleService.cancelUserDeletion(user);
-    userService.saveUser(user);
+    var compensationAttempted = new AtomicBoolean(false);
+    var compensationFailure = new AtomicReference<IdentityReactivationCompensationException>();
+    registerIdentityRollbackCompensation(
+        user.getUserId(), compensationAttempted, compensationFailure);
+    try {
+      deletionLifecycleService.cancelUserDeletion(user);
+      userService.saveUser(user);
+    } catch (RuntimeException databaseFailure) {
+      compensationAttempted.set(true);
+      try {
+        identityReactivationRepairService.compensate(user.getUserId(), databaseFailure);
+      } catch (IdentityReactivationCompensationException exception) {
+        compensationFailure.set(exception);
+        throw exception;
+      }
+      throw databaseFailure;
+    }
   }
 
   private void assertCallerMayAccessTenant(Long requestedTenantId) {
@@ -132,25 +159,50 @@ public class AskerUserAdminFacade {
     }
   }
 
-  private void registerIdentityRollbackCompensation(String userId) {
+  private void registerIdentityRollbackCompensation(
+      String userId,
+      AtomicBoolean compensationAttempted,
+      AtomicReference<IdentityReactivationCompensationException> compensationFailure) {
     TransactionSynchronizationManager.registerSynchronization(
         new TransactionSynchronization() {
           @Override
           public void afterCompletion(int status) {
-            if (status != TransactionSynchronization.STATUS_COMMITTED) {
-              try {
-                identityDeactivator.deactivateUser(userId);
-              } catch (RuntimeException exception) {
-                // The database remains soft-deleted, so the privileged operation is retryable. The
-                // external compensation failure must nevertheless be visible to operators.
-                log.error(
-                    "Could not disable Keycloak identity after asker reactivation rollback for userId={}",
-                    userId,
-                    exception);
-              }
+            if (status == TransactionSynchronization.STATUS_COMMITTED) {
+              return;
+            }
+            IdentityReactivationCompensationException priorFailure = compensationFailure.get();
+            if (priorFailure != null) {
+              queueDurableRepair(userId, priorFailure);
+              return;
+            }
+            if (compensationAttempted.compareAndSet(false, true)) {
+              compensateAfterCompletion(userId);
             }
           }
         });
+  }
+
+  private void compensateAfterCompletion(String userId) {
+    try {
+      identityReactivationRepairService.compensate(
+          userId,
+          new IllegalStateException(
+              "Database transaction rolled back after Keycloak reactivation"));
+    } catch (IdentityReactivationCompensationException exception) {
+      queueDurableRepair(userId, exception);
+    }
+  }
+
+  private void queueDurableRepair(
+      String userId, IdentityReactivationCompensationException compensationFailure) {
+    try {
+      identityReactivationRepairService.queueFailedCompensation(userId, compensationFailure);
+    } catch (RuntimeException exception) {
+      log.error(
+          "Durable Keycloak rollback repair persistence failed for asker userId={}",
+          userId,
+          exception);
+    }
   }
 
   private static String normalize(String value) {

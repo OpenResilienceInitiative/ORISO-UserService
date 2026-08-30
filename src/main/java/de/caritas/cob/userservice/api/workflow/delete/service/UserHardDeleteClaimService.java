@@ -27,7 +27,9 @@ public class UserHardDeleteClaimService {
       return Optional.empty();
     }
     User user = deletionLifecycleService.normalizeUserLifecycle(locked.get());
-    if (!deletionLifecycleService.isReadyForHardDelete(user)) {
+    boolean retryingPartialFailure =
+        user.getDeletionLifecycleState() == DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE;
+    if (!retryingPartialFailure && !deletionLifecycleService.isReadyForHardDelete(user)) {
       userRepository.save(user);
       return Optional.empty();
     }
@@ -41,7 +43,7 @@ public class UserHardDeleteClaimService {
         userRepository.releaseUserHardDeleteClaim(
             userId,
             DeletionLifecycleState.HARD_DELETE_IN_PROGRESS,
-            DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+            DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE);
     if (released == 1) {
       log.warn("Released unfinished asker hard-delete claim for userId={}", userId);
     }
@@ -49,13 +51,15 @@ public class UserHardDeleteClaimService {
 
   /**
    * Recovers a claim left by a crashed workflow after the scheduler has acquired its global lease.
+   * Since the process may have crashed after an irreversible external deletion, recovery must never
+   * make the account eligible for reactivation.
    */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public int releaseInterruptedClaims() {
     int released =
         userRepository.releaseInterruptedUserHardDeleteClaims(
             DeletionLifecycleState.HARD_DELETE_IN_PROGRESS,
-            DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+            DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE);
     if (released > 0) {
       log.warn("Recovered {} interrupted asker hard-delete claim(s)", released);
     }
