@@ -275,6 +275,7 @@ public class UserAccountService {
       return;
     }
     if (user.getDeletionLifecycleState() == DeletionLifecycleState.READ_ONLY_SAFEGUARD
+        || user.getDeletionLifecycleState() == DeletionLifecycleState.REACTIVATION_IN_PROGRESS
         || user.getDeletionLifecycleState() == DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED
         || user.getDeletionLifecycleState() == DeletionLifecycleState.HARD_DELETE_IN_PROGRESS
         || user.getDeletionLifecycleState() == DeletionLifecycleState.HARD_DELETE_PARTIAL_FAILURE) {

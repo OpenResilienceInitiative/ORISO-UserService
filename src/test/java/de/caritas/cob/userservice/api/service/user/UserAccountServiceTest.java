@@ -361,6 +361,19 @@ public class UserAccountServiceTest {
   }
 
   @Test
+  void ensureCurrentAccountIsWritable_ShouldRejectDurableReactivationClaim() {
+    var user = new User();
+    user.setDeleteDate(java.time.LocalDateTime.now());
+    user.setDeletionLifecycleState(
+        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
+            .REACTIVATION_IN_PROGRESS);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(user));
+
+    assertThrows(ForbiddenException.class, () -> accountProvider.updateUserMobileToken("token"));
+  }
+
+  @Test
   public void
       ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_ConsultantIsInReadOnlySafeguard() {
     when(userService.getUser(USER_ID)).thenReturn(Optional.empty());

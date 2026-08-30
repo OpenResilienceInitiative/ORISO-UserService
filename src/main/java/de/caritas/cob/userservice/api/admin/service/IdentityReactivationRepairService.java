@@ -2,16 +2,20 @@ package de.caritas.cob.userservice.api.admin.service;
 
 import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import io.micrometer.core.instrument.MeterRegistry;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
-/** Durably records and retries a failed Keycloak disable after database rollback. */
+/** Observes and retries durable, generation-fenced identity reactivation claims. */
 @Service
 @RequiredArgsConstructor
 @Slf4j
@@ -19,93 +23,94 @@ public class IdentityReactivationRepairService {
 
   static final String REPAIR_METRIC = "userservice.identity.reactivation.repair";
 
-  private final @NonNull IdentityDeactivator identityDeactivator;
   private final @NonNull IdentityReactivationRepairWriter repairWriter;
   private final @NonNull UserRepository userRepository;
   private final @NonNull MeterRegistry meterRegistry;
 
-  /**
-   * Attempts to disable the identity. The thrown typed exception surfaces the partial rollback to
-   * the HTTP error contract when the database failure is observable before transaction completion;
-   * the transaction callback then persists the repair marker after releasing its user-row lock.
-   */
-  public void compensate(String userId, RuntimeException databaseFailure) {
+  @Value("${identity.reactivation.repair.staleAfter:PT5M}")
+  private Duration staleAfter;
+
+  /** Compensates a failed request without permitting a stale generation to affect a newer one. */
+  public void compensate(
+      IdentityReactivationOperation operation, RuntimeException reactivationFailure) {
     metric("attempt");
     try {
-      identityDeactivator.deactivateUser(userId);
-      metric("disabled");
-    } catch (RuntimeException compensationFailure) {
-      throw new IdentityReactivationCompensationException(
-          "Keycloak rollback failed", databaseFailure, compensationFailure);
+      boolean repaired = repairWriter.compensate(operation, reactivationFailure);
+      metric(repaired ? "disabled" : "stale_skipped");
+    } catch (IdentityReactivationCompensationException exception) {
+      metric("queued");
+      log.error(
+          "Retained durable Keycloak disable repair for userId={} operationId={}",
+          operation.userId(),
+          operation.operationId(),
+          exception);
+      throw exception;
+    } catch (RuntimeException persistenceFailure) {
+      metric("queue_failed");
+      log.error(
+          "CRITICAL: identity compensation persistence failed for userId={} operationId={}",
+          operation.userId(),
+          operation.operationId(),
+          persistenceFailure);
+      throw persistenceFailure;
     }
   }
 
   /**
-   * Persists repair only after the failed caller transaction released its row lock. Calling this
-   * from inside that transaction would deadlock the independent writer on the same user row.
+   * Retries failed repairs and crash-window claims only after the configured stale grace period.
    */
-  public void queueFailedCompensation(
-      String userId, IdentityReactivationCompensationException compensationFailure) {
-    boolean queued;
-    try {
-      queued = repairWriter.markRepairRequired(userId);
-    } catch (RuntimeException persistenceFailure) {
-      metric("queue_failed");
-      throw durableStateFailure(userId, compensationFailure, persistenceFailure);
-    }
-    metric(queued ? "queued" : "queue_failed");
-    if (queued) {
-      log.error(
-          "Queued durable Keycloak disable repair after asker reactivation rollback for userId={}",
-          userId,
-          compensationFailure);
-      return;
-    }
-    throw durableStateFailure(
-        userId,
-        compensationFailure,
-        new IllegalStateException("Could not persist durable identity reactivation repair state"));
-  }
-
-  private IdentityReactivationCompensationException durableStateFailure(
-      String userId,
-      IdentityReactivationCompensationException compensationFailure,
-      RuntimeException persistenceFailure) {
-    persistenceFailure.addSuppressed(compensationFailure);
-    log.error(
-        "CRITICAL: Keycloak rollback and durable repair persistence both failed for userId={}",
-        userId,
-        persistenceFailure);
-    return new IdentityReactivationCompensationException(
-        "Keycloak rollback and durable repair persistence both failed",
-        compensationFailure,
-        persistenceFailure);
-  }
-
-  /** Retries every durable repair while leaving failed rows blocked for later scheduler runs. */
   public void retryOutstandingRepairs() {
-    userRepository
-        .findAllByDeletionLifecycleStateOrderByCreateDateAsc(
-            DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED)
+    LocalDateTime staleBefore = LocalDateTime.now(ZoneOffset.UTC).minus(staleAfter);
+    Stream.concat(
+            userRepository
+                .findAllByDeletionLifecycleStateOrderByCreateDateAsc(
+                    DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED)
+                .stream(),
+            userRepository
+                .findAllByDeletionLifecycleStateOrderByCreateDateAsc(
+                    DeletionLifecycleState.REACTIVATION_IN_PROGRESS)
+                .stream()
+                .filter(user -> isStale(user, staleBefore)))
         .forEach(this::retryRepair);
+  }
+
+  private boolean isStale(User user, LocalDateTime staleBefore) {
+    return user.getReactivationOperationStartedAt() == null
+        || !user.getReactivationOperationStartedAt().isAfter(staleBefore);
   }
 
   private void retryRepair(User user) {
     String userId = user.getUserId();
+    String operationId = user.getReactivationOperationId();
+    if (operationId == null) {
+      metric("invalid_claim");
+      log.error("Durable identity repair claim has no operationId for userId={}", userId);
+      return;
+    }
     metric("retry_attempt");
     try {
-      identityDeactivator.deactivateUser(userId);
-      if (repairWriter.resolveRepair(userId)) {
-        metric("retry_resolved");
-        log.info("Resolved durable Keycloak disable repair for userId={}", userId);
-      } else {
-        metric("retry_state_changed");
-        log.warn(
-            "Durable Keycloak disable repair state changed before resolve for userId={}", userId);
+      boolean repaired = repairWriter.retry(userId, operationId);
+      metric(repaired ? "retry_resolved" : "retry_stale_skipped");
+      if (repaired) {
+        log.info(
+            "Resolved durable Keycloak disable repair for userId={} operationId={}",
+            userId,
+            operationId);
       }
-    } catch (RuntimeException exception) {
+    } catch (IdentityReactivationCompensationException exception) {
       metric("retry_failed");
-      log.error("Durable Keycloak disable repair retry failed for userId={}", userId, exception);
+      log.error(
+          "Durable Keycloak disable repair retry failed for userId={} operationId={}",
+          userId,
+          operationId,
+          exception);
+    } catch (RuntimeException persistenceFailure) {
+      metric("retry_persistence_failed");
+      log.error(
+          "Durable identity repair persistence failed for userId={} operationId={}",
+          userId,
+          operationId,
+          persistenceFailure);
     }
   }
 

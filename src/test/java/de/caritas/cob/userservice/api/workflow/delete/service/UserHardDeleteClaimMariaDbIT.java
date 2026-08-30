@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.workflow.delete.service;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-import de.caritas.cob.userservice.api.admin.service.IdentityReactivationRepairWriter;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
@@ -33,11 +32,7 @@ import org.springframework.transaction.support.TransactionTemplate;
 @DataJpaTest
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @EnabledIfEnvironmentVariable(named = "LIQUIBASE_IT_DB_URL", matches = ".+")
-@Import({
-  UserHardDeleteClaimService.class,
-  DeletionLifecycleService.class,
-  IdentityReactivationRepairWriter.class
-})
+@Import({UserHardDeleteClaimService.class, DeletionLifecycleService.class})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class UserHardDeleteClaimMariaDbIT {
 
@@ -46,7 +41,6 @@ class UserHardDeleteClaimMariaDbIT {
 
   @Autowired private UserRepository userRepository;
   @Autowired private UserHardDeleteClaimService claimService;
-  @Autowired private IdentityReactivationRepairWriter repairWriter;
   @Autowired private PlatformTransactionManager transactionManager;
 
   private TransactionTemplate transactionTemplate;
@@ -151,25 +145,14 @@ class UserHardDeleteClaimMariaDbIT {
     assertThat(claimService.claim(USER_ID)).isPresent();
   }
 
-  @Test
-  void rollbackRepairWriterDurablyBlocksAndThenResolvesReactivation() {
-    assertThat(repairWriter.markRepairRequired(USER_ID)).isTrue();
-
-    User blocked = userRepository.findById(USER_ID).orElseThrow();
-    assertThat(blocked.getDeletionLifecycleState())
-        .isEqualTo(DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED);
-
-    assertThat(repairWriter.resolveRepair(USER_ID)).isTrue();
-    User resolved = userRepository.findById(USER_ID).orElseThrow();
-    assertThat(resolved.getDeletionLifecycleState())
-        .isEqualTo(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
-  }
-
   private User readyUser() {
     var user = new User(USER_ID, null, USERNAME, USERNAME, true);
+    var now = LocalDateTime.now(Clock.systemUTC());
+    user.setCreateDate(now);
+    user.setUpdateDate(now);
     user.setTenantId(40L);
-    user.setDeleteDate(LocalDateTime.now(Clock.systemUTC()).minusDays(3));
-    user.setDeletionReadOnlyUntil(LocalDateTime.now(Clock.systemUTC()).minusMinutes(1));
+    user.setDeleteDate(now.minusDays(3));
+    user.setDeletionReadOnlyUntil(now.minusMinutes(1));
     user.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
     return user;
   }

@@ -2,29 +2,31 @@ package de.caritas.cob.userservice.api.admin.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class IdentityReactivationRepairServiceTest {
 
-  @Mock private IdentityDeactivator identityDeactivator;
   @Mock private IdentityReactivationRepairWriter repairWriter;
   @Mock private UserRepository userRepository;
 
@@ -35,108 +37,121 @@ class IdentityReactivationRepairServiceTest {
   void setUp() {
     meterRegistry = new SimpleMeterRegistry();
     repairService =
-        new IdentityReactivationRepairService(
-            identityDeactivator, repairWriter, userRepository, meterRegistry);
+        new IdentityReactivationRepairService(repairWriter, userRepository, meterRegistry);
+    ReflectionTestUtils.setField(repairService, "staleAfter", Duration.ofMinutes(5));
   }
 
   @Test
-  void compensateCompletesWithoutRepairStateWhenDisableSucceeds() {
-    repairService.compensate("user-1", new IllegalStateException("database rollback"));
+  void compensateResolvesCurrentGeneration() {
+    when(repairWriter.compensate(org.mockito.ArgumentMatchers.eq(operation()), any()))
+        .thenReturn(true);
 
-    verify(identityDeactivator).deactivateUser("user-1");
-    verifyNoInteractions(repairWriter);
+    repairService.compensate(operation(), databaseFailure());
+
+    assertThat(counter("attempt")).isEqualTo(1.0);
     assertThat(counter("disabled")).isEqualTo(1.0);
   }
 
   @Test
-  void compensateSurfacesTypedFailureWithoutWritingInsideCallerTransaction() {
-    doThrow(new IllegalStateException("Keycloak unavailable"))
-        .when(identityDeactivator)
-        .deactivateUser("user-1");
-    assertThrows(
-        IdentityReactivationCompensationException.class,
-        () -> repairService.compensate("user-1", new IllegalStateException("database rollback")));
+  void compensateSkipsAStaleGenerationWithoutTouchingNewerIdentity() {
+    when(repairWriter.compensate(org.mockito.ArgumentMatchers.eq(operation()), any()))
+        .thenReturn(false);
 
-    verifyNoInteractions(repairWriter);
+    repairService.compensate(operation(), databaseFailure());
+
+    assertThat(counter("stale_skipped")).isEqualTo(1.0);
   }
 
   @Test
-  void queueFailedCompensationPersistsRepairAfterCallerTransactionCompletion() {
+  void compensateSurfacesFailedDisableWhileDurableClaimRemains() {
     var failure = compensationFailure();
-    when(repairWriter.markRepairRequired("user-1")).thenReturn(true);
+    doThrow(failure)
+        .when(repairWriter)
+        .compensate(org.mockito.ArgumentMatchers.eq(operation()), any());
 
-    repairService.queueFailedCompensation("user-1", failure);
+    assertThrows(
+        IdentityReactivationCompensationException.class,
+        () -> repairService.compensate(operation(), databaseFailure()));
 
-    verify(repairWriter).markRepairRequired("user-1");
     assertThat(counter("queued")).isEqualTo(1.0);
   }
 
   @Test
-  void queueFailedCompensationSurfacesWhenDurableRepairCannotBePersisted() {
-    when(repairWriter.markRepairRequired("user-1")).thenReturn(false);
-
-    assertThrows(
-        IdentityReactivationCompensationException.class,
-        () -> repairService.queueFailedCompensation("user-1", compensationFailure()));
-
-    assertThat(counter("queue_failed")).isEqualTo(1.0);
-  }
-
-  @Test
-  void queueFailedCompensationRemainsObservableWhenRepairWriterFails() {
-    doThrow(new IllegalStateException("database unavailable"))
-        .when(repairWriter)
-        .markRepairRequired("user-1");
-
-    assertThrows(
-        IdentityReactivationCompensationException.class,
-        () -> repairService.queueFailedCompensation("user-1", compensationFailure()));
-
-    assertThat(counter("queue_failed")).isEqualTo(1.0);
-  }
-
-  @Test
-  void retryOutstandingRepairsDisablesAndResolvesDurableState() {
-    User user = repairUser();
+  void retryOutstandingRepairsRetriesExplicitRepairImmediately() {
+    User repair = claimedUser(DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED, 0);
     when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
             DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED))
-        .thenReturn(List.of(user));
-    when(repairWriter.resolveRepair("user-1")).thenReturn(true);
+        .thenReturn(List.of(repair));
+    when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
+            DeletionLifecycleState.REACTIVATION_IN_PROGRESS))
+        .thenReturn(List.of());
+    when(repairWriter.retry("user-1", "operation-1")).thenReturn(true);
 
     repairService.retryOutstandingRepairs();
 
-    verify(identityDeactivator).deactivateUser("user-1");
-    verify(repairWriter).resolveRepair("user-1");
+    verify(repairWriter).retry("user-1", "operation-1");
     assertThat(counter("retry_resolved")).isEqualTo(1.0);
   }
 
   @Test
-  void retryOutstandingRepairsLeavesDurableStateWhenKeycloakStillFails() {
-    User user = repairUser();
+  void retryOutstandingRepairsClosesCrashWindowOnlyAfterClaimIsStale() {
+    User stale = claimedUser(DeletionLifecycleState.REACTIVATION_IN_PROGRESS, 10);
+    User fresh = claimedUser(DeletionLifecycleState.REACTIVATION_IN_PROGRESS, 1);
+    fresh.setUserId("user-2");
+    fresh.setReactivationOperationId("operation-2");
     when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
             DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED))
-        .thenReturn(List.of(user));
-    doThrow(new IllegalStateException("Keycloak unavailable"))
-        .when(identityDeactivator)
-        .deactivateUser("user-1");
+        .thenReturn(List.of());
+    when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
+            DeletionLifecycleState.REACTIVATION_IN_PROGRESS))
+        .thenReturn(List.of(stale, fresh));
+    when(repairWriter.retry("user-1", "operation-1")).thenReturn(true);
 
     repairService.retryOutstandingRepairs();
 
-    verify(repairWriter, never()).resolveRepair("user-1");
+    verify(repairWriter).retry("user-1", "operation-1");
+    verify(repairWriter, never()).retry("user-2", "operation-2");
+  }
+
+  @Test
+  void retryOutstandingRepairsKeepsFailedRepairObservable() {
+    User repair = claimedUser(DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED, 0);
+    when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
+            DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED))
+        .thenReturn(List.of(repair));
+    when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
+            DeletionLifecycleState.REACTIVATION_IN_PROGRESS))
+        .thenReturn(List.of());
+    doThrow(compensationFailure()).when(repairWriter).retry("user-1", "operation-1");
+
+    repairService.retryOutstandingRepairs();
+
     assertThat(counter("retry_failed")).isEqualTo(1.0);
   }
 
-  private User repairUser() {
+  private User claimedUser(DeletionLifecycleState state, long ageMinutes) {
     var user = new User();
     user.setUserId("user-1");
-    user.setDeletionLifecycleState(DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED);
+    user.setDeletionLifecycleState(state);
+    user.setReactivationOperationId("operation-1");
+    user.setReactivationOperationStartedAt(
+        LocalDateTime.now(ZoneOffset.UTC).minusMinutes(ageMinutes));
     return user;
+  }
+
+  private IdentityReactivationOperation operation() {
+    return new IdentityReactivationOperation(
+        "user-1", "operation-1", "marge.simpson@dreambau.de", "marge.simpson@dreambau.de", 40L);
+  }
+
+  private RuntimeException databaseFailure() {
+    return new IllegalStateException("database commit failed");
   }
 
   private IdentityReactivationCompensationException compensationFailure() {
     return new IdentityReactivationCompensationException(
         "Keycloak rollback failed",
-        new IllegalStateException("database rollback"),
+        databaseFailure(),
         new IllegalStateException("Keycloak unavailable"));
   }
 
