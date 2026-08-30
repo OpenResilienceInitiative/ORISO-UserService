@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -96,6 +97,9 @@ public class AskerUserAdminFacade {
     }
 
     User user = exactMatches.getFirst();
+    if (DeletionLifecycleState.HARD_DELETED.equals(user.getDeletionLifecycleState())) {
+      throw new NotFoundException("Hard-deleted asker identities cannot be reactivated");
+    }
     if (user.getDeleteDate() == null) {
       throw new ConflictException("Asker identity is active and cannot be reactivated");
     }

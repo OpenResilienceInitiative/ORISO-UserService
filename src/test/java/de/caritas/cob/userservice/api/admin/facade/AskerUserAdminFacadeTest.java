@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.util.List;
 import java.util.Optional;
@@ -171,6 +172,20 @@ public class AskerUserAdminFacadeTest {
         .thenReturn(List.of(active));
 
     assertThrows(ConflictException.class, () -> askerUserAdminFacade.reactivateAsker(request));
+
+    verifyNoInteractions(identityReactivator);
+  }
+
+  @Test
+  void reactivateAsker_shouldReturnNotFoundWhenLifecycleIsHardDeleted() {
+    var request = reactivationRequest();
+    var hardDeleted =
+        deletedUser("user-1", "marge.simpson_at_dreambau.de", "marge.simpson@dreambau.de", 40L);
+    hardDeleted.setDeletionLifecycleState(DeletionLifecycleState.HARD_DELETED);
+    when(userService.findUsersByUsernameIncludingDeleted(request.getUsername()))
+        .thenReturn(List.of(hardDeleted));
+
+    assertThrows(NotFoundException.class, () -> askerUserAdminFacade.reactivateAsker(request));
 
     verifyNoInteractions(identityReactivator);
   }
