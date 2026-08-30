@@ -28,7 +28,7 @@ public class IdentityReactivationRepairWriter {
       noRollbackFor = IdentityReactivationCompensationException.class)
   public boolean compensate(
       IdentityReactivationOperation operation, RuntimeException reactivationFailure) {
-    return repairCurrentOperation(operation, reactivationFailure);
+    return repairCurrentOperation(operation.userId(), operation.operationId(), reactivationFailure);
   }
 
   @Transactional(
@@ -36,19 +36,19 @@ public class IdentityReactivationRepairWriter {
       noRollbackFor = IdentityReactivationCompensationException.class)
   public boolean retry(String userId, String operationId) {
     return repairCurrentOperation(
-        new IdentityReactivationOperation(userId, operationId, "", "", null),
+        userId,
+        operationId,
         new IllegalStateException("Recovering stale durable identity reactivation claim"));
   }
 
   private boolean repairCurrentOperation(
-      IdentityReactivationOperation operation, RuntimeException reactivationFailure) {
+      String userId, String operationId, RuntimeException reactivationFailure) {
     User user =
         userRepository
-            .findByUserIdForUpdate(operation.userId())
+            .findByUserIdForUpdate(userId)
             .filter(
                 candidate ->
-                    IdentityReactivationSagaStore.isCurrentOperation(
-                        candidate, operation.operationId()))
+                    IdentityReactivationSagaStore.isCurrentOperation(candidate, operationId))
             .filter(this::isRepairableState)
             .orElse(null);
     if (user == null) {
@@ -57,10 +57,6 @@ public class IdentityReactivationRepairWriter {
 
     try {
       identityDeactivator.deactivateUser(user.getUserId());
-      user.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
-      IdentityReactivationSagaStore.clearOperation(user);
-      userRepository.save(user);
-      return true;
     } catch (RuntimeException compensationFailure) {
       user.setDeletionLifecycleState(DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED);
       userRepository.save(user);
@@ -69,6 +65,10 @@ public class IdentityReactivationRepairWriter {
           reactivationFailure,
           compensationFailure);
     }
+    user.setDeletionLifecycleState(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+    IdentityReactivationSagaStore.clearOperation(user);
+    userRepository.save(user);
+    return true;
   }
 
   private boolean isRepairableState(User user) {

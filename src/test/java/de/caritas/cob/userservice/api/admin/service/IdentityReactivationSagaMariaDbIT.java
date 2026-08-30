@@ -1,9 +1,13 @@
 package de.caritas.cob.userservice.api.admin.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -12,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -105,6 +110,26 @@ class IdentityReactivationSagaMariaDbIT {
   }
 
   @Test
+  void unmutatedConflictCommitsClaimReleaseThroughSpringTransactionProxy() {
+    IdentityReactivationOperation operation = sagaStore.begin(USERNAME, USERNAME, 40L);
+    doThrow(new ConflictException("identity mismatch"))
+        .when(identityReactivator)
+        .reactivateUser(any(), any(), any(), any(), any());
+
+    IdentityReactivationUnmutatedException failure =
+        assertThrows(
+            IdentityReactivationUnmutatedException.class,
+            () -> sagaStore.reactivateAndCommit(operation, "NewPassw0rd!"));
+
+    assertThat(failure.originalFailure()).isInstanceOf(ConflictException.class);
+    User persisted = userRepository.findById(USER_ID).orElseThrow();
+    assertThat(persisted.getDeletionLifecycleState())
+        .isEqualTo(DeletionLifecycleState.READ_ONLY_SAFEGUARD);
+    assertThat(persisted.getReactivationOperationId()).isNull();
+    assertThat(persisted.getReactivationOperationStartedAt()).isNull();
+  }
+
+  @Test
   void lateCompensationCannotDisableASecondSuccessfulGeneration() {
     IdentityReactivationOperation first = sagaStore.begin(USERNAME, USERNAME, 40L);
     assertThat(repairWriter.retry(first.userId(), first.operationId())).isTrue();
@@ -122,7 +147,7 @@ class IdentityReactivationSagaMariaDbIT {
 
   private User deletedUser() {
     var user = new User(USER_ID, null, USERNAME, USERNAME, true);
-    var now = LocalDateTime.now();
+    var now = LocalDateTime.now(ZoneOffset.UTC);
     user.setCreateDate(now);
     user.setUpdateDate(now);
     user.setTenantId(40L);

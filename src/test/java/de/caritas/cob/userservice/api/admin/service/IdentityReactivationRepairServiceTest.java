@@ -77,6 +77,22 @@ class IdentityReactivationRepairServiceTest {
   }
 
   @Test
+  void compensateSurfacesPersistenceFailureWhenDurableMarkerCannotBeUpdated() {
+    var persistenceFailure = new IllegalStateException("row lock timeout");
+    doThrow(persistenceFailure)
+        .when(repairWriter)
+        .compensate(org.mockito.ArgumentMatchers.eq(operation()), any());
+
+    RuntimeException actual =
+        assertThrows(
+            IllegalStateException.class,
+            () -> repairService.compensate(operation(), databaseFailure()));
+
+    assertThat(actual).isSameAs(persistenceFailure);
+    assertThat(counter("queue_failed")).isEqualTo(1.0);
+  }
+
+  @Test
   void retryOutstandingRepairsRetriesExplicitRepairImmediately() {
     User repair = claimedUser(DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED, 0);
     when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(

@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -62,6 +63,23 @@ class IdentityReactivationRepairWriterTest {
   }
 
   @Test
+  void compensateDoesNotMisreportPersistenceFailureAsKeycloakFailure() {
+    User user = claimedUser("operation-1", DeletionLifecycleState.REACTIVATION_IN_PROGRESS);
+    var persistenceFailure = new IllegalStateException("database unavailable");
+    when(userRepository.findByUserIdForUpdate("user-1")).thenReturn(Optional.of(user));
+    doThrow(persistenceFailure).when(userRepository).save(user);
+
+    RuntimeException actual =
+        assertThrows(
+            IllegalStateException.class,
+            () -> writer.compensate(operation("operation-1"), databaseFailure()));
+
+    assertThat(actual).isSameAs(persistenceFailure);
+    verify(identityDeactivator).deactivateUser("user-1");
+    verify(userRepository).save(user);
+  }
+
+  @Test
   void lateCompensationCannotDisableIdentityOwnedByNewerOperationGeneration() {
     User user = claimedUser("operation-2", DeletionLifecycleState.REACTIVATION_IN_PROGRESS);
     when(userRepository.findByUserIdForUpdate("user-1")).thenReturn(Optional.of(user));
@@ -88,10 +106,10 @@ class IdentityReactivationRepairWriterTest {
   private User claimedUser(String operationId, DeletionLifecycleState state) {
     var user = new User();
     user.setUserId("user-1");
-    user.setDeleteDate(LocalDateTime.now());
+    user.setDeleteDate(LocalDateTime.now(ZoneOffset.UTC));
     user.setDeletionLifecycleState(state);
     user.setReactivationOperationId(operationId);
-    user.setReactivationOperationStartedAt(LocalDateTime.now());
+    user.setReactivationOperationStartedAt(LocalDateTime.now(ZoneOffset.UTC));
     return user;
   }
 
