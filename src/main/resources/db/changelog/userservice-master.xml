@@ -146,14 +146,12 @@
     file="db/changelog/changeset/0084_event_notification_explanation_backfill/0084_changeSet.xml" />
   <include
     file="db/changelog/changeset/0085_consultant_internal_display_name/0085_changeSet.xml" />
-  <!-- 0086/0087 repair two changesets that existed on disk from e50c76d6/9b144871 but were never
-       wired into this master changelog, so Liquibase silently never ran them. Renumbered from
-       their original 0081/0083 (both already taken); changeset identity is (id, author,
-       filepath), and neither has ever run anywhere, so renumbering is safe. -->
+  <!-- 0083_empty_draft_rows shipped without this include (found via PR #1075 review),
+       so it never ran anywhere. Appended here so already-migrated environments pick it
+       up in their next run; it only deletes zero-content draft rows and has no ordering
+       dependency on 0084/0085. -->
   <include
-    file="db/changelog/changeset/0086_support_room_repair/0086_changeSet.xml" />
-  <include
-    file="db/changelog/changeset/0087_empty_draft_rows/0087_changeSet.xml" />
+    file="db/changelog/changeset/0083_empty_draft_rows/0083_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

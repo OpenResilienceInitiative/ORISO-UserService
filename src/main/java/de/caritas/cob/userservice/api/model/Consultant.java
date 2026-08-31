@@ -300,7 +300,10 @@ public class Consultant implements TenantAware, NotificationsAware {
   @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean notificationsEnabled;
 
-  @Column(name = "notifications_settings")
+  // The real column is varchar(4000) (see the userservice schema); without a
+  // length here Hibernate generates varchar(255) for the test DDL, and the
+  // settings JSON overflows it as soon as the notification matrix grows.
+  @Column(name = "notifications_settings", length = 4000)
   private String notificationsSettings;
 
   @JsonIgnore
