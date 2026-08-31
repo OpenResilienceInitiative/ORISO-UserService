@@ -134,15 +134,22 @@ class SupportRoomMigrationConvergenceIT {
   }
 
   private void deleteRepairChangelogRow(Statement statement) throws SQLException {
-    statement.executeUpdate(
-        "DELETE FROM userservice.DATABASECHANGELOG"
-            + " WHERE ID = '"
-            + REPAIR_CHANGESET_ID
-            + "' AND AUTHOR = '"
-            + REPAIR_CHANGESET_AUTHOR
-            + "' AND FILENAME = '"
-            + REPAIR_CHANGESET_FILE
-            + "'");
+    int deletedRows =
+        statement.executeUpdate(
+            "DELETE FROM userservice.DATABASECHANGELOG"
+                + " WHERE ID = '"
+                + REPAIR_CHANGESET_ID
+                + "' AND AUTHOR = '"
+                + REPAIR_CHANGESET_AUTHOR
+                + "' AND FILENAME = '"
+                + REPAIR_CHANGESET_FILE
+                + "'");
+    assertThat(deletedRows)
+        .as(
+            "exactly one recorded execution of the repair changeset must be deleted —"
+                + " zero means the changeset identity in this test no longer matches"
+                + " the changelog and the reruns would silently test nothing")
+        .isEqualTo(1);
   }
 
   private void assertSupportRoomIndexes(String description) throws SQLException {
