@@ -12,7 +12,6 @@ import de.caritas.cob.userservice.api.service.email.layout.BrandedEmailRequest;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import java.util.Map;
-import java.util.Optional;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -104,13 +103,7 @@ public class InviteMailDispatchService {
       String primaryActionUrl,
       Long tenantId,
       String language) {
-    InviteSmtpSettings smtp =
-        resolveGlobalSmtpSettings()
-            .orElseThrow(
-                () ->
-                    new SmtpSendException(
-                        "Global SMTP settings are unavailable or incomplete — invite mail not"
-                            + " sent"));
+    InviteSmtpSettings smtp = resolveGlobalSmtpSettings();
     BrandedEmail mail =
         renderBrandedMail(subject, bodyContent, primaryActionUrl, tenantId, language);
     return inviteMailTransport.send(smtp, recipient, subject, mail.html(), mail.plainText());
@@ -132,56 +125,86 @@ public class InviteMailDispatchService {
         branding, new BrandedEmailRequest(subject, bodyContent, primaryActionUrl, null, language));
   }
 
+  /**
+   * Resolves the global SMTP settings or throws an {@link SmtpSendException} whose message names
+   * the exact defect (#1006, "loud failure"): unreachable settings endpoint, the disabled toggle or
+   * missing field by name, or missing credentials with both remedies. The message travels to the
+   * Admin UI via the SMTP exception handler, so it must never contain secret values.
+   */
   @SuppressWarnings("unchecked")
-  private Optional<InviteSmtpSettings> resolveGlobalSmtpSettings() {
+  private InviteSmtpSettings resolveGlobalSmtpSettings() {
     if (isBlank(consultingTypeServiceApiUrl)) {
-      log.warn("Invite mail dispatch: 'consulting.type.service.api.url' is not configured");
-      return Optional.empty();
+      throw new SmtpSendException(
+          "Invite mail not sent: 'consulting.type.service.api.url' is not configured on"
+              + " UserService, so the global SMTP settings cannot be resolved");
     }
+    String settingsUrl = normalizeBaseUrl(consultingTypeServiceApiUrl) + "/settings";
+
+    Map<String, Object> settingsResponse;
     try {
-      String settingsUrl = normalizeBaseUrl(consultingTypeServiceApiUrl) + "/settings";
-      Map<String, Object> settingsResponse = restTemplate.getForObject(settingsUrl, Map.class);
-      if (settingsResponse == null || settingsResponse.isEmpty()) {
-        return Optional.empty();
-      }
-
-      boolean systemEmailsEnabled =
-          asBooleanSettingValue(
-              settingsResponse.get("globalFeatureSystemNotificationEmailsEnabled"));
-      boolean smtpEnabled = asBooleanSettingValue(settingsResponse.get("globalSmtpEnabled"));
-      String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
-      Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
-      boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
-      String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
-
-      if (!systemEmailsEnabled || !smtpEnabled || isBlank(host) || port == null || isBlank(from)) {
-        log.warn("Invite mail dispatch: global SMTP settings are incomplete or disabled");
-        return Optional.empty();
-      }
-
-      // The public /settings payload deliberately omits the SMTP username and password since the
-      // CTS-C01 credential-leak fix, so they can never be read from there.
-      String username = configuredSmtpUsername;
-      String password = configuredSmtpPassword;
-      if (isBlank(username) || isBlank(password)) {
-        var credentials = applicationSettingsService.getGlobalSmtpCredentials();
-        if (credentials.isEmpty()) {
-          log.warn(
-              "Invite mail not sent: no SMTP credentials available. Set SMTP_USER and"
-                  + " SMTP_PASSWORD on UserService or send with a super-admin token.");
-          return Optional.empty();
-        }
-        username = credentials.get().getGlobalSmtpUsername();
-        password = credentials.get().getGlobalSmtpPassword();
-      }
-
-      return Optional.of(new InviteSmtpSettings(host, port, secure, username, password, from));
+      settingsResponse = restTemplate.getForObject(settingsUrl, Map.class);
     } catch (Exception exception) {
-      log.warn(
-          "Invite mail dispatch: could not resolve global SMTP settings ({})",
-          exception.getClass().getSimpleName());
-      return Optional.empty();
+      throw new SmtpSendException(
+          "Invite mail not sent: the ConsultingTypeService /settings endpoint could not be reached"
+              + " ("
+              + exception.getClass().getSimpleName()
+              + ")",
+          exception);
     }
+    if (settingsResponse == null || settingsResponse.isEmpty()) {
+      throw new SmtpSendException(
+          "Invite mail not sent: the ConsultingTypeService /settings endpoint returned an empty"
+              + " payload");
+    }
+
+    boolean systemEmailsEnabled =
+        asBooleanSettingValue(settingsResponse.get("globalFeatureSystemNotificationEmailsEnabled"));
+    boolean smtpEnabled = asBooleanSettingValue(settingsResponse.get("globalSmtpEnabled"));
+    String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
+    Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
+    boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
+    String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
+
+    var problems = new java.util.ArrayList<String>();
+    if (!systemEmailsEnabled) {
+      problems.add("globalFeatureSystemNotificationEmailsEnabled is disabled");
+    }
+    if (!smtpEnabled) {
+      problems.add("globalSmtpEnabled is disabled");
+    }
+    if (isBlank(host)) {
+      problems.add("globalSmtpHost is missing");
+    }
+    if (port == null) {
+      problems.add("globalSmtpPort is missing or not a number");
+    }
+    if (isBlank(from)) {
+      problems.add("globalSmtpFrom is missing");
+    }
+    if (!problems.isEmpty()) {
+      throw new SmtpSendException(
+          "Invite mail not sent: the global SMTP configuration is unusable — "
+              + String.join(", ", problems));
+    }
+
+    // The public /settings payload deliberately omits the SMTP username and password since the
+    // CTS-C01 credential-leak fix, so they can never be read from there.
+    String username = configuredSmtpUsername;
+    String password = configuredSmtpPassword;
+    if (isBlank(username) || isBlank(password)) {
+      var credentials = applicationSettingsService.getGlobalSmtpCredentials();
+      if (credentials.isEmpty()) {
+        throw new SmtpSendException(
+            "Invite mail not sent: no SMTP credentials available — set SMTP_USER and SMTP_PASSWORD"
+                + " on the UserService deployment (the supported configuration), or the request"
+                + " must carry a platform-admin token for the guarded credentials endpoint (see"
+                + " the UserService log for the credential lookup outcome)");
+      }
+      username = credentials.get().getGlobalSmtpUsername();
+      password = credentials.get().getGlobalSmtpPassword();
+    }
+
+    return new InviteSmtpSettings(host, port, secure, username, password, from);
   }
 
   private boolean asBooleanSettingValue(Object raw) {

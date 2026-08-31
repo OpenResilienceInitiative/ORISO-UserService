@@ -150,6 +150,7 @@ class InviteMailDispatchServiceTest {
         .doesNotContain("f8e71c");
   }
 
+  /** #1006: a disabled toggle must be named, not folded into a generic "incomplete" failure. */
   @Test
   void send_Should_throwSmtpSendException_When_SmtpDisabled() {
     when(restTemplate.getForObject(anyString(), any()))
@@ -159,18 +160,82 @@ class InviteMailDispatchServiceTest {
                 "globalSmtpEnabled", Map.of("value", false)));
 
     assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
-        .isInstanceOf(SmtpSendException.class);
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpEnabled");
     verifyNoInteractions(inviteMailTransport);
   }
 
+  /** #1006: only the offending flag is reported when everything else is configured. */
+  @Test
+  void send_Should_nameTheDisabledFlag_When_SystemNotificationEmailsDisabled() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.put("globalFeatureSystemNotificationEmailsEnabled", Map.of("value", false));
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalFeatureSystemNotificationEmailsEnabled")
+        .hasMessageNotContaining("globalSmtpHost");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** #1006: a missing connection field is named so the operator knows what to configure. */
+  @Test
+  void send_Should_nameTheMissingField_When_SmtpHostIsMissing() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.remove("globalSmtpHost");
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpHost")
+        .hasMessageNotContaining("globalSmtpFrom");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** #1006: an unreachable settings endpoint is distinguished from bad configuration. */
   @Test
   void send_Should_throwSmtpSendException_When_SettingsEndpointUnreachable() {
     when(restTemplate.getForObject(anyString(), any()))
         .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
 
     assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
-        .isInstanceOf(SmtpSendException.class);
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("could not be reached")
+        .hasMessageContaining("ResourceAccessException")
+        .hasCauseInstanceOf(org.springframework.web.client.ResourceAccessException.class);
     verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** #1006: an empty payload is its own diagnosis, not a generic failure. */
+  @Test
+  void send_Should_sayPayloadEmpty_When_SettingsEndpointReturnsNothing() {
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(Map.of());
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("empty");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** #1006: a missing base URL is a deployment defect and must be named as such. */
+  @Test
+  void send_Should_nameTheMissingProperty_When_ConsultingTypeServiceUrlNotConfigured() {
+    var serviceWithoutUrl =
+        new InviteMailDispatchService(
+            restTemplate,
+            applicationSettingsService,
+            inviteMailTransport,
+            emailBrandingResolver,
+            renderer,
+            "",
+            "u",
+            "p");
+
+    assertThatThrownBy(() -> serviceWithoutUrl.send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("consulting.type.service.api.url");
+    verifyNoInteractions(inviteMailTransport, restTemplate);
   }
 
   @Test
@@ -196,13 +261,21 @@ class InviteMailDispatchServiceTest {
             anyString());
   }
 
+  /**
+   * #1006: the credentials failure must tell the operator both ways out — set the deployment secret
+   * (the supported configuration) or send with a platform-admin token. Never a generic "unavailable
+   * or incomplete".
+   */
   @Test
   void send_Should_throwSmtpSendException_When_NoCredentialsAnywhere() {
     when(restTemplate.getForObject(anyString(), any())).thenReturn(completeSettingsPayload());
     when(applicationSettingsService.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service("", "").send("to@example.org", "s", "b"))
-        .isInstanceOf(SmtpSendException.class);
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("SMTP_USER")
+        .hasMessageContaining("SMTP_PASSWORD")
+        .hasMessageContaining("platform-admin");
     verifyNoInteractions(inviteMailTransport);
   }
 

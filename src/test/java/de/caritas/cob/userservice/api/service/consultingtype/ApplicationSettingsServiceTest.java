@@ -199,6 +199,90 @@ class ApplicationSettingsServiceTest {
     assertThat(applicationSettingsService.getGlobalSmtpCredentials()).isEmpty();
   }
 
+  // #1006: a swallowed RestClientException made "invite mail not sent" undiagnosable. The
+  // degradation stays (best-effort), but status and cause must reach the log at WARN.
+  @Test
+  void getGlobalSmtpCredentials_httpClientErrorException_logsWarnWithStatusAndContext() {
+    withCapturedLogs(
+        appender -> {
+          controllerApi.smtpException =
+              HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null);
+
+          assertThat(applicationSettingsService.getGlobalSmtpCredentials()).isEmpty();
+
+          assertThat(appender.list)
+              .anySatisfy(
+                  event -> {
+                    assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+                    assertThat(event.getFormattedMessage())
+                        .contains("SMTP credentials")
+                        .contains("403");
+                  });
+        });
+  }
+
+  @Test
+  void getGlobalSmtpCredentials_restClientExceptionWithoutResponse_logsWarnWithExceptionType() {
+    withCapturedLogs(
+        appender -> {
+          controllerApi.smtpException = new RestClientException("settings unreachable");
+
+          assertThat(applicationSettingsService.getGlobalSmtpCredentials()).isEmpty();
+
+          assertThat(appender.list)
+              .anySatisfy(
+                  event -> {
+                    assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+                    assertThat(event.getFormattedMessage())
+                        .contains("SMTP credentials")
+                        .contains("RestClientException");
+                  });
+        });
+  }
+
+  // #1006: blank credentials from the endpoint are a configuration state worth a WARN — but the
+  // credential values themselves must never be logged.
+  @Test
+  void getGlobalSmtpCredentials_blankPassword_logsWarnWithoutCredentialValues() {
+    withCapturedLogs(
+        appender -> {
+          controllerApi.smtpResult =
+              new ApplicationSettingsSmtpCredentialsDTO()
+                  .globalSmtpUsername("smtp-account-name")
+                  .globalSmtpPassword("");
+
+          assertThat(applicationSettingsService.getGlobalSmtpCredentials()).isEmpty();
+
+          assertThat(appender.list)
+              .anySatisfy(
+                  event -> {
+                    assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+                    assertThat(event.getFormattedMessage()).contains("SMTP credentials");
+                  });
+          assertThat(appender.list)
+              .noneSatisfy(
+                  event -> assertThat(event.getFormattedMessage()).contains("smtp-account-name"));
+        });
+  }
+
+  private void withCapturedLogs(
+      java.util.function.Consumer<
+              ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>>
+          test) {
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(ApplicationSettingsService.class);
+    var appender =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      test.accept(appender);
+    } finally {
+      logger.detachAppender(appender);
+    }
+  }
+
   // Sensitive SMTP credentials must always be fetched fresh, never from cache.
   @Test
   void getGlobalSmtpCredentials_calledTwice_callsApiTwice() {

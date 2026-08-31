@@ -67,6 +67,8 @@ class ApiResponseEntityExceptionHandlerTest {
     assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
     var body = assertInstanceOf(Map.class, response.getBody());
     assertEquals("SMTP_SEND_FAILED", body.get("reason"));
+    // #1006: the specific failure reason must reach the Admin UI, not just the server log.
+    assertEquals("handover failed", body.get("message"));
   }
 
   @Test
