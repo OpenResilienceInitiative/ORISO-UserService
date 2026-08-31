@@ -15,6 +15,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
@@ -671,7 +672,7 @@ class TenantAdminOnboardingServiceTest {
     verify(dpaForwardEmailService, never()).sendSigningLink(any());
   }
 
-  /** Without a recipient no mail states a validity window, so the raw value passes through. */
+  /** A well-formed expiry still passes through verbatim when no mail states a validity window. */
   @Test
   void forwardDpa_returnsTheRawExpiry_When_noMailNeedsToStateIt() {
     var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
@@ -680,6 +681,41 @@ class TenantAdminOnboardingServiceTest {
         .thenReturn(signInvite());
 
     assertEquals("2026-08-29T14:31:07", service.forwardDpa(RAW_TOKEN, null).expiresAt());
+  }
+
+  /**
+   * The provider contract holds on the recipient-less path too: without this the broken value was
+   * simply handed back with a 200, because parseExpiry only ran when a mail had to state it
+   * (CodeRabbit, #1065).
+   */
+  @Test
+  void forwardDpa_failsLoudly_When_theProviderExpiryIsBroken_andNoRecipientIsGiven() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite().expiresAt(null));
+
+    assertThrows(InternalServerErrorException.class, () -> service.forwardDpa(RAW_TOKEN, null));
+
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  /**
+   * A broken provider answer must not leave a completed forward behind: the proof write happens
+   * only after the expiry parsed, so dpaForwardedAt stays null (CodeRabbit, #1065).
+   */
+  @Test
+  void forwardDpa_doesNotRecordTheForward_When_theProviderExpiryIsBroken() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite().expiresAt("29.08.2026 14:31"));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    assertNull(invite.getDpaForwardedAt());
   }
 
   @Test
@@ -733,6 +769,25 @@ class TenantAdminOnboardingServiceTest {
     assertThrows(AccountInviteLinkException.class, () -> service.forwardDpa(RAW_TOKEN, null));
     assertNull(invite.getDpaForwardedAt());
     verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  /**
+   * The controller test can only pin that no role dispatch happens; the rejection itself lives
+   * here. Without this case nothing proved that a counsellor token is refused — the controller stub
+   * answered for any token (CodeRabbit, #1065).
+   */
+  @Test
+  void forwardDpa_rejectsANonTenantAdminToken() {
+    var counsellorInvite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    counsellorInvite.setTargetRole(AccountInviteTargetRole.COUNSELLOR);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH))
+        .thenReturn(Optional.of(counsellorInvite));
+
+    assertThrows(NotFoundException.class, () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    // no link may be minted and no attempt may be spent for a token that does not belong here
+    verifyNoInteractions(publicDpaForwardClient);
+    verify(accountInviteRepository, never()).save(any());
   }
 
   @Test

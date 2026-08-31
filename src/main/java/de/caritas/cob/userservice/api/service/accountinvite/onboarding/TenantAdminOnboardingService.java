@@ -317,6 +317,12 @@ public class TenantAdminOnboardingService {
       throw exception;
     }
 
+    // The provider contract is checked BEFORE anything is recorded and regardless of whether a
+    // mail follows. A missing or unparseable expiry is TenantService breaking its contract (see
+    // parseExpiry): recording it as a completed forward, or handing the raw value back on the
+    // recipient-less path, would turn a broken provider answer into a successful one.
+    LocalDateTime expiresAt = parseExpiry(signInvite.getExpiresAt());
+
     recordDpaForward(rawToken);
 
     // Only the MAIL degrades, and only after the link exists. Everything that can go wrong before
@@ -328,14 +334,10 @@ public class TenantAdminOnboardingService {
     // mailSent=false and shares it manually.
     boolean mailSent = false;
     if (!isBlank(recipientEmail)) {
-      // Parsed OUTSIDE the mail try: a missing or unparseable expiry is TenantService breaking its
-      // contract (see parseExpiry) and must surface as 500, not be mislogged as a mail delivery
-      // failure while the call answers 200.
-      LocalDateTime mailExpiry = parseExpiry(signInvite.getExpiresAt());
       try {
         dpaForwardEmailService.sendSigningLink(
             new DpaForwardEmailCommand(
-                invite.getTenantId(), recipientEmail, signInvite.getSignLink(), mailExpiry));
+                invite.getTenantId(), recipientEmail, signInvite.getSignLink(), expiresAt));
         mailSent = true;
       } catch (RuntimeException exception) {
         // Swallowed deliberately, never silently: the link is the deliverable, the mail is the
