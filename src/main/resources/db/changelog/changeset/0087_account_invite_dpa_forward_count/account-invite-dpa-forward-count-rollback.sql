@@ -1,1 +1,1 @@
-ALTER TABLE account_invite DROP COLUMN dpa_forward_count;
+ALTER TABLE account_invite DROP COLUMN IF EXISTS dpa_forward_count;

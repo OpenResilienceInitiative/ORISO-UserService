@@ -5,12 +5,12 @@
 -- server-side proof that registration may proceed without an own acceptance, and the anchor for
 -- resolving the notice recipient of a pre-account forward.
 ALTER TABLE account_invite
-  ADD COLUMN dpa_forwarded_at DATETIME NULL AFTER two_factor_status;
+  ADD COLUMN IF NOT EXISTS dpa_forwarded_at DATETIME NULL AFTER two_factor_status;
 
 -- Exactly-once ledger for DPA_SIGNED_NOTICE mails: one notice per tenant and signed DPA version.
 -- The unique key is the concurrency guarantee - of two parallel signature hints exactly one
 -- claims the row and sends the mail.
-CREATE TABLE dpa_signed_notice (
+CREATE TABLE IF NOT EXISTS dpa_signed_notice (
   id BIGINT NOT NULL AUTO_INCREMENT,
   tenant_id BIGINT NOT NULL,
   dpa_version VARCHAR(64) NOT NULL,
