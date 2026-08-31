@@ -492,7 +492,8 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("2026-08-29T14:31:07", result.expiresAt());
     // the forward is proven server-side, which is what unlocks registration without acceptance
     assertNotNull(invite.getDpaForwardedAt());
-    verify(accountInviteRepository).save(invite);
+    // two short transactions write: the attempt reservation before the mint, the proof after it
+    verify(accountInviteRepository, times(2)).save(invite);
     var captor =
         ArgumentCaptor.forClass(
             de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService
@@ -544,7 +545,7 @@ class TenantAdminOnboardingServiceTest {
     assertFalse(result.mailSent());
     // and the forward is RECORDED: the link is live, so the proof of it must survive the failure
     assertNotNull(invite.getDpaForwardedAt());
-    verify(accountInviteRepository).save(invite);
+    verify(accountInviteRepository, times(2)).save(invite);
     // exactly one link was minted - a failed send must never cost a second slot
     verify(publicDpaForwardClient, times(1)).createForwardSignLink(any(), any());
   }
@@ -614,9 +615,11 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
-  void forwardDpa_doesNotSpendAnAttempt_When_theLinkCouldNotBeMinted() {
+  void forwardDpa_refundsTheAttempt_When_theLinkCouldNotBeMinted() {
     // an upstream failure must not burn one of the three forwards a Träger gets - otherwise a
-    // TenantService outage silently exhausts a legitimate invitation
+    // TenantService outage silently exhausts a legitimate invitation. Since the #1065 review the
+    // attempt is RESERVED before the mint (so the row lock is never held across the remote call)
+    // and REFUNDED when the mint produced no link - the net budget stays untouched.
     var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     invite.setDpaForwardCount(1);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
@@ -628,8 +631,55 @@ class TenantAdminOnboardingServiceTest {
         () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
 
     assertEquals(1, invite.getDpaForwardCount());
-    verify(accountInviteRepository, never()).save(any());
+    // reserve + refund are each persisted in their own short transaction
+    verify(accountInviteRepository, times(2)).save(invite);
+    assertNull(invite.getDpaForwardedAt());
     verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  /**
+   * The provider broke its contract (see parseExpiry): a missing or unparseable expiry must surface
+   * as 500 instead of being swallowed as a "mail failure" while the call answers 200 with an expiry
+   * string no mail could state (CodeRabbit, #1065).
+   */
+  @Test
+  void forwardDpa_failsLoudly_When_theProviderReturnsNoExpiry() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite().expiresAt(null));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    // the broken contract is not a mail-delivery problem, so no send may have been attempted
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_failsLoudly_When_theProviderReturnsAnUnparseableExpiry() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite().expiresAt("29.08.2026 14:31"));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  /** Without a recipient no mail states a validity window, so the raw value passes through. */
+  @Test
+  void forwardDpa_returnsTheRawExpiry_When_noMailNeedsToStateIt() {
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(signInvite());
+
+    assertEquals("2026-08-29T14:31:07", service.forwardDpa(RAW_TOKEN, null).expiresAt());
   }
 
   @Test
@@ -643,7 +693,7 @@ class TenantAdminOnboardingServiceTest {
     service.forwardDpa(RAW_TOKEN, "legal@example.org");
 
     assertEquals(2, invite.getDpaForwardCount());
-    verify(accountInviteRepository).save(invite);
+    verify(accountInviteRepository, times(2)).save(invite);
   }
 
   @Test
