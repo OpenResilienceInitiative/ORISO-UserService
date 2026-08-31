@@ -152,6 +152,13 @@
        dependency on 0084/0085. -->
   <include
     file="db/changelog/changeset/0083_empty_draft_rows/0083_changeSet.xml" />
+  <!-- Support-room repair (originally shipped as orphaned 0081_support_room_repair via
+       #955 and lost from this changelog in a later merge; renumbered to 0086 because
+       0081 is taken by 0081_account_invite_provisioning). Fully idempotent
+       (CREATE ... IF NOT EXISTS), so environments that already ran it under the old
+       0081 path converge without harm. -->
+  <include
+    file="db/changelog/changeset/0086_support_room_repair/0086_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

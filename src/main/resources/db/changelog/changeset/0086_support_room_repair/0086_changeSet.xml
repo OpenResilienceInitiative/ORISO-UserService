@@ -9,9 +9,9 @@
     changeset removed support_room after 0079 had already been recorded. A
     later pre-dev image therefore skipped 0079 and failed Hibernate validation.
   -->
-  <changeSet id="0081-support-room-repair" author="frank">
+  <changeSet id="0086-support-room-repair" author="frank">
     <sqlFile
-      path="db/changelog/changeset/0081_support_room_repair/migrate.sql"
+      path="db/changelog/changeset/0086_support_room_repair/migrate.sql"
       relativeToChangelogFile="false"
       splitStatements="true"
       stripComments="true"
