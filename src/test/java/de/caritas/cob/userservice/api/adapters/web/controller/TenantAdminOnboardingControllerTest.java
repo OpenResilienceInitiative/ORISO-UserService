@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -429,6 +430,8 @@ class TenantAdminOnboardingControllerTest {
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());
     assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    // the validity window must survive the degraded path - a mail failure may not cost it
+    assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
     assertFalse(response.getBody().mailSent);
   }
 
@@ -442,6 +445,11 @@ class TenantAdminOnboardingControllerTest {
     var response = controller.forwardDpa("raw-token", null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
+    // the body must be complete even without a request body - status alone cannot prove that
+    assertNotNull(response.getBody());
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
+    assertFalse(response.getBody().mailSent);
     verify(onboardingService).forwardDpa("raw-token", null);
   }
 
@@ -464,6 +472,8 @@ class TenantAdminOnboardingControllerTest {
     // counsellor counterpart to dispatch to (CounsellorOnboardingService has no forwardDpa at
     // all), so the role check would only add a second lookup with no branch to take
     verify(accountInviteService, never()).findTargetRoleByToken(any());
+    // and nothing may leak into the counsellor lane either
+    verifyNoInteractions(counsellorOnboardingService);
   }
 
   @Test
