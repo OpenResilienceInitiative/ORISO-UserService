@@ -27,6 +27,11 @@ class DefaultDpaSigningEmailDispatchServiceTest {
   @Mock private SecurityHeaderSupplier securityHeaderSupplier;
   @Mock private TenantHeaderSupplier tenantHeaderSupplier;
 
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.IdentityAuthentication identityAuthentication;
+
+  @Mock private de.caritas.cob.userservice.api.port.out.IdentityClientConfig identityClientConfig;
+
   private MockRestServiceServer server;
   private DefaultDpaSigningEmailDispatchService service;
 
@@ -39,6 +44,8 @@ class DefaultDpaSigningEmailDispatchServiceTest {
             restTemplate,
             securityHeaderSupplier,
             tenantHeaderSupplier,
+            identityAuthentication,
+            identityClientConfig,
             "http://consulting-type.example/service");
   }
 
@@ -46,7 +53,7 @@ class DefaultDpaSigningEmailDispatchServiceTest {
   void send_forwardsAuthenticatedFixedDpaPayload() {
     HttpHeaders headers = new HttpHeaders();
     headers.setBearerAuth("tenant-admin-token");
-    when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
     server
         .expect(
             requestTo("http://consulting-type.example/service/settingsadmin/dpa-signing-emails"))
@@ -66,6 +73,42 @@ class DefaultDpaSigningEmailDispatchServiceTest {
         LocalDateTime.parse("2026-08-03T13:27:28.243207790"));
 
     verify(tenantHeaderSupplier).addTenantHeader(headers);
+    server.verify();
+  }
+
+  /**
+   * The PUBLIC onboarding forward (ORISO-Admin#722) has no session, so the dispatch falls back to
+   * the Keycloak technical user instead of sending an unauthenticated request that the dispatch
+   * endpoint would reject.
+   */
+  @Test
+  void send_authenticatesAsTheTechnicalUser_When_thereIsNoSession() {
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders())
+        .thenReturn(new HttpHeaders());
+    var technicalUser = new de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig();
+    technicalUser.setUsername("technical");
+    technicalUser.setPassword("secret");
+    when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
+    when(identityAuthentication.login("technical", "secret"))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.port.out.IdentityLogin("tech-token", 0, 0, null));
+    HttpHeaders technicalHeaders = new HttpHeaders();
+    technicalHeaders.setBearerAuth("tech-token");
+    when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders("tech-token"))
+        .thenReturn(technicalHeaders);
+    server
+        .expect(
+            requestTo("http://consulting-type.example/service/settingsadmin/dpa-signing-emails"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(header("Authorization", "Bearer tech-token"))
+        .andRespond(withNoContent());
+
+    service.send(
+        "legal@example.org",
+        "Träger Nord e.V.",
+        "https://app.oriso.org/dpa-sign/single-use-token",
+        LocalDateTime.parse("2026-08-29T14:31:07"));
+
     server.verify();
   }
 }

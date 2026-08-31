@@ -15,6 +15,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class DpaForwardEmailService {
 
+  /** See {@link #resolveTenantName(Long)} for why this fallback is German-only. */
+  private static final String GENERIC_ORGANISATION_NAME = "Ihrer Organisation";
+
   private final TenantService tenantService;
   private final DpaSigningEmailDispatchService dpaSigningEmailDispatchService;
   private final URI permittedAppOrigin;
@@ -36,18 +39,60 @@ public class DpaForwardEmailService {
       throw new BadRequestException("tenantId, recipientEmail and expiresAt are required");
     }
 
-    URI signLink = parseUri(command.signLink(), "signLink");
+    URI signLink = resolveSignLink(command.signLink());
     if (!hasSameOrigin(signLink, permittedAppOrigin)
         || signLink.getPath() == null
         || !signLink.getPath().startsWith("/dpa-sign/")) {
       throw new BadRequestException("signLink must use the configured ORISO App origin");
     }
 
-    var tenant = tenantService.getRestrictedTenantData(command.tenantId());
-    String tenantName =
-        tenant == null || isBlank(tenant.getName()) ? "Ihrer Organisation" : tenant.getName();
+    var tenantName = resolveTenantName(command.tenantId());
     dpaSigningEmailDispatchService.send(
         command.recipientEmail().trim(), tenantName, signLink.toString(), command.expiresAt());
+  }
+
+  /**
+   * The TenantService builds the sign link as {@code app.base.url + "/dpa-sign/" + token} and that
+   * base URL is optional there — when it is unset (as on pre-dev) the link arrives PATH-ONLY, e.g.
+   * {@code /dpa-sign/<token>}. Browser clients resolve such a link against their own origin, but a
+   * mail must carry an absolute URL, so resolve it against the configured ORISO App origin instead
+   * of rejecting it. Anything that already carries a scheme/host stays untouched and still has to
+   * pass the same-origin guard below, so this never widens the set of accepted origins.
+   */
+  private URI resolveSignLink(String value) {
+    if (isBlank(value)) {
+      throw new BadRequestException("signLink is required");
+    }
+    String trimmed = value.trim();
+    if (trimmed.startsWith("/")) {
+      try {
+        return permittedAppOrigin.resolve(URI.create(trimmed));
+      } catch (IllegalArgumentException exception) {
+        throw new BadRequestException("signLink is invalid");
+      }
+    }
+    return parseUri(trimmed, "signLink");
+  }
+
+  /**
+   * The tenant of a pre-account onboarding forward does not exist yet (only its ID is reserved,
+   * ORISO-Admin#722) — the mail then falls back to the generic wording instead of failing.
+   *
+   * <p>The fallback is deliberately German-only, like the DPA_FORWARD mail it lands in: the {@link
+   * DpaSigningEmailDispatchService} contract carries no language at all and the downstream template
+   * is maintained in German only — the DPA is a German-language contract between the platform
+   * operator and a Träger. If that dispatch contract ever grows a language dimension, this fallback
+   * must follow it.
+   */
+  private String resolveTenantName(Long tenantId) {
+    try {
+      var tenant = tenantService.getRestrictedTenantData(tenantId);
+      return tenant == null || isBlank(tenant.getName())
+          ? GENERIC_ORGANISATION_NAME
+          : tenant.getName();
+    } catch (org.springframework.web.client.HttpClientErrorException.NotFound exception) {
+      return GENERIC_ORGANISATION_NAME;
+    }
   }
 
   private static URI parseUri(String value, String field) {
