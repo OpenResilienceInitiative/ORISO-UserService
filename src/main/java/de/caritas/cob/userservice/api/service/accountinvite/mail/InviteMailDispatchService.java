@@ -181,8 +181,7 @@ public class InviteMailDispatchService {
         asBooleanSettingValue(settingsResponse.get("globalFeatureSystemNotificationEmailsEnabled"));
     Boolean smtpEnabled = asBooleanSettingValue(settingsResponse.get("globalSmtpEnabled"));
     String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
-    boolean secure =
-        Boolean.TRUE.equals(asBooleanSettingValue(settingsResponse.get("globalSmtpSecure")));
+    Boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
     String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
 
     var problems = new java.util.ArrayList<String>();
@@ -196,6 +195,10 @@ public class InviteMailDispatchService {
       problems.add("globalSmtpEnabled is missing or not a boolean");
     } else if (!smtpEnabled) {
       problems.add("globalSmtpEnabled is disabled");
+    }
+    // Review 3893323639: an absent/malformed secure toggle must not silently select STARTTLS.
+    if (secure == null) {
+      problems.add("globalSmtpSecure is missing or not a boolean");
     }
     if (isBlank(host)) {
       problems.add("globalSmtpHost is missing");

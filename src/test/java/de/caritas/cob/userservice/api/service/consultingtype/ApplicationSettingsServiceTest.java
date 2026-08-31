@@ -217,6 +217,10 @@ class ApplicationSettingsServiceTest {
                     assertThat(event.getFormattedMessage())
                         .contains("SMTP credentials")
                         .contains("403");
+                    // Review 3893332413: the exception itself (root cause + stack trace) must
+                    // reach the log, not just its message.
+                    assertThat(event.getThrowableProxy()).isNotNull();
+                    assertThat(event.getThrowableProxy().getClassName()).contains("Forbidden");
                   });
         });
   }
@@ -235,6 +239,9 @@ class ApplicationSettingsServiceTest {
                     assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
                     assertThat(event.getFormattedMessage())
                         .contains("SMTP credentials")
+                        .contains("RestClientException");
+                    assertThat(event.getThrowableProxy()).isNotNull();
+                    assertThat(event.getThrowableProxy().getClassName())
                         .contains("RestClientException");
                   });
         });

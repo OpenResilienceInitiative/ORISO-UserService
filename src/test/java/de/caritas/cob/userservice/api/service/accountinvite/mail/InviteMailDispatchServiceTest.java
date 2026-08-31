@@ -213,6 +213,40 @@ class InviteMailDispatchServiceTest {
   }
 
   /**
+   * Review 3893323639: the secure toggle gets the same strict nullable treatment — an absent value
+   * must not silently pick STARTTLS over implicit TLS.
+   */
+  @Test
+  void send_Should_reportToggleMissing_When_SecureToggleIsAbsent() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.remove("globalSmtpSecure");
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpSecure is missing or not a boolean");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** Review 3893323639: a malformed secure toggle is a config defect, not "false". */
+  @Test
+  void send_Should_reportToggleMalformed_When_SecureToggleIsNotABoolean() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.put("globalSmtpSecure", Map.of("value", "sometimes"));
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpSecure is missing or not a boolean")
+        .isInstanceOfSatisfying(
+            SmtpSendException.class,
+            e ->
+                assertThat(e.getCategory())
+                    .isEqualTo(SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE));
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /**
    * Review 3893223709: 0, negative, out-of-range and fractional ports must fail here with a
    * field-specific message, not later in transport.
    */

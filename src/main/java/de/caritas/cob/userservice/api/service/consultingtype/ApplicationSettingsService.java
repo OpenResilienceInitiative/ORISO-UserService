@@ -68,11 +68,13 @@ public class ApplicationSettingsService {
           ex instanceof RestClientResponseException responseException
               ? String.valueOf(responseException.getStatusCode())
               : "no response";
+      // Review 3893332413: attach the exception itself so root cause (TLS vs DNS vs
+      // connection) and stack trace reach the log — context fields stay secret-free.
       log.warn(
-          "Global SMTP credentials lookup at ConsultingTypeService failed ({}, status: {}): {}",
+          "Global SMTP credentials lookup at ConsultingTypeService failed ({}, status: {})",
           ex.getClass().getSimpleName(),
           status,
-          ex.getMessage());
+          ex);
       return Optional.empty();
     }
   }
