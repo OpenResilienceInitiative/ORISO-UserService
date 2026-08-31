@@ -106,8 +106,13 @@ public class IdentityConfig implements IdentityClientConfig, IdentityPolicy {
    */
   @Override
   public boolean isProfileEmailUsableForMagicLink(String email) {
-    return StringUtils.hasText(email)
-        && emailDummySuffix != null
-        && !email.endsWith(emailDummySuffix);
+    if (!StringUtils.hasText(email) || emailDummySuffix == null) {
+      return false;
+    }
+    // Compare on the normalized form: a dummy address must stay unusable even when it
+    // arrives with surrounding whitespace or different casing. strip() (not trim())
+    // also removes Unicode whitespace such as \u2003, which hasText() accepts.
+    String normalized = email.strip().toLowerCase(java.util.Locale.ROOT);
+    return !normalized.endsWith(emailDummySuffix.strip().toLowerCase(java.util.Locale.ROOT));
   }
 }

@@ -60,6 +60,65 @@ class IdentityConfigTest {
   }
 
   @Test
+  void isProfileEmailUsableForMagicLinkShouldRejectDummyAddressesRegardlessOfCaseAndWhitespace() {
+    givenAValidIdentityConfig();
+    identityConfig.setEmailDummySuffix("@dummy.oriso.org");
+
+    // A dummy address must stay unusable even when it arrives un-normalized.
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org "));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("  u123@dummy.oriso.org"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@DUMMY.ORISO.ORG"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("  u123@Dummy.Oriso.Org  "));
+    assertTrue(identityConfig.isProfileEmailUsableForMagicLink(" real.user@example.org "));
+  }
+
+  @Test
+  void isProfileEmailUsableForMagicLinkShouldNormalizeTheConfiguredSuffixItself() {
+    givenAValidIdentityConfig();
+    // The configured side must be normalized too, not only the submitted address.
+    identityConfig.setEmailDummySuffix(" @DUMMY.oriso.org ");
+
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org"));
+    assertTrue(identityConfig.isProfileEmailUsableForMagicLink("real.user@example.org"));
+  }
+
+  @Test
+  void isProfileEmailUsableForMagicLinkShouldRejectDummyAddressesWithUnicodeWhitespace() {
+    givenAValidIdentityConfig();
+    identityConfig.setEmailDummySuffix("@dummy.oriso.org");
+
+    // hasText() accepts Unicode whitespace, so normalization must strip it too.
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org\u2003"));
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("\u00a0u123@dummy.oriso.org"));
+  }
+
+  @Test
+  void isProfileEmailUsableForMagicLinkShouldStayLocaleIndependent_WhenDefaultLocaleIsTurkish() {
+    givenAValidIdentityConfig();
+    identityConfig.setEmailDummySuffix("@DUMMY.orIso.org");
+
+    // Turkish lowercasing maps I to a dotless i; Locale.ROOT must keep the
+    // comparison stable regardless of the JVM default locale.
+    java.util.Locale previous = java.util.Locale.getDefault();
+    java.util.Locale.setDefault(java.util.Locale.forLanguageTag("tr-TR"));
+    try {
+      assertFalse(identityConfig.isProfileEmailUsableForMagicLink("u123@dummy.oriso.org"));
+      assertTrue(identityConfig.isProfileEmailUsableForMagicLink("real.user@example.org"));
+    } finally {
+      java.util.Locale.setDefault(previous);
+    }
+  }
+
+  @Test
+  void isProfileEmailUsableForMagicLinkShouldRejectEverything_WhenNoDummySuffixIsConfigured() {
+    givenAValidIdentityConfig();
+    // Without a configured suffix the dummy rule cannot be evaluated: fail closed.
+    identityConfig.setEmailDummySuffix(null);
+
+    assertFalse(identityConfig.isProfileEmailUsableForMagicLink("real.user@example.org"));
+  }
+
+  @Test
   void isConsultantDisplayNameAllowedShouldReadTheConfiguredFlagNullSafely() {
     givenAValidIdentityConfig();
 

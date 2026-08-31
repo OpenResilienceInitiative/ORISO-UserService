@@ -11,9 +11,13 @@
       "kind": "local-state",
       "owner": "identity-profile",
       "risk": "performance",
-      "components": ["accessTokenCache"],
+      "components": [
+        "accessTokenCache"
+      ],
       "decision": "Retain locally with the existing TTL; a miss re-authenticates without losing correctness.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -22,9 +26,13 @@
       "kind": "local-state",
       "owner": "identity-profile",
       "risk": "correctness",
-      "components": ["browserLoginLocks"],
+      "components": [
+        "browserLoginLocks"
+      ],
       "decision": "Externalize login coordination before more than one replica is supported.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -33,9 +41,13 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "correctness",
-      "components": ["syncTokenCache"],
+      "components": [
+        "syncTokenCache"
+      ],
       "decision": "Externalize the cursor and prove handoff without duplicate event side effects.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -44,9 +56,13 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "performance",
-      "components": ["presenceCache"],
+      "components": [
+        "presenceCache"
+      ],
       "decision": "Retain as a short-lived local optimization with deterministic TTL tests.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -55,9 +71,14 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "performance",
-      "components": ["cachedAdminToken", "adminTokenExpiry"],
+      "components": [
+        "cachedAdminToken",
+        "adminTokenExpiry"
+      ],
       "decision": "Retain locally with expiry; a miss or expiry re-authenticates.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -66,9 +87,13 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "performance",
-      "components": ["impersonationTokenCache"],
+      "components": [
+        "impersonationTokenCache"
+      ],
       "decision": "Retain locally with TTL; a miss requests a new bounded token.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -77,9 +102,13 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "performance",
-      "components": ["roomToSessionMap"],
+      "components": [
+        "roomToSessionMap"
+      ],
       "decision": "Retain only while the database fallback is covered and observable.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "safe"
     },
     {
@@ -88,9 +117,13 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "correctness",
-      "components": ["roomToUsersMap"],
+      "components": [
+        "roomToUsersMap"
+      ],
       "decision": "Externalize or deterministically rebuild recipients before multi-replica execution.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -99,9 +132,16 @@
       "kind": "local-state",
       "owner": "sessions-matrix",
       "risk": "duplicate-side-effect",
-      "components": ["executorService", "adminAccessToken", "syncToken", "running"],
+      "components": [
+        "executorService",
+        "adminAccessToken",
+        "syncToken",
+        "running"
+      ],
       "decision": "Add shared leadership, cursor handoff and durable side-effect deduplication.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -110,9 +150,13 @@
       "kind": "local-state",
       "owner": "notifications",
       "risk": "correctness",
-      "components": ["activeViewByUserId"],
+      "components": [
+        "activeViewByUserId"
+      ],
       "decision": "Externalize with TTL before cross-replica notification suppression is claimed.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -130,7 +174,9 @@
         "topicsCache"
       ],
       "decision": "Keep the one-replica ceiling until every correctness cache has shared invalidation or a measured freshness bound.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -139,9 +185,13 @@
       "kind": "local-state",
       "owner": "agency-tenant",
       "risk": "performance",
-      "components": ["agencyCache"],
+      "components": [
+        "agencyCache"
+      ],
       "decision": "Retain only as a bounded read optimization and define freshness before scale-out.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -150,9 +200,13 @@
       "kind": "local-state",
       "owner": "consulting-configuration",
       "risk": "performance",
-      "components": ["consultingTypeCache"],
+      "components": [
+        "consultingTypeCache"
+      ],
       "decision": "Retain only as a bounded read optimization and define freshness before scale-out.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -161,9 +215,13 @@
       "kind": "local-state",
       "owner": "consulting-configuration",
       "risk": "correctness",
-      "components": ["applicationSettingsCache"],
+      "components": [
+        "applicationSettingsCache"
+      ],
       "decision": "Add shared invalidation or an explicit measured freshness contract.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -172,9 +230,13 @@
       "kind": "local-state",
       "owner": "agency-tenant",
       "risk": "correctness",
-      "components": ["tenantCache"],
+      "components": [
+        "tenantCache"
+      ],
       "decision": "Add shared invalidation for tenant changes before scale-out.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -183,9 +245,13 @@
       "kind": "local-state",
       "owner": "administration",
       "risk": "correctness",
-      "components": ["tenantAdminCache"],
+      "components": [
+        "tenantAdminCache"
+      ],
       "decision": "Add shared invalidation for administrator changes before scale-out.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "blocker"
     },
     {
@@ -194,9 +260,13 @@
       "kind": "local-state",
       "owner": "consulting-configuration",
       "risk": "performance",
-      "components": ["topicsCache"],
+      "components": [
+        "topicsCache"
+      ],
       "decision": "Retain only as a bounded read optimization and define freshness before scale-out.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -205,9 +275,13 @@
       "kind": "local-state",
       "owner": "administration",
       "risk": "performance",
-      "components": ["cache"],
+      "components": [
+        "cache"
+      ],
       "decision": "Retain locally with the existing TTL; a miss re-reads TenantService without losing correctness.",
-      "signals": ["userservice.replica.local_state"],
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {
@@ -216,9 +290,14 @@
       "kind": "scheduler",
       "owner": "sessions-appointments",
       "risk": "duplicate-side-effect",
-      "components": ["deleteObsoleteAppointments"],
+      "components": [
+        "deleteObsoleteAppointments"
+      ],
       "decision": "Prove database-level idempotency under concurrent execution or add a lease.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -227,9 +306,14 @@
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["sendEmailNotificationsForOpenEnquiries"],
+      "components": [
+        "sendEmailNotificationsForOpenEnquiries"
+      ],
       "decision": "Lease execution and keep notification delivery idempotent.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -238,9 +322,14 @@
       "kind": "scheduler",
       "owner": "sessions-group-chat",
       "risk": "duplicate-side-effect",
-      "components": ["performDeactivationWorkflow"],
+      "components": [
+        "performDeactivationWorkflow"
+      ],
       "decision": "Prove Matrix and notification effects idempotent or add a lease.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -249,9 +338,14 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeactivationWorkflow"],
+      "components": [
+        "performDeactivationWorkflow"
+      ],
       "decision": "Lease execution and make every external side effect idempotent.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -260,9 +354,14 @@
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["publishUpcomingReminders"],
+      "components": [
+        "publishUpcomingReminders"
+      ],
       "decision": "Deduplicate by reminder identity and prove concurrent execution.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -271,9 +370,14 @@
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["notifyInactiveAccounts"],
+      "components": [
+        "notifyInactiveAccounts"
+      ],
       "decision": "Claim each dispatch durably and deduplicate replay.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -282,9 +386,14 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeletionWorkflow"],
+      "components": [
+        "performDeletionWorkflow"
+      ],
       "decision": "Lease execution and make provider cleanup idempotent.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -293,9 +402,14 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeletionWorkflow"],
+      "components": [
+        "performDeletionWorkflow"
+      ],
       "decision": "Lease execution and make provider cleanup idempotent.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -304,9 +418,14 @@
       "kind": "scheduler",
       "owner": "identity-profile",
       "risk": "duplicate-side-effect",
-      "components": ["performDeletionWorkflow"],
+      "components": [
+        "performDeletionWorkflow"
+      ],
       "decision": "Lease execution and make provider cleanup idempotent.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -315,9 +434,15 @@
       "kind": "scheduler",
       "owner": "support-access",
       "risk": "duplicate-side-effect",
-      "components": ["sweepExpired", "purgeOldAuditEvents"],
+      "components": [
+        "sweepExpired",
+        "purgeOldAuditEvents"
+      ],
       "decision": "Prove expiry/purge updates are idempotent under concurrent execution or add a lease.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -326,9 +451,14 @@
       "kind": "scheduler",
       "owner": "support-access",
       "risk": "duplicate-side-effect",
-      "components": ["sweepExpired"],
+      "components": [
+        "sweepExpired"
+      ],
       "decision": "Prove room close/leave effects are idempotent under concurrent execution or add a lease.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "blocker"
     },
     {
@@ -351,6 +481,21 @@
       "components": ["expireCoAccessSchedule"],
       "decision": "The sweep uses a shared lease, technical tenant context and pessimistic row locks; database expiry is saved only after Matrix membership is reconciled.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "bounded"
+    },
+    {
+      "id": "email-template-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/OrisoEmailRenderer.java",
+      "kind": "local-state",
+      "owner": "identity-profile",
+      "risk": "performance",
+      "components": [
+        "templateCache"
+      ],
+      "decision": "Retain locally for the life of the process, with bounded cardinality. The cache holds the generated e-mail templates read from the classpath, so it is immutable for the life of the process and bounded by the number of occasions times tone variants (22 x 3 x 2 files). Replicas cannot disagree, because every replica reads the same artefact out of the same image; a cold replica costs one resource read per template.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
       "status": "bounded"
     },
     {

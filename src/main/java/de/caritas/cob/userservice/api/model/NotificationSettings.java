@@ -15,4 +15,9 @@ public class NotificationSettings {
   boolean newChatMessageNotificationEnabled;
   boolean reassignmentNotificationEnabled;
   boolean appointmentNotificationEnabled;
+
+  // The notification matrix, ADR-019 in ORISO-Frontend.
+  boolean assignmentNotificationEnabled;
+  boolean feedbackNotificationEnabled;
+  boolean serviceNoticeNotificationEnabled;
 }
