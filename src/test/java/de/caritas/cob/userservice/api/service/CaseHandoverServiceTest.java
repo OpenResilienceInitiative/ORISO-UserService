@@ -59,6 +59,8 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -238,12 +240,24 @@ class CaseHandoverServiceTest {
             .build();
     when(caseHandoverRequestRepository.findByIdAndSessionId(101L, 123L))
         .thenReturn(Optional.of(request));
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(java.util.List.of("@requester:matrix", "@previous:matrix")));
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.removeUserFromRoom(
+            "!room:matrix", "@requester:matrix", "previous-token"))
+        .thenReturn(true);
 
     var status = caseHandoverService.resolveClientConsent(123L, 101L, false);
 
     assertEquals("CLIENT_CONSENT_DECLINED", status.getStatus());
     assertFalse(status.isCanViewContent());
     assertEquals("CLIENT_CONSENT_DECLINED", status.getAuditOutcome());
+    verify(matrixSynapseService)
+        .removeUserFromRoom("!room:matrix", "@requester:matrix", "previous-token");
   }
 
   @Test
@@ -494,6 +508,129 @@ class CaseHandoverServiceTest {
   }
 
   /**
+   * The Matrix join happens inside the granting transaction. When that transaction rolls back after
+   * the join, the membership must be compensated - otherwise the requester keeps reading chat
+   * content without any persisted grant.
+   */
+  @Test
+  void requestAccess_removesTheJoinedRequesterAgainWhenTheGrantingTransactionRollsBack() {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("requester-token");
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(List.of("@previous:matrix")));
+    when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
+    when(matrixSynapseService.removeUserFromRoom(
+            "!room:matrix", "@requester:matrix", "previous-token"))
+        .thenReturn(true);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
+      var registered = List.copyOf(TransactionSynchronizationManager.getSynchronizations());
+      assertEquals(1, registered.size());
+      verify(matrixSynapseService, never())
+          .removeUserFromRoom(anyString(), anyString(), anyString());
+
+      registered.forEach(
+          synchronization ->
+              synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(matrixSynapseService)
+        .removeUserFromRoom("!room:matrix", "@requester:matrix", "previous-token");
+  }
+
+  /** A commit must never trigger the rollback compensation. */
+  @Test
+  void requestAccess_keepsTheJoinedRequesterWhenTheGrantingTransactionCommits() {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("requester-token");
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(List.of("@previous:matrix")));
+    when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(
+              synchronization ->
+                  synchronization.afterCompletion(TransactionSynchronization.STATUS_COMMITTED));
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(matrixSynapseService, never()).removeUserFromRoom(anyString(), anyString(), anyString());
+  }
+
+  /**
+   * ADR-002: department counsellors are already room members. The rollback compensation must never
+   * remove a membership the handover did not create.
+   */
+  @Test
+  void requestAccess_registersNoRollbackCompensationForAPreexistingRoomMember() {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("requester-token");
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(List.of("@previous:matrix", "@requester:matrix")));
+    when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
+      assertTrue(TransactionSynchronizationManager.getSynchronizations().isEmpty());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  @Test
+  void requestAccess_rendersTheTenantConfiguredClientTemplateInTheGrantNotification() {
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(
+            tenantPolicies(
+                "Rat ben\u00f6tigt",
+                180,
+                de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .CaseHandoverConsentValue.OPT_OUT,
+                Set.of()));
+    when(eventNotificationService.buildCaseHandoverParams(
+            eq(session), anyString(), isNull(), isNull(), isNull()))
+        .thenReturn("{\"audience\":\"asker\"}");
+
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Zweitmeinung");
+
+    verify(eventNotificationService)
+        .createEvent(
+            eq("asker"),
+            eq("case.handover.granted"),
+            eq(EventNotificationService.CATEGORY_SYSTEM),
+            anyString(),
+            eq("Requesting Counsellor kann 3 Stunden zeitlich begrenzt mitlesen."),
+            eq("{\"audience\":\"asker\"}"),
+            anyString(),
+            eq(123L),
+            eq(7L));
+  }
+
+  /**
    * Reproduced on Pre-Dev 2026-07-30: since #905 the requester is already a member of the enquiry
    * room, and Synapse rejects the invite with 403 "<user> is already in the room". Before this test
    * the rejection was turned into a 500 and the handover failed outright.
@@ -675,16 +812,23 @@ class CaseHandoverServiceTest {
     requester.setMatrixUserId("@requester:matrix");
     when(matrixSynapseService.getRoomMembers("!room:matrix"))
         .thenThrow(new IllegalStateException("Matrix unavailable"));
+    Session roomlessSession = new Session();
+    roomlessSession.setId(124L);
+    roomlessSession.setTenantId(7L);
+    CaseHandoverRequest healthyRequest = grantedAdviceRequest();
+    healthyRequest.setId(101L);
+    healthyRequest.setSession(roomlessSession);
     when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
             CaseHandoverRequest.Status.GRANTED,
             CaseHandoverRequest.AccessType.CO_ACCESS,
             LocalDateTime.of(2026, 8, 16, 10, 0)))
-        .thenReturn(List.of(failingRequest));
+        .thenReturn(List.of(failingRequest, healthyRequest));
 
-    assertEquals(0, caseHandoverService.expireCoAccess());
+    assertEquals(1, caseHandoverService.expireCoAccess());
 
     assertEquals(CaseHandoverRequest.Status.GRANTED, failingRequest.getStatus());
-    verify(caseHandoverRequestRepository).saveAll(List.of());
+    assertEquals(CaseHandoverRequest.Status.EXPIRED, healthyRequest.getStatus());
+    verify(caseHandoverRequestRepository).saveAll(List.of(healthyRequest));
   }
 
   @Test

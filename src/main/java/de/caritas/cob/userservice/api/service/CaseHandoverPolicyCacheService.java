@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service;
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.TenantCaseHandoverPolicyCache;
 import de.caritas.cob.userservice.api.port.out.TenantCaseHandoverPolicyCacheRepository;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
@@ -13,6 +14,7 @@ import java.time.LocalDateTime;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +31,10 @@ public class CaseHandoverPolicyCacheService {
   private final @NonNull Clock clock;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
+  @Value("${case.handover.policy-refresh-claim-duration:PT1M}")
+  private Duration policyRefreshClaimDuration = Duration.ofMinutes(1);
+
+  @Transactional
   public CaseHandoverPolicies getEffective(Long tenantId) {
     return repository.findById(tenantId).map(this::deserialize).orElseGet(() -> refresh(tenantId));
   }
@@ -41,11 +47,13 @@ public class CaseHandoverPolicyCacheService {
   public CaseHandoverPolicies refresh(Long tenantId) {
     var existing = repository.findById(tenantId);
     if (!scheduledTaskClaimService.tryClaim(
-        "case-handover-policy-refresh-" + tenantId, Duration.ofMinutes(1))) {
+        "case-handover-policy-refresh-" + tenantId, policyRefreshClaimDuration)) {
       return existing
           .map(this::deserialize)
           .orElseThrow(
-              () -> new IllegalStateException("Case Handover policy refresh already in progress"));
+              () ->
+                  new ServiceUnavailableException(
+                      "Case Handover policy refresh already in progress; retry shortly"));
     }
     try {
       var response =
@@ -80,6 +88,7 @@ public class CaseHandoverPolicyCacheService {
   }
 
   @Scheduled(fixedDelayString = "${case.handover.policy-cache-refresh-delay-ms:300000}")
+  @Transactional
   void refreshKnownTenants() {
     repository.findAll().forEach(cache -> refresh(cache.getTenantId()));
   }

@@ -56,6 +56,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @RequiredArgsConstructor
@@ -65,6 +67,7 @@ public class CaseHandoverService {
   private static final String ADVICE_NEEDED = "COUNSELLOR_ASKED_FOR_ADVICE";
   private static final int DEFAULT_ADVICE_ACCESS_DURATION_MINUTES = 180;
   private static final String POLICY_AUTHORITY = "platform-admin-default-case-handover-policy";
+  private static final String TENANT_POLICY_AUTHORITY = "tenant-service-resolved";
   private static final String OUTCOME_ACTIVE_OWNER = "ACTIVE_OWNER";
   private static final String OUTCOME_ACCESS_GRANTED = "ACCESS_GRANTED";
   private static final String OUTCOME_ACCESS_DENIED = "ACCESS_DENIED";
@@ -877,7 +880,7 @@ public class CaseHandoverService {
         .accessAllowed(booleanValue(policy.getAccessAllowed(), false))
         .enabled(booleanValue(policy.getEnabled(), false))
         .displayOrder(displayOrder(code))
-        .policyAuthority("tenant-service-resolved")
+        .policyAuthority(TENANT_POLICY_AUTHORITY)
         .approvalRoles(approvalRoles)
         .clientNotificationTemplates(valueOf(policy.getClientNotificationTemplates()))
         .maxAccessDurationMinutes(duration)
@@ -1193,13 +1196,18 @@ public class CaseHandoverService {
     // never the configured reason (PR #1053 contract) — and the owner stays unchanged.
     String clientTitle = coAccess ? clientCopy.coAccessGrantedTitle() : clientCopy.grantedTitle();
     String clientDescription =
-        coAccess
-            ? renderClientCopy(clientCopy.coAccessGrantedDescription(), requesterName)
-                .replace(
-                    "{{duration}}",
-                    formatDuration(
-                        request.getMaxAccessDurationMinutes(), resolveSessionLanguage(session)))
-            : renderClientCopy(clientCopy.grantedDescription(), requesterName);
+        resolveTenantClientTemplate(request)
+            .map(template -> renderClientTemplate(template, requesterName, request, session))
+            .orElseGet(
+                () ->
+                    coAccess
+                        ? renderClientCopy(clientCopy.coAccessGrantedDescription(), requesterName)
+                            .replace(
+                                "{{duration}}",
+                                formatDuration(
+                                    request.getMaxAccessDurationMinutes(),
+                                    resolveSessionLanguage(session)))
+                        : renderClientCopy(clientCopy.grantedDescription(), requesterName));
     postGrantedChatSystemMessage(session, requesterName, clientDescription);
     // #1010 task 1a: the explanation is counsellor-written free text that can reference case
     // content. It is no longer copied into the notification, which kept it in plaintext for good;
@@ -1272,6 +1280,46 @@ public class CaseHandoverService {
 
   private String renderClientCopy(String template, String requesterName) {
     return template.replace("{{newAdvisor}}", requesterName);
+  }
+
+  /**
+   * Tenant-configured client notification template for the request's reason, resolved through the
+   * last-known-good policy cache. Only a TenantService-resolved policy may override the built-in
+   * client-safe copy; the built-in defaults keep the generic wording that the PR #1053 privacy
+   * contract asserts. Resolution failures fall back to the built-in copy - a notification must
+   * never fail the grant.
+   */
+  private Optional<String> resolveTenantClientTemplate(CaseHandoverRequest request) {
+    try {
+      Session requestSession = request.getSession();
+      CaseHandoverReason reason = findReason(requestSession, request.getReasonCode(), true);
+      if (!TENANT_POLICY_AUTHORITY.equals(reason.getPolicyAuthority())) {
+        return Optional.empty();
+      }
+      Map<String, String> templates = reason.getClientNotificationTemplates();
+      if (templates == null || templates.isEmpty()) {
+        return Optional.empty();
+      }
+      String language = resolveSessionLanguage(requestSession);
+      String template =
+          templates.containsKey(language) ? templates.get(language) : templates.get("de");
+      return Optional.ofNullable(template).filter(text -> !text.isBlank());
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Tenant client notification template could not be resolved for request {}; using built-in copy: {}",
+          request.getId(),
+          exception.getMessage());
+      return Optional.empty();
+    }
+  }
+
+  private String renderClientTemplate(
+      String template, String requesterName, CaseHandoverRequest request, Session session) {
+    return template
+        .replace("{{newAdvisor}}", requesterName)
+        .replace(
+            "{{duration}}",
+            formatDuration(request.getMaxAccessDurationMinutes(), resolveSessionLanguage(session)));
   }
 
   private String formatDuration(Integer durationMinutes, String language) {
@@ -1478,16 +1526,61 @@ public class CaseHandoverService {
           "Failed to create requester Matrix token for case handover");
     }
 
+    boolean wasMemberBefore =
+        matrixSynapseService
+            .getRoomMembers(roomId)
+            .map(members -> members.contains(requester.getMatrixUserId()))
+            .orElse(false);
+
     boolean joined = matrixSynapseService.joinRoom(roomId, requesterToken);
     if (!joined) {
       throw new InternalServerErrorException(
           "Failed to join case handover requester to Matrix room");
     }
+    registerMatrixJoinRollbackCompensation(
+        roomId, requester.getMatrixUserId(), previousConsultantToken, wasMemberBefore);
 
     // The previous counsellor deliberately keeps their membership. ADR-002's reveal lifecycle has
     // a takeover re-hide the original counsellor while they stay a member, so they can reclaim the
     // case when they return — and under Megolm a counsellor removed here could never be given the
     // history back. Hiding the conversation is the application curtain's job, not Matrix's.
+  }
+
+  /**
+   * The Matrix join above runs inside the granting transaction. If that transaction rolls back
+   * after the join (session save, notification write or commit failure), the database grant
+   * disappears but the Matrix membership would survive. This compensation removes the requester
+   * again on rollback - only when the join actually added them, so a counsellor who was already a
+   * room member (ADR-002 department membership) is never kicked out of their own room.
+   */
+  private void registerMatrixJoinRollbackCompensation(
+      String roomId, String requesterId, String operatorToken, boolean wasMemberBefore) {
+    if (wasMemberBefore || !TransactionSynchronizationManager.isSynchronizationActive()) {
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCompletion(int status) {
+            if (status != TransactionSynchronization.STATUS_ROLLED_BACK) {
+              return;
+            }
+            try {
+              if (!matrixSynapseService.removeUserFromRoom(roomId, requesterId, operatorToken)) {
+                log.error(
+                    "Rolled-back case handover left {} in Matrix room {}; the expiry sweep or manual removal must reconcile it",
+                    requesterId,
+                    roomId);
+              }
+            } catch (RuntimeException exception) {
+              log.error(
+                  "Rolled-back case handover left {} in Matrix room {}; the expiry sweep or manual removal must reconcile it",
+                  requesterId,
+                  roomId,
+                  exception);
+            }
+          }
+        });
   }
 
   private String resolveConsultantName(Consultant consultant) {
