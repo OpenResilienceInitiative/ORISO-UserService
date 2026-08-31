@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.CustomHttpHeader;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
@@ -194,6 +195,21 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     ex.executeLogging();
 
     return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.CONFLICT, request);
+  }
+
+  /**
+   * 503 - Service Unavailable, the caller should retry.
+   *
+   * @param request the invoking request
+   * @param ex the thrown exception
+   */
+  @ExceptionHandler({ServiceUnavailableException.class})
+  protected ResponseEntity<Object> handleServiceUnavailable(
+      final ServiceUnavailableException ex, final WebRequest request) {
+    ex.executeLogging();
+
+    return handleExceptionInternal(
+        null, null, new HttpHeaders(), HttpStatus.SERVICE_UNAVAILABLE, request);
   }
 
   private Optional<String> conflictReasonOf(Throwable throwable) {

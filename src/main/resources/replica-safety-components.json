@@ -462,6 +462,28 @@
       "status": "blocker"
     },
     {
+      "id": "case-handover-policy-cache-refresh",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverPolicyCacheService.java",
+      "kind": "scheduler",
+      "owner": "agency-tenant",
+      "risk": "correctness",
+      "components": ["refreshKnownTenants"],
+      "decision": "Each tenant refresh is serialized through ScheduledTaskClaimService and keeps enforcing the persisted last-known-good snapshot.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "bounded"
+    },
+    {
+      "id": "case-handover-co-access-expiry",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverService.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": ["expireCoAccessSchedule"],
+      "decision": "The sweep uses a shared lease, technical tenant context and pessimistic row locks; database expiry is saved only after Matrix membership is reconciled.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "bounded"
+    },
+    {
       "id": "email-template-cache",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/email/OrisoEmailRenderer.java",
       "kind": "local-state",

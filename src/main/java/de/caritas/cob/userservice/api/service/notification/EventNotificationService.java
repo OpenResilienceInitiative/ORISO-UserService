@@ -424,6 +424,17 @@ public class EventNotificationService {
       String reasonCode,
       String reasonLabel,
       Long caseHandoverRequestId) {
+    return buildCaseHandoverParams(
+        session, requesterName, reasonCode, reasonLabel, caseHandoverRequestId, null);
+  }
+
+  public String buildCaseHandoverParams(
+      Session session,
+      String requesterName,
+      String reasonCode,
+      String reasonLabel,
+      Long caseHandoverRequestId,
+      String clientConsent) {
     Map<String, Object> params = baseParams(session);
     putIfPresent(params, "requesterName", requesterName);
     putIfPresent(params, "reasonCode", reasonCode);
@@ -431,6 +442,7 @@ public class EventNotificationService {
     if (caseHandoverRequestId != null) {
       params.put("caseHandoverRequestId", caseHandoverRequestId);
     }
+    putIfPresent(params, "clientConsent", clientConsent);
     return serializeParams(params);
   }
 

@@ -152,6 +152,12 @@
        dependency on 0084/0085. -->
   <include
     file="db/changelog/changeset/0083_empty_draft_rows/0083_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0086_case_handover_co_access/0086_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0087_tenant_case_handover_policy_cache/0087_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0088_case_handover_consent_mode/0088_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

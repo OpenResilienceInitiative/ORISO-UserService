@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="0086-case-handover-co-access" author="oriso">
+    <sqlFile
+      path="db/changelog/changeset/0086_case_handover_co_access/migrate.sql"
+      relativeToChangelogFile="false"
+      splitStatements="true"
+      stripComments="true"
+      endDelimiter=";"/>
+    <rollback>
+      <sql>ALTER TABLE case_handover_request DROP COLUMN IF EXISTS expires_at;</sql>
+      <sql>ALTER TABLE case_handover_request DROP COLUMN IF EXISTS max_access_duration_minutes;</sql>
+      <sql>ALTER TABLE case_handover_request DROP COLUMN IF EXISTS access_type;</sql>
+      <sql>ALTER TABLE case_handover_reason_policy DROP COLUMN IF EXISTS max_access_duration_minutes;</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
