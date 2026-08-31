@@ -20,6 +20,9 @@ import ch.qos.logback.classic.Logger;
 import ch.qos.logback.classic.spi.ILoggingEvent;
 import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.Outcome;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.SideEffect;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -55,6 +58,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.slf4j.LoggerFactory;
@@ -77,6 +81,7 @@ class MatrixEventListenerServiceTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
   @Mock private ConsultantMessageStatService consultantMessageStatService;
+  @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
 
   private Logger logger;
   private ListAppender<ILoggingEvent> logAppender;
@@ -106,16 +111,19 @@ class MatrixEventListenerServiceTest {
   }
 
   private MatrixEventListenerService newService(Optional<RedisMessageMirrorService> mirror) {
-    return new MatrixEventListenerService(
-        matrixSynapseService,
-        sessionService,
-        mobilePushNotificationService,
-        eventNotificationService,
-        mirror,
-        userRepository,
-        consultantRepository,
-        sessionRepository,
-        consultantMessageStatService);
+    var service =
+        new MatrixEventListenerService(
+            matrixSynapseService,
+            sessionService,
+            mobilePushNotificationService,
+            eventNotificationService,
+            mirror,
+            userRepository,
+            consultantRepository,
+            sessionRepository,
+            consultantMessageStatService);
+    service.setDiagnosticMetrics(diagnosticMetrics);
+    return service;
   }
 
   private MatrixEventListenerService newServiceWithSyncExecutor() {
@@ -1017,9 +1025,11 @@ class MatrixEventListenerServiceTest {
     invokeProcessMatrixSyncEvents(service, syncResult);
 
     verify(mobilePushNotificationService).triggerMobilePushNotification(List.of(ASKER_DOMAIN_ID));
+    ArgumentCaptor<PrivacyEnvelope> envelopeCaptor = ArgumentCaptor.forClass(PrivacyEnvelope.class);
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
-            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), envelopeCaptor.capture());
+    assertThat(envelopeCaptor.getValue().getMessageId()).isEqualTo("$evt-direct");
     verify(eventNotificationService, never())
         .createThreadReplyNotificationFromRoom(
             anyString(), any(), anyString(), any(PrivacyEnvelope.class));
@@ -1048,12 +1058,11 @@ class MatrixEventListenerServiceTest {
 
     invokeProcessMatrixSyncEvents(service, syncResult);
 
+    ArgumentCaptor<PrivacyEnvelope> envelopeCaptor = ArgumentCaptor.forClass(PrivacyEnvelope.class);
     verify(eventNotificationService)
         .createThreadReplyNotificationFromRoom(
-            eq(MATRIX_ROOM_ID),
-            eq(ASKER_DOMAIN_ID),
-            eq("$root-thread"),
-            any(PrivacyEnvelope.class));
+            eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), eq("$root-thread"), envelopeCaptor.capture());
+    assertThat(envelopeCaptor.getValue().getMessageId()).isEqualTo("$evt-thread");
     verify(eventNotificationService, never())
         .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
     verify(consultantMessageStatService, never()).recordMessageSent(any(), any());
@@ -1185,11 +1194,25 @@ class MatrixEventListenerServiceTest {
 
     assertThatCode(() -> invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event))
         .doesNotThrowAnyException();
+    verify(diagnosticMetrics).recordMatrixEvent("m.room.member", Outcome.SKIPPED);
   }
 
   @Test
   void processMatrixEvent_shouldReturnEarly_whenEventTypeNull() {
     invokeProcessMatrixEvent(newService(), MATRIX_ROOM_ID, new HashMap<>());
+    verify(diagnosticMetrics).recordMatrixEvent(null, Outcome.SKIPPED);
+  }
+
+  @Test
+  void processMatrixEvent_shouldRethrowHandlerFailure_andRecordFailure() {
+    var service = newService();
+    var failure = new IllegalStateException("repository unavailable");
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID)).thenThrow(failure);
+    var event = messageEvent(SENDER_MATRIX_ID, "m.text", "hello", "$evt-failure");
+
+    assertThatThrownBy(() -> invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event))
+        .isSameAs(failure);
+    verify(diagnosticMetrics).recordMatrixEvent("m.room.message", Outcome.FAILURE);
   }
 
   @Test
@@ -1224,6 +1247,7 @@ class MatrixEventListenerServiceTest {
 
     assertThat(logAppender.list)
         .noneMatch(e -> e.getFormattedMessage().contains("Matrix call invite received"));
+    verify(diagnosticMetrics).recordMatrixEvent("m.call.invite", Outcome.SKIPPED);
   }
 
   @Test
@@ -1282,6 +1306,8 @@ class MatrixEventListenerServiceTest {
             e ->
                 e.getLevel().toString().equals("ERROR")
                     && e.getFormattedMessage().contains("Failed to send mobile push notification"));
+    verify(diagnosticMetrics).recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.FAILURE);
+    verify(diagnosticMetrics).recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
   }
 
   @Test
@@ -1426,6 +1452,9 @@ class MatrixEventListenerServiceTest {
     verify(eventNotificationService)
         .createMessageNotificationFromRoom(
             eq(MATRIX_ROOM_ID), eq(ASKER_DOMAIN_ID), any(PrivacyEnvelope.class));
+    verify(diagnosticMetrics).recordMatrixEvent("m.room.encrypted", Outcome.SUCCESS);
+    verify(diagnosticMetrics).recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.SUCCESS);
+    verify(diagnosticMetrics).recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
   }
 
   @Test
@@ -1440,6 +1469,38 @@ class MatrixEventListenerServiceTest {
     invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
 
     verifyNoInteractions(eventNotificationService);
+    verify(diagnosticMetrics).recordMatrixEvent("m.room.encrypted", Outcome.SKIPPED);
+  }
+
+  @Test
+  void handleRoomMessage_shouldKeepNotificationSuccess_whenStatisticRecordingFails() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(35L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    org.mockito.Mockito.doThrow(new IllegalStateException("statistics unavailable"))
+        .when(consultantMessageStatService)
+        .recordMessageSent(CONSULTANT_DOMAIN_ID, 35L);
+
+    invokeProcessMatrixEvent(
+        service,
+        MATRIX_ROOM_ID,
+        messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello", "$evt-stat-failure"));
+
+    verify(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
+    verify(diagnosticMetrics).recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
+    verify(diagnosticMetrics, never()).recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
+    assertThat(logAppender.list)
+        .anyMatch(
+            entry ->
+                entry.getLevel().toString().equals("ERROR")
+                    && entry
+                        .getFormattedMessage()
+                        .contains("Failed to record consultant message statistic"));
   }
 
   private static Session sessionWithId(long sessionId) {

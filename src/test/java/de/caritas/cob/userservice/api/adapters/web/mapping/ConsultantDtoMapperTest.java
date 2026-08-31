@@ -62,9 +62,28 @@ class ConsultantDtoMapperTest {
     // then
     assertThat(consultant.getDisplayName()).isEqualTo("Public Name");
     assertThat(consultant.getPublicName()).isEqualTo("Public Name");
+    assertThat(consultant.getInternalDisplayName()).isEqualTo("Internal Name");
     assertThat(consultant.getVacated()).isTrue();
     assertThat(consultant.getAdminRights()).isTrue();
     assertThat(consultant.getRoleInOrg()).isEqualTo("Counsellor Admin");
+  }
+
+  @Test
+  void consultantDtoOf_Should_KeepInternalDisplayNameNull_When_AbsentFromMap() {
+    ConsultantDtoMapper consultantDtoMapper = new ConsultantDtoMapper();
+    ReflectionTestUtils.setField(consultantDtoMapper, "identityManager", identityManager);
+    when(identityManager.hasRole("consultant-id", UserRole.GROUP_CHAT_CONSULTANT))
+        .thenReturn(false);
+    var map = consultantMap();
+    map.remove("internalDisplayName");
+
+    var consultant = consultantDtoMapper.consultantDtoOf(map);
+
+    // No internal name set: the DTO keeps it null while displayName/publicName stay the
+    // PUBLIC name — the fallback is the reader's concern, not the mapper's.
+    assertThat(consultant.getInternalDisplayName()).isNull();
+    assertThat(consultant.getDisplayName()).isEqualTo("Public Name");
+    assertThat(consultant.getPublicName()).isEqualTo("Public Name");
   }
 
   @Test
@@ -122,6 +141,7 @@ class ConsultantDtoMapperTest {
     consultantMap.put("updatedAt", "2026-06-08T10:00:00");
     consultantMap.put("deletedAt", "2026-06-09T10:00:00");
     consultantMap.put("displayName", "Public Name");
+    consultantMap.put("internalDisplayName", "Internal Name");
     consultantMap.put("tenantId", 1L);
     consultantMap.put("tenantName", "Tenant");
     consultantMap.put("agencies", new ArrayList<Map<String, Object>>());

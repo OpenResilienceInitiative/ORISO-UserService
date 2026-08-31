@@ -63,6 +63,64 @@ public class CaseHandoverService {
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
 
+  private record ClientHandoverCopy(
+      String grantedTitle,
+      String grantedDescription,
+      String pendingTitle,
+      String pendingDescription) {}
+
+  /**
+   * Built-in client-safe copy used until the tenant-scoped effective policy cache in
+   * ORISO-UserService#201 becomes the canonical source. No entry contains reason-derived wording;
+   * internal illness, absence, emergency, and staffing details stay on staff and audit surfaces.
+   * Unknown languages deliberately fall back to German, while every currently supported language
+   * has an explicit entry. fr/ru/tr/uk/ti copy requires native-speaker review before final release.
+   */
+  private static final Map<String, ClientHandoverCopy> CLIENT_SAFE_HANDOVER_COPY =
+      Map.of(
+          "de",
+          new ClientHandoverCopy(
+              "Neue Beratungsperson hat deinen Fall übernommen",
+              "{{newAdvisor}} hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.",
+              "Zugriffsanfrage einer Beratungsperson",
+              "{{newAdvisor}} bittet um Zugriff auf deinen Fall. Deine Zustimmung ist erforderlich."),
+          "en",
+          new ClientHandoverCopy(
+              "New counsellor took over your case",
+              "{{newAdvisor}} has taken over your case and will continue your counselling from now on.",
+              "Counsellor access request",
+              "{{newAdvisor}} requested access to your case. Your consent is required."),
+          "fr",
+          new ClientHandoverCopy(
+              "Un nouveau conseiller ou une nouvelle conseillère a repris votre dossier",
+              "{{newAdvisor}} a repris votre dossier et poursuivra désormais votre accompagnement.",
+              "Demande d’accès d’un conseiller ou d’une conseillère",
+              "{{newAdvisor}} demande l’accès à votre dossier. Votre consentement est requis."),
+          "ru",
+          new ClientHandoverCopy(
+              "Новый консультант принял ваше дело",
+              "{{newAdvisor}} принял(а) ваше дело и с этого момента продолжит консультирование.",
+              "Запрос консультанта на доступ",
+              "{{newAdvisor}} запросил(а) доступ к вашему делу. Требуется ваше согласие."),
+          "tr",
+          new ClientHandoverCopy(
+              "Yeni bir danışman vakanızı devraldı",
+              "{{newAdvisor}} vakanızı devraldı ve bundan sonra danışmanlığınıza devam edecek.",
+              "Danışman erişim talebi",
+              "{{newAdvisor}} vakanıza erişim istedi. Onayınız gerekiyor."),
+          "uk",
+          new ClientHandoverCopy(
+              "Новий консультант перейняв вашу справу",
+              "{{newAdvisor}} перейняв(-ла) вашу справу й відтепер продовжуватиме консультування.",
+              "Запит консультанта на доступ",
+              "{{newAdvisor}} запитує доступ до вашої справи. Потрібна ваша згода."),
+          "ti",
+          new ClientHandoverCopy(
+              "ሓድሽ ኣማኻሪ ጉዳይካ ተረኪቡ",
+              "{{newAdvisor}} ጉዳይካ ተረኪቡ ካብ ሕጂ ንደሓር ምኽሪ ክቕጽል እዩ።",
+              "ናይ ኣማኻሪ ናይ ምእታው ሕቶ",
+              "{{newAdvisor}} ናብ ጉዳይካ ክኣቱ ሓቲቱ። ፍቓድካ የድሊ።"));
+
   /**
    * Default client-facing notification templates per reason and language (de/en/tr/uk). Source:
    * vault doc "Case Handover — System-Benachrichtigungen & Rechtstexte (Entwurf)"; tr/uk are
@@ -382,7 +440,7 @@ public class CaseHandoverService {
     }
 
     if (request.getStatus() != Status.PENDING_CLIENT_CONSENT) {
-      return toStatus(request);
+      return toClientStatus(request);
     }
 
     LocalDateTime now = LocalDateTime.now();
@@ -392,7 +450,7 @@ public class CaseHandoverService {
         request.setStatus(Status.DENIED);
         request.setAuditOutcome(OUTCOME_ALREADY_ANSWERED);
         CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
-        return toStatus(saved);
+        return toClientStatus(saved);
       }
 
       request.setStatus(Status.GRANTED);
@@ -404,14 +462,14 @@ public class CaseHandoverService {
       sessionRepository.save(session);
       CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
       notifyGranted(saved);
-      return toStatus(saved);
+      return toClientStatus(saved);
     }
 
     request.setStatus(Status.CLIENT_CONSENT_DECLINED);
     request.setAuditOutcome(OUTCOME_CLIENT_CONSENT_DECLINED);
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
     notifyConsentDeclined(saved);
-    return toStatus(saved);
+    return toClientStatus(saved);
   }
 
   private Consultant retrieveCurrentConsultant() {
@@ -461,6 +519,13 @@ public class CaseHandoverService {
                 session.getConsultant() != null
                     ? decodeUsername(session.getConsultant().getDisplayName())
                     : null),
+            // The candidate list renders the internal name with fallback (#996), so the search
+            // must cover it too — otherwise an internal-name-only query filters the session out
+            // before it is rendered. The public display name above stays a valid search term.
+            nullable(
+                session.getConsultant() != null
+                    ? decodeUsername(session.getConsultant().getInternalDisplayNameOrFallback())
+                    : null),
             nullable(
                 session.getConsultant() != null ? session.getConsultant().getFirstName() : null),
             nullable(
@@ -501,7 +566,8 @@ public class CaseHandoverService {
               .firstName(consultant.getFirstName())
               .lastName(consultant.getLastName())
               .username(decodeUsername(consultant.getUsername()))
-              .displayName(decodeUsername(consultant.getDisplayName())));
+              // Handover candidates are shown to colleagues (internal surface, #996).
+              .displayName(decodeUsername(consultant.getInternalDisplayNameOrFallback())));
     }
 
     return dto;
@@ -714,23 +780,44 @@ public class CaseHandoverService {
         .build();
   }
 
+  private CaseHandoverStatus toClientStatus(CaseHandoverRequest request) {
+    return CaseHandoverStatus.builder()
+        .requestId(request.getId())
+        .sessionId(request.getSession().getId())
+        .status(request.getStatus().name())
+        .canViewContent(request.getStatus() == Status.GRANTED)
+        .clientConsentRequired(Boolean.TRUE.equals(request.getClientConsentRequired()))
+        .auditOutcome(request.getAuditOutcome())
+        .createdAt(request.getCreatedAt())
+        .resolvedAt(request.getResolvedAt())
+        .build();
+  }
+
   private void notifyGranted(CaseHandoverRequest request) {
     Session session = request.getSession();
     Consultant requester = request.getRequesterConsultant();
     String requesterName = resolveConsultantName(requester);
-    postGrantedChatSystemMessage(request, session, requesterName);
-    String text =
-        String.format(
-            "%s took over your case. Reason: %s. Explanation: %s",
-            requesterName, request.getReasonLabel(), request.getExplanation());
+    ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
+    String clientDescription = renderClientCopy(clientCopy.grantedDescription(), requesterName);
+    postGrantedChatSystemMessage(session, requesterName, clientDescription);
+    // #1010 task 1a: the explanation is counsellor-written free text that can reference case
+    // content. It is no longer copied into the notification, which kept it in plaintext for good;
+    // the handover-request API serves it on demand instead.
+    String params =
+        eventNotificationService.buildCaseHandoverParams(
+            session, requesterName, request.getReasonCode(), request.getReasonLabel(), null);
 
     if (session.getUser() != null && session.getUser().getUserId() != null) {
+      String clientParams =
+          eventNotificationService.buildCaseHandoverParams(
+              session, requesterName, null, null, null);
       eventNotificationService.createEvent(
           session.getUser().getUserId(),
           "case.handover.granted",
           EventNotificationService.CATEGORY_SYSTEM,
-          "New counsellor took over your case",
-          text,
+          clientCopy.grantedTitle(),
+          clientDescription,
+          clientParams,
           buildAskerSessionActionPath(session),
           session.getId(),
           session.getTenantId());
@@ -746,6 +833,7 @@ public class CaseHandoverService {
           String.format(
               "%s took over case #%s. Reason: %s",
               requesterName, session.getId(), request.getReasonLabel()),
+          params,
           buildConsultantSessionActionPath(session),
           session.getId(),
           session.getTenantId());
@@ -757,11 +845,10 @@ public class CaseHandoverService {
    * session's Matrix room. Emission failures must never fail the handover itself.
    */
   private void postGrantedChatSystemMessage(
-      CaseHandoverRequest request, Session session, String requesterName) {
+      Session session, String requesterName, String description) {
     try {
-      var description = resolveClientNotificationDescription(request, requesterName);
       matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
-          session, requesterName, request.getReasonLabel(), request.getExplanation(), description);
+          session, requesterName, description);
     } catch (RuntimeException exception) {
       log.warn(
           "Case-handover system message for session {} could not be posted: {}",
@@ -770,24 +857,12 @@ public class CaseHandoverService {
     }
   }
 
-  private String resolveClientNotificationDescription(
-      CaseHandoverRequest request, String requesterName) {
-    var reasonCode = normalizeReasonCode(request.getReasonCode());
-    Map<String, String> templates =
-        caseHandoverReasonPolicyRepository
-            .findById(reasonCode)
-            .map(CaseHandoverReasonPolicy::getClientNotificationTemplates)
-            .filter(map -> map != null && !map.isEmpty())
-            .orElseGet(() -> DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(reasonCode));
-    if (templates == null || templates.isEmpty()) {
-      return null;
-    }
-    var language = resolveSessionLanguage(request.getSession());
-    var template =
-        templates.getOrDefault(
-            language,
-            templates.getOrDefault(
-                "de", templates.getOrDefault("en", templates.values().iterator().next())));
+  private ClientHandoverCopy resolveClientHandoverCopy(Session session) {
+    var language = resolveSessionLanguage(session);
+    return CLIENT_SAFE_HANDOVER_COPY.getOrDefault(language, CLIENT_SAFE_HANDOVER_COPY.get("de"));
+  }
+
+  private String renderClientCopy(String template, String requesterName) {
     return template.replace("{{newAdvisor}}", requesterName);
   }
 
@@ -803,16 +878,19 @@ public class CaseHandoverService {
     if (session.getUser() == null || session.getUser().getUserId() == null) {
       return;
     }
+    String requesterName = resolveConsultantName(request.getRequesterConsultant());
+    ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
+    // The request id remains so the advice seeker can answer the consent prompt. The configured
+    // reason and counsellor-written explanation stay staff-only and are never copied into the
+    // advice seeker's notification payload.
     eventNotificationService.createEvent(
         session.getUser().getUserId(),
         "case.handover.consent.requested",
         EventNotificationService.CATEGORY_SYSTEM,
-        "Counsellor access request",
-        String.format(
-            "%s requested access to your case. Reason: %s. Explanation: %s",
-            resolveConsultantName(request.getRequesterConsultant()),
-            request.getReasonLabel(),
-            request.getExplanation()),
+        clientCopy.pendingTitle(),
+        renderClientCopy(clientCopy.pendingDescription(), requesterName),
+        eventNotificationService.buildCaseHandoverParams(
+            session, requesterName, null, null, request.getId()),
         buildAskerSessionActionPath(session) + "?caseHandoverRequestId=" + request.getId(),
         session.getId(),
         session.getTenantId());
@@ -832,6 +910,12 @@ public class CaseHandoverService {
         String.format(
             "Client consent was declined for case #%s. Reason: %s",
             session.getId(), request.getReasonLabel()),
+        eventNotificationService.buildCaseHandoverParams(
+            session,
+            resolveConsultantName(requester),
+            request.getReasonCode(),
+            request.getReasonLabel(),
+            request.getId()),
         buildConsultantSessionActionPath(session),
         session.getId(),
         session.getTenantId());

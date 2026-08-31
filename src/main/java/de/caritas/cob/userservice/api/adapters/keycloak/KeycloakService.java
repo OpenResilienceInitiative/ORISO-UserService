@@ -11,7 +11,6 @@ import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.keycloak.dto.KeycloakLoginResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
-import de.caritas.cob.userservice.api.config.auth.Authority;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -128,7 +127,7 @@ public class KeycloakService
   private OutboundHttpMetrics outboundHttpMetrics;
 
   @Value("${api.error.keycloakError}")
-  private String keycloakError;
+  private String genericKeycloakError;
 
   @Value("${multitenancy.enabled}")
   private Boolean multiTenancyEnabled;
@@ -227,10 +226,20 @@ public class KeycloakService
     updateEmail(userId, userHelper.getDummyEmail(userId));
   }
 
+  /**
+   * Exact-owner lookup on top of Keycloak's fuzzy user search, which also matches on username,
+   * first and last name — hence the re-filter on the e-mail field itself.
+   *
+   * <p>The comparison ignores case: callers normalize the probe to lower case, but a stored record
+   * need not be lower-cased (imported or externally federated users routinely are not). A
+   * case-sensitive comparison would discard exactly the hit that Keycloak's own case-insensitive
+   * search just returned and report the address as free — the same duplicate-address defect the
+   * callers use this method to prevent.
+   */
   @Override
   public Optional<IdentityEmailOwner> findByEmail(String email) {
     return keycloakClient.getUsersResource().search(email, 0, Integer.MAX_VALUE).stream()
-        .filter(userRepresentation -> email.equals(userRepresentation.getEmail()))
+        .filter(userRepresentation -> email.equalsIgnoreCase(userRepresentation.getEmail()))
         .findFirst()
         .map(userRepresentation -> new IdentityEmailOwner(userRepresentation.getUsername()));
   }
@@ -365,34 +374,44 @@ public class KeycloakService
     var locale =
         isNull(user.getPreferredLanguage()) ? "de" : user.getPreferredLanguage().toString();
     var kcUser = getUserRepresentation(user, firstName, lastName, locale);
-    try (var response = keycloakClient.getUsersResource().create(kcUser)) {
-      if (response.getStatus() == HttpStatus.CREATED.value()) {
-        final String createdUserId = getCreatedUserId(response.getLocation());
-        try {
-          updateIdentityAttributesAfterCreate(user, createdUserId);
-        } catch (Exception exception) {
-          log.error(
-              "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
-              createdUserId,
-              exception);
-          rollbackUser(createdUserId);
-          throw new InternalServerErrorException(
-              String.format(
-                  "Could not persist mandatory keycloak user attributes for user %s",
-                  createdUserId),
-              exception);
+    for (int attempt = 0; attempt < 2; attempt++) {
+      try (var response = keycloakClient.getUsersResource().create(kcUser)) {
+        if (response.getStatus() == HttpStatus.UNAUTHORIZED.value() && attempt == 0) {
+          log.warn(
+              "Keycloak admin session was unauthorized while creating a user, forcing token refresh and retrying once");
+          recordRetry("admin-session-refresh");
+          keycloakClient.refreshAdminSession();
+          continue;
         }
-        return new CreatedIdentity(createdUserId);
+        if (response.getStatus() == HttpStatus.CREATED.value()) {
+          final String createdUserId = getCreatedUserId(response.getLocation());
+          try {
+            updateIdentityAttributesAfterCreate(user, createdUserId);
+          } catch (Exception exception) {
+            log.error(
+                "Failed to set mandatory attributes for created keycloak user {}. Rolling back user creation.",
+                createdUserId,
+                exception);
+            rollbackUser(createdUserId);
+            throw new InternalServerErrorException(
+                String.format(
+                    "Could not persist mandatory keycloak user attributes for user %s",
+                    createdUserId),
+                exception);
+          }
+          return new CreatedIdentity(createdUserId);
+        }
+        throw createUserFailure(user, response);
       }
-      throw createUserFailure(user, response);
     }
+    throw new IllegalStateException("Unreachable Keycloak create-user retry state");
   }
 
   /**
    * Builds the failure for a non-201 Keycloak create-user response.
    *
    * <p>Returns the exception rather than throwing it, and rather than recording the detail in a
-   * field the caller reads afterwards. {@code keycloakError} is {@code @Value}-injected
+   * field the caller reads afterwards. {@code genericKeycloakError} is {@code @Value}-injected
    * configuration on a singleton bean, so writing the current request's Keycloak response into it
    * corrupted it for the life of the JVM and let concurrent failures read each other's detail -
    * request A could be handed the raw Keycloak body belonging to request B, which carries B's
@@ -430,7 +449,7 @@ public class KeycloakService
     log.warn("Keycloak create-user failed. status={}", status);
 
     return new InternalServerErrorException(
-        String.format("%s: Keycloak responded with status %s", keycloakError, status));
+        String.format("%s: Keycloak responded with status %s", genericKeycloakError, status));
   }
 
   /**
@@ -924,50 +943,6 @@ public class KeycloakService
       keycloakClient.getUsersResource().get(userId).remove();
     } catch (NotFoundException e) {
       log.warn("User {} not found in Keycloak, skipping deletion.", userId);
-    }
-  }
-
-  /**
-   * Returns true if the given user has the provided authority.
-   *
-   * @param userId Keycloak user ID
-   * @param authority Keycloak authority
-   * @return true if user hast provided authority
-   */
-  public boolean userHasAuthority(String userId, String authority) {
-    try {
-      return getUserRoles(userId).stream()
-          .map(role -> UserRole.getRoleByValue(role.getName()))
-          .filter(Optional::isPresent)
-          .map(Optional::get)
-          .map(Authority::getAuthoritiesByUserRole)
-          .anyMatch(currentAuthority -> currentAuthority.contains(authority));
-    } catch (Exception ex) {
-      var error = String.format("Could not get roles for user id %s", userId);
-      log.error("Keycloak error: " + error, ex);
-      throw new KeycloakException(error);
-    }
-  }
-
-  /**
-   * Returns true if the given user has the provided role.
-   *
-   * @param userId Keycloak user ID
-   * @param userRole Keycloak role
-   * @return true if user hast provided role
-   */
-  public boolean userHasRole(String userId, String userRole) {
-    try {
-      return getUserRoles(userId).stream()
-          .map(this::toUserRole)
-          .filter(Optional::isPresent)
-          .map(Optional::get)
-          .map(UserRole::getValue)
-          .anyMatch(userRole::equals);
-    } catch (Exception ex) {
-      var error = String.format("Could not get roles for user id %s", userId);
-      log.error("Keycloak error: " + error, ex);
-      throw new KeycloakException(error);
     }
   }
 

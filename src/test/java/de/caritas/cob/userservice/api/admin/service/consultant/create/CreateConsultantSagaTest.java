@@ -349,34 +349,48 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void createNewConsultant_Should_reportUnconfiguredLicensing_When_tenantCarriesNoLicensingBlock() {
+  void createNewConsultant_Should_proceedUnlimited_When_tenantCarriesNoLicensingBlock()
+      throws Exception {
+    // Invite-flow tenants carry no licensing block at all: no configured limit means no limit.
     ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
     TenantContext.setCurrentTenant(1L);
+    stubHappyPath();
     CreateConsultantDTO dto = validCreateConsultantDto();
     dto.setTenantId(1L);
     when(tenantAdminService.getTenantById(1L)).thenReturn(new TenantDTO());
 
-    var ex =
-        assertThrows(
-            CustomValidationHttpStatusException.class,
-            () -> createConsultantSaga.createNewConsultant(dto));
+    var response = createConsultantSaga.createNewConsultant(dto);
 
-    assertThat(
-        ex.getCustomHttpHeaders().get("X-Reason").get(0),
-        is(TENANT_LICENSING_NOT_CONFIGURED.name()));
-    assertThat(ex.getHttpStatus(), is(HttpStatus.BAD_REQUEST));
-    verify(identityClient, never()).createUser(any(), anyString(), anyString());
+    assertThat(response, notNullValue());
+    verify(consultantService, never()).getNumberOfActiveConsultants(1L);
   }
 
   @Test
-  void
-      createNewConsultant_Should_reportUnconfiguredLicensing_When_tenantLicensingCarriesNoUserLimit() {
+  void createNewConsultant_Should_proceedUnlimited_When_tenantLicensingCarriesNoUserLimit()
+      throws Exception {
+    // `licensing_allowed_users = NULL` is the invite-flow default, not a configuration error.
+    ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
+    TenantContext.setCurrentTenant(1L);
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTenantId(1L);
+    when(tenantAdminService.getTenantById(1L))
+        .thenReturn(new TenantDTO().licensing(new Licensing()));
+
+    var response = createConsultantSaga.createNewConsultant(dto);
+
+    assertThat(response, notNullValue());
+    verify(consultantService, never()).getNumberOfActiveConsultants(1L);
+  }
+
+  @Test
+  void createNewConsultant_Should_reportUnconfiguredLicensing_When_tenantServiceIsUnreachable() {
     ReflectionTestUtils.setField(createConsultantSaga, "multiTenancyEnabled", true);
     TenantContext.setCurrentTenant(1L);
     CreateConsultantDTO dto = validCreateConsultantDto();
     dto.setTenantId(1L);
     when(tenantAdminService.getTenantById(1L))
-        .thenReturn(new TenantDTO().licensing(new Licensing()));
+        .thenThrow(new org.springframework.web.client.RestClientException("tenant service down"));
 
     var ex =
         assertThrows(

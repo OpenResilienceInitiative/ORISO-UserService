@@ -105,7 +105,14 @@ public class AgencyPreAssignmentRoomService {
       // message for an audience that does not yet contain the department. Consultants-first makes
       // every membership view the asker's client can ever observe already include the department.
       joinAgencyConsultants(session, roomId, agencyToken);
-      inviteUser(roomId, user, agencyToken);
+      if (!inviteUser(roomId, user, agencyToken)) {
+        log.error(
+            "Asker {} could not be invited to Matrix holding room {} for session {}; room id will not be persisted.",
+            user.getUserId(),
+            roomId,
+            session.getId());
+        return;
+      }
 
       session.setMatrixRoomId(roomId);
       sessionService.saveSession(session);
@@ -158,20 +165,22 @@ public class AgencyPreAssignmentRoomService {
     }
   }
 
-  private void inviteUser(String roomId, User user, String agencyToken) {
+  private boolean inviteUser(String roomId, User user, String agencyToken) {
     try {
       sessionRoomGateway.inviteUser(roomId, user.getMatrixUserId(), agencyToken);
 
       String userToken = sessionRoomGateway.loginAsUser(user.getMatrixUserId());
       if (!isBlank(userToken)) {
-        sessionRoomGateway.joinRoom(roomId, userToken);
+        return sessionRoomGateway.joinRoom(roomId, userToken);
       }
+      return true;
     } catch (MatrixInviteUserException ex) {
       log.error(
           "Failed to invite user {} to holding room {}: {}",
           user.getUserId(),
           roomId,
           ex.getMessage());
+      return false;
     }
   }
 

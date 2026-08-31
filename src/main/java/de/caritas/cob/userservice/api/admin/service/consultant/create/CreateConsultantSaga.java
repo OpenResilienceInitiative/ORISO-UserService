@@ -53,6 +53,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
 
 /** Creates consultants in the identity provider, Matrix and the application database. */
 @Service
@@ -128,6 +129,9 @@ public class CreateConsultantSaga {
       throws DistributedTransactionException {
     Consultant newConsultant = this.createNewConsultantWithoutAppointment(createConsultantDTO);
 
+    // adminRemarks intentionally stays at the builder's fail-closed default (null) here: this
+    // DTO is also the appointment-service payload. ConsultantAdminService#createNewConsultant
+    // re-attaches the submitted remarks to the outgoing response for tenant-level admins.
     ConsultantAdminResponseDTO consultantAdminResponseDTO =
         ConsultantResponseDTOBuilder.getInstance(newConsultant).buildResponseDTO();
 
@@ -433,6 +437,12 @@ public class CreateConsultantSaga {
             .email(consultantCreationInput.getEmail())
             .absent(isTrue(consultantCreationInput.isAbsent()))
             .absenceMessage(consultantCreationInput.getAbsenceMessage())
+            .displayName(consultantCreationInput.getDisplayName())
+            .internalDisplayName(consultantCreationInput.getInternalDisplayName())
+            .salutation(consultantCreationInput.getSalutation())
+            .position(consultantCreationInput.getPosition())
+            .title(consultantCreationInput.getTitle())
+            .adminRemarks(consultantCreationInput.getAdminRemarks())
             .teamConsultant(consultantCreationInput.isTeamConsultant())
             .matrixUserId(matrixUserId)
             .encourage2fa(true)
@@ -478,17 +488,18 @@ public class CreateConsultantSaga {
   /**
    * Enforces the tenant's licensed user limit, when one is configured.
    *
-   * <p>{@code TenantDTO.licensing} is optional in the tenant admin contract, so a tenant can
-   * legitimately come back without a licensing block, and {@code allowedNumberOfUsers} can be
-   * absent within it. This used to be guarded by a bare {@code assert}, which the JVM strips unless
-   * it is started with {@code -ea} - so in production the very next line dereferenced null and
-   * every consultant creation for such a tenant died with a {@link NullPointerException}, which the
-   * exception handler turns into an empty-bodied 500 that tells the admin nothing.
+   * <p>{@code TenantDTO.licensing} is optional in the tenant admin contract: every tenant created
+   * through the invite flow has {@code licensing_allowed_users = NULL} — only the seed tenant
+   * carries a number. A missing cap therefore means <em>no limit</em> and must not refuse creation;
+   * unboxing it straight into the comparison used to kill consultant creation for every new tenant
+   * with a bare 500, and the previous {@code assert nonNull(...)} guard never executed in
+   * production because the JVM strips assertions unless it is started with {@code -ea}.
    *
-   * <p>Enforcement itself is unchanged: a tenant without a configured limit still cannot be given a
-   * new consultant. The only difference is that the refusal is now reported as a named {@code
-   * TENANT_LICENSING_NOT_CONFIGURED} 400, which the admin UI can render, instead of dying on a null
-   * dereference that reaches the operator as "Something went wrong".
+   * <p>Only states in which the limit cannot be established at all refuse creation: an unresolvable
+   * tenant id is a plain 400, and an unreadable tenant is reported as a named {@code
+   * TENANT_LICENSING_NOT_CONFIGURED} 400 that the admin UI can render — silently treating a
+   * TenantService outage as "unlimited" would let creations slip past a limit that is merely
+   * unreadable at that moment.
    */
   private void assertLicensesNotExceeded(CreateConsultantDTO createConsultantDTO) {
     if (!multiTenancyEnabled) {
@@ -505,10 +516,32 @@ public class CreateConsultantSaga {
           "TenantId could not be resolved for the consultant to be created");
     }
 
-    Integer allowedNumberOfUsers = resolveAllowedNumberOfUsers(tenantId);
-    if (isNull(allowedNumberOfUsers)) {
+    TenantDTO tenant;
+    try {
+      tenant = tenantAdminService.getTenantById(tenantId);
+    } catch (RestClientException exception) {
+      log.warn(
+          "TenantService could not be reached for tenant {}; refusing consultant creation because"
+              + " its licensed user limit cannot be established.",
+          tenantId,
+          exception);
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED);
+    }
+    if (isNull(tenant)) {
+      log.warn(
+          "TenantService returned no tenant {}; refusing consultant creation because its licensed"
+              + " user limit cannot be established.",
+          tenantId);
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED);
+    }
+
+    // No configured limit means no limit — the invite-flow default, see the javadoc above.
+    var licensing = tenant.getLicensing();
+    Integer allowedNumberOfUsers = isNull(licensing) ? null : licensing.getAllowedNumberOfUsers();
+    if (isNull(allowedNumberOfUsers)) {
+      return;
     }
 
     // Licenses are counted per tenant, so always scope the active-consultant count to the
@@ -520,44 +553,6 @@ public class CreateConsultantSaga {
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED);
     }
-  }
-
-  /**
-   * Reads the tenant's licensed user limit, or {@code null} when there is no usable one. Every hop
-   * here is optional in the contract, so none of them may be dereferenced blindly - and each hop
-   * fails for a different reason, so each logs its own, rather than reporting an unreadable tenant
-   * as a missing cap.
-   *
-   * <p>Logged at WARN: this is an expected configuration gap, not a server fault, and the handler
-   * already logs the thrown exception at INFO. These lines stay because that INFO line carries no
-   * message - the cause would otherwise be unrecoverable from the logs.
-   */
-  private Integer resolveAllowedNumberOfUsers(Long tenantId) {
-    TenantDTO tenant = tenantAdminService.getTenantById(tenantId);
-    if (isNull(tenant)) {
-      log.warn(
-          "TenantService returned no tenant {}; refusing consultant creation because its licensed"
-              + " user limit cannot be established.",
-          tenantId);
-      return null;
-    }
-
-    var licensing = tenant.getLicensing();
-    if (isNull(licensing)) {
-      log.warn(
-          "Tenant {} carries no licensing configuration; refusing consultant creation.", tenantId);
-      return null;
-    }
-
-    var allowedNumberOfUsers = licensing.getAllowedNumberOfUsers();
-    if (isNull(allowedNumberOfUsers)) {
-      log.warn(
-          "Tenant {} has licensing configured but no licensed user limit; refusing consultant"
-              + " creation.",
-          tenantId);
-      return null;
-    }
-    return allowedNumberOfUsers;
   }
 
   private void addGroupChatConsultantRole(

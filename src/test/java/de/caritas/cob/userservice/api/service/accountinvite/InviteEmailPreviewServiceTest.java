@@ -89,7 +89,7 @@ class InviteEmailPreviewServiceTest {
   @Test
   void preview_Should_renderExactlyWhatTheDispatcherBuilds() {
     String subject = "Ihre Einladung";
-    String body = "Hallo Erika Musterfrau,\n\nbitte richten Sie Ihr Konto ein.";
+    String body = "Hallo Maren Muster,\n\nbitte richten Sie Ihr Konto ein.";
 
     InviteEmailPreview preview =
         previewService.preview(
@@ -119,9 +119,11 @@ class InviteEmailPreviewServiceTest {
         .isEqualTo(
             "https://admin.oriso.org/admin/tenant-onboarding/"
                 + InviteEmailPreviewService.SAMPLE_TOKEN);
+    // #997: counsellor invites land on the PUBLIC ADMIN wizard, not the app acceptance page.
     assertThat(counsellorPreview.sampleAcceptUrl())
         .isEqualTo(
-            "https://app.oriso.org/account-invite/" + InviteEmailPreviewService.SAMPLE_TOKEN);
+            "https://admin.oriso.org/admin/counsellor-onboarding/"
+                + InviteEmailPreviewService.SAMPLE_TOKEN);
   }
 
   /** A preview must never mint something that looks like a usable invite token. */
@@ -140,7 +142,7 @@ class InviteEmailPreviewServiceTest {
         previewService.preview(new PreviewCommand(null, null, null, null, null));
 
     assertThat(preview.subject()).isEqualTo(InviteEmailPreviewService.SAMPLE_SUBJECT);
-    assertThat(preview.html()).contains("Erika").contains("Musterfrau");
+    assertThat(preview.html()).contains("Maren").contains("Muster");
     assertThat(preview.kind()).isEqualTo(InviteEmailTemplateKind.TENANT_INVITE);
   }
 
@@ -161,10 +163,10 @@ class InviteEmailPreviewServiceTest {
     InviteEmailPreview preview =
         previewService.preview(new PreviewCommand(5L, null, null, null, null));
 
-    assertThat(preview.subject()).isEqualTo("Willkommen Erika");
+    assertThat(preview.subject()).isEqualTo("Willkommen Maren");
     assertThat(preview.templateName()).isEqualTo("Counsellor DE");
     assertThat(preview.html())
-        .contains("Erika Musterfrau")
+        .contains("Maren Muster")
         .doesNotContain("{{inviteLink}}")
         .contains(preview.sampleAcceptUrl());
   }

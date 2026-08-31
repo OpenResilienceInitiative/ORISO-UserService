@@ -127,7 +127,13 @@ public class AdminDtoMapper implements DtoMapperUtils {
     adminDTO.setUsername((String) adminUserMap.get("username"));
     adminDTO.setCreateDate((String) adminUserMap.get("createdAt"));
     adminDTO.setUpdateDate((String) adminUserMap.get("updatedAt"));
-    adminDTO.setPublicName(null);
+    // publicName was dead scaffolding hardcoded to null (#996). Admin accounts have no
+    // separate display name, so their public name is the full name.
+    adminDTO.setPublicName(
+        fullNameOf(
+            (String) adminUserMap.get("firstName"),
+            (String) adminUserMap.get("lastName"),
+            (String) adminUserMap.get("username")));
     adminDTO.setRoleInOrg(roleInOrgOf((Admin.AdminType) adminUserMap.get("type")));
     adminDTO.setVacated(false);
     adminDTO.setAdminRights(true);
@@ -153,6 +159,15 @@ public class AdminDtoMapper implements DtoMapperUtils {
     adminDTO.setAgencies(agencies);
 
     return adminDTO;
+  }
+
+  private String fullNameOf(String firstName, String lastName, String usernameFallback) {
+    var fullName =
+        ((firstName == null ? "" : firstName.trim())
+                + " "
+                + (lastName == null ? "" : lastName.trim()))
+            .trim();
+    return fullName.isBlank() ? usernameFallback : fullName;
   }
 
   private void enrichResponseWithTenantInformation(

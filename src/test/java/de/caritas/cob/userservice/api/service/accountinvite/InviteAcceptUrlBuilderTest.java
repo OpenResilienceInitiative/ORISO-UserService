@@ -5,8 +5,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import org.junit.jupiter.api.Test;
 
 /**
- * Link-target contract (TEN-INV-U6, #890): tenant-admin invites must land on the PUBLIC ADMIN
- * onboarding route, counsellor (and other app-level) invites on the public App accept route.
+ * Link-target contract (TEN-INV-U6, #890; extended by #997): tenant-admin invites land on the
+ * PUBLIC ADMIN onboarding route, counsellor invites on the PUBLIC ADMIN counsellor wizard, other
+ * app-level invites on the public App accept route.
  */
 class InviteAcceptUrlBuilderTest {
 
@@ -21,10 +22,10 @@ class InviteAcceptUrlBuilderTest {
   }
 
   @Test
-  void buildAcceptUrl_Should_targetPublicAppRoute_ForCounsellor() {
+  void buildAcceptUrl_Should_targetPublicAdminWizardRoute_ForCounsellor() {
     String url = builder.buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, "tok-2");
 
-    assertThat(url).isEqualTo("https://app.example.org/account-invite/tok-2");
+    assertThat(url).isEqualTo("https://admin.example.org/admin/counsellor-onboarding/tok-2");
   }
 
   @Test
@@ -42,19 +43,23 @@ class InviteAcceptUrlBuilderTest {
     var slashy =
         new InviteAcceptUrlBuilder("https://app.example.org///", "https://admin.example.org/");
 
-    assertThat(slashy.buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, "tok"))
+    assertThat(slashy.buildAcceptUrl(AccountInviteTargetRole.ADVICE_SEEKER, "tok"))
         .isEqualTo("https://app.example.org/account-invite/tok");
     assertThat(slashy.buildAcceptUrl(AccountInviteTargetRole.TENANT_ADMIN, "tok"))
         .isEqualTo("https://admin.example.org/admin/tenant-onboarding/tok");
+    assertThat(slashy.buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, "tok"))
+        .isEqualTo("https://admin.example.org/admin/counsellor-onboarding/tok");
   }
 
   @Test
   void buildAcceptUrl_Should_fallBackToDefaultOrigin_When_ConfigurationBlank() {
     var blank = new InviteAcceptUrlBuilder("  ", null);
 
-    assertThat(blank.buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, "tok"))
+    assertThat(blank.buildAcceptUrl(AccountInviteTargetRole.ADVICE_SEEKER, "tok"))
         .isEqualTo("https://app.oriso.org/account-invite/tok");
     assertThat(blank.buildAcceptUrl(AccountInviteTargetRole.TENANT_ADMIN, "tok"))
         .isEqualTo("https://app.oriso.org/admin/tenant-onboarding/tok");
+    assertThat(blank.buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, "tok"))
+        .isEqualTo("https://app.oriso.org/admin/counsellor-onboarding/tok");
   }
 }
