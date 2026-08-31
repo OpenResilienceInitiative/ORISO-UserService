@@ -330,7 +330,10 @@ class TenantAdminOnboardingServiceTest {
     assertNotNull(
         licensing.getAllowedNumberOfUsers(),
         "the created tenant carries no allowed number of consultants");
-    assertTrue(licensing.getAllowedNumberOfUsers() > 0);
+    assertEquals(
+        9999,
+        licensing.getAllowedNumberOfUsers(),
+        "the provisional allowance must match the Admin panel's default of 9999");
   }
 
   /**
