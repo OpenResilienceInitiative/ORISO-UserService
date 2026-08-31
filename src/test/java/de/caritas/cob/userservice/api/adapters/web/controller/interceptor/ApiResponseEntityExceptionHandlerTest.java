@@ -67,8 +67,27 @@ class ApiResponseEntityExceptionHandlerTest {
     assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
     var body = assertInstanceOf(Map.class, response.getBody());
     assertEquals("SMTP_SEND_FAILED", body.get("reason"));
-    // #1006: the specific failure reason must reach the Admin UI, not just the server log.
-    assertEquals("handover failed", body.get("message"));
+    // Review 3893231984 / AGENTS.md error contract: the body carries only a stable coarse
+    // category — the detailed diagnosis (field names, remedies, causes) stays in the server log.
+    assertEquals("SMTP_TRANSPORT_FAILED", body.get("detail"));
+    assertNull(body.get("message"));
+    org.junit.jupiter.api.Assertions.assertFalse(body.toString().contains("handover failed"));
+  }
+
+  @Test
+  void handleSmtpSendFailure_carriesTheCoarseCategoryOfTheFailure() {
+    // #1006: the Admin UI companion surfaces the detail field, so it must follow the category.
+    var ex =
+        new de.caritas.cob.userservice.api.exception.SmtpSendException(
+            de.caritas.cob.userservice.api.exception.SmtpSendException.Category
+                .SMTP_CREDENTIALS_MISSING,
+            "no SMTP credentials available — set SMTP_USER and SMTP_PASSWORD");
+    var response = handler.handleSmtpSendFailure(ex, request);
+
+    var body = assertInstanceOf(Map.class, response.getBody());
+    assertEquals("SMTP_SEND_FAILED", body.get("reason"));
+    assertEquals("SMTP_CREDENTIALS_MISSING", body.get("detail"));
+    org.junit.jupiter.api.Assertions.assertFalse(body.toString().contains("SMTP_USER"));
   }
 
   @Test

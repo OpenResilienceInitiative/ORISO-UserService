@@ -127,14 +127,16 @@ public class InviteMailDispatchService {
 
   /**
    * Resolves the global SMTP settings or throws an {@link SmtpSendException} whose message names
-   * the exact defect (#1006, "loud failure"): unreachable settings endpoint, the disabled toggle or
-   * missing field by name, or missing credentials with both remedies. The message travels to the
-   * Admin UI via the SMTP exception handler, so it must never contain secret values.
+   * the exact defect (#1006, "loud failure"): unreachable or erroring settings endpoint, the
+   * disabled/missing toggle or missing field by name, an invalid port, or missing credentials with
+   * both remedies. The detailed message goes to the server log only; the API response carries just
+   * the coarse {@link SmtpSendException.Category}. Messages must never contain secret values.
    */
   @SuppressWarnings("unchecked")
   private InviteSmtpSettings resolveGlobalSmtpSettings() {
     if (isBlank(consultingTypeServiceApiUrl)) {
       throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
           "Invite mail not sent: 'consulting.type.service.api.url' is not configured on"
               + " UserService, so the global SMTP settings cannot be resolved");
     }
@@ -143,46 +145,68 @@ public class InviteMailDispatchService {
     Map<String, Object> settingsResponse;
     try {
       settingsResponse = restTemplate.getForObject(settingsUrl, Map.class);
-    } catch (Exception exception) {
+    } catch (org.springframework.web.client.RestClientResponseException exception) {
+      // Review 3893231991: an HTTP error means the endpoint WAS reached — say so, with the status.
       throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
+          "Invite mail not sent: the ConsultingTypeService /settings endpoint responded with HTTP "
+              + exception.getStatusCode().value(),
+          exception);
+    } catch (org.springframework.web.client.ResourceAccessException exception) {
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
           "Invite mail not sent: the ConsultingTypeService /settings endpoint could not be reached"
               + " ("
+              + exception.getClass().getSimpleName()
+              + ")",
+          exception);
+    } catch (Exception exception) {
+      // Conversion or other unexpected failures get their own case instead of "unreachable".
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
+          "Invite mail not sent: the ConsultingTypeService /settings response could not be"
+              + " processed ("
               + exception.getClass().getSimpleName()
               + ")",
           exception);
     }
     if (settingsResponse == null || settingsResponse.isEmpty()) {
       throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
           "Invite mail not sent: the ConsultingTypeService /settings endpoint returned an empty"
               + " payload");
     }
 
-    boolean systemEmailsEnabled =
+    Boolean systemEmailsEnabled =
         asBooleanSettingValue(settingsResponse.get("globalFeatureSystemNotificationEmailsEnabled"));
-    boolean smtpEnabled = asBooleanSettingValue(settingsResponse.get("globalSmtpEnabled"));
+    Boolean smtpEnabled = asBooleanSettingValue(settingsResponse.get("globalSmtpEnabled"));
     String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
-    Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
-    boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
+    boolean secure =
+        Boolean.TRUE.equals(asBooleanSettingValue(settingsResponse.get("globalSmtpSecure")));
     String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
 
     var problems = new java.util.ArrayList<String>();
-    if (!systemEmailsEnabled) {
+    // Review 3893223709: an absent or malformed toggle must not masquerade as "disabled".
+    if (systemEmailsEnabled == null) {
+      problems.add("globalFeatureSystemNotificationEmailsEnabled is missing or not a boolean");
+    } else if (!systemEmailsEnabled) {
       problems.add("globalFeatureSystemNotificationEmailsEnabled is disabled");
     }
-    if (!smtpEnabled) {
+    if (smtpEnabled == null) {
+      problems.add("globalSmtpEnabled is missing or not a boolean");
+    } else if (!smtpEnabled) {
       problems.add("globalSmtpEnabled is disabled");
     }
     if (isBlank(host)) {
       problems.add("globalSmtpHost is missing");
     }
-    if (port == null) {
-      problems.add("globalSmtpPort is missing or not a number");
-    }
+    Integer port = resolvePort(settingsResponse.get("globalSmtpPort"), problems);
     if (isBlank(from)) {
       problems.add("globalSmtpFrom is missing");
     }
     if (!problems.isEmpty()) {
       throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE,
           "Invite mail not sent: the global SMTP configuration is unusable — "
               + String.join(", ", problems));
     }
@@ -195,6 +219,7 @@ public class InviteMailDispatchService {
       var credentials = applicationSettingsService.getGlobalSmtpCredentials();
       if (credentials.isEmpty()) {
         throw new SmtpSendException(
+            SmtpSendException.Category.SMTP_CREDENTIALS_MISSING,
             "Invite mail not sent: no SMTP credentials available — set SMTP_USER and SMTP_PASSWORD"
                 + " on the UserService deployment (the supported configuration), or the request"
                 + " must carry a platform-admin token for the guarded credentials endpoint (see"
@@ -207,15 +232,24 @@ public class InviteMailDispatchService {
     return new InviteSmtpSettings(host, port, secure, username, password, from);
   }
 
-  private boolean asBooleanSettingValue(Object raw) {
+  /**
+   * Review 3893223709: nullable on purpose — {@code null} means "missing or not a boolean", which
+   * must not be conflated with an explicit {@code false}.
+   */
+  private Boolean asBooleanSettingValue(Object raw) {
     Object value = unwrapSettingValue(raw);
     if (value instanceof Boolean bool) {
       return bool;
     }
     if (value instanceof String string) {
-      return "true".equalsIgnoreCase(string);
+      if ("true".equalsIgnoreCase(string.trim())) {
+        return Boolean.TRUE;
+      }
+      if ("false".equalsIgnoreCase(string.trim())) {
+        return Boolean.FALSE;
+      }
     }
-    return false;
+    return null;
   }
 
   private String asStringSettingValue(Object raw) {
@@ -223,18 +257,34 @@ public class InviteMailDispatchService {
     return nonNull(value) ? String.valueOf(value).trim() : null;
   }
 
-  private Integer asIntSettingValue(Object raw) {
+  /**
+   * Review 3893223709: validates the port as an integral TCP port in 1..65535 instead of letting 0,
+   * negative, out-of-range or fractional values fail later in transport. Adds the field-specific
+   * problem and returns {@code null} when the value is unusable.
+   */
+  private Integer resolvePort(Object raw, java.util.List<String> problems) {
     Object value = unwrapSettingValue(raw);
     if (value instanceof Number number) {
-      return number.intValue();
+      double asDouble = number.doubleValue();
+      if (asDouble == Math.rint(asDouble) && asDouble >= 1 && asDouble <= 65535) {
+        return (int) asDouble;
+      }
+      problems.add("globalSmtpPort is not a valid TCP port (1-65535)");
+      return null;
     }
     if (value instanceof String string && isNotBlank(string)) {
       try {
-        return Integer.parseInt(string.trim());
-      } catch (NumberFormatException exception) {
+        int parsed = Integer.parseInt(string.trim());
+        if (parsed >= 1 && parsed <= 65535) {
+          return parsed;
+        }
+        problems.add("globalSmtpPort is not a valid TCP port (1-65535)");
         return null;
+      } catch (NumberFormatException exception) {
+        // falls through to the "missing or not a number" problem below
       }
     }
+    problems.add("globalSmtpPort is missing or not a number");
     return null;
   }
 

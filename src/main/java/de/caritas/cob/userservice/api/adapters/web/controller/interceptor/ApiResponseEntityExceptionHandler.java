@@ -234,18 +234,18 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   @ExceptionHandler({SmtpSendException.class})
   public ResponseEntity<Object> handleSmtpSendFailure(
       final SmtpSendException ex, final WebRequest request) {
-    log.error("SMTP send failed", ex);
+    // The detailed diagnosis (field names, remedies, causes) belongs here in the server log only.
+    log.error("SMTP send failed ({})", ex.getCategory(), ex);
 
-    // #1006: the body carries the specific failure reason (never secret values — the SMTP
-    // services guarantee their messages are credential-free) so the Admin UI can show the
-    // operator what is actually wrong instead of a generic send failure.
-    var body = new java.util.LinkedHashMap<String, Object>();
-    body.put("reason", "SMTP_SEND_FAILED");
-    if (ex.getMessage() != null) {
-      body.put("message", ex.getMessage());
-    }
-
-    return handleExceptionInternal(ex, body, new HttpHeaders(), HttpStatus.BAD_GATEWAY, request);
+    // #1006: per the repository error contract the body stays information-poor — it carries the
+    // stable reason plus a coarse category so the Admin UI can distinguish "credentials missing"
+    // from "SMTP disabled" without leaking deployment properties or service topology.
+    return handleExceptionInternal(
+        ex,
+        Map.of("reason", "SMTP_SEND_FAILED", "detail", ex.getCategory().name()),
+        new HttpHeaders(),
+        HttpStatus.BAD_GATEWAY,
+        request);
   }
 
   /**
