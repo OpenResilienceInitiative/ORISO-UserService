@@ -56,6 +56,15 @@
 		<!-- Spring Boot 4.0.7 still manages HttpCore 5.3.6; 5.4.3 fixes
 		     CVE-2026-54399 and is compatible with the managed HttpClient 5.5.2. -->
 		<httpcore5.version>5.4.3</httpcore5.version>
+		<!-- Spring Boot 4.0.7 under-pins the RabbitMQ Java client at 5.27.1 (via
+		     spring-boot-starter-amqp -> spring-rabbit 4.0.4). 5.33.1 is the lowest
+		     version that clears all three HIGH findings of the image CVE gate:
+		     CVE-2026-63337 (unvalidated Class.forName in JSON-RPC, fixed 5.33.0),
+		     CVE-2026-69219 (oversized LongString/bytes in ValueReader, fixed 5.33.1)
+		     and CVE-2026-69220 (unbounded recursion in ValueReader, fixed 5.33.1).
+		     Boot 4.1.0 still manages only 5.30.0, so upgrading Boot does not remove
+		     the need for this override. Drop it once the Boot BOM manages >= 5.33.1. -->
+		<rabbit-amqp-client.version>5.33.1</rabbit-amqp-client.version>
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
 		<testcontainers.version>1.21.4</testcontainers.version>
 		<lombok.version>1.18.42</lombok.version>
