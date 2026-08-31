@@ -123,7 +123,9 @@ public class InviteEmailPreviewService {
         mail.subject(),
         mail.html(),
         mail.plainText(),
-        acceptUrl);
+        // primaryAction is already null for DPA_SIGNED_NOTICE: the notice carries no accept
+        // route, so the preview must not advertise one either.
+        primaryAction);
   }
 
   /** Sample values for the DPA_SIGNED_NOTICE dialect (see DpaSignedNoticeService placeholders). */

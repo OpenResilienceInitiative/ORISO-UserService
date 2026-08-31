@@ -210,5 +210,8 @@ class InviteEmailPreviewServiceTest {
     assertThat(preview.plainText()).contains("https://admin.configured.example/admin");
     // and the notice must not advertise an invite accept link it never carries
     assertThat(preview.plainText()).doesNotContain("/account-invite");
+    // that includes the machine-readable field: a consumer must not receive an accept URL
+    // for a mail that has no primary action (CodeRabbit, #1065)
+    assertThat(preview.sampleAcceptUrl()).isNull();
   }
 }
