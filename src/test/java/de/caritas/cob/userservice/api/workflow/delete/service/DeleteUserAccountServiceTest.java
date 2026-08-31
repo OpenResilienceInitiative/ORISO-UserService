@@ -17,8 +17,12 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerDraftMessagesAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteMatrixAskerAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantDraftMessagesAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantEventNotificationsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMatrixConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
@@ -86,6 +90,15 @@ public class DeleteUserAccountServiceTest {
         .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
     verify(this.commandMockProvider.getActionMock(DeleteDatabaseAskerAction.class), times(1))
         .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
+    // #983 / #1010: drafts hold the only unencrypted counselling content server-side and must
+    // not survive account deletion.
+    verify(this.commandMockProvider.getActionMock(DeleteAskerDraftMessagesAction.class), times(1))
+        .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
+    // #1010 task 2b: notification rows carry identity, session references and read timestamps.
+    verify(
+            this.commandMockProvider.getActionMock(DeleteAskerEventNotificationsAction.class),
+            times(1))
+        .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
     verifyNoMoreInteractions(this.workflowErrorMailService);
   }
 
@@ -109,6 +122,14 @@ public class DeleteUserAccountServiceTest {
     verify(this.commandMockProvider.getActionMock(DeleteMatrixConsultantAction.class), times(1))
         .execute(new ConsultantDeletionWorkflowDTO(consultant, emptyList()));
     verify(this.commandMockProvider.getActionMock(DeleteDatabaseConsultantAction.class), times(1))
+        .execute(new ConsultantDeletionWorkflowDTO(consultant, emptyList()));
+    verify(
+            this.commandMockProvider.getActionMock(DeleteConsultantDraftMessagesAction.class),
+            times(1))
+        .execute(new ConsultantDeletionWorkflowDTO(consultant, emptyList()));
+    verify(
+            this.commandMockProvider.getActionMock(DeleteConsultantEventNotificationsAction.class),
+            times(1))
         .execute(new ConsultantDeletionWorkflowDTO(consultant, emptyList()));
     verifyNoMoreInteractions(this.workflowErrorMailService);
   }

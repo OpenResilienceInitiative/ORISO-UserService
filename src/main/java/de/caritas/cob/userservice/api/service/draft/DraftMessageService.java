@@ -30,7 +30,10 @@ public class DraftMessageService {
     }
 
     String text = request != null && request.getText() != null ? request.getText() : "";
-    if (text.isBlank()) {
+    // #983: the API must not depend on every client behaving. A draft that carries no content —
+    // including TipTap's empty document, which is markup rather than an empty string — deletes the
+    // row instead of persisting one nothing can ever clear.
+    if (!DraftContent.hasContent(text)) {
       draftMessageRepository.deleteByUserIdAndScopeKey(userId, scopeKey);
       return;
     }

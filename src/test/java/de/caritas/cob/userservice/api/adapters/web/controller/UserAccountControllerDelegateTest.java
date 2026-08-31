@@ -42,8 +42,8 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.DecryptionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -68,7 +68,7 @@ class UserAccountControllerDelegateTest {
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private DecryptionService decryptionService;
   @Mock private ConsultantDataFacade consultantDataFacade;
-  @Mock private IdentityClientConfig identityClientConfig;
+  @Mock private IdentityPolicy identityPolicy;
   @Mock private IdentityManaging identityManager;
   @Mock private AccountManaging accountManager;
   @Mock private Messaging messenger;
@@ -94,7 +94,7 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(true);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(true);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.getOtpCredential(USERNAME)).thenThrow(new RuntimeException("OTP down"));
     when(userDtoMapper.userDataOf(
@@ -119,7 +119,7 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(authenticatedUser.getRoles()).thenReturn(roles);
     when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(true);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(true);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean()))
         .thenReturn(fullUserData);
 
@@ -138,7 +138,7 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(authenticatedUser.getRoles()).thenReturn(roles);
     when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean()))
         .thenReturn(fullUserData);
 
@@ -158,7 +158,8 @@ class UserAccountControllerDelegateTest {
     consultant.setEmail("dummy@example.invalid");
     when(authenticatedUser.isConsultant()).thenReturn(true);
     when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
-    when(identityClientConfig.getEmailDummySuffix()).thenReturn("@example.invalid");
+    when(identityPolicy.isProfileEmailUsableForMagicLink("dummy@example.invalid"))
+        .thenReturn(false);
 
     assertThatThrownBy(() -> delegate.patchUser(patchUserDTO))
         .isInstanceOf(BadRequestException.class);
@@ -321,9 +322,9 @@ class UserAccountControllerDelegateTest {
     when(accountManager.findConsultant(USER_ID)).thenReturn(Optional.of(consultantMap));
     when(userDtoMapper.displayNameOf(consultantMap)).thenReturn("Display Name");
     when(messenger.getAvailability(USER_ID)).thenReturn(true);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(true);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(true);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(true);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(true), eq(true)))
         .thenReturn(fullUserData);
 
@@ -345,9 +346,9 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.isAgencySuperAdmin()).thenReturn(true);
     when(authenticatedUser.getRoles()).thenReturn(roles);
     when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -373,9 +374,9 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.getRoles()).thenReturn(roles);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(user);
     when(askerDataProvider.retrieveData(user)).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -402,11 +403,11 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(new User());
     when(askerDataProvider.retrieveData(any(User.class))).thenReturn(partialUserData);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(true);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(true);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
     when(identityManager.getOtpCredential(USERNAME)).thenReturn(otpInfo);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), eq(otpInfo), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -429,9 +430,9 @@ class UserAccountControllerDelegateTest {
     when(consultantDataProvider.retrieveData(any(Consultant.class))).thenReturn(partialUserData);
     when(accountManager.findConsultant(USER_ID)).thenReturn(Optional.empty());
     when(messenger.getAvailability(USER_ID)).thenReturn(false);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -456,9 +457,9 @@ class UserAccountControllerDelegateTest {
     when(accountManager.findConsultant(USER_ID))
         .thenThrow(new RuntimeException("display name down"));
     when(messenger.getAvailability(USER_ID)).thenReturn(true);
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -481,9 +482,9 @@ class UserAccountControllerDelegateTest {
     when(consultantDataProvider.retrieveData(any(Consultant.class))).thenReturn(partialUserData);
     when(accountManager.findConsultant(USER_ID)).thenReturn(Optional.empty());
     when(messenger.getAvailability(USER_ID)).thenThrow(new RuntimeException("availability down"));
-    when(identityClientConfig.isOtpAllowed(roles)).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
-    when(identityClientConfig.getDisplayNameAllowedForConsultants()).thenReturn(false);
+    when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
     when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), eq(false), eq(false)))
         .thenReturn(fullUserData);
 
@@ -587,7 +588,7 @@ class UserAccountControllerDelegateTest {
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
     when(userAccountProvider.retrieveValidatedUser()).thenReturn(user);
-    when(identityClientConfig.getEmailDummySuffix()).thenReturn("@example.invalid");
+    when(identityPolicy.isProfileEmailUsableForMagicLink("user@example.org")).thenReturn(true);
     when(userDtoMapper.mapOf(patchUserDTO, authenticatedUser)).thenReturn(Optional.of(patchMap));
     when(accountManager.patchUser(patchMap)).thenReturn(Optional.of(patchMap));
     when(userDtoMapper.preferredLanguageOf(patchUserDTO)).thenReturn(Optional.empty());

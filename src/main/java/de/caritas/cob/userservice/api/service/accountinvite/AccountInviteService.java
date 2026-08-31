@@ -4,13 +4,16 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
@@ -29,7 +32,9 @@ import java.time.ZoneId;
 import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -51,6 +56,17 @@ public class AccountInviteService {
   private static final List<AccountInviteStatus> ACTIVE_TENANT_INVITE_STATUSES =
       List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
 
+  /**
+   * The invite states in which a recipient can still redeem the invite, and in which its address is
+   * therefore taken. Everything else in {@link AccountInviteStatus} is terminal and must leave the
+   * address free again: {@code ACCEPTED} is already covered by the identity probe (and must not be
+   * blocked here as well, or deleting the identity would leave the address permanently
+   * un-invitable), while {@code EXPIRED}, {@code REVOKED} and {@code SUPERSEDED} are exactly the
+   * cases in which an admin needs to invite the same person once more.
+   */
+  private static final List<AccountInviteStatus> ADDRESS_HOLDING_INVITE_STATUSES =
+      List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
+
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull InviteEmailTemplateRepository templateRepository;
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
@@ -61,6 +77,7 @@ public class AccountInviteService {
   private final @NonNull InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   private final @NonNull InviteMailDispatchService inviteMailDispatchService;
   private final @NonNull InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
+  private final @NonNull IdentityEmailOwnerLookup identityEmailOwnerLookup;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand command) {
@@ -74,6 +91,7 @@ public class AccountInviteService {
       throw new BadRequestException("recipientEmail is required");
     }
     validateAllocationModes(command);
+    verifyRecipientEmailAvailable(command.recipientEmail());
     if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
         && command.tenantId() != null
         && isTenantIdTaken(command.tenantId())) {
@@ -136,6 +154,55 @@ public class AccountInviteService {
         tenantIdAllocationClient.release(tenantReservation.tenantId());
       }
       throw exception;
+    }
+  }
+
+  /**
+   * P3: refuses an invite whose recipient address already belongs to a registered identity.
+   *
+   * <p>Before this guard the collision only surfaced at redemption time — the invitee filled in the
+   * whole registration, signed and forwarded the contract and only then hit the dead-end
+   * "invitation already used" page, with all that work lost. The check therefore belongs at the
+   * front of the funnel, on the admin's create call.
+   *
+   * <p>Role-agnostic on purpose: counsellor and tenant-admin invites both run through {@code
+   * createInvite}, and so do both creation paths ("send directly" posts a templateId, "add to list"
+   * does not). One guard covers all four combinations.
+   *
+   * <p>No separate availability endpoint is exposed: the check rides on the existing, admin-only
+   * create call, so it never becomes an unauthenticated user-enumeration oracle.
+   *
+   * <p>The address is normalized the same way {@link CounsellorInviteProvisioningService}
+   * normalizes it when it later creates the identity, so the guard tests exactly the value that
+   * would collide.
+   *
+   * <p>Two sources have to be consulted, because neither sees the other's half of the funnel:
+   *
+   * <ol>
+   *   <li>the identity provider, which owns every address that already has an account, and
+   *   <li>the invite table, which owns every address that is merely <em>promised</em> to somebody.
+   *       An identity is created only at accept time, so an invite sitting in {@code DRAFT} or
+   *       {@code EMAIL_SENT} is invisible to the identity probe — which is how a second invite for
+   *       the same address used to be created without complaint. To the admin, and to the owner's
+   *       wording of the rule, such an address is just as "already there" as a registered one.
+   * </ol>
+   *
+   * <p>Deliberately not backed by a database constraint — see {@link
+   * AccountInviteRepository#countNonTerminalInvitesForRecipientEmail} for why the rule is not
+   * expressible as one.
+   */
+  private void verifyRecipientEmailAvailable(String recipientEmail) {
+    String normalized = recipientEmail.trim().toLowerCase(Locale.ROOT);
+    if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()
+        || accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+                normalized, ADDRESS_HOLDING_INVITE_STATUSES, LocalDateTime.now())
+            > 0) {
+      // 409 + X-Reason: EMAIL_NOT_AVAILABLE — distinguishable from the bare 400 of a malformed
+      // address and from the reason-less 409 of a taken tenant ID. Both sources answer with the
+      // SAME reason on purpose: the admin renders one inline field error for it, and a second
+      // code would degrade to a generic toast.
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
   }
 
@@ -508,7 +575,7 @@ public class AccountInviteService {
     // the public Admin route, everyone else accepts on the public App route.
     String acceptUrl = inviteAcceptUrlBuilder.buildAcceptUrl(invite.getTargetRole(), rawToken);
     String subject = render(template.getSubject(), invite, acceptUrl);
-    String body = render(template.getBody(), invite, acceptUrl);
+    String body = renderBody(template.getBody(), invite, acceptUrl);
 
     InviteMailSendReceipt receipt;
     try {
@@ -654,6 +721,49 @@ public class AccountInviteService {
       return 20;
     }
     return Math.min(size, 100);
+  }
+
+  /** The action-link token standing alone on its own line, including that line's break. */
+  private static final Pattern ACTION_LINK_TOKEN_LINE =
+      Pattern.compile("(?m)^[ \\t]*\\{\\{inviteLink\\}\\}[ \\t]*(\\r?\\n)?");
+
+  /** A run of three or more line breaks, left behind when a token line is lifted out. */
+  private static final Pattern BLANK_LINE_RUN = Pattern.compile("(\\r?\\n){3,}");
+
+  /** The action-link token sitting inside a sentence, with the space in front of it. */
+  private static final Pattern ACTION_LINK_TOKEN_INLINE =
+      Pattern.compile("[ \\t]*\\{\\{inviteLink\\}\\}");
+
+  /**
+   * Renders a template <em>body</em>. Same substitution as {@link #render}, minus the action link.
+   *
+   * <p>The branded layout renders the invite link itself — as a CTA button and, underneath it, a
+   * visible copy-paste line carrying the plain URL (in the HTML part and in the text/plain
+   * alternative alike). A body that <em>also</em> inlined {@code {{inviteLink}}} therefore produced
+   * the same URL twice in the received mail, which is what the annotated screenshots show. The
+   * layout owns the action link; the body must not carry it.
+   *
+   * <p>Enforcing it here rather than in the composer is deliberate: the send path and the Admin
+   * preview share this code, so an author cannot compose a mail whose link is duplicated, and
+   * templates saved before this rule existed — including the shipped default — are repaired on
+   * render instead of needing a migration.
+   *
+   * <p>Removal is line-aware. A token alone on its line takes the line with it, so the sentence
+   * that introduced it runs straight into the button. A token inside a sentence takes the space in
+   * front of it, leaving the author's own wording otherwise untouched: {@code "Hier: {{inviteLink}}
+   * — viel Erfolg"} becomes {@code "Hier: — viel Erfolg"}. The dangling colon is the author's text
+   * and is not invented away.
+   */
+  public static String renderBody(String value, AccountInvite invite, String acceptUrl) {
+    if (value == null) {
+      return "";
+    }
+    String withoutActionLink = ACTION_LINK_TOKEN_LINE.matcher(value).replaceAll("");
+    withoutActionLink = ACTION_LINK_TOKEN_INLINE.matcher(withoutActionLink).replaceAll("");
+    // Lifting a line out of "text\n\n{{inviteLink}}\n\ntext" would otherwise leave a
+    // triple break — a visible hole exactly where the link used to be.
+    withoutActionLink = BLANK_LINE_RUN.matcher(withoutActionLink).replaceAll("\n\n");
+    return render(withoutActionLink, invite, acceptUrl);
   }
 
   /**
