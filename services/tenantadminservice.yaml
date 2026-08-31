@@ -1091,6 +1091,9 @@ components:
         status:
           type: string
           example: SIGNED
+        dpaVersion:
+          type: string
+          description: Activation timestamp identifying the signed DPA version
         signerName:
           type: string
         signerPosition:
