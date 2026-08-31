@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.OnboardingDpaAcceptanceDTO;
 import java.time.LocalDateTime;
@@ -50,6 +51,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class TenantAdminOnboardingService {
 
   private static final int MIN_PASSWORD_LENGTH = 8;
+
+  /**
+   * Provisional consultant allowance stamped on every tenant this flow creates. It is NOT a
+   * considered business limit: the onboarding invite carries no licensing information, so this is a
+   * placeholder that keeps the required {@code Licensing.allowedNumberOfUsers} non-null until the
+   * platform operator sets the real number for the tenant. The value mirrors the Admin panel's own
+   * default (ORISO-Admin {@code EditableTable.tsx}, {@code allowedNumberOfUsers = 9999}) and is
+   * high enough never to block consultant creation in the meantime.
+   */
+  private static final int PROVISIONAL_ALLOWED_NUMBER_OF_USERS = 9999;
 
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull AccountInviteService accountInviteService;
@@ -411,6 +422,11 @@ public class TenantAdminOnboardingService {
         .address(trimToNull(command.address()))
         .adminEmails(List.of(invite.getRecipientEmail()))
         .tenantIdReservationToken(invite.getTenantIdReservationToken())
+        // Licensing.allowedNumberOfUsers is required by the TenantService creation contract and
+        // its column has no database default, so leaving it out created tenants whose consultant
+        // allowance was null — the Admin tenant list then showed an empty "Max. erlaubte Berater"
+        // column and the number could only be repaired by hand.
+        .licensing(new Licensing().allowedNumberOfUsers(PROVISIONAL_ALLOWED_NUMBER_OF_USERS))
         .onboardingDpaAcceptance(dpaAcceptance);
   }
 

@@ -301,6 +301,39 @@ class TenantAdminOnboardingServiceTest {
   }
 
   /**
+   * The onboarding flow never sent a licensing block, so every tenant created through an invite
+   * link landed with a null consultant allowance: {@code Licensing.allowedNumberOfUsers} is a
+   * required property of the TenantService creation contract and {@code licensing_allowed_users} is
+   * a nullable column without a default, so the Admin tenant list showed an empty "Max. erlaubte
+   * Berater" column for those tenants. A tenant must never be created without an allowance.
+   */
+  @Test
+  void registerTenantAdmin_alwaysSendsANonNullConsultantAllowance() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    service.registerTenantAdmin(RAW_TOKEN, validCommand());
+
+    ArgumentCaptor<MultilingualTenantDTO> tenantCaptor =
+        ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(tenantCaptor.capture());
+    var licensing = tenantCaptor.getValue().getLicensing();
+    assertNotNull(licensing, "the created tenant carries no licensing block");
+    assertNotNull(
+        licensing.getAllowedNumberOfUsers(),
+        "the created tenant carries no allowed number of consultants");
+    assertTrue(licensing.getAllowedNumberOfUsers() > 0);
+  }
+
+  /**
    * #569 defect 2 (compliance): the acceptance must become an auditable U9 admin signature for the
    * tenant being created — signer identity, the operator DPA version actually shown and the form
    * data — instead of a log line. Defect 1 follows from it: with that signature the tenant's DPA
