@@ -55,6 +55,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.email.WelcomeEmailService;
 import de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensator;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -105,6 +106,7 @@ public class CreateUserFacadeTest {
   @Mock private SessionService sessionService;
 
   @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private WelcomeEmailService welcomeEmailService;
 
   @Spy
   private ProvisioningCompensator provisioningCompensator =
@@ -265,6 +267,7 @@ public class CreateUserFacadeTest {
     verify(sessionService, never()).deleteSession(any(Session.class));
     verify(userService, never()).deleteUser(any(User.class));
     verify(identityAccountRemover, never()).rollbackUser(anyString());
+    verify(welcomeEmailService, times(1)).sendWelcomeEmail(any(User.class), anyString());
   }
 
   @Test

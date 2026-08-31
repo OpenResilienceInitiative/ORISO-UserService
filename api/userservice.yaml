@@ -3239,6 +3239,37 @@ components:
           type: boolean
           example: true
           default: false
+        # Added for the notification matrix (ADR-019 in ORISO-Frontend).
+        # These live in the same JSON blob as the four above, so there is no
+        # schema migration behind them.
+        assignmentNotificationEnabled:
+          type: boolean
+          description: >-
+            Counsellor: an enquiry was assigned to me.
+          example: true
+          # On unless the recipient switches it off: ADR-019 makes these
+          # switchable, not opt-in. A counsellor who never opens the settings
+          # screen still gets their work queue.
+          default: true
+        feedbackNotificationEnabled:
+          type: boolean
+          description: >-
+            Counsellor: a reply arrived in the protected professional exchange.
+          example: true
+          # On unless the recipient switches it off: ADR-019 makes these
+          # switchable, not opt-in. A counsellor who never opens the settings
+          # screen still gets their work queue.
+          default: true
+        serviceNoticeNotificationEnabled:
+          type: boolean
+          description: >-
+            Both roles: maintenance and platform notices. Outages are sent
+            regardless — this switches off the planned ones only.
+          example: true
+          # On unless the recipient switches it off: ADR-019 makes these
+          # switchable, not opt-in. A counsellor who never opens the settings
+          # screen still gets their work queue.
+          default: true
 
     OtpType:
       type: string

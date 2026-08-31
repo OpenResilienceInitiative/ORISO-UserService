@@ -47,12 +47,12 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
@@ -340,7 +340,7 @@ class UserControllerIT {
 
   @MockitoBean
   @SuppressWarnings("unused")
-  private IdentityClientConfig identityClientConfig;
+  private IdentityPolicy identityPolicy;
 
   @MockitoBean
   @SuppressWarnings("unused")
@@ -573,7 +573,7 @@ class UserControllerIT {
   void activateTwoFactorAuthByApp_Should_NotActivateIfSingleTenantAdminButNotConfiguredToUse2Fa()
       throws Exception {
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.SINGLE_TENANT_ADMIN.getValue()));
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     mvc.perform(
             put(PATH_ACTIVATE_2FA)
@@ -588,7 +588,7 @@ class UserControllerIT {
   void activateTwoFactorAuthByApp_Should_NotActivateIfTenantSuperAdminButNotConfiguredToUse2Fa()
       throws Exception {
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.TENANT_ADMIN.getValue()));
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     mvc.perform(
             put(PATH_ACTIVATE_2FA)
@@ -603,7 +603,7 @@ class UserControllerIT {
   void activateTwoFactorAuthByApp_Should_Activate() throws Exception {
     when(authenticatedUser.getUsername()).thenReturn("username");
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(true);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(true);
     when(identityManager.setUpOneTimePassword(anyString(), anyString(), anyString()))
         .thenReturn(true);
 
@@ -801,7 +801,8 @@ class UserControllerIT {
 
     mvc.perform(
             post(PATH_POST_REGISTER_NEW_CONSULTING_TYPE)
-                .content(VALID_NEW_REGISTRATION_BODY.replace("}", ", \"newUserAccount\": false}"))
+                // exactly the frontend payload - newUserAccount is never sent by clients
+                .content(VALID_NEW_REGISTRATION_BODY)
                 .contentType(MediaType.APPLICATION_JSON)
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isCreated());

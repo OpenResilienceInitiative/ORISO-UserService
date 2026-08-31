@@ -14,6 +14,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import java.util.Arrays;
+import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.keycloak.admin.client.resource.UserResource;
@@ -142,8 +144,10 @@ public class KeycloakTestConfig {
       public void deactivateUser(String userId) {}
 
       @Override
-      public boolean userHasRole(String userId, String userRole) {
-        return true;
+      public List<String> findAllByUserId(String userId) {
+        // Preserves the previous `userHasRole -> true` behaviour of this shared double:
+        // every role is reported, so role-gated integration paths stay open.
+        return Arrays.stream(UserRole.values()).map(UserRole::getValue).toList();
       }
     };
   }
