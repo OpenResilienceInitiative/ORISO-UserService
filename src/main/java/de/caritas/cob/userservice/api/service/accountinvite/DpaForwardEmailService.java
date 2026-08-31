@@ -15,6 +15,9 @@ import org.springframework.stereotype.Service;
 @Service
 public class DpaForwardEmailService {
 
+  /** See {@link #resolveTenantName(Long)} for why this fallback is German-only. */
+  private static final String GENERIC_ORGANISATION_NAME = "Ihrer Organisation";
+
   private final TenantService tenantService;
   private final DpaSigningEmailDispatchService dpaSigningEmailDispatchService;
   private final URI permittedAppOrigin;
@@ -74,13 +77,21 @@ public class DpaForwardEmailService {
   /**
    * The tenant of a pre-account onboarding forward does not exist yet (only its ID is reserved,
    * ORISO-Admin#722) — the mail then falls back to the generic wording instead of failing.
+   *
+   * <p>The fallback is deliberately German-only, like the DPA_FORWARD mail it lands in: the {@link
+   * DpaSigningEmailDispatchService} contract carries no language at all and the downstream template
+   * is maintained in German only — the DPA is a German-language contract between the platform
+   * operator and a Träger. If that dispatch contract ever grows a language dimension, this fallback
+   * must follow it.
    */
   private String resolveTenantName(Long tenantId) {
     try {
       var tenant = tenantService.getRestrictedTenantData(tenantId);
-      return tenant == null || isBlank(tenant.getName()) ? "Ihrer Organisation" : tenant.getName();
+      return tenant == null || isBlank(tenant.getName())
+          ? GENERIC_ORGANISATION_NAME
+          : tenant.getName();
     } catch (org.springframework.web.client.HttpClientErrorException.NotFound exception) {
-      return "Ihrer Organisation";
+      return GENERIC_ORGANISATION_NAME;
     }
   }
 
