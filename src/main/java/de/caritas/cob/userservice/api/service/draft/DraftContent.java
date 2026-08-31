@@ -30,7 +30,7 @@ public final class DraftContent {
       Pattern.compile("&(nbsp|#0*160|#x0*a0|#0*8203|#x0*200b);", Pattern.CASE_INSENSITIVE);
 
   /** Non-breaking space and zero-width space — invisible, and therefore not content. */
-  private static final Pattern INVISIBLE_WHITESPACE = Pattern.compile("[ ​]");
+  private static final Pattern INVISIBLE_WHITESPACE = Pattern.compile("[\\u00a0\\u200b]");
 
   private DraftContent() {}
 
