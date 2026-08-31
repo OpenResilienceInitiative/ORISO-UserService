@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.TenantCaseHandoverPolicyCache;
 import de.caritas.cob.userservice.api.port.out.TenantCaseHandoverPolicyCacheRepository;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
@@ -17,6 +18,7 @@ import de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControl
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantPermissionPolicies;
 import java.time.Clock;
+import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
@@ -28,6 +30,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientException;
 
 @ExtendWith(MockitoExtension.class)
@@ -46,7 +50,7 @@ class CaseHandoverPolicyCacheServiceTest {
         new CaseHandoverPolicyCacheService(
             repository, tenantServiceFactory, scheduledTaskClaimService, clock);
     lenient().when(tenantServiceFactory.createControllerApi()).thenReturn(tenantControllerApi);
-    when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
+    lenient().when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
   }
 
   @Test
@@ -129,5 +133,69 @@ class CaseHandoverPolicyCacheServiceTest {
 
     verify(tenantControllerApi, never()).getTenantPermissionPolicies(any());
     verify(repository, never()).save(any());
+  }
+
+  @Test
+  void refresh_signalsARetryableConflictWhenAnotherReplicaOwnsTheLeaseAndNoSnapshotExists() {
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(false);
+
+    assertThatThrownBy(() -> service.refresh(42L))
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("retry");
+    verify(tenantControllerApi, never()).getTenantPermissionPolicies(any());
+  }
+
+  @Test
+  void refresh_passesTheConfiguredClaimDurationToTheLease() {
+    ReflectionTestUtils.setField(service, "policyRefreshClaimDuration", Duration.ofMinutes(5));
+    var policies = new CaseHandoverPolicies().reasons(Map.of());
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(
+            new TenantPermissionPolicies()
+                .tenantId(42L)
+                .policies(Map.of())
+                .caseHandoverPolicies(policies));
+
+    service.refresh(42L);
+
+    verify(scheduledTaskClaimService)
+        .tryClaim("case-handover-policy-refresh-42", Duration.ofMinutes(5));
+  }
+
+  @Test
+  void getEffective_refreshesTheTenantWhenNoSnapshotIsCached() {
+    var policies = new CaseHandoverPolicies().reasons(Map.of());
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(
+            new TenantPermissionPolicies()
+                .tenantId(42L)
+                .policies(Map.of())
+                .caseHandoverPolicies(policies));
+
+    assertThat(service.getEffective(42L)).isSameAs(policies);
+
+    verify(repository).save(any(TenantCaseHandoverPolicyCache.class));
+  }
+
+  /**
+   * The production entry points are {@code getEffective} and the scheduled sweep; {@code refresh}
+   * is only ever self-invoked from them, where its own annotation is inert. The transaction must
+   * therefore open at the proxy boundary of the entry points.
+   */
+  @Test
+  void entryPoints_carryTheTransactionAnnotationAtTheProxyBoundary() throws Exception {
+    assertThat(
+            CaseHandoverPolicyCacheService.class
+                .getMethod("getEffective", Long.class)
+                .isAnnotationPresent(Transactional.class))
+        .isTrue();
+    assertThat(
+            CaseHandoverPolicyCacheService.class
+                .getDeclaredMethod("refreshKnownTenants")
+                .isAnnotationPresent(Transactional.class))
+        .isTrue();
   }
 }

@@ -21,11 +21,27 @@
       SET client_consent_mode = CASE WHEN client_consent_required = 1 THEN 'OPT_IN' ELSE 'NONE' END;
       UPDATE case_handover_request
       SET client_consent_mode = CASE WHEN client_consent_required = 1 THEN 'OPT_IN' ELSE 'NONE' END;
+      -- Retire the OTHER_EMERGENCY default only where the row still carries the untouched
+      -- seeded values (0057/0059). Admin-edited policies are never overwritten, which also
+      -- makes the rollback below exact: it restores precisely the seeded default.
       UPDATE case_handover_reason_policy
       SET enabled = 0, access_allowed = 0
-      WHERE code = 'OTHER_EMERGENCY';
+      WHERE code = 'OTHER_EMERGENCY'
+        AND policy_authority = 'platform-admin-default-case-handover-policy'
+        AND enabled = 1
+        AND access_allowed = 1
+        AND client_consent_required = 0;
     </sql>
     <rollback>
+      <sql>
+        UPDATE case_handover_reason_policy
+        SET enabled = 1, access_allowed = 1
+        WHERE code = 'OTHER_EMERGENCY'
+          AND policy_authority = 'platform-admin-default-case-handover-policy'
+          AND enabled = 0
+          AND access_allowed = 0
+          AND client_consent_required = 0;
+      </sql>
       <dropColumn tableName="case_handover_request" columnName="client_consent_mode" />
       <dropColumn tableName="case_handover_reason_policy" columnName="client_consent_mode" />
     </rollback>
