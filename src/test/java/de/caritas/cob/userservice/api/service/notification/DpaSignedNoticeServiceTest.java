@@ -25,10 +25,12 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -123,6 +125,27 @@ class DpaSignedNoticeServiceTest {
 
   private void givenSignatures(DpaSignatureDTO... signatures) {
     when(signatureReadClient.readSignatures(TENANT_ID)).thenReturn(List.of(signatures));
+  }
+
+  @Test
+  void onSignatureHint_runsTheDispatchInTheHintedTenantContextAndClearsItAfterwards() {
+    // The dispatch runs on a pooled daemon thread that starts with no TenantContext. TenantAspect
+    // calls filter.validate() with the current tenant before every repository call, so without an
+    // established context the forwarding admin is filtered away and the notice is silently lost.
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    var tenantSeenByTheRepository = new AtomicReference<Long>();
+    when(adminRepository.findById("kc-admin-1"))
+        .thenAnswer(
+            invocation -> {
+              tenantSeenByTheRepository.set(TenantContext.getCurrentTenant());
+              return Optional.of(forwardingAdmin());
+            });
+
+    service.onSignatureHint(TENANT_ID);
+
+    assertEquals(TENANT_ID, tenantSeenByTheRepository.get());
+    // the pool reuses the thread, so the context must not survive the task
+    assertFalse(TenantContext.contextIsSet());
   }
 
   @Test

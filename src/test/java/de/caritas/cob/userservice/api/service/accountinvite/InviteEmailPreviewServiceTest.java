@@ -208,13 +208,15 @@ class InviteEmailPreviewServiceTest {
                 "de"));
 
     assertThat(preview.plainText()).contains("https://admin.configured.example/admin");
-    // and the notice must not advertise an invite accept link it never carries
-    assertThat(preview.plainText()).doesNotContain("/account-invite");
+    // and the notice must not advertise an invite accept link it never carries. The accept URL
+    // is .../admin/tenant-onboarding/<token>, so it never contains "/account-invite" — asserting
+    // that string could not fail. The sample token is what an accept link would actually carry.
+    assertThat(preview.plainText()).doesNotContain(InviteEmailPreviewService.SAMPLE_TOKEN);
     // the HTML body is what the recipient actually sees, so it carries the same two invariants:
     // asserting only the plain text left the rendered mail free to carry a wrong Admin URL or an
     // accept action (CodeRabbit, #1065)
     assertThat(preview.html()).contains("https://admin.configured.example/admin");
-    assertThat(preview.html()).doesNotContain("/account-invite");
+    assertThat(preview.html()).doesNotContain(InviteEmailPreviewService.SAMPLE_TOKEN);
     // that includes the machine-readable field: a consumer must not receive an accept URL
     // for a mail that has no primary action (CodeRabbit, #1065)
     assertThat(preview.sampleAcceptUrl()).isNull();
