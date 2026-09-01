@@ -40,6 +40,10 @@ updates:
     groups:
       github-actions:
         patterns: ["*"]
+    ignore:
+      # Majors are upgraded deliberately, never by bot.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: "docker"
     directory: "/"
@@ -52,3 +56,7 @@ updates:
     groups:
       docker-base-images:
         patterns: ["*"]
+    ignore:
+      # Majors are upgraded deliberately, never by bot.
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
