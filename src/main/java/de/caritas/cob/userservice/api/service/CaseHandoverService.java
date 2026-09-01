@@ -513,7 +513,10 @@ public class CaseHandoverService {
         new TransactionSynchronization() {
           @Override
           public void afterCommit() {
-            sessionSupervisorFacade.attachStandingSupervisorIfAssigned(sessionId, newOwner);
+            // Must be the REQUIRES_NEW entry point: at afterCommit the committed transaction's
+            // resources are still bound, so a write through the plain method would join a
+            // transaction that can no longer commit and the SessionSupervisor row would be lost.
+            sessionSupervisorFacade.attachStandingSupervisorInNewTransaction(sessionId, newOwner);
           }
         });
   }

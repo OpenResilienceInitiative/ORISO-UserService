@@ -163,19 +163,26 @@ class CaseHandoverServiceTest {
    * case, no Matrix user id) would mark the shared transaction rollback-only and kill the handover
    * at commit — even though the facade swallows it. Deferring to after-commit is the whole point,
    * so assert the deferral, not just the call.
+   *
+   * <p>It must also defer to the REQUIRES_NEW entry point, not the plain one: during afterCommit
+   * the committed transaction's resources are still bound to the thread, so a write through the
+   * plain method joins a transaction that can no longer commit and the SessionSupervisor row is
+   * lost after Matrix access has already been granted.
    */
   @Test
-  void requestAccess_defersTheSupervisorAttachUntilTheHandoverHasCommitted() {
+  void requestAccess_defersTheSupervisorAttachToANewTransactionAfterTheHandoverHasCommitted() {
     TransactionSynchronizationManager.initSynchronization();
     try {
       caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
 
-      verify(sessionSupervisorFacade, never()).attachStandingSupervisorIfAssigned(any(), any());
+      verify(sessionSupervisorFacade, never())
+          .attachStandingSupervisorInNewTransaction(any(), any());
 
       TransactionSynchronizationManager.getSynchronizations()
           .forEach(synchronization -> synchronization.afterCommit());
 
-      verify(sessionSupervisorFacade).attachStandingSupervisorIfAssigned(123L, requester);
+      verify(sessionSupervisorFacade).attachStandingSupervisorInNewTransaction(123L, requester);
+      verify(sessionSupervisorFacade, never()).attachStandingSupervisorIfAssigned(any(), any());
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
@@ -605,6 +612,33 @@ class CaseHandoverServiceTest {
     assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
     assertEquals("ACCESS_GRANTED", request.getAuditOutcome());
     verify(sessionRepository).save(session);
+  }
+
+  /**
+   * A client-approved handover transfers ownership just as a granted requestAccess does, so the new
+   * owner's standing supervisor has to attach on this path too. Without this test a regression on
+   * the resolveClientConsent branch passes the whole suite.
+   */
+  @Test
+  void resolveClientConsent_attachesTheNewOwnersStandingSupervisor_WhenClientApproves() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    verify(sessionSupervisorFacade).attachStandingSupervisorIfAssigned(123L, requester);
+  }
+
+  @Test
+  void resolveClientConsent_doesNotAttachAStandingSupervisor_WhenClientDeclines() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    caseHandoverService.resolveClientConsent(123L, 88L, false);
+
+    verify(sessionSupervisorFacade, never()).attachStandingSupervisorIfAssigned(any(), any());
   }
 
   @Test

@@ -141,6 +141,29 @@ public class ConsultantUpdateServiceTest {
   }
 
   @Test
+  public void updateConsultant_Should_setStandingSupervisor_When_bothTenantIdsAreNull() {
+    // Single-tenant deployments leave tenant_id null on every consultant. The cross-tenant guard
+    // uses Objects.equals precisely so null == null still passes; a guard written with != would
+    // block every standing-supervisor assignment on those installations.
+    Consultant consultant = consultantWithId("counsellor-1");
+    consultant.setTenantId(null);
+    Consultant standingSupervisor = consultantWithId("supervisor-1");
+    standingSupervisor.setSupervisor(true);
+    standingSupervisor.setTenantId(null);
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.getConsultant("supervisor-1"))
+        .thenReturn(Optional.of(standingSupervisor));
+    UpdateAdminConsultantDTO updateConsultant = updateDtoFor(consultant);
+    updateConsultant.setAssignedSupervisorId("supervisor-1");
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", updateConsultant);
+
+    ArgumentCaptor<Consultant> saved = ArgumentCaptor.forClass(Consultant.class);
+    verify(this.consultantService).saveConsultant(saved.capture());
+    assertEquals("supervisor-1", saved.getValue().getAssignedSupervisorId());
+  }
+
+  @Test
   public void updateConsultant_Should_throwBadRequest_When_assigningSelfAsStandingSupervisor() {
     // Supervision is oversight BY A COLLEAGUE; supervising yourself is meaningless and would let a
     // counsellor silently self-approve their own oversight.
