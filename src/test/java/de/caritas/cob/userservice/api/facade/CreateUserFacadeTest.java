@@ -258,7 +258,8 @@ public class CreateUserFacadeTest {
     createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
     TenantContext.clear();
     verify(identityClient, times(1)).createUser(any(UserDTO.class));
-    verify(identityRoleUpdater, times(1)).assignRoles(any(), eq(List.of(UserRole.USER.getValue())));
+    verify(identityRoleUpdater, times(1))
+        .assignRoles(eq(USER_ID), eq(List.of(UserRole.USER.getValue())));
     verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
     verify(createNewSessionFacade, times(1))
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
@@ -278,7 +279,8 @@ public class CreateUserFacadeTest {
 
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
 
-    verify(identityRoleUpdater, times(1)).assignRoles(any(), eq(List.of(UserRole.USER.getValue())));
+    verify(identityRoleUpdater, times(1))
+        .assignRoles(eq(USER_ID), eq(List.of(UserRole.USER.getValue())));
     verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
   }
 

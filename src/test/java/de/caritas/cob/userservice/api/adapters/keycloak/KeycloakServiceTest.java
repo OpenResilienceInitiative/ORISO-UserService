@@ -1010,7 +1010,9 @@ public class KeycloakServiceTest {
   public void assignRoles_Should_notTouchKeycloak_When_RoleCollectionIsEmpty() {
     this.keycloakService.assignRoles("user", List.of());
 
-    verify(keycloakClient, never()).getRealmResource();
+    // Not never().getRealmResource(): that would still pass if the empty path started reaching
+    // Keycloak through some other client method.
+    verifyNoInteractions(keycloakClient);
   }
 
   @Test
