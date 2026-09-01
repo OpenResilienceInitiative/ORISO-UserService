@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -135,5 +136,19 @@ class DpaForwardEmailServiceTest {
     verifyNoInteractions(tenantService);
     verify(dpaSigningEmailDispatchService, org.mockito.Mockito.never())
         .send(anyString(), anyString(), anyString(), any(LocalDateTime.class));
+  }
+
+  @Test
+  void toAbsoluteSignLink_resolvesAPathOnlyLinkAgainstTheConfiguredAppOrigin() {
+    // TenantService omits its base URL on Pre-Dev; the wizard must still get a shareable link.
+    assertThat(service.toAbsoluteSignLink("/dpa-sign/single-use-token"))
+        .isEqualTo("https://app.oriso-dev.site/dpa-sign/single-use-token");
+  }
+
+  @Test
+  void toAbsoluteSignLink_rejectsAForeignOrigin() {
+    assertThatThrownBy(() -> service.toAbsoluteSignLink("https://evil.example/dpa-sign/token"))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class);
   }
 }

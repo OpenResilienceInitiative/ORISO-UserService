@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
 import de.caritas.cob.userservice.api.service.notification.AdminPanelUrl;
+import de.caritas.cob.userservice.api.service.notification.DpaSignedNoticeService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -75,11 +76,19 @@ public class InviteEmailPreviewService {
         !isBlank(safe.language())
             ? safe.language()
             : (template == null ? null : template.getLanguage());
+    // The last-resort sample has to be the one the DISPATCHER falls back to, per kind. With no
+    // active template, DpaSignedNoticeService sends its own signed-notice defaults; falling back to
+    // the generic invite sample here showed the operator invitation prose with a literal
+    // {{inviteLink}} — a preview of a mail that is never sent.
+    boolean signedNotice = kind == InviteEmailTemplateKind.DPA_SIGNED_NOTICE;
+    String fallbackSubject =
+        signedNotice ? DpaSignedNoticeService.defaultSubject(language) : SAMPLE_SUBJECT;
+    String fallbackBody = signedNotice ? DpaSignedNoticeService.defaultBody(language) : SAMPLE_BODY;
     String subject =
         firstNonBlank(
-            safe.subject(), template == null ? null : template.getSubject(), SAMPLE_SUBJECT);
+            safe.subject(), template == null ? null : template.getSubject(), fallbackSubject);
     String body =
-        firstNonBlank(safe.body(), template == null ? null : template.getBody(), SAMPLE_BODY);
+        firstNonBlank(safe.body(), template == null ? null : template.getBody(), fallbackBody);
 
     AccountInvite sampleInvite =
         AccountInvite.builder()

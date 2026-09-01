@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService;
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService.DpaForwardEmailCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.OnboardingDpaAcceptanceDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO;
@@ -53,6 +54,16 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class TenantAdminOnboardingService {
 
   private static final int MIN_PASSWORD_LENGTH = 8;
+
+  /**
+   * Provisional consultant allowance stamped on every tenant this flow creates. It is NOT a
+   * considered business limit: the onboarding invite carries no licensing information, so this is a
+   * placeholder that keeps the required {@code Licensing.allowedNumberOfUsers} non-null until the
+   * platform operator sets the real number for the tenant. The value mirrors the Admin panel's own
+   * default (ORISO-Admin {@code EditableTable.tsx}, {@code allowedNumberOfUsers = 9999}) and is
+   * high enough never to block consultant creation in the meantime.
+   */
+  private static final int PROVISIONAL_ALLOWED_NUMBER_OF_USERS = 9999;
 
   /**
    * How often one invitation may forward the DPA. Small on purpose: a real forward needs one, a
@@ -305,23 +316,38 @@ public class TenantAdminOnboardingService {
     reserved.rethrowLinkDeath();
     AccountInvite invite = reserved.invite();
 
-    DpaSignInviteDTO signInvite;
-    try {
-      signInvite =
-          publicDpaForwardClient.createForwardSignLink(
-              invite.getTenantId(), invite.getTenantIdReservationToken());
-    } catch (RuntimeException exception) {
-      // The mint produced no link, so the reserved attempt is repaid: an upstream outage or
-      // throttle must not exhaust the forwards a legitimate invitation gets.
-      refundDpaForwardAttempt(rawToken);
-      throw exception;
-    }
-
     // The provider contract is checked BEFORE anything is recorded and regardless of whether a
     // mail follows. A missing or unparseable expiry is TenantService breaking its contract (see
     // parseExpiry): recording it as a completed forward, or handing the raw value back on the
     // recipient-less path, would turn a broken provider answer into a successful one.
-    LocalDateTime expiresAt = parseExpiry(signInvite.getExpiresAt());
+    //
+    // Same reasoning for the link itself: TenantService emits a path-only link when its base URL is
+    // unset (Pre-Dev). The mail path already resolves that against the configured App origin, but
+    // the recipient-less and mail-failed branches hand the link back for MANUAL sharing — a copied
+    // "/dpa-sign/<token>" has no origin and never reaches the DPA frontend. Normalise once here so
+    // the mail and the returned link cannot disagree.
+    //
+    // Both checks run INSIDE the compensated region: a 200 carrying no usable link leaves the
+    // caller with nothing, exactly like an outage or a throttle, so the reserved attempt has to be
+    // repaid the same way. Charging it would let three malformed provider answers exhaust an
+    // invitation's five forwards for good.
+    LocalDateTime expiresAt;
+    String signLink;
+    String rawExpiresAt;
+    try {
+      DpaSignInviteDTO signInvite =
+          publicDpaForwardClient.createForwardSignLink(
+              invite.getTenantId(), invite.getTenantIdReservationToken());
+      rawExpiresAt = signInvite.getExpiresAt();
+      expiresAt = parseExpiry(rawExpiresAt);
+      signLink = dpaForwardEmailService.toAbsoluteSignLink(signInvite.getSignLink());
+    } catch (RuntimeException exception) {
+      // The mint produced no usable link, so the reserved attempt is repaid: an upstream outage,
+      // a throttle or a malformed answer must not exhaust the forwards a legitimate invitation
+      // gets.
+      refundDpaForwardAttempt(rawToken);
+      throw exception;
+    }
 
     recordDpaForward(rawToken);
 
@@ -336,8 +362,7 @@ public class TenantAdminOnboardingService {
     if (!isBlank(recipientEmail)) {
       try {
         dpaForwardEmailService.sendSigningLink(
-            new DpaForwardEmailCommand(
-                invite.getTenantId(), recipientEmail, signInvite.getSignLink(), expiresAt));
+            new DpaForwardEmailCommand(invite.getTenantId(), recipientEmail, signLink, expiresAt));
         mailSent = true;
       } catch (RuntimeException exception) {
         // Swallowed deliberately, never silently: the link is the deliverable, the mail is the
@@ -356,7 +381,7 @@ public class TenantAdminOnboardingService {
         invite.getId(),
         invite.getTenantId(),
         mailSent);
-    return new DpaForwardResult(signInvite.getSignLink(), signInvite.getExpiresAt(), mailSent);
+    return new DpaForwardResult(signLink, rawExpiresAt, mailSent);
   }
 
   /**
@@ -668,6 +693,11 @@ public class TenantAdminOnboardingService {
         .address(trimToNull(command.address()))
         .adminEmails(List.of(invite.getRecipientEmail()))
         .tenantIdReservationToken(invite.getTenantIdReservationToken())
+        // Licensing.allowedNumberOfUsers is required by the TenantService creation contract and
+        // its column has no database default, so leaving it out created tenants whose consultant
+        // allowance was null — the Admin tenant list then showed an empty "Max. erlaubte Berater"
+        // column and the number could only be repaired by hand.
+        .licensing(new Licensing().allowedNumberOfUsers(PROVISIONAL_ALLOWED_NUMBER_OF_USERS))
         .onboardingDpaAcceptance(dpaAcceptance);
   }
 

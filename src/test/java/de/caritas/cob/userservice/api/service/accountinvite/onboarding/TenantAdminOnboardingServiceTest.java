@@ -12,6 +12,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -106,6 +107,11 @@ class TenantAdminOnboardingServiceTest {
             dpaForwardEmailService,
             new UsernameTranscoder(),
             transactionManager);
+    // the real service resolves a path-only link against the configured App origin; the default
+    // here passes an already-absolute link straight through, as production does
+    lenient()
+        .when(dpaForwardEmailService.toAbsoluteSignLink(anyString()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   private static AccountInvite tenantAdminInvite(AccountInviteStatus status) {
@@ -311,6 +317,42 @@ class TenantAdminOnboardingServiceTest {
   }
 
   /**
+   * The onboarding flow never sent a licensing block, so every tenant created through an invite
+   * link landed with a null consultant allowance: {@code Licensing.allowedNumberOfUsers} is a
+   * required property of the TenantService creation contract and {@code licensing_allowed_users} is
+   * a nullable column without a default, so the Admin tenant list showed an empty "Max. erlaubte
+   * Berater" column for those tenants. A tenant must never be created without an allowance.
+   */
+  @Test
+  void registerTenantAdmin_alwaysSendsANonNullConsultantAllowance() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    service.registerTenantAdmin(RAW_TOKEN, validCommand());
+
+    ArgumentCaptor<MultilingualTenantDTO> tenantCaptor =
+        ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(tenantCaptor.capture());
+    var licensing = tenantCaptor.getValue().getLicensing();
+    assertNotNull(licensing, "the created tenant carries no licensing block");
+    assertNotNull(
+        licensing.getAllowedNumberOfUsers(),
+        "the created tenant carries no allowed number of consultants");
+    assertEquals(
+        9999,
+        licensing.getAllowedNumberOfUsers(),
+        "the provisional allowance must match the Admin panel's default of 9999");
+  }
+
+  /**
    * #569 defect 2 (compliance): the acceptance must become an auditable U9 admin signature for the
    * tenant being created — signer identity, the operator DPA version actually shown and the form
    * data — instead of a log line. Defect 1 follows from it: with that signature the tenant's DPA
@@ -503,6 +545,91 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("legal@example.org", captor.getValue().recipientEmail());
     assertEquals(RESERVED_TENANT_ID, captor.getValue().tenantId());
     assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", captor.getValue().signLink());
+  }
+
+  @Test
+  void forwardDpa_repaysTheReservedAttempt_When_theProviderAnswersWithoutAUsableExpiry() {
+    // A 200 that carries no usable link leaves the caller with nothing, exactly like an outage or
+    // a throttle — charging the attempt would let three malformed answers exhaust the invitation's
+    // five forwards for good.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
+                .token("RAWSIGNTOKEN")
+                .signLink("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN")
+                .expiresAt(null));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    // reserved (+1) and repaid (-1) — the budget is untouched
+    assertEquals(0, invite.getDpaForwardCount());
+    assertNull(invite.getDpaForwardedAt());
+    // and no mail went out for a link that does not exist
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_repaysTheReservedAttempt_When_theProviderAnswersWithNoBodyAtAll() {
+    // A null DTO is the second way a 200 can carry no link; it must be compensated like the
+    // missing expiry, otherwise a provider fault still burns the invitation's budget.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(null);
+
+    assertThrows(RuntimeException.class, () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    assertEquals(0, invite.getDpaForwardCount());
+    assertNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_repaysTheReservedAttempt_When_theProviderLinkFailsTheOriginGuard() {
+    // The third way: a 200 with a link from a foreign origin. toAbsoluteSignLink rejects it, and
+    // the caller is left without a usable link — so the attempt is repaid like the other two.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
+                .token("RAWSIGNTOKEN")
+                .signLink("https://evil.example/dpa-sign/RAWSIGNTOKEN")
+                .expiresAt("2026-08-29T14:31:07"));
+    when(dpaForwardEmailService.toAbsoluteSignLink("https://evil.example/dpa-sign/RAWSIGNTOKEN"))
+        .thenThrow(new BadRequestException("signLink must use the configured ORISO App origin"));
+
+    assertThrows(
+        BadRequestException.class, () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    assertEquals(0, invite.getDpaForwardCount());
+    assertNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_returnsAnAbsoluteLink_When_theProviderEmitsAPathOnlyOne() {
+    // On Pre-Dev the TenantService base URL is unset, so the mint answers "/dpa-sign/<token>".
+    // Both the recipient-less and the mail-failed branch hand that link to the wizard for MANUAL
+    // sharing — a copied relative path carries no origin and never reaches the DPA frontend.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
+                .token("RAWSIGNTOKEN")
+                .signLink("/dpa-sign/RAWSIGNTOKEN")
+                .expiresAt("2026-08-29T14:31:07"));
+    when(dpaForwardEmailService.toAbsoluteSignLink("/dpa-sign/RAWSIGNTOKEN"))
+        .thenReturn("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN");
+
+    var result = service.forwardDpa(RAW_TOKEN, null);
+
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
   }
 
   @Test

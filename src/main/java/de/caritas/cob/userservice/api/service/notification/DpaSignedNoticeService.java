@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import jakarta.annotation.PreDestroy;
 import java.time.LocalDateTime;
@@ -195,6 +196,13 @@ public class DpaSignedNoticeService {
    * next collaborator added will not know that rule.
    */
   private void processHint(Long tenantId) {
+    // The dispatch runs on a pooled daemon thread, which starts with no TenantContext. Every
+    // repository call below passes through TenantAspect, and that aspect calls filter.validate()
+    // with TenantContext.getCurrentTenant() — a null tenant either fails the Hibernate filter or
+    // silently filters the forwarding admin away, so the notice would never be sent. Establish the
+    // hinted tenant for the duration of the task, and clear it again because the pool reuses the
+    // thread.
+    TenantContext.setCurrentTenant(tenantId);
     try {
       dispatchNotice(tenantId);
     } catch (RuntimeException failure) {
@@ -203,6 +211,8 @@ public class DpaSignedNoticeService {
               + " hint",
           tenantId,
           failure);
+    } finally {
+      TenantContext.clear();
     }
   }
 
@@ -301,8 +311,11 @@ public class DpaSignedNoticeService {
           render(
               template.map(InviteEmailTemplate::getBody).orElse(defaultBody(language)),
               placeholders);
-      inviteMailDispatchService.send(
-          recipient.email(), subject, body, adminPanelUrl, tenantId, language);
+      // No primary action: the notice carries its link as {{adminUrl}} inline in the prose, and
+      // the layout would render a second CTA button on top of it. InviteEmailPreviewService passes
+      // null for this kind, so passing the Admin URL here made the delivered mail carry a button
+      // the operator never saw in the preview.
+      inviteMailDispatchService.send(recipient.email(), subject, body, null, tenantId, language);
     } catch (RuntimeException beforeDispatch) {
       // Every failure up to the handoff, not only SmtpSendException: a template load, the
       // tenant-name lookup or the rendering can fail too, and a stranded claim silently disables
@@ -423,11 +436,18 @@ public class DpaSignedNoticeService {
     return rendered;
   }
 
-  private static String defaultSubject(String language) {
+  /**
+   * The subject an operator sees when no DPA_SIGNED_NOTICE template is active — the same text
+   * delivery falls back to. Public so {@link
+   * de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService} previews what
+   * is actually sent instead of the generic invite sample.
+   */
+  public static String defaultSubject(String language) {
     return "de".equalsIgnoreCase(language) ? DEFAULT_SUBJECT_DE : DEFAULT_SUBJECT_EN;
   }
 
-  private static String defaultBody(String language) {
+  /** The body counterpart of {@link #defaultSubject(String)}. */
+  public static String defaultBody(String language) {
     return "de".equalsIgnoreCase(language) ? DEFAULT_BODY_DE : DEFAULT_BODY_EN;
   }
 

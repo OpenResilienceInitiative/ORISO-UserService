@@ -156,6 +156,13 @@
     file="db/changelog/changeset/0086_dpa_forward_and_signed_notice/0086_changeSet.xml" />
   <include
     file="db/changelog/changeset/0087_account_invite_dpa_forward_count/0087_changeSet.xml" />
+  <!-- Support-room repair (originally shipped as orphaned 0081_support_room_repair via
+       #955 and lost from this changelog in a later merge; renumbered to 0088 because
+       0081 is taken by 0081_account_invite_provisioning and 0086/0087 by the
+       DPA-forward chain). Fully idempotent (CREATE ... IF NOT EXISTS), so environments
+       that already ran it under an earlier path converge without harm. -->
+  <include
+    file="db/changelog/changeset/0088_support_room_repair/0088_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
