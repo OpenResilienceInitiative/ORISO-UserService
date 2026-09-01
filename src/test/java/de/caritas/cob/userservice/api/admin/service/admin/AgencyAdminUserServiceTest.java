@@ -288,6 +288,42 @@ class AgencyAdminUserServiceTest {
             Mockito.anyString(), Mockito.any(), Mockito.anyCollection(), Mockito.any());
   }
 
+  /**
+   * Fail-closed mirror of the tenant-admin search: if a tenant-bound caller has no resolvable
+   * tenant, the agency-admin search still routes through the scoped call with a null tenant and
+   * returns an empty page — never the unscoped list (#968).
+   */
+  @Test
+  void findAgencyAdminsByInfix_Should_FailClosedToEmpty_WhenTenantAdminHasNullTenant() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(null);
+    when(retrieveAdminService.findAllByInfixScopedToTenant(
+            "*", Admin.AdminType.AGENCY, null, pageRequest))
+        .thenReturn(new PageImpl<>(Collections.emptyList(), pageRequest, 0));
+    when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(Collections.emptyList());
+    when(retrieveAdminService.agenciesOfAdmin(Mockito.anySet()))
+        .thenReturn(Collections.emptyList());
+    when(agencyService.getAgenciesWithoutCaching(Collections.emptyList()))
+        .thenReturn(Collections.emptyList());
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    agencyAdminUserService.findAgencyAdminsByInfix("*", pageRequest);
+
+    Mockito.verify(retrieveAdminService)
+        .findAllByInfixScopedToTenant("*", Admin.AdminType.AGENCY, null, pageRequest);
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
+  }
+
   @Test
   void findAgencyAdminsByInfix_Should_NotScope_ForPlatformAdmin() {
     PageRequest pageRequest = PageRequest.of(0, 10);

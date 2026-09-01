@@ -325,6 +325,37 @@ class TenantAdminUserServiceTest {
         .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
   }
 
+  /**
+   * Fail-closed: if the caller has no resolvable tenant (getTenantId() returns null), the search
+   * must still route through the scoped call and return an empty page — never fall back to the
+   * unscoped repository query. Prevents any future change to the branching logic from silently
+   * re-opening #968.
+   */
+  @Test
+  void findTenantAdminsByInfix_Should_FailClosedToEmpty_WhenCallerTenantIsNull() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(null);
+    when(retrieveAdminService.findAllByInfixScopedToTenant(
+            "*", Admin.AdminType.TENANT, null, pageRequest))
+        .thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+
+    Mockito.verify(retrieveAdminService)
+        .findAllByInfixScopedToTenant("*", Admin.AdminType.TENANT, null, pageRequest);
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
+  }
+
   @Test
   void findTenantAdminsByInfix_Should_NotScope_ForPlatformAdmin() {
     PageRequest pageRequest = PageRequest.of(0, 10);
