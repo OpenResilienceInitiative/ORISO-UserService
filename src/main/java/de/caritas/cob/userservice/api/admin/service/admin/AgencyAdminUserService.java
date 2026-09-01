@@ -130,9 +130,10 @@ public class AgencyAdminUserService {
 
   /**
    * Returns the infix-matched agency admins visible to the current caller. A restricted agency
-   * admin only sees admins of their own agencies; platform/tenant admins keep the full list. This
-   * closes the cross-Träger leak where any holder of the user-admin authority (which every agency
-   * admin also carries, to manage consultants) could list every agency admin of every Träger.
+   * admin only sees admins of their own agencies; a tenant-bound caller (single-tenant or tenant
+   * super admin) is scoped to their own tenant so they cannot enumerate agency admins of other
+   * tenants (#968); only platform admins keep the full list. This closes both the cross-Träger
+   * leak within a tenant and the cross-tenant leak across tenants.
    */
   private Page<AdminBase> findScopedAgencyAdminsByInfix(String infix, PageRequest pageRequest) {
     if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
@@ -140,6 +141,10 @@ public class AgencyAdminUserService {
           retrieveAdminService.findAgencyIdsOfAdmin(authenticatedUser.getUserId());
       return retrieveAdminService.findAllByInfixScopedToAgencies(
           infix, Admin.AdminType.AGENCY, callerAgencyIds, pageRequest);
+    }
+    if (!authenticatedUser.isPlatformAdmin()) {
+      return retrieveAdminService.findAllByInfixScopedToTenant(
+          infix, Admin.AdminType.AGENCY, authenticatedUser.getTenantId(), pageRequest);
     }
     return retrieveAdminService.findAllByInfix(infix, Admin.AdminType.AGENCY, pageRequest);
   }

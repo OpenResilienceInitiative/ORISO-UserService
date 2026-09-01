@@ -216,6 +216,7 @@ class TenantAdminUserServiceTest {
     Admin secondTenantAdmin = tenantAdmin("tenant-admin-2", 1L);
     Admin thirdTenantAdmin = tenantAdmin("tenant-admin-3", 2L);
     List<Admin> fullAdmins = Arrays.asList(firstTenantAdmin, secondTenantAdmin, thirdTenantAdmin);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.TENANT, pageRequest))
         .thenReturn(adminsPage);
     when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(fullAdmins);
@@ -255,6 +256,7 @@ class TenantAdminUserServiceTest {
     Admin.AdminBase platformAdminBase = adminBase("platform-admin", 0L);
     Page<Admin.AdminBase> adminsPage = new PageImpl<>(List.of(platformAdminBase), pageRequest, 1);
     Admin platformAdmin = tenantAdmin("platform-admin", 0L);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.TENANT, pageRequest))
         .thenReturn(adminsPage);
     when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(List.of(platformAdmin));
@@ -280,6 +282,66 @@ class TenantAdminUserServiceTest {
             tenantNameMapCaptor.capture(),
             Mockito.any());
     assertThat(tenantNameMapCaptor.getValue()).isEmpty();
+  }
+
+  /**
+   * #968: a single tenant admin querying /useradmin/tenantadmins/search must only see admins of
+   * their own tenant. Before the fix the search hit findAllByInfix unscoped and returned admins of
+   * every tenant.
+   */
+  @Test
+  void findTenantAdminsByInfix_Should_ScopeToCallerTenant_ForNonPlatformAdmin() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    Admin.AdminBase ownAdminBase = adminBase("own-tenant-admin", 9L);
+    Page<Admin.AdminBase> ownAdminsPage = new PageImpl<>(List.of(ownAdminBase), pageRequest, 1);
+    Admin ownAdmin = tenantAdmin("own-tenant-admin", 9L);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(retrieveAdminService.findAllByInfixScopedToTenant(
+            "*", Admin.AdminType.TENANT, 9L, pageRequest))
+        .thenReturn(ownAdminsPage);
+    when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(List.of(ownAdmin));
+    when(tenantService.getRestrictedTenantData(Set.of(9L)))
+        .thenReturn(List.of(new RestrictedTenantDTO().id(9L).name("Own tenant")));
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+
+    Mockito.verify(retrieveAdminService)
+        .findAllByInfixScopedToTenant("*", Admin.AdminType.TENANT, 9L, pageRequest);
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
+  }
+
+  @Test
+  void findTenantAdminsByInfix_Should_NotScope_ForPlatformAdmin() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    Page<Admin.AdminBase> emptyPage = new PageImpl<>(List.of(), pageRequest, 0);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.TENANT, pageRequest))
+        .thenReturn(emptyPage);
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+
+    Mockito.verify(retrieveAdminService).findAllByInfix("*", Admin.AdminType.TENANT, pageRequest);
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfixScopedToTenant(
+            Mockito.anyString(), Mockito.any(), Mockito.anyLong(), Mockito.any(PageRequest.class));
   }
 
   private Admin tenantAdmin(String id, Long tenantId) {

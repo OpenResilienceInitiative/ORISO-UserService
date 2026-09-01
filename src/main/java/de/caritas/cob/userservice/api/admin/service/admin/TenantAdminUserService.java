@@ -100,8 +100,7 @@ public class TenantAdminUserService {
   }
 
   public Map<String, Object> findTenantAdminsByInfix(String infix, PageRequest pageRequest) {
-    Page<AdminBase> adminsPage =
-        retrieveAdminService.findAllByInfix(infix, Admin.AdminType.TENANT, pageRequest);
+    Page<AdminBase> adminsPage = findScopedTenantAdminsByInfix(infix, pageRequest);
     var adminIds = adminsPage.stream().map(AdminBase::getId).collect(Collectors.toSet());
     var fullAdmins = retrieveAdminService.findAllById(adminIds);
 
@@ -119,6 +118,21 @@ public class TenantAdminUserService {
         Lists.newArrayList(),
         tenantIdsToNameMap,
         idsWithConsultantIdentity);
+  }
+
+  /**
+   * Returns the infix-matched tenant admins visible to the current caller. A platform admin keeps
+   * the full list; every other caller — including a single-tenant admin and a tenant super admin
+   * bound to their own tenant — is scoped to their own tenant. Closes the cross-tenant leak in
+   * /useradmin/tenantadmins/search (#968) where any holder of the tenant-admin authority could
+   * enumerate admins of every other tenant.
+   */
+  private Page<AdminBase> findScopedTenantAdminsByInfix(String infix, PageRequest pageRequest) {
+    if (authenticatedUser.isPlatformAdmin()) {
+      return retrieveAdminService.findAllByInfix(infix, Admin.AdminType.TENANT, pageRequest);
+    }
+    return retrieveAdminService.findAllByInfixScopedToTenant(
+        infix, Admin.AdminType.TENANT, authenticatedUser.getTenantId(), pageRequest);
   }
 
   private Map<Long, String> tenantIdsToNameMap(List<Admin> fullAdmins) {
