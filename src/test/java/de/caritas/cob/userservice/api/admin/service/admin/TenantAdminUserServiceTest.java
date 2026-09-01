@@ -102,6 +102,56 @@ class TenantAdminUserServiceTest {
   }
 
   @Test
+  void createNewTenantAdmin_Should_RejectForeignTenantId_WhenCallerIsTenantScoped() {
+    // given a tenant admin of tenant 9 trying to create an admin record for tenant 7
+    CreateAdminDTO createAdminDTO = new CreateAdminDTO();
+    createAdminDTO.setTenantId(7);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+
+    // when, then
+    assertThatThrownBy(() -> tenantAdminUserService.createNewTenantAdmin(createAdminDTO))
+        .isInstanceOf(ForbiddenException.class)
+        .hasMessage("Admin accounts can only be created for the tenant of the calling admin");
+    Mockito.verifyNoInteractions(createAdminService);
+  }
+
+  @Test
+  void createNewTenantAdmin_Should_AllowOwnTenantId_WhenCallerIsTenantScoped() {
+    // given
+    CreateAdminDTO createAdminDTO = new CreateAdminDTO();
+    createAdminDTO.setTenantId(9);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(createAdminService.createNewTenantAdmin(createAdminDTO))
+        .thenReturn(tenantAdmin("tenant-admin-9", 9L));
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.createNewTenantAdmin(createAdminDTO);
+
+    // then
+    Mockito.verify(createAdminService).createNewTenantAdmin(createAdminDTO);
+    assertThat(response.getEmbedded().getTenantId()).isEqualTo("9");
+  }
+
+  @Test
+  void createNewTenantAdmin_Should_AllowForeignTenantId_WhenCallerIsPlatformAdmin() {
+    // given
+    CreateAdminDTO createAdminDTO = new CreateAdminDTO();
+    createAdminDTO.setTenantId(7);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(createAdminService.createNewTenantAdmin(createAdminDTO))
+        .thenReturn(tenantAdmin("tenant-admin-7", 7L));
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.createNewTenantAdmin(createAdminDTO);
+
+    // then
+    Mockito.verify(createAdminService).createNewTenantAdmin(createAdminDTO);
+    assertThat(response.getEmbedded().getTenantId()).isEqualTo("7");
+  }
+
+  @Test
   void updateTenantAdmin_Should_UpdateTenantAndEnrichResponseWithTenantSubdomain() {
     // given
     EasyRandom random = new EasyRandom();

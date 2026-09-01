@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminControllerIT.AGENCY_ADMIN_PATH;
+import static de.caritas.cob.userservice.api.adapters.web.controller.UserAdminControllerIT.TENANT_ADMIN_PATH;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.mockito.ArgumentMatchers.any;
@@ -169,6 +170,123 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isInternalServerError())
         .andReturn();
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void createNewAgencyAdmin_Should_returnForbidden_When_tenantAdminTargetsForeignTenant()
+      throws Exception {
+    // given a tenant admin of tenant 95 posting an agency admin for tenant 7
+    CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setEmail("agencyadmin@email.com");
+    createAdminDTO.setTenantId(7);
+    givenTenant();
+    givenTenantSuperAdmin();
+    givenCallerBelongsToTenant(95L);
+
+    // when, then
+    this.mockMvc
+        .perform(
+            post(AGENCY_ADMIN_PATH)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createAdminDTO)))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void createNewAgencyAdmin_Should_returnOk_When_tenantAdminTargetsOwnTenant() throws Exception {
+    // given
+    CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setEmail("agencyadmin@email.com");
+    createAdminDTO.setTenantId(95);
+    givenTenant();
+    givenTenantSuperAdmin();
+    givenCallerBelongsToTenant(95L);
+
+    // when, then
+    this.mockMvc
+        .perform(
+            post(AGENCY_ADMIN_PATH)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createAdminDTO)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("_embedded.tenantId", is("95")));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void createNewTenantAdmin_Should_returnForbidden_When_tenantAdminTargetsForeignTenant()
+      throws Exception {
+    // given a tenant admin of tenant 95 posting a tenant admin for tenant 7
+    CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setEmail("tenantadmin@email.com");
+    createAdminDTO.setTenantId(7);
+    givenTenant();
+    givenCallerBelongsToTenant(95L);
+
+    // when, then
+    this.mockMvc
+        .perform(
+            post(TENANT_ADMIN_PATH)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createAdminDTO)))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void createNewTenantAdmin_Should_returnOk_When_tenantAdminTargetsOwnTenant() throws Exception {
+    // given
+    CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setEmail("tenantadmin@email.com");
+    createAdminDTO.setTenantId(95);
+    givenTenant();
+    givenCallerBelongsToTenant(95L);
+
+    // when, then
+    this.mockMvc
+        .perform(
+            post(TENANT_ADMIN_PATH)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createAdminDTO)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("_embedded.tenantId", is("95")));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void createNewTenantAdmin_Should_returnOk_When_platformAdminCreatesPlatformAdmin()
+      throws Exception {
+    // given
+    CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setEmail("platformadmin@email.com");
+    createAdminDTO.setTenantId(0);
+    givenTenant();
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+
+    // when, then
+    this.mockMvc
+        .perform(
+            post(TENANT_ADMIN_PATH)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createAdminDTO)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("_embedded.tenantId", is("0")));
+  }
+
+  private void givenCallerBelongsToTenant(Long tenantId) {
+    when(authenticatedUser.getTenantId()).thenReturn(tenantId);
   }
 
   private void givenTenantSuperAdmin() {
