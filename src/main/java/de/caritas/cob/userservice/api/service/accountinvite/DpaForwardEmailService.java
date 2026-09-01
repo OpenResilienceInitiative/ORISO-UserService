@@ -39,16 +39,28 @@ public class DpaForwardEmailService {
       throw new BadRequestException("tenantId, recipientEmail and expiresAt are required");
     }
 
-    URI signLink = resolveSignLink(command.signLink());
+    String signLink = toAbsoluteSignLink(command.signLink());
+
+    var tenantName = resolveTenantName(command.tenantId());
+    dpaSigningEmailDispatchService.send(
+        command.recipientEmail().trim(), tenantName, signLink, command.expiresAt());
+  }
+
+  /**
+   * The absolute, origin-checked sign link. Callers that hand the link back for MANUAL sharing need
+   * the same normalisation the mail path applies: TenantService emits a path-only link whenever its
+   * own base URL is unset (as on Pre-Dev), and a copied {@code /dpa-sign/<token>} carries no
+   * origin, so it never reaches the DPA frontend. Anything that already has a scheme and host stays
+   * untouched and still has to pass the same-origin guard, so this never widens accepted origins.
+   */
+  public String toAbsoluteSignLink(String value) {
+    URI signLink = resolveSignLink(value);
     if (!hasSameOrigin(signLink, permittedAppOrigin)
         || signLink.getPath() == null
         || !signLink.getPath().startsWith("/dpa-sign/")) {
       throw new BadRequestException("signLink must use the configured ORISO App origin");
     }
-
-    var tenantName = resolveTenantName(command.tenantId());
-    dpaSigningEmailDispatchService.send(
-        command.recipientEmail().trim(), tenantName, signLink.toString(), command.expiresAt());
+    return signLink.toString();
   }
 
   /**

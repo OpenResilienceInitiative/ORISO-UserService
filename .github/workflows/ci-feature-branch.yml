@@ -24,6 +24,8 @@ jobs:
   required-integration-tests:
     name: required integration tests
     runs-on: ubuntu-latest
+    env:
+      ORISO_LOCAL_REDIS_IT: true
     services:
       redis:
         image: redis:7-alpine
@@ -34,7 +36,6 @@ jobs:
           --health-interval 5s
           --health-timeout 3s
           --health-retries 10
-
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6

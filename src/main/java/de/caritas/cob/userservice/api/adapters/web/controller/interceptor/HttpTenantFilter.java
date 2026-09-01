@@ -29,6 +29,19 @@ public class HttpTenantFilter extends OncePerRequestFilter {
 
   private static final String MATRIX_RTC_CALL_POLICY_PATH = "/internal/matrixrtc/call-policy";
 
+  /**
+   * The DPA signed-notice hint from TenantService. Like the MatrixRTC policy endpoint this is a
+   * machine callback, not a browser request: it arrives on the service host without a session,
+   * without a tenant header and without a resolvable subdomain, so {@code
+   * TenantResolverService.resolveForNonAuthenticatedUser} would throw AccessDeniedException before
+   * the permitAll route reaches its controller. The tenant is not lost by skipping this filter — it
+   * travels in the path and {@code DpaSignedNoticeService.processHint} establishes it on the worker
+   * thread that does the database work. Matched by pattern rather than by substring so sibling
+   * tenant routes keep the normal resolution.
+   */
+  private static final java.util.regex.Pattern DPA_SIGNED_NOTICE_PATH =
+      java.util.regex.Pattern.compile(".*/users/tenants/[^/]+/dpa-signed-notices$");
+
   private final @Nullable TenantResolverService tenantResolverService;
 
   private final @Nullable TenantService tenantService;
@@ -95,6 +108,9 @@ public class HttpTenantFilter extends OncePerRequestFilter {
 
     private boolean belongsToWhitelist(HttpServletRequest request, List<String> tenantWhitelist) {
       String requestUri = request.getRequestURI().toLowerCase();
+      if (DPA_SIGNED_NOTICE_PATH.matcher(requestUri).matches()) {
+        return true;
+      }
       return tenantWhitelist.parallelStream()
           .anyMatch(
               whitelistUri ->

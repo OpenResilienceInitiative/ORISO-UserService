@@ -13,12 +13,15 @@ import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 
 /** Service class to communicate with the ConsultingTypeService. */
+@Slf4j
 @Component
 @RequiredArgsConstructor
 public class ApplicationSettingsService {
@@ -49,10 +52,29 @@ public class ApplicationSettingsService {
       if (credentials == null
           || isBlank(credentials.getGlobalSmtpUsername())
           || isBlank(credentials.getGlobalSmtpPassword())) {
+        // #1006: log the configuration state, never the credential values themselves.
+        log.warn(
+            "Global SMTP credentials lookup at ConsultingTypeService returned no usable"
+                + " credentials (username or password missing/blank)");
         return Optional.empty();
       }
       return Optional.of(credentials);
     } catch (RestClientException ex) {
+      // #1006: this used to be swallowed silently, making "invite mail not sent"
+      // undiagnosable. The lookup stays best-effort, but status and cause must reach the log.
+      // A 403 here typically means the current request's token lacks the platform-admin role
+      // required by the guarded credentials endpoint.
+      String status =
+          ex instanceof RestClientResponseException responseException
+              ? String.valueOf(responseException.getStatusCode())
+              : "no response";
+      // Review 3893332413: attach the exception itself so root cause (TLS vs DNS vs
+      // connection) and stack trace reach the log — context fields stay secret-free.
+      log.warn(
+          "Global SMTP credentials lookup at ConsultingTypeService failed ({}, status: {})",
+          ex.getClass().getSimpleName(),
+          status,
+          ex);
       return Optional.empty();
     }
   }

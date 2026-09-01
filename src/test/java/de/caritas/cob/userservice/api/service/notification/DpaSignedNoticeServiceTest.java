@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -25,10 +26,12 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -126,6 +129,27 @@ class DpaSignedNoticeServiceTest {
   }
 
   @Test
+  void onSignatureHint_runsTheDispatchInTheHintedTenantContextAndClearsItAfterwards() {
+    // The dispatch runs on a pooled daemon thread that starts with no TenantContext. TenantAspect
+    // calls filter.validate() with the current tenant before every repository call, so without an
+    // established context the forwarding admin is filtered away and the notice is silently lost.
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    var tenantSeenByTheRepository = new AtomicReference<Long>();
+    when(adminRepository.findById("kc-admin-1"))
+        .thenAnswer(
+            invocation -> {
+              tenantSeenByTheRepository.set(TenantContext.getCurrentTenant());
+              return Optional.of(forwardingAdmin());
+            });
+
+    service.onSignatureHint(TENANT_ID);
+
+    assertEquals(TENANT_ID, tenantSeenByTheRepository.get());
+    // the pool reuses the thread, so the context must not survive the task
+    assertFalse(TenantContext.contextIsSet());
+  }
+
+  @Test
   void onSignatureHint_sendsToTheForwardingAdminsAccountEmailAndLanguage() {
     // given a forward created by a logged-in admin
     givenSignatures(forwardedSignature("kc-admin-1"));
@@ -143,7 +167,10 @@ class DpaSignedNoticeServiceTest {
             eq("toni@example.org"),
             subject.capture(),
             body.capture(),
-            eq("https://admin.example.org/admin"),
+            // no primary action: the layout would render a CTA button on top of the {{adminUrl}}
+            // the body already carries, and the preview passes null for this kind — a delivered
+            // button the operator never saw in the preview is the drift this asserts against
+            isNull(),
             eq(TENANT_ID),
             eq("en"));
     // the account language wins
@@ -154,6 +181,8 @@ class DpaSignedNoticeServiceTest {
     assertTrue(body.getValue().contains("2026-08-14 09:15"));
     assertTrue(body.getValue().contains("Erika Mustermann"));
     assertTrue(body.getValue().contains("Geschäftsführerin"));
+    // the Admin link is not lost by dropping the primary action — it lives inline in the prose
+    assertTrue(body.getValue().contains("https://admin.example.org/admin"));
     // no raw sign token can leak into the mail — the signature carries none
     assertTrue(!body.getValue().contains("/dpa-sign/"));
   }
