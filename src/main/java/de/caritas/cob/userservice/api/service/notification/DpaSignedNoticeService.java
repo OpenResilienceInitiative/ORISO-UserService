@@ -223,6 +223,12 @@ public class DpaSignedNoticeService {
       return;
     }
     var signature = forwardedSignature.get();
+    // Before anything that can bail out (recipient resolution, the ledger claim): the verified
+    // signature must reach the invite row either way, because the Admin invite progress board
+    // proves its final "Vertrag unterschrieben" phase from the invite's dpa_signed_at
+    // (ORISO-Admin#896, epic #725). Idempotent end to end - the repository update only fills a
+    // still-null timestamp, so a repeated hint can never regress or overwrite it.
+    recordSignatureOnInvites(tenantId, signature);
     Optional<Recipient> recipient = resolveRecipient(tenantId, signature);
     if (recipient.isEmpty()) {
       log.warn(
@@ -235,6 +241,27 @@ public class DpaSignedNoticeService {
       return;
     }
     sendNotice(tenantId, signature, recipient.get(), claim.get());
+  }
+
+  /**
+   * Writes the verified signature timestamp back to the tenant's onboarding invites (own
+   * transaction: the surrounding dispatch is deliberately transaction-free, and the stamp must
+   * survive a later mail failure). Falls back to the processing time when the upstream timestamp
+   * does not parse - a wrong-but-present stamp is better for the board than a phase that never
+   * completes.
+   */
+  private void recordSignatureOnInvites(Long tenantId, DpaSignatureDTO signature) {
+    LocalDateTime signedAt =
+        Optional.ofNullable(parseDateTime(signature.getSignedAt())).orElseGet(LocalDateTime::now);
+    Integer stamped =
+        requiresNewTransaction.execute(
+            tx ->
+                accountInviteRepository.markDpaSigned(
+                    tenantId, AccountInviteTargetRole.TENANT_ADMIN, signedAt));
+    if (stamped != null && stamped > 0) {
+      log.info(
+          "DPA signature for tenant {} written back to {} onboarding invite(s)", tenantId, stamped);
+    }
   }
 
   private Optional<DpaSignatureDTO> findLatestForwardedSignature(Long tenantId) {

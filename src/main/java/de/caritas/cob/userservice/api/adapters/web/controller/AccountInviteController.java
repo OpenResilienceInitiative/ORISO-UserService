@@ -454,6 +454,18 @@ public class AccountInviteController {
     public String acceptUrl;
 
     /**
+     * DPA contract state for the Admin invite progress board (ORISO-Admin#896, epic #725). The
+     * frontend consumes these optional fields by exactly these names: {@code dpaForwardedAt} proves
+     * the "Vertragsunterlagen weitergeleitet" phase, {@code dpaSignedAt} the final "Vertrag
+     * unterschrieben" phase — without it the board must not claim completion. {@code
+     * dpaForwardCount} accompanies them so the board can tell a first forward from a re-forward.
+     */
+    public LocalDateTime dpaForwardedAt;
+
+    public Integer dpaForwardCount;
+    public LocalDateTime dpaSignedAt;
+
+    /**
      * Only set by the public accept endpoint (ORISO-Admin#569 resume contract): {@code
      * PENDING_2FA_ACTIVATION} while the mandatory 2FA activation is open (link resumable), {@code
      * COMPLETED} once every account gate is satisfied. {@code null} on admin-facing endpoints.
@@ -504,6 +516,9 @@ public class AccountInviteController {
       dto.twoFactorWaivedAt = invite.getTwoFactorWaivedAt();
       dto.twoFactorWaiverReason = invite.getTwoFactorWaiverReason();
       dto.createDate = invite.getCreateDate();
+      dto.dpaForwardedAt = invite.getDpaForwardedAt();
+      dto.dpaForwardCount = invite.getDpaForwardCount();
+      dto.dpaSignedAt = invite.getDpaSignedAt();
       return dto;
     }
   }

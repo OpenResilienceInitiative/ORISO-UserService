@@ -480,6 +480,26 @@ class AccountInviteControllerTest {
     assertNotNull(annotation);
   }
 
+  /**
+   * Contract for the Admin invite progress board (ORISO-Admin#896, epic #725): the entity has
+   * stored the DPA forward state since the #722/#1090 chain and now the signature write-back, but
+   * the response DTO used to drop all of it — the board could never prove its "Vertragsunterlagen
+   * weitergeleitet" and final "Vertrag unterschrieben" phases.
+   */
+  @Test
+  void responseDto_serializesTheDpaStateForTheInviteProgressBoard() {
+    var invite = sampleInvite();
+    invite.setDpaForwardedAt(LocalDateTime.parse("2026-08-20T10:00:00"));
+    invite.setDpaForwardCount(2);
+    invite.setDpaSignedAt(LocalDateTime.parse("2026-08-21T09:30:00"));
+
+    var dto = AccountInviteController.AccountInviteResponseDTO.from(invite, null, null);
+
+    assertEquals(LocalDateTime.parse("2026-08-20T10:00:00"), dto.dpaForwardedAt);
+    assertEquals(2, dto.dpaForwardCount);
+    assertEquals(LocalDateTime.parse("2026-08-21T09:30:00"), dto.dpaSignedAt);
+  }
+
   private static AccountInvite sampleInvite() {
     return AccountInvite.builder()
         .id(10L)

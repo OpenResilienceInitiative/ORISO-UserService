@@ -482,6 +482,53 @@ class TenantAdminOnboardingServiceTest {
     verify(tenantCreationClient, never()).createTenant(any());
   }
 
+  /**
+   * ORISO-Admin#896 (epic #725): the invite progress board proves its final "Vertrag
+   * unterschrieben" phase from the invite's {@code dpaSignedAt}. An own acceptance at registration
+   * IS the signature (recorded as the tenant's U9 admin signature), so the registration must stamp
+   * the invite — otherwise every self-signed tenant waits for a signature forever.
+   */
+  @Test
+  void registerTenantAdmin_ownDpaAcceptance_stampsTheSignatureOnTheInvite() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    service.registerTenantAdmin(RAW_TOKEN, validCommand());
+
+    assertNotNull(
+        invite.getDpaSignedAt(),
+        "an own DPA acceptance is the signature and must be stamped on the invite");
+  }
+
+  @Test
+  void registerTenantAdmin_dpaForwardedEarlier_doesNotStampTheSignature() {
+    // The forwarded signature is pending with an external signer — only the DPA_SIGNED_NOTICE
+    // chain may stamp it once TenantService has verified the signature actually landed.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardedAt(LocalDateTime.now().minusMinutes(5));
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdmin(any(CreateAdminDTO.class)))
+        .thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance());
+
+    assertNull(invite.getDpaSignedAt(), "a pending forwarded signature must not be pre-stamped");
+  }
+
   @Test
   void registerTenantAdmin_dpaForwardedEarlier_createsTenantWithoutAcceptance() {
     // given an invite that forwarded the DPA in wizard step 1
