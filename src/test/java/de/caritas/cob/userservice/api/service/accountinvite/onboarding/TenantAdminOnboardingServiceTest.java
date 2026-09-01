@@ -537,6 +537,45 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
+  void forwardDpa_repaysTheReservedAttempt_When_theProviderAnswersWithNoBodyAtAll() {
+    // A null DTO is the second way a 200 can carry no link; it must be compensated like the
+    // missing expiry, otherwise a provider fault still burns the invitation's budget.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(null);
+
+    assertThrows(RuntimeException.class, () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    assertEquals(0, invite.getDpaForwardCount());
+    assertNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
+  void forwardDpa_repaysTheReservedAttempt_When_theProviderLinkFailsTheOriginGuard() {
+    // The third way: a 200 with a link from a foreign origin. toAbsoluteSignLink rejects it, and
+    // the caller is left without a usable link — so the attempt is repaid like the other two.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
+                .token("RAWSIGNTOKEN")
+                .signLink("https://evil.example/dpa-sign/RAWSIGNTOKEN")
+                .expiresAt("2026-08-29T14:31:07"));
+    when(dpaForwardEmailService.toAbsoluteSignLink("https://evil.example/dpa-sign/RAWSIGNTOKEN"))
+        .thenThrow(new BadRequestException("signLink must use the configured ORISO App origin"));
+
+    assertThrows(
+        BadRequestException.class, () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    assertEquals(0, invite.getDpaForwardCount());
+    assertNull(invite.getDpaForwardedAt());
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
   void forwardDpa_returnsAnAbsoluteLink_When_theProviderEmitsAPathOnlyOne() {
     // On Pre-Dev the TenantService base URL is unset, so the mint answers "/dpa-sign/<token>".
     // Both the recipient-less and the mail-failed branch hand that link to the wizard for MANUAL
