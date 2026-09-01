@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -52,6 +53,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.UnexpectedRollbackException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
@@ -628,6 +630,56 @@ class CaseHandoverServiceTest {
     caseHandoverService.resolveClientConsent(123L, 88L, true);
 
     verify(sessionSupervisorFacade).attachStandingSupervisorIfAssigned(123L, requester);
+  }
+
+  /**
+   * The production path is transactional, so it takes the deferred branch, not the
+   * no-synchronization fallback the test above exercises. Assert the real one: nothing before the
+   * commit, then the REQUIRES_NEW entry point and never the plain method.
+   */
+  @Test
+  void resolveClientConsent_defersTheSupervisorAttachToANewTransaction_WhenClientApproves() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+      verify(sessionSupervisorFacade, never())
+          .attachStandingSupervisorInNewTransaction(any(), any());
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(synchronization -> synchronization.afterCommit());
+
+      verify(sessionSupervisorFacade).attachStandingSupervisorInNewTransaction(123L, requester);
+      verify(sessionSupervisorFacade, never()).attachStandingSupervisorIfAssigned(any(), any());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  /**
+   * The facade swallows its own failures, but the REQUIRES_NEW commit happens after that catch
+   * returns, so a rollback-only transaction throws out of the proxy. The handover has already
+   * committed by then; letting it escape would 500 a successful takeover.
+   */
+  @Test
+  void requestAccess_swallowsASupervisorAttachFailureRaisedByTheNewTransactionsCommit() {
+    doThrow(new UnexpectedRollbackException("transaction rolled back"))
+        .when(sessionSupervisorFacade)
+        .attachStandingSupervisorInNewTransaction(any(), any());
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(synchronization -> synchronization.afterCommit());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(sessionSupervisorFacade).attachStandingSupervisorInNewTransaction(123L, requester);
   }
 
   @Test

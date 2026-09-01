@@ -513,10 +513,24 @@ public class CaseHandoverService {
         new TransactionSynchronization() {
           @Override
           public void afterCommit() {
-            // Must be the REQUIRES_NEW entry point: at afterCommit the committed transaction's
-            // resources are still bound, so a write through the plain method would join a
-            // transaction that can no longer commit and the SessionSupervisor row would be lost.
-            sessionSupervisorFacade.attachStandingSupervisorInNewTransaction(sessionId, newOwner);
+            try {
+              // Must be the REQUIRES_NEW entry point: at afterCommit the committed transaction's
+              // resources are still bound, so a write through the plain method would join a
+              // transaction that can no longer commit and the SessionSupervisor row would be lost.
+              sessionSupervisorFacade.attachStandingSupervisorInNewTransaction(sessionId, newOwner);
+            } catch (RuntimeException supervisionFailure) {
+              // The catch has to sit OUTSIDE the proxied boundary. The facade swallows its own
+              // exceptions, but a swallowed persistence failure has already marked the new
+              // transaction rollback-only, so the commit the proxy attempts afterwards throws
+              // UnexpectedRollbackException — after this method returned. Escaping here would
+              // surface as a 500 on a handover that has already committed, which is exactly the
+              // guarantee this indirection exists to protect.
+              log.warn(
+                  "Standing supervisor attach failed after the handover of session {} committed;"
+                      + " the case stays unsupervised",
+                  sessionId,
+                  supervisionFailure);
+            }
           }
         });
   }
