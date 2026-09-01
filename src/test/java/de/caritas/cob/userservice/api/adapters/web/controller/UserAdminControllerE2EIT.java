@@ -420,8 +420,45 @@ class UserAdminControllerE2EIT {
     when(authenticatedUser.getUserId()).thenReturn(adminId);
     when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(false);
     when(authenticatedUser.isSingleTenantAdmin()).thenReturn(true);
-    // #968: self-patch dispatches to patchTenantAdmin which now enforces tenant scoping;
-    // treat this mock user as platform admin so the check short-circuits.
+    // #968: self-patch dispatches to patchTenantAdmin, which scopes to the caller's tenant.
+    // The caller here *is* the admin being patched, so it carries that admin's own tenant
+    // (102 for cgenney5 in UserServiceDatabase.sql). Reporting platform admin instead would
+    // short-circuit the check and leave the same-tenant path this test exists for unproven.
+    when(authenticatedUser.getTenantId()).thenReturn(102L);
+
+    PatchAdminDTO patchAdminDTO = new EasyRandom().nextObject(PatchAdminDTO.class);
+
+    patchAdminDTO.setFirstname("changedFirstname");
+    patchAdminDTO.setLastname("changedLastname");
+    patchAdminDTO.setEmail("changed@email.com");
+
+    when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
+        .thenReturn(new RestrictedTenantDTO().subdomain("subdomain"));
+
+    // when, then
+    this.mockMvc
+        .perform(
+            patch(ADMIN_DATA_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(patchAdminDTO)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("_embedded.id", is(adminId)))
+        .andExpect(jsonPath("_embedded.firstname", is("changedFirstname")))
+        .andExpect(jsonPath("_embedded.lastname", is("changedLastname")))
+        .andExpect(jsonPath("_embedded.email", is("changed@email.com")));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.SINGLE_TENANT_ADMIN})
+  void patchAdminData_Should_returnOk_When_patchAttemptAsPlatformAdmin() throws Exception {
+    // given
+    // #968: a platform admin keeps the cross-tenant view, so the scope check short-circuits
+    // and no caller tenant is needed. Kept separate from the single-tenant case so that one
+    // still exercises the same-tenant path.
+    String adminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
+    when(authenticatedUser.getUserId()).thenReturn(adminId);
+    when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(false);
+    when(authenticatedUser.isSingleTenantAdmin()).thenReturn(true);
     when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
 
     PatchAdminDTO patchAdminDTO = new EasyRandom().nextObject(PatchAdminDTO.class);
