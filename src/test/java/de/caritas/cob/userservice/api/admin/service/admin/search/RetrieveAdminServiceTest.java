@@ -24,9 +24,9 @@ class RetrieveAdminServiceTest {
 
   /**
    * #968 fail-closed contract: a null caller tenant id must NOT be forwarded to
-   * AdminRepository#findAllByInfixAndTenantId (which would return an unbounded result set), and
-   * the method must return an empty page instead. Same shape as
-   * {@link RetrieveAdminService#findAllByInfixScopedToAgencies} on an empty agency set.
+   * AdminRepository#findAllByInfixAndTenantId (which would return an unbounded result set), and the
+   * method must return an empty page instead. Same shape as {@link
+   * RetrieveAdminService#findAllByInfixScopedToAgencies} on an empty agency set.
    */
   @Test
   void findAllByInfixScopedToTenant_Should_ReturnEmpty_AndSkipRepository_WhenTenantIdIsNull() {
@@ -45,12 +45,10 @@ class RetrieveAdminServiceTest {
   void findAllByInfixScopedToTenant_Should_DelegateToRepository_WhenTenantIdIsPresent() {
     PageRequest pageRequest = PageRequest.of(0, 10);
     Mockito.when(
-            adminRepository.findAllByInfixAndTenantId(
-                "*", Admin.AdminType.AGENCY, 9L, pageRequest))
+            adminRepository.findAllByInfixAndTenantId("*", Admin.AdminType.AGENCY, 9L, pageRequest))
         .thenReturn(org.springframework.data.domain.Page.empty(pageRequest));
 
-    retrieveAdminService.findAllByInfixScopedToTenant(
-        "*", Admin.AdminType.AGENCY, 9L, pageRequest);
+    retrieveAdminService.findAllByInfixScopedToTenant("*", Admin.AdminType.AGENCY, 9L, pageRequest);
 
     Mockito.verify(adminRepository)
         .findAllByInfixAndTenantId("*", Admin.AdminType.AGENCY, 9L, pageRequest);
