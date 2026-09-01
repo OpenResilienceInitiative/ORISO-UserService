@@ -436,11 +436,18 @@ public class DpaSignedNoticeService {
     return rendered;
   }
 
-  private static String defaultSubject(String language) {
+  /**
+   * The subject an operator sees when no DPA_SIGNED_NOTICE template is active — the same text
+   * delivery falls back to. Public so {@link
+   * de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService} previews what
+   * is actually sent instead of the generic invite sample.
+   */
+  public static String defaultSubject(String language) {
     return "de".equalsIgnoreCase(language) ? DEFAULT_SUBJECT_DE : DEFAULT_SUBJECT_EN;
   }
 
-  private static String defaultBody(String language) {
+  /** The body counterpart of {@link #defaultSubject(String)}. */
+  public static String defaultBody(String language) {
     return "de".equalsIgnoreCase(language) ? DEFAULT_BODY_DE : DEFAULT_BODY_EN;
   }
 
