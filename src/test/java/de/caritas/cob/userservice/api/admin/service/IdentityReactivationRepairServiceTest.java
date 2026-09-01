@@ -22,6 +22,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -39,6 +40,7 @@ class IdentityReactivationRepairServiceTest {
     repairService =
         new IdentityReactivationRepairService(repairWriter, userRepository, meterRegistry);
     ReflectionTestUtils.setField(repairService, "staleAfter", Duration.ofMinutes(5));
+    ReflectionTestUtils.setField(repairService, "repairBatchSize", 200);
   }
 
   @Test
@@ -96,7 +98,7 @@ class IdentityReactivationRepairServiceTest {
   void retryOutstandingRepairsRetriesExplicitRepairImmediately() {
     User repair = claimedUser(DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED, 0);
     when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
-            DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED))
+            DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED, PageRequest.of(0, 200)))
         .thenReturn(List.of(repair));
     when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
             DeletionLifecycleState.REACTIVATION_IN_PROGRESS))
@@ -116,7 +118,7 @@ class IdentityReactivationRepairServiceTest {
     fresh.setUserId("user-2");
     fresh.setReactivationOperationId("operation-2");
     when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
-            DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED))
+            DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED, PageRequest.of(0, 200)))
         .thenReturn(List.of());
     when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
             DeletionLifecycleState.REACTIVATION_IN_PROGRESS))
@@ -133,7 +135,7 @@ class IdentityReactivationRepairServiceTest {
   void retryOutstandingRepairsKeepsFailedRepairObservable() {
     User repair = claimedUser(DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED, 0);
     when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
-            DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED))
+            DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED, PageRequest.of(0, 200)))
         .thenReturn(List.of(repair));
     when(userRepository.findAllByDeletionLifecycleStateOrderByCreateDateAsc(
             DeletionLifecycleState.REACTIVATION_IN_PROGRESS))

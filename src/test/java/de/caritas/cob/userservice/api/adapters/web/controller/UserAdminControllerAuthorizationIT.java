@@ -128,6 +128,35 @@ class UserAdminControllerAuthorizationIT {
     verify(askerUserAdminFacade).reactivateAsker(any());
   }
 
+  /**
+   * The alias is a second URI onto the same handler, so it needs its own authorization coverage:
+   * the security matchers are URI-based and can drift apart from the canonical path.
+   */
+  @Test
+  void reactivateAskerAlias_Should_ReturnUnauthorized_When_noKeycloakAuthorizationIsPresent()
+      throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_ALIAS_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isUnauthorized());
+
+    verifyNoInteractions(askerUserAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void reactivateAskerAlias_Should_ReturnForbidden_When_authorityIsNotPrivileged()
+      throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_ALIAS_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(askerUserAdminFacade);
+  }
+
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void reactivateAskerAlias_Should_RejectInvalidRequestBeforeFacadeCall() throws Exception {

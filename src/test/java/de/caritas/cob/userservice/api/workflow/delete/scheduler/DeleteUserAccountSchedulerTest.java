@@ -1,6 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
-import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
@@ -14,6 +14,7 @@ import java.time.Duration;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InOrder;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -44,10 +45,20 @@ public class DeleteUserAccountSchedulerTest {
 
     this.deleteUserAccountScheduler.performDeletionWorkflow();
 
-    verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
-    verify(identityReactivationRepairService).retryOutstandingRepairs();
-    verify(userHardDeleteClaimService).releaseInterruptedClaims();
-    verify(this.deleteUserAccountService).deleteUserAccounts();
+    // Order is the contract, not just the call set: an outstanding repair must be retried and an
+    // interrupted claim released BEFORE deletion runs, or the run deletes against a claim state it
+    // has not recovered yet. Independent verifies pass even if deletion goes first.
+    InOrder inOrder =
+        inOrder(
+            tenantContextProvider,
+            identityReactivationRepairService,
+            userHardDeleteClaimService,
+            deleteUserAccountService);
+    inOrder.verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
+    inOrder.verify(identityReactivationRepairService).retryOutstandingRepairs();
+    inOrder.verify(userHardDeleteClaimService).releaseInterruptedClaims();
+    inOrder.verify(deleteUserAccountService).deleteUserAccounts();
+    inOrder.verifyNoMoreInteractions();
   }
 
   @Test

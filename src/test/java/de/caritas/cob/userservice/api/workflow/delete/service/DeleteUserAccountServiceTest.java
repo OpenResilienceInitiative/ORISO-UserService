@@ -4,6 +4,7 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
@@ -60,9 +61,16 @@ public class DeleteUserAccountServiceTest {
     lenient()
         .when(deletionLifecycleService.normalizeConsultantLifecycle(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    // Echo the requested id. The blanket stub used to hand back a blank User, so a test that left
+    // userId null could claim and delete an account other than the one it set up.
     lenient()
-        .when(userHardDeleteClaimService.claim(any()))
-        .thenAnswer(invocation -> Optional.of(new User()));
+        .when(userHardDeleteClaimService.claim(anyString()))
+        .thenAnswer(
+            invocation -> {
+              var claimed = new User();
+              claimed.setUserId(invocation.getArgument(0));
+              return Optional.of(claimed);
+            });
     lenient()
         .when(deletionLifecycleService.isReadyForHardDelete(any(Consultant.class)))
         .thenReturn(true);
@@ -154,7 +162,9 @@ public class DeleteUserAccountServiceTest {
   @Test
   public void deleteUserAccounts_Should_sendErrorMails_When_someActionsFail() {
     User user = new User();
+    user.setUserId("user-id");
     when(this.userRepository.findAllByDeleteDateNotNull()).thenReturn(singletonList(user));
+    when(userHardDeleteClaimService.claim("user-id")).thenReturn(Optional.of(user));
     when(this.actionsRegistry.buildContainerForType(AskerDeletionWorkflowDTO.class))
         .thenReturn(this.commandMockProvider.getActionContainer(AskerDeletionWorkflowDTO.class));
     doAnswer(

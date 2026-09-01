@@ -264,10 +264,16 @@ public class UserAccountService {
   }
 
   private void ensureCurrentAccountIsWritable() {
-    this.userService.getUser(this.authenticatedUser.getUserId()).ifPresent(this::assertWritable);
-    this.consultantService
-        .getConsultant(this.authenticatedUser.getUserId())
+    String userId = this.authenticatedUser.getUserId();
+    // getUser filters deleteDate IS NULL, so on its own it can never return an account in a
+    // deletion lifecycle state — every branch of assertWritable(User) below would be unreachable.
+    // The soft-deleted account is exactly the one the safeguard exists to freeze, so fall back to
+    // the lookup that includes it.
+    this.userService
+        .getUser(userId)
+        .or(() -> this.userService.findDeletedById(userId))
         .ifPresent(this::assertWritable);
+    this.consultantService.getConsultant(userId).ifPresent(this::assertWritable);
   }
 
   private void assertWritable(User user) {

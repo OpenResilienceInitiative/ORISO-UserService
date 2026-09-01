@@ -13,6 +13,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 
 /** Observes and retries durable, generation-fenced identity reactivation claims. */
@@ -29,6 +30,14 @@ public class IdentityReactivationRepairService {
 
   @Value("${identity.reactivation.repair.staleAfter:PT5M}")
   private Duration staleAfter;
+
+  /**
+   * Upper bound on the durable repair queue drained per scheduler run. Each row costs one
+   * synchronous Keycloak call on the scheduler thread, so an unbounded backlog would stall the
+   * whole deletion workflow behind it.
+   */
+  @Value("${identity.reactivation.repair.batchSize:200}")
+  private int repairBatchSize;
 
   /** Compensates a failed request without permitting a stale generation to affect a newer one. */
   public void compensate(
@@ -58,13 +67,20 @@ public class IdentityReactivationRepairService {
 
   /**
    * Retries failed repairs and crash-window claims only after the configured stale grace period.
+   *
+   * <p>The durable REACTIVATION_REPAIR_REQUIRED queue is the one that accumulates across runs, so
+   * it is drained a bounded page at a time. The REACTIVATION_IN_PROGRESS scan stays unbounded: its
+   * staleness filter runs here rather than in SQL, so paging it by create date would starve an old
+   * stale claim behind a page of fresh ones. Its population is the set of in-flight admin
+   * reactivations, which is transient by construction.
    */
   public void retryOutstandingRepairs() {
     LocalDateTime staleBefore = LocalDateTime.now(ZoneOffset.UTC).minus(staleAfter);
     Stream.concat(
             userRepository
                 .findAllByDeletionLifecycleStateOrderByCreateDateAsc(
-                    DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED)
+                    DeletionLifecycleState.REACTIVATION_REPAIR_REQUIRED,
+                    PageRequest.of(0, repairBatchSize))
                 .stream(),
             userRepository
                 .findAllByDeletionLifecycleStateOrderByCreateDateAsc(

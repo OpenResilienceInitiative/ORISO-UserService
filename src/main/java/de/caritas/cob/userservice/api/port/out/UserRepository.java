@@ -7,6 +7,7 @@ import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -27,6 +28,13 @@ public interface UserRepository extends CrudRepository<User, String> {
 
   List<User> findAllByDeletionLifecycleStateOrderByCreateDateAsc(
       DeletionLifecycleState deletionLifecycleState);
+
+  /**
+   * Bounded, oldest-first variant. The durable repair queue is drained a page at a time so one
+   * scheduler run has a predictable upper cost; the remainder is picked up by the next run.
+   */
+  List<User> findAllByDeletionLifecycleStateOrderByCreateDateAsc(
+      DeletionLifecycleState deletionLifecycleState, Pageable pageable);
 
   List<User> findAllByDeleteDateIsNull();
 
