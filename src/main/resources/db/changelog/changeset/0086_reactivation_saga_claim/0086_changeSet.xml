@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="0086-reactivation-saga-claim" author="frank">
+    <comment>#1082: durable generation-fenced claim before external identity reactivation.</comment>
+    <sqlFile
+      path="db/changelog/changeset/0086_reactivation_saga_claim/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    <rollback>
+      <sql>ALTER TABLE user DROP COLUMN IF EXISTS reactivation_operation_started_at;</sql>
+      <sql>ALTER TABLE user DROP COLUMN IF EXISTS reactivation_operation_id;</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

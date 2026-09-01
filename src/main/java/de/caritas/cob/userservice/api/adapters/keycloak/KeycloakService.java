@@ -15,6 +15,8 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationUpstreamException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
@@ -41,6 +43,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityReactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -98,6 +101,7 @@ public class KeycloakService
         IdentityPasswordUpdater,
         IdentityProfileLookup,
         IdentityProfileUpdater,
+        IdentityReactivator,
         IdentityRoleLookup,
         IdentityRoleUpdater,
         IdentitySecondFactor,
@@ -1008,5 +1012,98 @@ public class KeycloakService
     var userRepresentation = userResource.toRepresentation();
     userRepresentation.setEnabled(false);
     userResource.update(userRepresentation);
+  }
+
+  @Override
+  public void reactivateUser(
+      String userId,
+      String expectedUsername,
+      String expectedEmail,
+      Long expectedTenantId,
+      String password) {
+    var userResource = keycloakClient.getUsersResource().get(userId);
+    final UserRepresentation identity;
+    try {
+      identity = userResource.toRepresentation();
+    } catch (NotFoundException exception) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException(
+          "Identity for soft-deleted asker does not exist");
+    }
+    if (!matchesReactivationIdentity(
+        identity, userId, expectedUsername, expectedEmail, expectedTenantId)) {
+      throw new de.caritas.cob.userservice.api.exception.httpresponses.ConflictException(
+          "Keycloak identity does not match the soft-deleted asker exactly");
+    }
+
+    boolean failClosedDisableRequired = false;
+    boolean sessionsWereRevoked = false;
+    try {
+      if (TRUE.equals(identity.isEnabled())) {
+        // A previous database-rollback compensation may have failed after Keycloak was enabled.
+        // Repair only the already-validated exact tuple and make a privileged retry fail closed.
+        identity.setEnabled(false);
+        failClosedDisableRequired = true;
+        userResource.update(identity);
+        userResource.logout();
+        sessionsWereRevoked = true;
+      }
+      updatePassword(userId, password);
+      failClosedDisableRequired = true;
+      if (!sessionsWereRevoked) {
+        userResource.logout();
+      }
+      identity.setEnabled(true);
+      userResource.update(identity);
+    } catch (CustomValidationHttpStatusException exception) {
+      throw exception;
+    } catch (RuntimeException exception) {
+      if (failClosedDisableRequired) {
+        ensureReactivationIdentityDisabled(userId, userResource, identity, exception);
+      }
+      throw new IdentityReactivationUpstreamException(
+          "Keycloak could not complete asker identity reactivation", exception);
+    }
+  }
+
+  private void ensureReactivationIdentityDisabled(
+      String userId,
+      UserResource userResource,
+      UserRepresentation identity,
+      RuntimeException reactivationFailure) {
+    identity.setEnabled(false);
+    try {
+      userResource.update(identity);
+    } catch (RuntimeException compensationFailure) {
+      log.error(
+          "Could not disable partially reactivated Keycloak identity {}",
+          userId,
+          compensationFailure);
+      throw new IdentityReactivationCompensationException(
+          "Keycloak identity reactivation and disable compensation both failed",
+          reactivationFailure,
+          compensationFailure);
+    }
+  }
+
+  private boolean matchesReactivationIdentity(
+      UserRepresentation identity,
+      String userId,
+      String expectedUsername,
+      String expectedEmail,
+      Long expectedTenantId) {
+    if (identity == null
+        || !userId.equals(identity.getId())
+        || !expectedUsername.equalsIgnoreCase(identity.getUsername())
+        || !expectedEmail.equalsIgnoreCase(identity.getEmail())) {
+      return false;
+    }
+    if (!TRUE.equals(multiTenancyEnabled)) {
+      return true;
+    }
+    var attributes = identity.getAttributes();
+    var tenantIds = attributes == null ? null : attributes.get(TENANT_ID_ATTRIBUTE);
+    return tenantIds != null
+        && tenantIds.size() == 1
+        && expectedTenantId.toString().equals(tenantIds.getFirst());
   }
 }

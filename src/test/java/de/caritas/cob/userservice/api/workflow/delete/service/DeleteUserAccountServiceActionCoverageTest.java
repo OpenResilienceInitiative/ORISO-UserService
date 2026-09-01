@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMa
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -94,6 +95,8 @@ class DeleteUserAccountServiceActionCoverageTest {
 
   @Mock private DeletionLifecycleService deletionLifecycleService;
 
+  @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
+
   @Mock private ActionContainer<AskerDeletionWorkflowDTO> askerContainer;
 
   @Mock private ActionContainer<ConsultantDeletionWorkflowDTO> consultantContainer;
@@ -101,12 +104,11 @@ class DeleteUserAccountServiceActionCoverageTest {
   @BeforeEach
   void setupLifecycleMocks() {
     lenient()
-        .when(deletionLifecycleService.normalizeUserLifecycle(any(User.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-    lenient()
         .when(deletionLifecycleService.normalizeConsultantLifecycle(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    lenient().when(deletionLifecycleService.isReadyForHardDelete(any(User.class))).thenReturn(true);
+    lenient()
+        .when(userHardDeleteClaimService.claim(any()))
+        .thenAnswer(invocation -> Optional.of(new User()));
     lenient()
         .when(deletionLifecycleService.isReadyForHardDelete(any(Consultant.class)))
         .thenReturn(true);

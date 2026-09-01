@@ -4,6 +4,7 @@ import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonList;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
@@ -28,6 +29,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteMa
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.ConsultantDeletionWorkflowDTO;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -50,17 +52,25 @@ public class DeleteUserAccountServiceTest {
 
   @Mock private DeletionLifecycleService deletionLifecycleService;
 
+  @Mock private UserHardDeleteClaimService userHardDeleteClaimService;
+
   private final ActionCommandMockProvider commandMockProvider = new ActionCommandMockProvider();
 
   @BeforeEach
   public void setupLifecycleMocks() {
     lenient()
-        .when(deletionLifecycleService.normalizeUserLifecycle(any(User.class)))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-    lenient()
         .when(deletionLifecycleService.normalizeConsultantLifecycle(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    lenient().when(deletionLifecycleService.isReadyForHardDelete(any(User.class))).thenReturn(true);
+    // Echo the requested id. The blanket stub used to hand back a blank User, so a test that left
+    // userId null could claim and delete an account other than the one it set up.
+    lenient()
+        .when(userHardDeleteClaimService.claim(anyString()))
+        .thenAnswer(
+            invocation -> {
+              var claimed = new User();
+              claimed.setUserId(invocation.getArgument(0));
+              return Optional.of(claimed);
+            });
     lenient()
         .when(deletionLifecycleService.isReadyForHardDelete(any(Consultant.class)))
         .thenReturn(true);
@@ -77,15 +87,17 @@ public class DeleteUserAccountServiceTest {
   @Test
   public void deleteUserAccounts_Should_performAskerDeletion_When_userIsMarkedAsDeleted() {
     User user = new User();
+    user.setUserId("deleted-user");
     when(this.userRepository.findAllByDeleteDateNotNull()).thenReturn(singletonList(user));
-    when(this.deletionLifecycleService.normalizeUserLifecycle(user)).thenReturn(user);
-    when(this.deletionLifecycleService.isReadyForHardDelete(user)).thenReturn(true);
+    when(userHardDeleteClaimService.claim("deleted-user")).thenReturn(Optional.of(user));
     when(this.actionsRegistry.buildContainerForType(AskerDeletionWorkflowDTO.class))
         .thenReturn(this.commandMockProvider.getActionContainer(AskerDeletionWorkflowDTO.class));
 
     this.deleteUserAccountService.deleteUserAccounts();
 
     verify(this.actionsRegistry, times(1)).buildContainerForType(AskerDeletionWorkflowDTO.class);
+    verify(userHardDeleteClaimService).claim(user.getUserId());
+    verify(userHardDeleteClaimService).release(user.getUserId());
     verify(this.commandMockProvider.getActionMock(DeleteMatrixAskerAction.class), times(1))
         .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
     verify(this.commandMockProvider.getActionMock(DeleteDatabaseAskerAction.class), times(1))
@@ -100,6 +112,19 @@ public class DeleteUserAccountServiceTest {
             times(1))
         .execute(new AskerDeletionWorkflowDTO(user, emptyList()));
     verifyNoMoreInteractions(this.workflowErrorMailService);
+  }
+
+  @Test
+  void deleteUserAccounts_Should_skipDestructiveActions_When_hardDeleteClaimIsLost() {
+    User user = new User();
+    user.setUserId("racing-user");
+    when(userRepository.findAllByDeleteDateNotNull()).thenReturn(singletonList(user));
+    when(userHardDeleteClaimService.claim("racing-user")).thenReturn(Optional.empty());
+
+    deleteUserAccountService.deleteUserAccounts();
+
+    verify(userHardDeleteClaimService).claim("racing-user");
+    verifyNoMoreInteractions(actionsRegistry, userHardDeleteClaimService);
   }
 
   @Test
@@ -137,9 +162,9 @@ public class DeleteUserAccountServiceTest {
   @Test
   public void deleteUserAccounts_Should_sendErrorMails_When_someActionsFail() {
     User user = new User();
+    user.setUserId("user-id");
     when(this.userRepository.findAllByDeleteDateNotNull()).thenReturn(singletonList(user));
-    when(this.deletionLifecycleService.normalizeUserLifecycle(user)).thenReturn(user);
-    when(this.deletionLifecycleService.isReadyForHardDelete(user)).thenReturn(true);
+    when(userHardDeleteClaimService.claim("user-id")).thenReturn(Optional.of(user));
     when(this.actionsRegistry.buildContainerForType(AskerDeletionWorkflowDTO.class))
         .thenReturn(this.commandMockProvider.getActionContainer(AskerDeletionWorkflowDTO.class));
     doAnswer(

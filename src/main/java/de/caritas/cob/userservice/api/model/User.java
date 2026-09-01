@@ -114,6 +114,12 @@ public class User implements TenantAware, NotificationsAware {
   @Column(name = "deletion_pause_created_at", columnDefinition = "datetime")
   private LocalDateTime deletionPauseCreatedAt;
 
+  @Column(name = "reactivation_operation_id", length = 36)
+  private String reactivationOperationId;
+
+  @Column(name = "reactivation_operation_started_at", columnDefinition = "datetime")
+  private LocalDateTime reactivationOperationStartedAt;
+
   @Column(name = "tenant_id")
   private Long tenantId;
 

@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyConsultantResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyTypeDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyResponseDTO;
@@ -384,6 +385,18 @@ public class UserAdminController implements UseradminApi {
         deletionPauseRequestDTO.getMonths(),
         authenticatedUser.getUserId());
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  @PostMapping(
+      value = {
+        "/useradmin/askers/deletion/reactivate",
+        "/service/useradmin/askers/deletion/reactivate"
+      },
+      consumes = "application/json")
+  public ResponseEntity<Void> reactivateAsker(
+      @Valid @RequestBody AskerReactivationRequestDTO reactivationRequest) {
+    askerUserAdminFacade.reactivateAsker(reactivationRequest);
+    return ResponseEntity.noContent().build();
   }
 
   @Override
