@@ -354,8 +354,10 @@ class UserAdminControllerE2EIT {
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void updateAgencyAdmin_Should_returnOk_When_updateAttemptAsUserAdmin() throws Exception {
     // given
-    // #968: tenant-scoping now guards this endpoint; test intent is authority acceptance,
-    // so run as platform admin. Same-tenant path is covered by AgencyAdminUserServiceTest.
+    // #968: this class runs with multitenancy.enabled=false, so CreateAdminService stores the
+    // new admin with a null tenant. The scope check rejects a null on either side, so only a
+    // platform admin can reach the endpoint here; the same-tenant path is covered by
+    // AgencyAdminUserServiceTest against a target that actually has a tenant.
     when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     String adminId = givenNewAgencyAdminIsCreated();
 
@@ -550,8 +552,10 @@ class UserAdminControllerE2EIT {
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void updateTenantAdmin_Should_returnOk_When_updateAttemptAsTenantAdmin() throws Exception {
     // given
-    // #968: run as platform admin to bypass the new tenant-scope check; same-tenant path
-    // is covered by TenantAdminUserServiceTest scoping tests.
+    // #968: multitenancy.enabled=false here, so the freshly created admin has a null tenant
+    // and the scope check can never match a caller tenant. Platform admin is the only caller
+    // that can reach this endpoint in this setup; TenantAdminUserServiceTest covers the
+    // same-tenant path against a target that has a tenant.
     when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     String adminId = givenNewTenantAdminIsCreated();
 
@@ -637,8 +641,10 @@ class UserAdminControllerE2EIT {
   void getTenantAdmin_Should_returnOk_When_attemptedToGetTenantAdminWithTenantAdminAuthority()
       throws Exception {
     // given
-    // #968: unscoped access requires platform-admin identity now.
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    // #968: reading a tenant admin is scoped to the caller's tenant. cgenney5 sits in tenant
+    // 102 (UserServiceDatabase.sql), so the caller carries that tenant and the same-tenant
+    // branch is the one under test.
+    when(authenticatedUser.getTenantId()).thenReturn(102L);
     var existingAdminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
 
     // when, then
@@ -868,8 +874,10 @@ class UserAdminControllerE2EIT {
   @Test
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void searchTenantAdmin_Should_returnCorrectResult_When_tenantIdIsProvided() throws Exception {
-    // #968: cross-tenant search is now platform-admin only.
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    // #968: the infix search is scoped to the caller's tenant for every non-platform caller.
+    // The expected hit, cgenney5, is in tenant 102, so a caller in that tenant still finds it —
+    // this keeps the test on the scoped path instead of the platform-admin short-circuit.
+    when(authenticatedUser.getTenantId()).thenReturn(102L);
     final String tenantId = "102";
     final String expectedAdminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
     final String expectedUsername = "cgenney5";
@@ -947,7 +955,8 @@ class UserAdminControllerE2EIT {
   void deleteTenantAdmin_Should_delete_When_attemptedToDeleteTenantAdminWithTenantAdminAuthority()
       throws Exception {
     // given
-    // #968: cross-tenant delete is now platform-admin only.
+    // #968: the admin created here has a null tenant (multitenancy.enabled=false), which no
+    // caller tenant can match, so only a platform admin can delete it in this setup.
     when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     var adminId = givenNewTenantAdminIsCreated();
 
