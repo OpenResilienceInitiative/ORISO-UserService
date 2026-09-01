@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
@@ -69,6 +70,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.Synchronized;
 import lombok.extern.slf4j.Slf4j;
+import org.apache.commons.lang3.StringUtils;
 import org.keycloak.admin.client.resource.UserResource;
 import org.keycloak.admin.client.resource.UsersResource;
 import org.keycloak.representations.idm.CredentialRepresentation;
@@ -95,6 +97,7 @@ public class KeycloakService
         IdentityDummyEmailUpdater,
         IdentityEmailAddressUpdater,
         IdentityEmailOwnerLookup,
+        IdentityLocaleLookup,
         IdentityPasswordUpdater,
         IdentityProfileLookup,
         IdentityProfileUpdater,
@@ -401,14 +404,29 @@ public class KeycloakService
           }
           return new CreatedIdentity(createdUserId);
         }
-        handleCreateKeycloakUserError(response);
-        throw new InternalServerErrorException(genericKeycloakError);
+        throw createUserFailure(user, response);
       }
     }
     throw new IllegalStateException("Unreachable Keycloak create-user retry state");
   }
 
-  private void handleCreateKeycloakUserError(Response response) {
+  /**
+   * Builds the failure for a non-201 Keycloak create-user response.
+   *
+   * <p>Returns the exception rather than throwing it, and rather than recording the detail in a
+   * field the caller reads afterwards. {@code genericKeycloakError} is {@code @Value}-injected
+   * configuration on a singleton bean, so writing the current request's Keycloak response into it
+   * corrupted it for the life of the JVM and let concurrent failures read each other's detail -
+   * request A could be handed the raw Keycloak body belonging to request B, which carries B's
+   * username and e-mail. Nothing else needs the value to outlive the throw, so it does not.
+   *
+   * <p>Only the HTTP status leaves this method - in the log line and in the exception message. The
+   * Keycloak response body echoes the submitted username and e-mail on validation errors, and the
+   * UserDTO carries both, so neither is safe to propagate to a log aggregator or to an
+   * operator-facing error page. Duplicate detection still reads the body in-memory here but the
+   * body does not outlive the method.
+   */
+  private RuntimeException createUserFailure(UserDTO user, Response response) {
     final int status = response.getStatus();
     String rawResponse = "";
 
@@ -423,15 +441,18 @@ public class KeycloakService
 
     if (errorMatchesMarker(combinedError, identityClientConfig.getErrorMessageDuplicatedEmail())
         || (status == HttpStatus.CONFLICT.value() && combinedError.contains("email"))) {
-      throw new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
+      return new CustomValidationHttpStatusException(EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
     if (errorMatchesMarker(combinedError, identityClientConfig.getErrorMessageDuplicatedUsername())
         || (status == HttpStatus.CONFLICT.value() && combinedError.contains("username"))) {
-      throw new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
+      return new CustomValidationHttpStatusException(USERNAME_NOT_AVAILABLE, HttpStatus.CONFLICT);
     }
 
     log.warn("Keycloak create-user failed. status={}", status);
+
+    return new InternalServerErrorException(
+        String.format("%s: Keycloak responded with status %s", genericKeycloakError, status));
   }
 
   /**
@@ -992,6 +1013,30 @@ public class KeycloakService
               user.getFirstName(),
               user.getLastName(),
               user.getEmail()));
+    } catch (NotFoundException ex) {
+      return Optional.empty();
+    }
+  }
+
+  /**
+   * The user's account language ({@code locale} attribute, the one {@link #changeLanguage} writes).
+   * Empty when the user or the attribute does not exist (callers fall back to the default).
+   */
+  @Override
+  public Optional<String> findLocaleById(String userId) {
+    try {
+      UserResource userResource = keycloakClient.getUsersResource().get(userId);
+      if (userResource == null) {
+        return Optional.empty();
+      }
+      var user = userResource.toRepresentation();
+      if (user == null || user.getAttributes() == null) {
+        return Optional.empty();
+      }
+      return Optional.ofNullable(user.getAttributes().get(LOCALE)).stream()
+          .flatMap(List::stream)
+          .filter(StringUtils::isNotBlank)
+          .findFirst();
     } catch (NotFoundException ex) {
       return Optional.empty();
     }
