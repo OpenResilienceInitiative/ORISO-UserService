@@ -354,6 +354,9 @@ class UserAdminControllerE2EIT {
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void updateAgencyAdmin_Should_returnOk_When_updateAttemptAsUserAdmin() throws Exception {
     // given
+    // #968: tenant-scoping now guards this endpoint; test intent is authority acceptance,
+    // so run as platform admin. Same-tenant path is covered by AgencyAdminUserServiceTest.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     String adminId = givenNewAgencyAdminIsCreated();
 
     UpdateAgencyAdminDTO updateAdminDTO = new EasyRandom().nextObject(UpdateAgencyAdminDTO.class);
@@ -417,6 +420,9 @@ class UserAdminControllerE2EIT {
     when(authenticatedUser.getUserId()).thenReturn(adminId);
     when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(false);
     when(authenticatedUser.isSingleTenantAdmin()).thenReturn(true);
+    // #968: self-patch dispatches to patchTenantAdmin which now enforces tenant scoping;
+    // treat this mock user as platform admin so the check short-circuits.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
 
     PatchAdminDTO patchAdminDTO = new EasyRandom().nextObject(PatchAdminDTO.class);
 
@@ -507,6 +513,9 @@ class UserAdminControllerE2EIT {
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void updateTenantAdmin_Should_returnOk_When_updateAttemptAsTenantAdmin() throws Exception {
     // given
+    // #968: run as platform admin to bypass the new tenant-scope check; same-tenant path
+    // is covered by TenantAdminUserServiceTest scoping tests.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     String adminId = givenNewTenantAdminIsCreated();
 
     UpdateTenantAdminDTO updateAdminDTO = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
@@ -591,6 +600,8 @@ class UserAdminControllerE2EIT {
   void getTenantAdmin_Should_returnOk_When_attemptedToGetTenantAdminWithTenantAdminAuthority()
       throws Exception {
     // given
+    // #968: unscoped access requires platform-admin identity now.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     var existingAdminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
 
     // when, then
@@ -609,6 +620,8 @@ class UserAdminControllerE2EIT {
   void
       getTenantAdmins_Should_returnOkAndFilterByTenantId_When_attemptedToGetTenantWithTenantAdminAuthority()
           throws Exception {
+    // #968: cross-tenant listing is now platform-admin only.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
 
     // when, then
     this.mockMvc
@@ -818,6 +831,8 @@ class UserAdminControllerE2EIT {
   @Test
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void searchTenantAdmin_Should_returnCorrectResult_When_tenantIdIsProvided() throws Exception {
+    // #968: cross-tenant search is now platform-admin only.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     final String tenantId = "102";
     final String expectedAdminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
     final String expectedUsername = "cgenney5";
@@ -895,6 +910,8 @@ class UserAdminControllerE2EIT {
   void deleteTenantAdmin_Should_delete_When_attemptedToDeleteTenantAdminWithTenantAdminAuthority()
       throws Exception {
     // given
+    // #968: cross-tenant delete is now platform-admin only.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     var adminId = givenNewTenantAdminIsCreated();
 
     // when
