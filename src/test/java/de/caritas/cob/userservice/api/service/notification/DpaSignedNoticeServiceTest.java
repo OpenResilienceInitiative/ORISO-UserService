@@ -276,6 +276,9 @@ class DpaSignedNoticeServiceTest {
 
     verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
     verify(noticeRepository, never()).save(any());
+    // the notice chain must only ever stamp verified FORWARDED_EXTERNAL signatures - the
+    // self-sign path stamps its own invite at registration
+    verify(accountInviteRepository, never()).markDpaSigned(any(), any(), any());
   }
 
   @Test
@@ -286,6 +289,9 @@ class DpaSignedNoticeServiceTest {
     service.onSignatureHint(TENANT_ID);
 
     verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    // a pending forward is NOT a signature: a reordering that stamps before the SIGNED filter
+    // would mark unsigned DPAs as signed on the Admin board
+    verify(accountInviteRepository, never()).markDpaSigned(any(), any(), any());
   }
 
   @Test
@@ -296,6 +302,7 @@ class DpaSignedNoticeServiceTest {
     service.onSignatureHint(TENANT_ID);
 
     verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(accountInviteRepository, never()).markDpaSigned(any(), any(), any());
   }
 
   @Test
@@ -395,5 +402,67 @@ class DpaSignedNoticeServiceTest {
     assertEquals(TENANT_ID, claim.getTenantId());
     assertEquals(DPA_VERSION, claim.getDpaVersion());
     assertEquals("toni@example.org", claim.getRecipientEmail());
+  }
+
+  // --- DPA signed write-back to the invite (ORISO-Admin#896, epic #725) ---
+
+  @Test
+  void onSignatureHint_writesTheSignatureTimestampBackToTheTenantAdminInvites() {
+    // The Admin invite progress board proves its final "Vertrag unterschrieben" phase from the
+    // invite's dpaSignedAt — the verified signature must reach the invite row, not only the mail.
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+
+    service.onSignatureHint(TENANT_ID);
+
+    verify(accountInviteRepository)
+        .markDpaSigned(
+            TENANT_ID,
+            AccountInviteTargetRole.TENANT_ADMIN,
+            java.time.LocalDateTime.parse("2026-08-14T09:15:00"));
+  }
+
+  @Test
+  void onSignatureHint_duplicateNotice_stillWritesTheSignatureBackButSendsNoSecondMail() {
+    // Repeated hints must stay idempotent end to end: the ledger dedupes the mail, and the
+    // write-back only fills a still-null dpa_signed_at (guarded in the repository query), so a
+    // duplicate can never regress the invite state — but it must also not skip the write-back,
+    // because the first hint may have raced a deploy after claiming and before stamping.
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+    when(noticeRepository.save(any(DpaSignedNotice.class)))
+        .thenThrow(new DataIntegrityViolationException("duplicate"));
+
+    service.onSignatureHint(TENANT_ID);
+
+    verify(accountInviteRepository)
+        .markDpaSigned(
+            eq(TENANT_ID),
+            eq(AccountInviteTargetRole.TENANT_ADMIN),
+            any(java.time.LocalDateTime.class));
+    verify(inviteMailDispatchService, never())
+        .send(anyString(), anyString(), anyString(), any(), anyLong(), anyString());
+  }
+
+  @Test
+  void onSignatureHint_unresolvableRecipient_stillWritesTheSignatureBack() {
+    // No resolvable notice recipient (admin gone, no forwarding invite) must not lose the
+    // signature on the board: the write-back anchors on the verified signature alone.
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.empty());
+    when(accountInviteRepository
+            .findFirstByTenantIdAndTargetRoleAndDpaForwardedAtIsNotNullOrderByDpaForwardedAtDesc(
+                TENANT_ID, AccountInviteTargetRole.TENANT_ADMIN))
+        .thenReturn(Optional.empty());
+
+    service.onSignatureHint(TENANT_ID);
+
+    verify(accountInviteRepository)
+        .markDpaSigned(
+            eq(TENANT_ID),
+            eq(AccountInviteTargetRole.TENANT_ADMIN),
+            any(java.time.LocalDateTime.class));
+    verify(inviteMailDispatchService, never())
+        .send(anyString(), anyString(), anyString(), any(), anyLong(), anyString());
   }
 }
