@@ -17,7 +17,6 @@ import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
-import static org.mockito.ArgumentMatchers.anyCollection;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doNothing;
@@ -259,7 +258,7 @@ public class CreateUserFacadeTest {
     createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
     TenantContext.clear();
     verify(identityClient, times(1)).createUser(any(UserDTO.class));
-    verify(identityRoleUpdater, times(1)).assignRoles(any(), anyCollection());
+    verify(identityRoleUpdater, times(1)).assignRoles(any(), eq(List.of(UserRole.USER.getValue())));
     verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
     verify(createNewSessionFacade, times(1))
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
@@ -279,7 +278,7 @@ public class CreateUserFacadeTest {
 
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
 
-    verify(identityRoleUpdater, times(1)).assignRoles(any(), anyCollection());
+    verify(identityRoleUpdater, times(1)).assignRoles(any(), eq(List.of(UserRole.USER.getValue())));
     verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
   }
 
@@ -304,7 +303,9 @@ public class CreateUserFacadeTest {
   public void
       updateIdentityAndCreateAccount_Should_AbortBeforeDatabaseWrite_When_RoleUpdateFails() {
     RuntimeException identityFailure = new RuntimeException("role update failed");
-    doThrow(identityFailure).when(identityRoleUpdater).assignRoles(anyString(), anyCollection());
+    doThrow(identityFailure)
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), eq(List.of(UserRole.USER.getValue())));
 
     RuntimeException propagated =
         assertThrows(
@@ -323,7 +324,9 @@ public class CreateUserFacadeTest {
     PlainCredentialsHolder.set("plain-user", "plain-password");
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     RuntimeException identityFailure = new RuntimeException("role update failed");
-    doThrow(identityFailure).when(identityRoleUpdater).assignRoles(anyString(), anyCollection());
+    doThrow(identityFailure)
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), eq(List.of(UserRole.USER.getValue())));
 
     RuntimeException propagated =
         assertThrows(
@@ -682,7 +685,7 @@ public class CreateUserFacadeTest {
       updateIdentityAndCreateAccount_Should_ThrowInternalServerError_When_KeycloakFailsForAnonymousUser() {
     doThrow(new RuntimeException("kc down"))
         .when(identityRoleUpdater)
-        .assignRoles(anyString(), anyCollection());
+        .assignRoles(anyString(), eq(List.of(UserRole.ANONYMOUS.getValue())));
 
     assertThrows(
         InternalServerErrorException.class,
@@ -718,7 +721,9 @@ public class CreateUserFacadeTest {
   void updateIdentityAndCreateAccount_Should_CallUpdateDummyEmail_When_EmailIsBlank() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(identityRoleUpdater).assignRoles(anyString(), anyCollection());
+    doNothing()
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), eq(List.of(UserRole.USER.getValue())));
     doNothing()
         .when(identityPasswordUpdater)
         .updatePassword(anyString(), org.mockito.ArgumentMatchers.nullable(String.class));

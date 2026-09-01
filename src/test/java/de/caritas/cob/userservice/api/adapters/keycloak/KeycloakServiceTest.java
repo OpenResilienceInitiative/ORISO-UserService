@@ -964,6 +964,56 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  public void assignRoles_Should_writeEveryDistinctRoleInASingleAdd_When_CollectionHasDuplicates() {
+    UserResource userResource = mock(UserResource.class);
+    UsersResource usersResource = mock(UsersResource.class);
+    when(usersResource.get(anyString())).thenReturn(userResource);
+    RoleScopeResource roleScopeResource = mock(RoleScopeResource.class);
+    RoleMappingResource roleMappingResource = mock(RoleMappingResource.class);
+    when(roleMappingResource.realmLevel()).thenReturn(roleScopeResource);
+    when(userResource.roles()).thenReturn(roleMappingResource);
+
+    RoleRepresentation assignedFirst = mock(RoleRepresentation.class);
+    when(assignedFirst.getName()).thenReturn("first");
+    RoleRepresentation assignedSecond = mock(RoleRepresentation.class);
+    when(assignedSecond.getName()).thenReturn("second");
+    when(roleScopeResource.listAll()).thenReturn(List.of(assignedFirst, assignedSecond));
+
+    RoleRepresentation firstRealmRole = new RoleRepresentation();
+    firstRealmRole.setName("first");
+    RoleRepresentation secondRealmRole = new RoleRepresentation();
+    secondRealmRole.setName("second");
+    RoleResource firstRoleResource = mock(RoleResource.class);
+    when(firstRoleResource.toRepresentation()).thenReturn(firstRealmRole);
+    RoleResource secondRoleResource = mock(RoleResource.class);
+    when(secondRoleResource.toRepresentation()).thenReturn(secondRealmRole);
+    RolesResource rolesResource = mock(RolesResource.class);
+    when(rolesResource.get("first")).thenReturn(firstRoleResource);
+    when(rolesResource.get("second")).thenReturn(secondRoleResource);
+
+    RealmResource realmResource = mock(RealmResource.class);
+    when(realmResource.users()).thenReturn(usersResource);
+    when(realmResource.roles()).thenReturn(rolesResource);
+    when(keycloakClient.getRealmResource()).thenReturn(realmResource);
+
+    this.keycloakService.assignRoles("user", List.of("first", "second", "first"));
+
+    ArgumentCaptor<List<RoleRepresentation>> addedRoles = ArgumentCaptor.forClass(List.class);
+    verify(roleScopeResource, times(1)).add(addedRoles.capture());
+    assertEquals(List.of(firstRealmRole, secondRealmRole), addedRoles.getValue());
+    verify(rolesResource, times(1)).get("first");
+    verify(rolesResource, times(1)).get("second");
+  }
+
+  @Test
+  public void assignRoles_Should_notTouchKeycloak_When_RoleCollectionIsEmpty() {
+    this.keycloakService.assignRoles("user", List.of());
+
+    verify(keycloakClient, never()).getRealmResource();
+  }
+
+  @Test
   public void assignRoles_Should_RefreshAdminSessionAndRetry_When_Unauthorized() {
     var outboundHttpMetrics = mock(OutboundHttpMetrics.class);
     keycloakService.setOutboundHttpMetrics(outboundHttpMetrics);
