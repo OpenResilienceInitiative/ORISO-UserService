@@ -15,7 +15,7 @@ This graph was generated for `ORISO-UserService` only. It does not analyze sibli
 
 ## Integration Clues
 
-Specs this service implements (server side):
+Specs this service implements (server-side):
 
 - `api/userservice.yaml` (main API), `api/useradminservice.yaml`, `api/conversationservice.yaml`, `api/appointmentservice.yaml`, `api/userstatisticsservice.yaml`
 - `INVITE_LINKS_API.md` (docs, markdown)
