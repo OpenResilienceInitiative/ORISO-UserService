@@ -136,8 +136,8 @@ public class TenantAdminUserService {
 
   /**
    * Enforces the caller may list tenant admins for the supplied tenant id. Platform admins may
-   * cross tenants; every other caller may only list their own tenant. Prevents the sibling leak
-   * of {@link #findTenantAdminsByInfix} on GET /useradmin/tenantadmins?tenantId=X (#968).
+   * cross tenants; every other caller may only list their own tenant. Prevents the sibling leak of
+   * {@link #findTenantAdminsByInfix} on GET /useradmin/tenantadmins?tenantId=X (#968).
    */
   private void assertCallerMayListTenantAdminsOf(Long tenantId) {
     if (authenticatedUser.isPlatformAdmin()) {

@@ -78,8 +78,8 @@ public class AgencyAdminUserService {
    * non-platform caller (single-tenant admin, tenant super admin, agency super admin without shared
    * agencies) may only act on agency admins of their own tenant (#968). Platform admins keep the
    * full view. Prevents a caller from reading, editing or deleting admins of other Träger or other
-   * tenants by targeting their id directly, mirroring the search-side scoping applied by
-   * {@link #findScopedAgencyAdminsByInfix}.
+   * tenants by targeting their id directly, mirroring the search-side scoping applied by {@link
+   * #findScopedAgencyAdminsByInfix}.
    */
   private void assertCallerMayAccessAgencyAdmin(final String targetAdminId) {
     if (authenticatedUser.isPlatformAdmin()) {
