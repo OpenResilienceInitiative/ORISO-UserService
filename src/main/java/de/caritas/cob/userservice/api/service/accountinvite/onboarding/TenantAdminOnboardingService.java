@@ -305,29 +305,38 @@ public class TenantAdminOnboardingService {
     reserved.rethrowLinkDeath();
     AccountInvite invite = reserved.invite();
 
-    DpaSignInviteDTO signInvite;
-    try {
-      signInvite =
-          publicDpaForwardClient.createForwardSignLink(
-              invite.getTenantId(), invite.getTenantIdReservationToken());
-    } catch (RuntimeException exception) {
-      // The mint produced no link, so the reserved attempt is repaid: an upstream outage or
-      // throttle must not exhaust the forwards a legitimate invitation gets.
-      refundDpaForwardAttempt(rawToken);
-      throw exception;
-    }
-
     // The provider contract is checked BEFORE anything is recorded and regardless of whether a
     // mail follows. A missing or unparseable expiry is TenantService breaking its contract (see
     // parseExpiry): recording it as a completed forward, or handing the raw value back on the
     // recipient-less path, would turn a broken provider answer into a successful one.
-    LocalDateTime expiresAt = parseExpiry(signInvite.getExpiresAt());
+    //
     // Same reasoning for the link itself: TenantService emits a path-only link when its base URL is
     // unset (Pre-Dev). The mail path already resolves that against the configured App origin, but
     // the recipient-less and mail-failed branches hand the link back for MANUAL sharing — a copied
     // "/dpa-sign/<token>" has no origin and never reaches the DPA frontend. Normalise once here so
     // the mail and the returned link cannot disagree.
-    String signLink = dpaForwardEmailService.toAbsoluteSignLink(signInvite.getSignLink());
+    //
+    // Both checks run INSIDE the compensated region: a 200 carrying no usable link leaves the
+    // caller with nothing, exactly like an outage or a throttle, so the reserved attempt has to be
+    // repaid the same way. Charging it would let three malformed provider answers exhaust an
+    // invitation's five forwards for good.
+    LocalDateTime expiresAt;
+    String signLink;
+    String rawExpiresAt;
+    try {
+      DpaSignInviteDTO signInvite =
+          publicDpaForwardClient.createForwardSignLink(
+              invite.getTenantId(), invite.getTenantIdReservationToken());
+      rawExpiresAt = signInvite.getExpiresAt();
+      expiresAt = parseExpiry(rawExpiresAt);
+      signLink = dpaForwardEmailService.toAbsoluteSignLink(signInvite.getSignLink());
+    } catch (RuntimeException exception) {
+      // The mint produced no usable link, so the reserved attempt is repaid: an upstream outage,
+      // a throttle or a malformed answer must not exhaust the forwards a legitimate invitation
+      // gets.
+      refundDpaForwardAttempt(rawToken);
+      throw exception;
+    }
 
     recordDpaForward(rawToken);
 
@@ -361,7 +370,7 @@ public class TenantAdminOnboardingService {
         invite.getId(),
         invite.getTenantId(),
         mailSent);
-    return new DpaForwardResult(signLink, signInvite.getExpiresAt(), mailSent);
+    return new DpaForwardResult(signLink, rawExpiresAt, mailSent);
   }
 
   /**

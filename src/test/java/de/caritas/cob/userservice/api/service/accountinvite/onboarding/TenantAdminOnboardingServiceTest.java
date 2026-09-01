@@ -512,6 +512,31 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
+  void forwardDpa_repaysTheReservedAttempt_When_theProviderAnswersWithoutAUsableExpiry() {
+    // A 200 that carries no usable link leaves the caller with nothing, exactly like an outage or
+    // a throttle — charging the attempt would let three malformed answers exhaust the invitation's
+    // five forwards for good.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
+                .token("RAWSIGNTOKEN")
+                .signLink("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN")
+                .expiresAt(null));
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> service.forwardDpa(RAW_TOKEN, "legal@example.org"));
+
+    // reserved (+1) and repaid (-1) — the budget is untouched
+    assertEquals(0, invite.getDpaForwardCount());
+    assertNull(invite.getDpaForwardedAt());
+    // and no mail went out for a link that does not exist
+    verify(dpaForwardEmailService, never()).sendSigningLink(any());
+  }
+
+  @Test
   void forwardDpa_returnsAnAbsoluteLink_When_theProviderEmitsAPathOnlyOne() {
     // On Pre-Dev the TenantService base URL is unset, so the mint answers "/dpa-sign/<token>".
     // Both the recipient-less and the mail-failed branch hand that link to the wizard for MANUAL
