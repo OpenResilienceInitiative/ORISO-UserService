@@ -59,6 +59,7 @@ class AgencyAdminUserServiceTest {
   @Test
   void findAgencyAdminShouldExposeActiveConsultantIdentity() {
     var admin = agencyAdmin("agency-admin", 1L);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(retrieveAdminService.findAdmin("agency-admin", Admin.AdminType.AGENCY)).thenReturn(admin);
     when(consultantRepository.findActiveIdsByIdIn(Set.of("agency-admin")))
         .thenReturn(Set.of("agency-admin"));
@@ -71,6 +72,7 @@ class AgencyAdminUserServiceTest {
   @Test
   void findAgencyAdminShouldReportNoActiveConsultantIdentity() {
     var admin = agencyAdmin("agency-admin", 1L);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(retrieveAdminService.findAdmin("agency-admin", Admin.AdminType.AGENCY)).thenReturn(admin);
     when(consultantRepository.findActiveIdsByIdIn(Set.of("agency-admin")))
         .thenReturn(Collections.emptySet());
@@ -150,15 +152,49 @@ class AgencyAdminUserServiceTest {
 
   @Test
   void deleteAgencyAdmin_Should_NotScope_WhenCallerIsPlatformAdmin() {
-    // given a platform/user admin without restricted-agency privileges
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
+    // given a platform admin (unscoped access)
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
 
     // when
     agencyAdminUserService.deleteAgencyAdmin("any-admin");
 
     // then no agency lookup happens and deletion proceeds
     Mockito.verify(retrieveAdminService, Mockito.never()).findAgencyIdsOfAdmin(Mockito.any());
+    Mockito.verify(retrieveAdminService, Mockito.never()).findAdmin(Mockito.any(), Mockito.any());
     Mockito.verify(deleteAdminService).deleteAgencyAdmin("any-admin");
+  }
+
+  /**
+   * #968: a tenant admin (not restricted agency admin, not platform admin) must not act on agency
+   * admins of other tenants via the by-id endpoints — mirrors the search-side tenant scoping.
+   */
+  @Test
+  void deleteAgencyAdmin_Should_ThrowForbidden_WhenTenantAdminTargetsForeignTenant() {
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    Admin foreignAgencyAdmin = agencyAdmin("foreign-agency-admin", 1L);
+    when(retrieveAdminService.findAdmin("foreign-agency-admin", Admin.AdminType.AGENCY))
+        .thenReturn(foreignAgencyAdmin);
+
+    Assertions.assertThrows(
+        ForbiddenException.class,
+        () -> agencyAdminUserService.deleteAgencyAdmin("foreign-agency-admin"));
+    Mockito.verify(deleteAdminService, Mockito.never()).deleteAgencyAdmin(Mockito.any());
+  }
+
+  @Test
+  void deleteAgencyAdmin_Should_Delete_WhenTenantAdminTargetsOwnTenant() {
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    Admin ownAgencyAdmin = agencyAdmin("own-agency-admin", 9L);
+    when(retrieveAdminService.findAdmin("own-agency-admin", Admin.AdminType.AGENCY))
+        .thenReturn(ownAgencyAdmin);
+
+    agencyAdminUserService.deleteAgencyAdmin("own-agency-admin");
+
+    Mockito.verify(deleteAdminService).deleteAgencyAdmin("own-agency-admin");
   }
 
   @Test

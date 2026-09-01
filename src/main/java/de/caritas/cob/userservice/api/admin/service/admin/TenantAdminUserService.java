@@ -25,6 +25,7 @@ import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
@@ -32,6 +33,7 @@ import org.springframework.stereotype.Service;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class TenantAdminUserService {
 
   private final @NonNull RetrieveAdminService retrieveAdminService;
@@ -71,6 +73,7 @@ public class TenantAdminUserService {
 
   public AdminResponseDTO findTenantAdmin(final String adminId) {
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.TENANT);
+    assertCallerMayAccessTenantAdmin(admin);
     var responseDTO = AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
     responseDTO
         .getEmbedded()
@@ -81,6 +84,7 @@ public class TenantAdminUserService {
   public AdminResponseDTO updateTenantAdmin(
       final String adminId, final UpdateTenantAdminDTO updateTenantAdminDTO) {
     validateUpdateAdmin(updateTenantAdminDTO);
+    assertCallerMayAccessTenantAdmin(adminId);
     final Admin updatedAdmin = updateAdminService.updateTenantAdmin(adminId, updateTenantAdminDTO);
     var responseDTO =
         AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();
@@ -96,7 +100,59 @@ public class TenantAdminUserService {
   }
 
   public void deleteTenantAdmin(final String adminId) {
+    assertCallerMayAccessTenantAdmin(adminId);
     this.deleteAdminService.deleteTenantAdmin(adminId);
+  }
+
+  /**
+   * Enforces that the caller may act on a tenant admin identified by id. A platform admin keeps the
+   * full view; every other caller must belong to the target's tenant (#968). Loads the target admin
+   * to read its tenant so a caller cannot bypass the search-side scoping by guessing an admin id.
+   */
+  private void assertCallerMayAccessTenantAdmin(String targetAdminId) {
+    if (authenticatedUser.isPlatformAdmin()) {
+      return;
+    }
+    Admin target = retrieveAdminService.findAdmin(targetAdminId, Admin.AdminType.TENANT);
+    assertCallerMayAccessTenantAdmin(target);
+  }
+
+  private void assertCallerMayAccessTenantAdmin(Admin target) {
+    if (authenticatedUser.isPlatformAdmin()) {
+      return;
+    }
+    Long callerTenantId = authenticatedUser.getTenantId();
+    if (callerTenantId == null || !callerTenantId.equals(target.getTenantId())) {
+      log.warn(
+          "Tenant admin {} (tenant {}) attempted to access tenant admin {} in tenant {}",
+          authenticatedUser.getUserId(),
+          callerTenantId,
+          target.getId(),
+          target.getTenantId());
+      throw new ForbiddenException(
+          "Tenant admin is not allowed to access an admin outside their own tenant");
+    }
+  }
+
+  /**
+   * Enforces the caller may list tenant admins for the supplied tenant id. Platform admins may
+   * cross tenants; every other caller may only list their own tenant. Prevents the sibling leak
+   * of {@link #findTenantAdminsByInfix} on GET /useradmin/tenantadmins?tenantId=X (#968).
+   */
+  private void assertCallerMayListTenantAdminsOf(Long tenantId) {
+    if (authenticatedUser.isPlatformAdmin()) {
+      return;
+    }
+    Long callerTenantId = authenticatedUser.getTenantId();
+    if (callerTenantId == null || !callerTenantId.equals(tenantId)) {
+      log.warn(
+          "Tenant admin {} (tenant {}) attempted to list tenant admins of tenant {}",
+          authenticatedUser.getUserId(),
+          callerTenantId,
+          tenantId);
+      throw new ForbiddenException(
+          "Tenant admin is not allowed to list admins of a foreign tenant");
+    }
   }
 
   public Map<String, Object> findTenantAdminsByInfix(String infix, PageRequest pageRequest) {
@@ -158,6 +214,7 @@ public class TenantAdminUserService {
   }
 
   public List<AdminResponseDTO> findTenantAdmins(Long tenantId) {
+    assertCallerMayListTenantAdminsOf(tenantId);
     var admins = retrieveAdminService.findTenantAdminsByTenantId(tenantId);
     return admins.stream()
         .map(admin -> AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO())
@@ -165,7 +222,7 @@ public class TenantAdminUserService {
   }
 
   public AdminResponseDTO patchTenantAdmin(String adminId, PatchAdminDTO patchAdminDTO) {
-
+    assertCallerMayAccessTenantAdmin(adminId);
     final Admin updatedAdmin = updateAdminService.patchTenantAdmin(adminId, patchAdminDTO);
     var responseDTO =
         AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();
