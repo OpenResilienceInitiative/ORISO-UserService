@@ -192,7 +192,7 @@ public class AccountInviteController {
                     request.formalLanguage,
                     request.acceptedByUserId));
     AccountInviteResponseDTO response =
-        AccountInviteResponseDTO.from(
+        AccountInviteResponseDTO.fromPublic(
             invite, latestDeliveryStatus(invite), accountInviteService.calculateAccessGate(invite));
     response.phase =
         invite.getTwoFactorStatus() == TwoFactorGateStatus.PENDING_SETUP
@@ -205,7 +205,7 @@ public class AccountInviteController {
   public ResponseEntity<AccountInviteResponseDTO> getInvite(@PathVariable String token) {
     AccountInvite invite = accountInviteService.requireActiveInvite(token);
     return ResponseEntity.ok(
-        AccountInviteResponseDTO.from(
+        AccountInviteResponseDTO.fromPublic(
             invite,
             latestDeliveryStatus(invite),
             accountInviteService.calculateAccessGate(invite)));
@@ -480,6 +480,22 @@ public class AccountInviteController {
               result.invite() == null ? null : AccountAccessGateStatus.BLOCKED_INVITE);
       dto.rawToken = result.rawToken();
       dto.acceptUrl = result.acceptUrl();
+      return dto;
+    }
+
+    /**
+     * View for the public token endpoints, which answer to whoever holds the raw invite link. The
+     * DPA progress state is Admin invite-board material (ORISO-Admin#896) and stays out of the
+     * anonymous responses - the wizard has its own resolve contract for what the invitee needs.
+     */
+    static AccountInviteResponseDTO fromPublic(
+        AccountInvite invite,
+        InviteEmailDeliveryStatus deliveryStatus,
+        AccountAccessGateStatus accessGateStatus) {
+      AccountInviteResponseDTO dto = from(invite, deliveryStatus, accessGateStatus);
+      dto.dpaForwardedAt = null;
+      dto.dpaForwardCount = null;
+      dto.dpaSignedAt = null;
       return dto;
     }
 

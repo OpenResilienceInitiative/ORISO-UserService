@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -498,6 +499,86 @@ class AccountInviteControllerTest {
     assertEquals(LocalDateTime.parse("2026-08-20T10:00:00"), dto.dpaForwardedAt);
     assertEquals(2, dto.dpaForwardCount);
     assertEquals(LocalDateTime.parse("2026-08-21T09:30:00"), dto.dpaSignedAt);
+  }
+
+  private static AccountInvite sampleInviteWithDpaState() {
+    var invite = sampleInvite();
+    invite.setDpaForwardedAt(LocalDateTime.parse("2026-08-20T10:00:00"));
+    invite.setDpaForwardCount(2);
+    invite.setDpaSignedAt(LocalDateTime.parse("2026-08-21T09:30:00"));
+    return invite;
+  }
+
+  /**
+   * The public token endpoints answer to whoever holds the raw invite link - the DPA progress state
+   * is Admin invite-board material (ORISO-Admin#896) and must not ride along there.
+   */
+  @Test
+  void getInvite_publicTokenEndpoint_doesNotExposeTheAdminDpaState() {
+    var invite = sampleInviteWithDpaState();
+    when(accountInviteService.requireActiveInvite("token-details")).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
+
+    var response = controller.getInvite("token-details");
+
+    assertNull(response.getBody().dpaForwardedAt);
+    assertNull(response.getBody().dpaForwardCount);
+    assertNull(response.getBody().dpaSignedAt);
+  }
+
+  @Test
+  void acceptInvite_publicTokenEndpoint_doesNotExposeTheAdminDpaState() {
+    var invite = sampleInviteWithDpaState();
+    when(counsellorInviteProvisioningService.acceptInvite("token-2", null)).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
+
+    var response = controller.acceptInvite("token-2", null);
+
+    assertNull(response.getBody().dpaForwardedAt);
+    assertNull(response.getBody().dpaForwardCount);
+    assertNull(response.getBody().dpaSignedAt);
+  }
+
+  /**
+   * Wire contract for the Admin invite progress board (ORISO-Admin#896): the board consumes the
+   * JSON properties {@code dpaForwardedAt}, {@code dpaForwardCount}, {@code dpaSignedAt} by exactly
+   * these names. Serialized through a Jackson 3 mapper like the one the HTTP layer uses (Spring
+   * Boot 4 JacksonJsonHttpMessageConverter) - reading Java fields alone could not catch a renamed
+   * or re-annotated property.
+   */
+  @Test
+  void responseDto_wireContract_serializesTheDpaPropertiesByName() {
+    var dto =
+        AccountInviteController.AccountInviteResponseDTO.from(
+            sampleInviteWithDpaState(), null, null);
+
+    var json = tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(dto);
+    var tree = tools.jackson.databind.json.JsonMapper.builder().build().readTree(json);
+
+    assertEquals("2026-08-20T10:00:00", tree.path("dpaForwardedAt").asString());
+    assertEquals(2, tree.path("dpaForwardCount").asInt());
+    assertEquals("2026-08-21T09:30:00", tree.path("dpaSignedAt").asString());
+  }
+
+  @Test
+  void responseDto_wireContract_notYetSignedSerializesAsExplicitNull() {
+    // #896 renders the phase open until dpaSignedAt arrives; the property is present-as-null
+    // (Jackson default inclusion), not absent - pinned so the shape cannot drift silently
+    var invite = sampleInviteWithDpaState();
+    invite.setDpaSignedAt(null);
+
+    var dto = AccountInviteController.AccountInviteResponseDTO.from(invite, null, null);
+    var tree =
+        tools.jackson.databind.json.JsonMapper.builder()
+            .build()
+            .readTree(
+                tools.jackson.databind.json.JsonMapper.builder().build().writeValueAsString(dto));
+
+    assertEquals(true, tree.has("dpaSignedAt"), "dpaSignedAt must stay present in the payload");
+    assertEquals(true, tree.get("dpaSignedAt").isNull(), "not signed yet must serialize as null");
+    assertEquals("2026-08-20T10:00:00", tree.path("dpaForwardedAt").asString());
   }
 
   private static AccountInvite sampleInvite() {

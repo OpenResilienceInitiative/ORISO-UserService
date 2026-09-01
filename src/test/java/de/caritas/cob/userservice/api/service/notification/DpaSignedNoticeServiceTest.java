@@ -276,6 +276,9 @@ class DpaSignedNoticeServiceTest {
 
     verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
     verify(noticeRepository, never()).save(any());
+    // the notice chain must only ever stamp verified FORWARDED_EXTERNAL signatures - the
+    // self-sign path stamps its own invite at registration
+    verify(accountInviteRepository, never()).markDpaSigned(any(), any(), any());
   }
 
   @Test
@@ -286,6 +289,9 @@ class DpaSignedNoticeServiceTest {
     service.onSignatureHint(TENANT_ID);
 
     verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    // a pending forward is NOT a signature: a reordering that stamps before the SIGNED filter
+    // would mark unsigned DPAs as signed on the Admin board
+    verify(accountInviteRepository, never()).markDpaSigned(any(), any(), any());
   }
 
   @Test
@@ -296,6 +302,7 @@ class DpaSignedNoticeServiceTest {
     service.onSignatureHint(TENANT_ID);
 
     verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(accountInviteRepository, never()).markDpaSigned(any(), any(), any());
   }
 
   @Test
