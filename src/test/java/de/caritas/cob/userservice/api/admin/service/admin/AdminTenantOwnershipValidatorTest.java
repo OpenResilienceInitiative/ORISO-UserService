@@ -66,6 +66,11 @@ class AdminTenantOwnershipValidatorTest {
         .doesNotThrowAnyException();
   }
 
+  /**
+   * Tenant 0 is the technical tenant nobody belongs to, so a caller in that context is not bounded
+   * by this check — provisioning a tenant's admins from the platform context is established
+   * behaviour (see {@code CreateAdminServiceIT}, {@code UserAdminControllerE2EIT}).
+   */
   @Test
   void assertCallerMayCreateAdminForTenant_Should_Pass_When_CallerRunsInTechnicalTenantContext() {
     when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
