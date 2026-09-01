@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
-import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
@@ -514,7 +513,10 @@ class AccountInviteControllerTest {
    * is Admin invite-board material (ORISO-Admin#896) and must not ride along there.
    */
   @Test
-  void getInvite_publicTokenEndpoint_doesNotExposeTheAdminDpaState() {
+  void getInvite_publicTokenEndpoint_omitsTheAdminDpaKeysFromTheWire() {
+    // Nulling the fields is not enough: without a global NON_NULL inclusion (this service
+    // configures none) a null still emits the JSON key. The public shape must not carry the keys
+    // at all - the payload itself must not advertise the Admin board's DPA vocabulary.
     var invite = sampleInviteWithDpaState();
     when(accountInviteService.requireActiveInvite("token-details")).thenReturn(invite);
     when(accountInviteService.calculateAccessGate(invite))
@@ -522,13 +524,17 @@ class AccountInviteControllerTest {
 
     var response = controller.getInvite("token-details");
 
-    assertNull(response.getBody().dpaForwardedAt);
-    assertNull(response.getBody().dpaForwardCount);
-    assertNull(response.getBody().dpaSignedAt);
+    var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+    var tree = mapper.readTree(mapper.writeValueAsString(response.getBody()));
+    assertEquals(false, tree.has("dpaForwardedAt"), "public payload must not carry the key");
+    assertEquals(false, tree.has("dpaForwardCount"), "public payload must not carry the key");
+    assertEquals(false, tree.has("dpaSignedAt"), "public payload must not carry the key");
+    // the invitee-facing content is unaffected
+    assertEquals("invitee@example.org", tree.path("recipientEmail").asString());
   }
 
   @Test
-  void acceptInvite_publicTokenEndpoint_doesNotExposeTheAdminDpaState() {
+  void acceptInvite_publicTokenEndpoint_omitsTheAdminDpaKeysFromTheWire() {
     var invite = sampleInviteWithDpaState();
     when(counsellorInviteProvisioningService.acceptInvite("token-2", null)).thenReturn(invite);
     when(accountInviteService.calculateAccessGate(invite))
@@ -536,9 +542,13 @@ class AccountInviteControllerTest {
 
     var response = controller.acceptInvite("token-2", null);
 
-    assertNull(response.getBody().dpaForwardedAt);
-    assertNull(response.getBody().dpaForwardCount);
-    assertNull(response.getBody().dpaSignedAt);
+    var mapper = tools.jackson.databind.json.JsonMapper.builder().build();
+    var tree = mapper.readTree(mapper.writeValueAsString(response.getBody()));
+    assertEquals(false, tree.has("dpaForwardedAt"), "public payload must not carry the key");
+    assertEquals(false, tree.has("dpaForwardCount"), "public payload must not carry the key");
+    assertEquals(false, tree.has("dpaSignedAt"), "public payload must not carry the key");
+    // the resume contract's own field stays
+    assertEquals(true, tree.has("phase"));
   }
 
   /**

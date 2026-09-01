@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
@@ -487,12 +488,17 @@ public class AccountInviteController {
      * View for the public token endpoints, which answer to whoever holds the raw invite link. The
      * DPA progress state is Admin invite-board material (ORISO-Admin#896) and stays out of the
      * anonymous responses - the wizard has its own resolve contract for what the invitee needs.
+     * Nulling the fields is not enough: the service configures no global NON_NULL inclusion, so a
+     * null still emits the JSON key - the public shape must not carry the keys at all, hence the
+     * {@code PublicAccountInviteResponseDTO} subtype whose serialization drops them.
      */
     static AccountInviteResponseDTO fromPublic(
         AccountInvite invite,
         InviteEmailDeliveryStatus deliveryStatus,
         AccountAccessGateStatus accessGateStatus) {
-      AccountInviteResponseDTO dto = from(invite, deliveryStatus, accessGateStatus);
+      PublicAccountInviteResponseDTO dto =
+          fill(new PublicAccountInviteResponseDTO(), invite, deliveryStatus, accessGateStatus);
+      // Kept null at the Java level too, so no code path can read admin state off a public view.
       dto.dpaForwardedAt = null;
       dto.dpaForwardCount = null;
       dto.dpaSignedAt = null;
@@ -503,7 +509,14 @@ public class AccountInviteController {
         AccountInvite invite,
         InviteEmailDeliveryStatus deliveryStatus,
         AccountAccessGateStatus accessGateStatus) {
-      AccountInviteResponseDTO dto = new AccountInviteResponseDTO();
+      return fill(new AccountInviteResponseDTO(), invite, deliveryStatus, accessGateStatus);
+    }
+
+    private static <T extends AccountInviteResponseDTO> T fill(
+        T dto,
+        AccountInvite invite,
+        InviteEmailDeliveryStatus deliveryStatus,
+        AccountAccessGateStatus accessGateStatus) {
       dto.id = invite.getId();
       dto.targetRole = invite.getTargetRole() == null ? null : invite.getTargetRole().name();
       dto.tenantId = invite.getTenantId();
@@ -538,6 +551,15 @@ public class AccountInviteController {
       return dto;
     }
   }
+
+  /**
+   * Wire shape of the public token endpoints: identical to {@link AccountInviteResponseDTO} minus
+   * the Admin progress-board DPA state - the keys are ABSENT, not null, so the anonymous payload
+   * does not even advertise that vocabulary (ORISO-Admin#896). Admin endpoints keep the full shape
+   * with {@code dpaSignedAt} present-as-null until signed.
+   */
+  @JsonIgnoreProperties({"dpaForwardedAt", "dpaForwardCount", "dpaSignedAt"})
+  public static class PublicAccountInviteResponseDTO extends AccountInviteResponseDTO {}
 
   public static class PagedAccountInviteResponseDTO {
     public List<AccountInviteResponseDTO> content;
