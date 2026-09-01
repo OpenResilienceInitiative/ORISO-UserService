@@ -322,6 +322,12 @@ public class TenantAdminOnboardingService {
     // parseExpiry): recording it as a completed forward, or handing the raw value back on the
     // recipient-less path, would turn a broken provider answer into a successful one.
     LocalDateTime expiresAt = parseExpiry(signInvite.getExpiresAt());
+    // Same reasoning for the link itself: TenantService emits a path-only link when its base URL is
+    // unset (Pre-Dev). The mail path already resolves that against the configured App origin, but
+    // the recipient-less and mail-failed branches hand the link back for MANUAL sharing — a copied
+    // "/dpa-sign/<token>" has no origin and never reaches the DPA frontend. Normalise once here so
+    // the mail and the returned link cannot disagree.
+    String signLink = dpaForwardEmailService.toAbsoluteSignLink(signInvite.getSignLink());
 
     recordDpaForward(rawToken);
 
@@ -336,8 +342,7 @@ public class TenantAdminOnboardingService {
     if (!isBlank(recipientEmail)) {
       try {
         dpaForwardEmailService.sendSigningLink(
-            new DpaForwardEmailCommand(
-                invite.getTenantId(), recipientEmail, signInvite.getSignLink(), expiresAt));
+            new DpaForwardEmailCommand(invite.getTenantId(), recipientEmail, signLink, expiresAt));
         mailSent = true;
       } catch (RuntimeException exception) {
         // Swallowed deliberately, never silently: the link is the deliverable, the mail is the
@@ -356,7 +361,7 @@ public class TenantAdminOnboardingService {
         invite.getId(),
         invite.getTenantId(),
         mailSent);
-    return new DpaForwardResult(signInvite.getSignLink(), signInvite.getExpiresAt(), mailSent);
+    return new DpaForwardResult(signLink, signInvite.getExpiresAt(), mailSent);
   }
 
   /**

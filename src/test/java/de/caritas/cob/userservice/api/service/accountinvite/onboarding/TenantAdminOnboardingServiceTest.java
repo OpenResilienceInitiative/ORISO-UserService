@@ -12,6 +12,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -106,6 +107,11 @@ class TenantAdminOnboardingServiceTest {
             dpaForwardEmailService,
             new UsernameTranscoder(),
             transactionManager);
+    // the real service resolves a path-only link against the configured App origin; the default
+    // here passes an already-absolute link straight through, as production does
+    lenient()
+        .when(dpaForwardEmailService.toAbsoluteSignLink(anyString()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
   private static AccountInvite tenantAdminInvite(AccountInviteStatus status) {
@@ -503,6 +509,27 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("legal@example.org", captor.getValue().recipientEmail());
     assertEquals(RESERVED_TENANT_ID, captor.getValue().tenantId());
     assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", captor.getValue().signLink());
+  }
+
+  @Test
+  void forwardDpa_returnsAnAbsoluteLink_When_theProviderEmitsAPathOnlyOne() {
+    // On Pre-Dev the TenantService base URL is unset, so the mint answers "/dpa-sign/<token>".
+    // Both the recipient-less and the mail-failed branch hand that link to the wizard for MANUAL
+    // sharing — a copied relative path carries no origin and never reaches the DPA frontend.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(publicDpaForwardClient.createForwardSignLink(RESERVED_TENANT_ID, RESERVATION_TOKEN))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
+                .token("RAWSIGNTOKEN")
+                .signLink("/dpa-sign/RAWSIGNTOKEN")
+                .expiresAt("2026-08-29T14:31:07"));
+    when(dpaForwardEmailService.toAbsoluteSignLink("/dpa-sign/RAWSIGNTOKEN"))
+        .thenReturn("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN");
+
+    var result = service.forwardDpa(RAW_TOKEN, null);
+
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
   }
 
   @Test

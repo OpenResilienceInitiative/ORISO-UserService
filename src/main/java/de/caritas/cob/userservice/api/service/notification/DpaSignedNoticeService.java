@@ -311,8 +311,11 @@ public class DpaSignedNoticeService {
           render(
               template.map(InviteEmailTemplate::getBody).orElse(defaultBody(language)),
               placeholders);
-      inviteMailDispatchService.send(
-          recipient.email(), subject, body, adminPanelUrl, tenantId, language);
+      // No primary action: the notice carries its link as {{adminUrl}} inline in the prose, and
+      // the layout would render a second CTA button on top of it. InviteEmailPreviewService passes
+      // null for this kind, so passing the Admin URL here made the delivered mail carry a button
+      // the operator never saw in the preview.
+      inviteMailDispatchService.send(recipient.email(), subject, body, null, tenantId, language);
     } catch (RuntimeException beforeDispatch) {
       // Every failure up to the handoff, not only SmtpSendException: a template load, the
       // tenant-name lookup or the rendering can fail too, and a stranded claim silently disables

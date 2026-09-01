@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -166,7 +167,10 @@ class DpaSignedNoticeServiceTest {
             eq("toni@example.org"),
             subject.capture(),
             body.capture(),
-            eq("https://admin.example.org/admin"),
+            // no primary action: the layout would render a CTA button on top of the {{adminUrl}}
+            // the body already carries, and the preview passes null for this kind — a delivered
+            // button the operator never saw in the preview is the drift this asserts against
+            isNull(),
             eq(TENANT_ID),
             eq("en"));
     // the account language wins
@@ -177,6 +181,8 @@ class DpaSignedNoticeServiceTest {
     assertTrue(body.getValue().contains("2026-08-14 09:15"));
     assertTrue(body.getValue().contains("Erika Mustermann"));
     assertTrue(body.getValue().contains("Geschäftsführerin"));
+    // the Admin link is not lost by dropping the primary action — it lives inline in the prose
+    assertTrue(body.getValue().contains("https://admin.example.org/admin"));
     // no raw sign token can leak into the mail — the signature carries none
     assertTrue(!body.getValue().contains("/dpa-sign/"));
   }
