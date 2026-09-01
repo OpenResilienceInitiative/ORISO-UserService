@@ -121,6 +121,17 @@ public class StatelessCsrfFilter extends OncePerRequestFilter {
         if (lowerUri.matches(".*/users/account-invites/[^/]+/accept$")) {
           return true;
         }
+        // The DPA signed-notice hint is a machine callback from TenantService, not a browser
+        // request: DpaSignedNoticeHintService posts with restTemplate.postForLocation(url, null),
+        // so it carries no cookie and no header pair and would be rejected with 403 before ever
+        // reaching the controller — and TenantService swallows that 403, so the notice would fail
+        // silently. Exempting it adds no exposure: the route is already permitAll, carries no body
+        // and no authority, and UserService reads every fact back over the authenticated
+        // technical-user channel and deduplicates through the exactly-once ledger. Kept exact, like
+        // the MatrixRTC exemption above: sibling tenant routes still pass the normal check.
+        if (lowerUri.matches(".*/users/tenants/[^/]+/dpa-signed-notices$")) {
+          return true;
+        }
       }
       // Invite-link redeem is a public bootstrap endpoint too — anyone opening the shared link
       // hits it before any session / CSRF cookie exists.

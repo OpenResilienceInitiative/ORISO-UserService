@@ -45,10 +45,10 @@ import org.junit.jupiter.api.condition.EnabledIfEnvironmentVariable;
 class SupportRoomMigrationConvergenceIT {
 
   private static final String CHANGELOG = "db/changelog/userservice-master.xml";
-  private static final String REPAIR_CHANGESET_ID = "0086-support-room-repair";
+  private static final String REPAIR_CHANGESET_ID = "0088-support-room-repair";
   private static final String REPAIR_CHANGESET_AUTHOR = "frank";
   private static final String REPAIR_CHANGESET_FILE =
-      "db/changelog/changeset/0086_support_room_repair/0086_changeSet.xml";
+      "db/changelog/changeset/0088_support_room_repair/0088_changeSet.xml";
 
   /** The lookup indexes 0079 defines and the repair must restore, with their column order. */
   private static final Map<String, List<String>> EXPECTED_INDEX_COLUMNS =
