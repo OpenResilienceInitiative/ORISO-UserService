@@ -354,6 +354,11 @@ class UserAdminControllerE2EIT {
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void updateAgencyAdmin_Should_returnOk_When_updateAttemptAsUserAdmin() throws Exception {
     // given
+    // #968: this class runs with multitenancy.enabled=false, so CreateAdminService stores the
+    // new admin with a null tenant. The scope check rejects a null on either side, so only a
+    // platform admin can reach the endpoint here; the same-tenant path is covered by
+    // AgencyAdminUserServiceTest against a target that actually has a tenant.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     String adminId = givenNewAgencyAdminIsCreated();
 
     UpdateAgencyAdminDTO updateAdminDTO = new EasyRandom().nextObject(UpdateAgencyAdminDTO.class);
@@ -417,6 +422,46 @@ class UserAdminControllerE2EIT {
     when(authenticatedUser.getUserId()).thenReturn(adminId);
     when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(false);
     when(authenticatedUser.isSingleTenantAdmin()).thenReturn(true);
+    // #968: self-patch dispatches to patchTenantAdmin, which scopes to the caller's tenant.
+    // The caller here *is* the admin being patched, so it carries that admin's own tenant
+    // (102 for cgenney5 in UserServiceDatabase.sql). Reporting platform admin instead would
+    // short-circuit the check and leave the same-tenant path this test exists for unproven.
+    when(authenticatedUser.getTenantId()).thenReturn(102L);
+
+    PatchAdminDTO patchAdminDTO = new EasyRandom().nextObject(PatchAdminDTO.class);
+
+    patchAdminDTO.setFirstname("changedFirstname");
+    patchAdminDTO.setLastname("changedLastname");
+    patchAdminDTO.setEmail("changed@email.com");
+
+    when(tenantService.getRestrictedTenantData(Mockito.anyLong()))
+        .thenReturn(new RestrictedTenantDTO().subdomain("subdomain"));
+
+    // when, then
+    this.mockMvc
+        .perform(
+            patch(ADMIN_DATA_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(patchAdminDTO)))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("_embedded.id", is(adminId)))
+        .andExpect(jsonPath("_embedded.firstname", is("changedFirstname")))
+        .andExpect(jsonPath("_embedded.lastname", is("changedLastname")))
+        .andExpect(jsonPath("_embedded.email", is("changed@email.com")));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.SINGLE_TENANT_ADMIN})
+  void patchAdminData_Should_returnOk_When_patchAttemptAsPlatformAdmin() throws Exception {
+    // given
+    // #968: a platform admin keeps the cross-tenant view, so the scope check short-circuits
+    // and no caller tenant is needed. Kept separate from the single-tenant case so that one
+    // still exercises the same-tenant path.
+    String adminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
+    when(authenticatedUser.getUserId()).thenReturn(adminId);
+    when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(false);
+    when(authenticatedUser.isSingleTenantAdmin()).thenReturn(true);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
 
     PatchAdminDTO patchAdminDTO = new EasyRandom().nextObject(PatchAdminDTO.class);
 
@@ -507,6 +552,11 @@ class UserAdminControllerE2EIT {
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void updateTenantAdmin_Should_returnOk_When_updateAttemptAsTenantAdmin() throws Exception {
     // given
+    // #968: multitenancy.enabled=false here, so the freshly created admin has a null tenant
+    // and the scope check can never match a caller tenant. Platform admin is the only caller
+    // that can reach this endpoint in this setup; TenantAdminUserServiceTest covers the
+    // same-tenant path against a target that has a tenant.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     String adminId = givenNewTenantAdminIsCreated();
 
     UpdateTenantAdminDTO updateAdminDTO = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
@@ -591,6 +641,10 @@ class UserAdminControllerE2EIT {
   void getTenantAdmin_Should_returnOk_When_attemptedToGetTenantAdminWithTenantAdminAuthority()
       throws Exception {
     // given
+    // #968: reading a tenant admin is scoped to the caller's tenant. cgenney5 sits in tenant
+    // 102 (UserServiceDatabase.sql), so the caller carries that tenant and the same-tenant
+    // branch is the one under test.
+    when(authenticatedUser.getTenantId()).thenReturn(102L);
     var existingAdminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
 
     // when, then
@@ -609,6 +663,8 @@ class UserAdminControllerE2EIT {
   void
       getTenantAdmins_Should_returnOkAndFilterByTenantId_When_attemptedToGetTenantWithTenantAdminAuthority()
           throws Exception {
+    // #968: cross-tenant listing is now platform-admin only.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
 
     // when, then
     this.mockMvc
@@ -818,6 +874,10 @@ class UserAdminControllerE2EIT {
   @Test
   @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
   void searchTenantAdmin_Should_returnCorrectResult_When_tenantIdIsProvided() throws Exception {
+    // #968: the infix search is scoped to the caller's tenant for every non-platform caller.
+    // The expected hit, cgenney5, is in tenant 102, so a caller in that tenant still finds it —
+    // this keeps the test on the scoped path instead of the platform-admin short-circuit.
+    when(authenticatedUser.getTenantId()).thenReturn(102L);
     final String tenantId = "102";
     final String expectedAdminId = "6584f4a9-a7f0-42f0-b929-ab5c99c0802d";
     final String expectedUsername = "cgenney5";
@@ -895,6 +955,9 @@ class UserAdminControllerE2EIT {
   void deleteTenantAdmin_Should_delete_When_attemptedToDeleteTenantAdminWithTenantAdminAuthority()
       throws Exception {
     // given
+    // #968: the admin created here has a null tenant (multitenancy.enabled=false), which no
+    // caller tenant can match, so only a platform admin can delete it in this setup.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     var adminId = givenNewTenantAdminIsCreated();
 
     // when
