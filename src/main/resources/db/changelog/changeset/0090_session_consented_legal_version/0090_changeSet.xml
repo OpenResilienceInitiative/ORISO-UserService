@@ -11,9 +11,9 @@
 
        No precondition needed: the SQL guards the column with IF NOT EXISTS, so the
        changeset is idempotent and safe to run against any schema state. -->
-  <changeSet id="0087-session-consented-legal-version" author="frank">
+  <changeSet id="0090-session-consented-legal-version" author="frank">
     <sqlFile
-      path="db/changelog/changeset/0087_session_consented_legal_version/migrate.sql"
+      path="db/changelog/changeset/0090_session_consented_legal_version/migrate.sql"
       relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
     <rollback>
       <sql>ALTER TABLE session DROP COLUMN IF EXISTS consented_legal_version_id;</sql>
