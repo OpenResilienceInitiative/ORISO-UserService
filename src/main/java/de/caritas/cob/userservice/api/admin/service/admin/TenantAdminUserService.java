@@ -56,6 +56,8 @@ public class TenantAdminUserService {
 
   private void validateCreateAdmin(CreateAdminDTO createTenantAdminDTO) {
     validateTenantId(createTenantAdminDTO.getTenantId());
+    AdminTenantOwnershipValidator.assertCallerMayCreateAdminForTenant(
+        authenticatedUser, createTenantAdminDTO.getTenantId());
   }
 
   private void validateUpdateAdmin(UpdateTenantAdminDTO updateTenantAdminDTO) {
