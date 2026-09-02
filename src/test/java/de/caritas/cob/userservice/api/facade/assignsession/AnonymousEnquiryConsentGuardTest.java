@@ -68,6 +68,17 @@ class AnonymousEnquiryConsentGuardTest {
   }
 
   @Test
+  void allowsAnAnonymousEnquiryWhenTheSessionCarriesAConsentPointer() {
+    /* ADR-022 decision 2 moves the Gate 2 state onto the session. A room that is
+    cleared for a legal-text version has passed the gate, even though
+    CreateUserFacade deliberately leaves the account-level timestamp null. */
+    var session = sessionWithConfirmation(null);
+    session.setConsentedLegalVersionId(7L);
+
+    assertThatCode(() -> guard.verifyAnonymousConsent(session)).doesNotThrowAnyException();
+  }
+
+  @Test
   void doesNotThrowWhenTheSessionCarriesNoUserAtAll() {
     /* A session without a user cannot be an anonymous advice seeker awaiting
     consent, and failing an assignment on a malformed session would turn a

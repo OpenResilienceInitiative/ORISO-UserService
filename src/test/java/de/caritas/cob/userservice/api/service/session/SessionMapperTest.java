@@ -87,6 +87,70 @@ class SessionMapperTest {
   }
 
   @Test
+  void convertToSessionDTO_Should_projectTheConsentPointerAndClearTheGate() {
+    // ADR-022 decision 2: the read path exists so the client can open the composer.
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.AGENCY_COUNSELLING);
+    session.setConsentedLegalVersionId(7L);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertThat(sessionDTO.getConsentedLegalVersionId(), is(7L));
+    assertThat(sessionDTO.getConsentRequired(), is(false));
+  }
+
+  @Test
+  void convertToSessionDTO_Should_requireConsent_When_noPointerIsRecorded() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.LIVE_CHAT);
+    session.setConsentedLegalVersionId(null);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertNull(sessionDTO.getConsentedLegalVersionId());
+    assertThat(sessionDTO.getConsentRequired(), is(true));
+  }
+
+  @Test
+  void convertToSessionDTO_Should_notRequireConsent_When_theRoomHasNoHelpSeeker() {
+    // Internal rooms (supervision, Team-Besprechung) have no help-seeker and therefore no gate.
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.INTERNAL_GROUP);
+    session.setConsentedLegalVersionId(null);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertThat(sessionDTO.getConsentRequired(), is(false));
+  }
+
+  @Test
+  void convertToSessionDTO_Should_notRequireConsent_When_theRoomIsASelfHelpGroup() {
+    /* A SELF_HELP session is owned by a tenant system user, not by a help-seeker
+    (CreateChatFacade#createMatrixGroupChat). Reporting consentRequired there would
+    park a gate on a room nobody can ever clear, and one shared pointer could never
+    express per-participant consent anyway. */
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(ConversationType.SELF_HELP);
+    session.setConsentedLegalVersionId(null);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertThat(sessionDTO.getConsentRequired(), is(false));
+  }
+
+  @Test
+  void convertToSessionDTO_Should_requireConsent_When_theModalityPredatesAdr006() {
+    // Legacy 1:1 rooms carry no conversation type; their user IS the help-seeker.
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setConversationType(null);
+    session.setConsentedLegalVersionId(null);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertThat(sessionDTO.getConsentRequired(), is(true));
+  }
+
+  @Test
   void convertToSessionDTO_Should_leaveConversationTypeAndAskerMatrixUserIdNull_When_userIsNull() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setConversationType(null);

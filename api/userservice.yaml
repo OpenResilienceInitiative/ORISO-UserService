@@ -317,6 +317,47 @@ paths:
       security:
         - Bearer: [ ]
 
+  /users/sessions/{sessionId}/consent:
+    put:
+      tags:
+        - user-controller
+      summary: 'Records which legal-text version this counselling room is cleared for - Gate 2 of
+        ADR-022. PUT, not POST: the pointer is overwritten on re-consent, so the call is idempotent
+        and repeating it is not consenting twice. Nothing is appended and nothing about the person
+        is stored. [Authorization: Role: anonymous or user]'
+      operationId: recordSessionConsent
+      parameters:
+        - name: sessionId
+          in: path
+          description: Session Id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/SessionConsentDTO'
+        required: true
+      responses:
+        204:
+          description: NO CONTENT - successful operation
+        400:
+          description: BAD REQUEST - no legal version supplied
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token, or the session
+            does not belong to the authenticated help-seeker
+        404:
+          description: NOT FOUND - session not found
+        409:
+          description: CONFLICT - this room has no consent gate (no help-seeker owns it)
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /users/sessions/{sessionId}/archive:
     put:
       tags:
@@ -2107,6 +2148,35 @@ components:
           $ref: '#/components/schemas/VideoCallMessageDTO'
         topic:
           $ref: '#/components/schemas/SessionTopicDTO'
+        consentedLegalVersionId:
+          type: integer
+          format: int64
+          example: 7
+          description: >-
+            ADR-022 decision 2 - the legal-text version (owned by ORISO-AgencyService) this room is
+            currently cleared for; null when Gate 2 has not been passed. A pointer, overwritten on
+            re-consent, never a consent log. Additive - older clients can ignore it.
+        consentRequired:
+          type: boolean
+          example: false
+          description: >-
+            true when Gate 2 applies to this session and no consent pointer is recorded, i.e. the
+            client must show the consent gate instead of the composer. Internal rooms (no
+            help-seeker) always report false. Additive - older clients can ignore it.
+
+    SessionConsentDTO:
+      type: object
+      required:
+        - legalVersionId
+      properties:
+        legalVersionId:
+          type: integer
+          format: int64
+          example: 7
+          description: >-
+            The legal-text version the help-seeker agreed to, as published by ORISO-AgencyService.
+            A public document version - no personal data. Stored as a pointer that is overwritten
+            on re-consent (ADR-022 decision 2); no consent log is kept.
 
     SessionAttachmentDTO:
       type: object
