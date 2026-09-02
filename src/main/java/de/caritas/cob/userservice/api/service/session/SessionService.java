@@ -657,6 +657,7 @@ public class SessionService {
    * fallback the open path uses so a visible request can always be opened; it never widens access
    * to registered sessions.
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getVisibleAnonymousLiveChatEnquiriesByIds(
       Consultant consultant, Set<Long> sessionIds) {
     if (!isNotEmpty(sessionIds)) {
@@ -690,6 +691,7 @@ public class SessionService {
    * never widens access by agency or topic, and it does not change the session's tenant ownership
    * (the asker keeps seeing their own chat).
    */
+  @Transactional(readOnly = true)
   public List<ConsultantSessionResponseDTO> getDirectlyAssignedSessionsByIdsCrossTenant(
       Consultant consultant, Set<Long> sessionIds) {
     if (!isNotEmpty(sessionIds)) {
