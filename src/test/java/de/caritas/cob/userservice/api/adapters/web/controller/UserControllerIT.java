@@ -57,6 +57,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
@@ -76,6 +77,7 @@ import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -284,6 +286,8 @@ class UserControllerIT {
   @MockitoBean private EmailNotificationFacade emailNotificationFacade;
 
   @MockitoBean private SessionListFacade sessionListFacade;
+
+  @MockitoBean private SessionConsentService sessionConsentService;
   @MockitoBean private ConsultantAgencyService consultantAgencyService;
   @MockitoBean private AssignSessionFacade assignSessionFacade;
   @MockitoBean private AssignEnquiryFacade assignEnquiryFacade;
@@ -296,6 +300,7 @@ class UserControllerIT {
         IdentityDummyEmailUpdater.class,
         IdentityEmailAddressUpdater.class,
         IdentityEmailOwnerLookup.class,
+        IdentityLocaleLookup.class,
         IdentityPasswordUpdater.class,
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,

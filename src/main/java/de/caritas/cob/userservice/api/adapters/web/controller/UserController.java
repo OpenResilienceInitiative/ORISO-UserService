@@ -32,6 +32,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.RoleRequest;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsentDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDataDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.TransferOwnershipRequest;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateChatResponseDTO;
@@ -757,6 +758,20 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<Void> dearchiveSession(@PathVariable Long sessionId) {
     return userSessionControllerDelegate.dearchiveSession(sessionId);
+  }
+
+  /**
+   * Records which legal-text version this counselling room is cleared for — Gate 2 of ADR-022. The
+   * pointer is overwritten on re-consent; no consent log is written.
+   *
+   * @param sessionId (required) session ID
+   * @param sessionConsentDTO (required) the legal-text version the help-seeker agreed to
+   * @return {@link ResponseEntity}
+   */
+  @Override
+  public ResponseEntity<Void> recordSessionConsent(
+      @PathVariable Long sessionId, SessionConsentDTO sessionConsentDTO) {
+    return userSessionControllerDelegate.recordSessionConsent(sessionId, sessionConsentDTO);
   }
 
   @Override

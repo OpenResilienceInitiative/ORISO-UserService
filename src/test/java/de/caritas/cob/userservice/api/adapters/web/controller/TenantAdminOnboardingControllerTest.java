@@ -1,11 +1,15 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -389,5 +393,101 @@ class TenantAdminOnboardingControllerTest {
                 Arrays.asList(
                     "/users/account-invites/{token}/onboarding/two-factor",
                     "/service/users/account-invites/{token}/onboarding/two-factor")));
+  }
+
+  // --- DPA forward from the wizard (ORISO-Admin#722) ---
+
+  @Test
+  void forwardDpa_passesTheRecipientAndReturnsTheSignLink() {
+    when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
+        .thenReturn(
+            new TenantAdminOnboardingService.DpaForwardResult(
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", true));
+    var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
+    request.recipientEmail = "legal@example.org";
+
+    var response = controller.forwardDpa("raw-token", request);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
+    assertTrue(response.getBody().mailSent);
+  }
+
+  /** Option A: an undelivered mail still answers 200 with the link, flagged as not sent. */
+  @Test
+  void forwardDpa_returnsTheLinkFlaggedUnsent_When_theMailCouldNotBeDelivered() {
+    when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
+        .thenReturn(
+            new TenantAdminOnboardingService.DpaForwardResult(
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+    var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
+    request.recipientEmail = "legal@example.org";
+
+    var response = controller.forwardDpa("raw-token", request);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertNotNull(response.getBody());
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    // the validity window must survive the degraded path - a mail failure may not cost it
+    assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
+    assertFalse(response.getBody().mailSent);
+  }
+
+  @Test
+  void forwardDpa_toleratesAnAbsentBody() {
+    when(onboardingService.forwardDpa(eq("raw-token"), eq(null)))
+        .thenReturn(
+            new TenantAdminOnboardingService.DpaForwardResult(
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+
+    var response = controller.forwardDpa("raw-token", null);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    // the body must be complete even without a request body - status alone cannot prove that
+    assertNotNull(response.getBody());
+    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
+    assertFalse(response.getBody().mailSent);
+    verify(onboardingService).forwardDpa("raw-token", null);
+  }
+
+  @Test
+  void forwardDpa_isTenantAdminOnly_andDoesNotDispatchByRole() {
+    // forwardDpa is the only public onboarding endpoint here that does NOT branch on the token's
+    // role: forwarding a DPA is meaningless for a counsellor invite, which has no tenant to sign
+    // for. This pins that difference so a refactor cannot quietly route counsellor tokens into
+    // tenant-admin forwarding; the service-level lookup stays the enforcement point (it answers
+    // 404 for a non-tenant-admin token).
+    when(onboardingService.forwardDpa("raw-token", null))
+        .thenReturn(
+            new TenantAdminOnboardingService.DpaForwardResult(
+                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+
+    controller.forwardDpa("raw-token", null);
+
+    verify(onboardingService).forwardDpa("raw-token", null);
+    // the role probe the other three endpoints run is deliberately absent here — there is no
+    // counsellor counterpart to dispatch to (CounsellorOnboardingService has no forwardDpa at
+    // all), so the role check would only add a second lookup with no branch to take
+    verify(accountInviteService, never()).findTargetRoleByToken(any());
+    // and nothing may leak into the counsellor lane either
+    verifyNoInteractions(counsellorOnboardingService);
+  }
+
+  @Test
+  void forwardDpa_isAnonymousAndMappedOnBothPrefixes() throws Exception {
+    Method forwardDpa =
+        TenantAdminOnboardingController.class.getMethod(
+            "forwardDpa", String.class, TenantAdminOnboardingController.DpaForwardRequestDTO.class);
+
+    assertNull(forwardDpa.getAnnotation(PreAuthorize.class));
+    assertTrue(
+        Arrays.asList(forwardDpa.getAnnotation(PostMapping.class).value())
+            .containsAll(
+                Arrays.asList(
+                    "/users/account-invites/{token}/onboarding/dpa-forward",
+                    "/service/users/account-invites/{token}/onboarding/dpa-forward")));
   }
 }

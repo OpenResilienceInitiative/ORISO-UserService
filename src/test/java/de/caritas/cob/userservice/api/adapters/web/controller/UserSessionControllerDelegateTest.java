@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResp
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsentDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
@@ -34,6 +35,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import jakarta.ws.rs.InternalServerErrorException;
@@ -66,8 +68,23 @@ class UserSessionControllerDelegateTest {
   @Mock private ConsultantDtoMapper consultantDtoMapper;
   @Mock private UserDtoMapper userDtoMapper;
   @Mock private ConsultantService consultantService;
+  @Mock private SessionConsentService sessionConsentService;
 
   @InjectMocks private UserSessionControllerDelegate delegate;
+
+  @Test
+  void recordSessionConsent_Should_moveThePointerForTheAuthenticatedHelpSeeker() {
+    // ADR-022 Gate 2 write path: overwrite the pointer, record nothing about the person.
+    var adviceSeeker = new User();
+    adviceSeeker.setUserId("asker-1");
+    when(userAccountProvider.retrieveValidatedUser()).thenReturn(adviceSeeker);
+    var body = new SessionConsentDTO().legalVersionId(7L);
+
+    var response = delegate.recordSessionConsent(42L, body);
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+    verify(sessionConsentService).recordConsent(42L, adviceSeeker, 7L);
+  }
 
   @Test
   void getSessionsForAuthenticatedUserShouldReturnOk() {
