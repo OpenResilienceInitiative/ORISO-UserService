@@ -106,6 +106,7 @@ class TenantAdminUserServiceTest {
     // given
     EasyRandom random = new EasyRandom();
     UpdateTenantAdminDTO tenantAdminDTO = random.nextObject(UpdateTenantAdminDTO.class);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(tenantService.getRestrictedTenantData(1L))
         .thenReturn(new RestrictedTenantDTO().subdomain("subdomain"));
     Admin tenantAdmin = new Admin();
@@ -127,6 +128,7 @@ class TenantAdminUserServiceTest {
   void updateTenantAdmin_Should_NotLookUpTechnicalTenant() {
     UpdateTenantAdminDTO tenantAdminDTO = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
     Admin platformAdmin = tenantAdmin("platform-admin", 0L);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(updateAdminService.updateTenantAdmin("platform-admin", tenantAdminDTO))
         .thenReturn(platformAdmin);
 
@@ -150,6 +152,7 @@ class TenantAdminUserServiceTest {
     secondTenantAdmin.setId("tenant-admin-2");
     secondTenantAdmin.setType(Admin.AdminType.TENANT);
     secondTenantAdmin.setTenantId(tenantId);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(retrieveAdminService.findTenantAdminsByTenantId(tenantId))
         .thenReturn(Arrays.asList(firstTenantAdmin, secondTenantAdmin));
 
@@ -172,6 +175,7 @@ class TenantAdminUserServiceTest {
     Admin admin = new Admin();
     admin.setId("tenant-admin-1");
     admin.setType(Admin.AdminType.TENANT);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(retrieveAdminService.findAdmin("tenant-admin-1", Admin.AdminType.TENANT))
         .thenReturn(admin);
     when(consultantRepository.findActiveIdsByIdIn(java.util.Set.of("tenant-admin-1")))
@@ -190,6 +194,7 @@ class TenantAdminUserServiceTest {
     Admin admin = new Admin();
     admin.setId("tenant-admin-1");
     admin.setType(Admin.AdminType.TENANT);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(retrieveAdminService.findAdmin("tenant-admin-1", Admin.AdminType.TENANT))
         .thenReturn(admin);
     when(consultantRepository.findActiveIdsByIdIn(java.util.Set.of("tenant-admin-1")))
@@ -216,6 +221,7 @@ class TenantAdminUserServiceTest {
     Admin secondTenantAdmin = tenantAdmin("tenant-admin-2", 1L);
     Admin thirdTenantAdmin = tenantAdmin("tenant-admin-3", 2L);
     List<Admin> fullAdmins = Arrays.asList(firstTenantAdmin, secondTenantAdmin, thirdTenantAdmin);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.TENANT, pageRequest))
         .thenReturn(adminsPage);
     when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(fullAdmins);
@@ -255,6 +261,7 @@ class TenantAdminUserServiceTest {
     Admin.AdminBase platformAdminBase = adminBase("platform-admin", 0L);
     Page<Admin.AdminBase> adminsPage = new PageImpl<>(List.of(platformAdminBase), pageRequest, 1);
     Admin platformAdmin = tenantAdmin("platform-admin", 0L);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.TENANT, pageRequest))
         .thenReturn(adminsPage);
     when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(List.of(platformAdmin));
@@ -280,6 +287,173 @@ class TenantAdminUserServiceTest {
             tenantNameMapCaptor.capture(),
             Mockito.any());
     assertThat(tenantNameMapCaptor.getValue()).isEmpty();
+  }
+
+  /**
+   * #968: a single tenant admin querying /useradmin/tenantadmins/search must only see admins of
+   * their own tenant. Before the fix the search hit findAllByInfix unscoped and returned admins of
+   * every tenant.
+   */
+  @Test
+  void findTenantAdminsByInfix_Should_ScopeToCallerTenant_ForNonPlatformAdmin() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    Admin.AdminBase ownAdminBase = adminBase("own-tenant-admin", 9L);
+    Page<Admin.AdminBase> ownAdminsPage = new PageImpl<>(List.of(ownAdminBase), pageRequest, 1);
+    Admin ownAdmin = tenantAdmin("own-tenant-admin", 9L);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(retrieveAdminService.findAllByInfixScopedToTenant(
+            "*", Admin.AdminType.TENANT, 9L, pageRequest))
+        .thenReturn(ownAdminsPage);
+    when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(List.of(ownAdmin));
+    when(tenantService.getRestrictedTenantData(Set.of(9L)))
+        .thenReturn(List.of(new RestrictedTenantDTO().id(9L).name("Own tenant")));
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+
+    Mockito.verify(retrieveAdminService)
+        .findAllByInfixScopedToTenant("*", Admin.AdminType.TENANT, 9L, pageRequest);
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
+  }
+
+  /**
+   * Fail-closed: if the caller has no resolvable tenant (getTenantId() returns null), the search
+   * must still route through the scoped call and return an empty page — never fall back to the
+   * unscoped repository query. Prevents any future change to the branching logic from silently
+   * re-opening #968.
+   */
+  @Test
+  void findTenantAdminsByInfix_Should_FailClosedToEmpty_WhenCallerTenantIsNull() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(null);
+    when(retrieveAdminService.findAllByInfixScopedToTenant(
+            "*", Admin.AdminType.TENANT, null, pageRequest))
+        .thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+
+    Mockito.verify(retrieveAdminService)
+        .findAllByInfixScopedToTenant("*", Admin.AdminType.TENANT, null, pageRequest);
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
+  }
+
+  @Test
+  void findTenantAdminsByInfix_Should_NotScope_ForPlatformAdmin() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    Page<Admin.AdminBase> emptyPage = new PageImpl<>(List.of(), pageRequest, 0);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.TENANT, pageRequest))
+        .thenReturn(emptyPage);
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+
+    Mockito.verify(retrieveAdminService).findAllByInfix("*", Admin.AdminType.TENANT, pageRequest);
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfixScopedToTenant(
+            Mockito.anyString(), Mockito.any(), Mockito.anyLong(), Mockito.any(PageRequest.class));
+  }
+
+  // ---- #968: by-id sibling endpoints must reject foreign-tenant targets ----
+
+  @Test
+  void findTenantAdmin_Should_ThrowForbidden_WhenCallerIsInForeignTenant() {
+    Admin foreignAdmin = tenantAdmin("foreign-admin", 1L);
+    when(retrieveAdminService.findAdmin("foreign-admin", Admin.AdminType.TENANT))
+        .thenReturn(foreignAdmin);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+
+    assertThatThrownBy(() -> tenantAdminUserService.findTenantAdmin("foreign-admin"))
+        .isInstanceOf(ForbiddenException.class);
+    Mockito.verifyNoInteractions(consultantRepository);
+  }
+
+  @Test
+  void updateTenantAdmin_Should_ThrowForbidden_WhenCallerIsInForeignTenant() {
+    UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    dto.setTenantId(9);
+    Admin foreignAdmin = tenantAdmin("foreign-admin", 1L);
+    when(retrieveAdminService.findAdmin("foreign-admin", Admin.AdminType.TENANT))
+        .thenReturn(foreignAdmin);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+
+    assertThatThrownBy(() -> tenantAdminUserService.updateTenantAdmin("foreign-admin", dto))
+        .isInstanceOf(ForbiddenException.class);
+    Mockito.verifyNoInteractions(updateAdminService);
+  }
+
+  @Test
+  void deleteTenantAdmin_Should_ThrowForbidden_WhenCallerIsInForeignTenant() {
+    Admin foreignAdmin = tenantAdmin("foreign-admin", 1L);
+    when(retrieveAdminService.findAdmin("foreign-admin", Admin.AdminType.TENANT))
+        .thenReturn(foreignAdmin);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+
+    assertThatThrownBy(() -> tenantAdminUserService.deleteTenantAdmin("foreign-admin"))
+        .isInstanceOf(ForbiddenException.class);
+    Mockito.verifyNoInteractions(deleteAdminService);
+  }
+
+  @Test
+  void deleteTenantAdmin_Should_Delete_WhenCallerIsInSameTenant() {
+    Admin ownAdmin = tenantAdmin("own-admin", 9L);
+    when(retrieveAdminService.findAdmin("own-admin", Admin.AdminType.TENANT)).thenReturn(ownAdmin);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+
+    tenantAdminUserService.deleteTenantAdmin("own-admin");
+
+    Mockito.verify(deleteAdminService).deleteTenantAdmin("own-admin");
+  }
+
+  @Test
+  void findTenantAdmins_Should_ThrowForbidden_WhenQueryingForeignTenant() {
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+
+    assertThatThrownBy(() -> tenantAdminUserService.findTenantAdmins(1L))
+        .isInstanceOf(ForbiddenException.class);
+    Mockito.verify(retrieveAdminService, Mockito.never()).findTenantAdminsByTenantId(Mockito.any());
+  }
+
+  @Test
+  void findTenantAdmins_Should_Allow_WhenPlatformAdminQueriesAnyTenant() {
+    Admin someAdmin = tenantAdmin("some-admin", 1L);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(retrieveAdminService.findTenantAdminsByTenantId(1L)).thenReturn(List.of(someAdmin));
+
+    List<AdminResponseDTO> admins = tenantAdminUserService.findTenantAdmins(1L);
+
+    assertThat(admins).hasSize(1);
   }
 
   private Admin tenantAdmin(String id, Long tenantId) {

@@ -247,6 +247,15 @@ public class TenantAdminOnboardingService {
               .orElseThrow(() -> new NotFoundException("Account invite not found"));
       claimedInvite.setAcceptedByUserId(admin.getId());
       claimedInvite.setTotpPendingSecret(otpInfo.secret());
+      if (command.dpaAccepted()) {
+        // The own acceptance IS the signature (recorded below as the tenant's U9 admin
+        // signature), so stamp it on the invite: the Admin invite progress board proves its
+        // final "Vertrag unterschrieben" phase from dpa_signed_at (ORISO-Admin#896, epic #725).
+        // Rollback-safe: a tenant-creation failure below rolls this write back with the rest of
+        // the transaction. A forwarded DPA stays pending here - only the DPA_SIGNED_NOTICE chain
+        // may stamp it once TenantService verified the external signature actually landed.
+        claimedInvite.setDpaSignedAt(now);
+      }
       claimedInvite.setUpdateDate(now);
       accountInviteRepository.save(claimedInvite);
 

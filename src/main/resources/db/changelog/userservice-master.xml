@@ -163,6 +163,8 @@
        that already ran it under an earlier path converge without harm. -->
   <include
     file="db/changelog/changeset/0088_support_room_repair/0088_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0089_account_invite_dpa_signed_at/0089_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
