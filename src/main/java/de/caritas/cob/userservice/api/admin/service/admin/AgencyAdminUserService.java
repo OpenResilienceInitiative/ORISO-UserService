@@ -74,23 +74,42 @@ public class AgencyAdminUserService {
 
   /**
    * A restricted agency admin (an agency-level admin without the broader agency-super-admin role)
-   * may only act on agency admins that share at least one of their own agencies. This prevents a
-   * single Beratungsstellen-Admin from reading, editing or deleting admins of other Träger by
-   * targeting their id directly, mirroring the agency scoping already applied to consultants.
+   * may only act on agency admins that share at least one of their own agencies; every other
+   * non-platform caller (single-tenant admin, tenant super admin, agency super admin without shared
+   * agencies) may only act on agency admins of their own tenant (#968). Platform admins keep the
+   * full view. Prevents a caller from reading, editing or deleting admins of other Träger or other
+   * tenants by targeting their id directly, mirroring the search-side scoping applied by {@link
+   * #findScopedAgencyAdminsByInfix}.
    */
   private void assertCallerMayAccessAgencyAdmin(final String targetAdminId) {
-    if (!authenticatedUser.hasRestrictedAgencyPriviliges()) {
+    if (authenticatedUser.isPlatformAdmin()) {
       return;
     }
-    var callerAgencyIds = retrieveAdminService.findAgencyIdsOfAdmin(authenticatedUser.getUserId());
-    var targetAgencyIds = retrieveAdminService.findAgencyIdsOfAdmin(targetAdminId);
-    if (Collections.disjoint(callerAgencyIds, targetAgencyIds)) {
+    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
+      var callerAgencyIds =
+          retrieveAdminService.findAgencyIdsOfAdmin(authenticatedUser.getUserId());
+      var targetAgencyIds = retrieveAdminService.findAgencyIdsOfAdmin(targetAdminId);
+      if (Collections.disjoint(callerAgencyIds, targetAgencyIds)) {
+        log.warn(
+            "Restricted agency admin {} attempted to access agency admin {} outside their agencies",
+            authenticatedUser.getUserId(),
+            targetAdminId);
+        throw new ForbiddenException(
+            "Agency admin is not allowed to access an admin outside their own agencies");
+      }
+      return;
+    }
+    Admin target = retrieveAdminService.findAdmin(targetAdminId, Admin.AdminType.AGENCY);
+    Long callerTenantId = authenticatedUser.getTenantId();
+    if (callerTenantId == null || !callerTenantId.equals(target.getTenantId())) {
       log.warn(
-          "Restricted agency admin {} attempted to access agency admin {} outside their agencies",
+          "Tenant admin {} (tenant {}) attempted to access agency admin {} in tenant {}",
           authenticatedUser.getUserId(),
-          targetAdminId);
+          callerTenantId,
+          targetAdminId,
+          target.getTenantId());
       throw new ForbiddenException(
-          "Agency admin is not allowed to access an admin outside their own agencies");
+          "Tenant admin is not allowed to access an admin outside their own tenant");
     }
   }
 
@@ -130,9 +149,10 @@ public class AgencyAdminUserService {
 
   /**
    * Returns the infix-matched agency admins visible to the current caller. A restricted agency
-   * admin only sees admins of their own agencies; platform/tenant admins keep the full list. This
-   * closes the cross-Träger leak where any holder of the user-admin authority (which every agency
-   * admin also carries, to manage consultants) could list every agency admin of every Träger.
+   * admin only sees admins of their own agencies; a tenant-bound caller (single-tenant or tenant
+   * super admin) is scoped to their own tenant so they cannot enumerate agency admins of other
+   * tenants (#968); only platform admins keep the full list. This closes both the cross-Träger leak
+   * within a tenant and the cross-tenant leak across tenants.
    */
   private Page<AdminBase> findScopedAgencyAdminsByInfix(String infix, PageRequest pageRequest) {
     if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
@@ -140,6 +160,10 @@ public class AgencyAdminUserService {
           retrieveAdminService.findAgencyIdsOfAdmin(authenticatedUser.getUserId());
       return retrieveAdminService.findAllByInfixScopedToAgencies(
           infix, Admin.AdminType.AGENCY, callerAgencyIds, pageRequest);
+    }
+    if (!authenticatedUser.isPlatformAdmin()) {
+      return retrieveAdminService.findAllByInfixScopedToTenant(
+          infix, Admin.AdminType.AGENCY, authenticatedUser.getTenantId(), pageRequest);
     }
     return retrieveAdminService.findAllByInfix(infix, Admin.AdminType.AGENCY, pageRequest);
   }

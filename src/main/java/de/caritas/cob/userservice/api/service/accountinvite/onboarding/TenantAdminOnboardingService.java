@@ -18,9 +18,13 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkExc
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService;
+import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService.DpaForwardEmailCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.OnboardingDpaAcceptanceDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.function.Supplier;
@@ -51,6 +55,23 @@ public class TenantAdminOnboardingService {
 
   private static final int MIN_PASSWORD_LENGTH = 8;
 
+  /**
+   * Provisional consultant allowance stamped on every tenant this flow creates. It is NOT a
+   * considered business limit: the onboarding invite carries no licensing information, so this is a
+   * placeholder that keeps the required {@code Licensing.allowedNumberOfUsers} non-null until the
+   * platform operator sets the real number for the tenant. The value mirrors the Admin panel's own
+   * default (ORISO-Admin {@code EditableTable.tsx}, {@code allowedNumberOfUsers = 9999}) and is
+   * high enough never to block consultant creation in the meantime.
+   */
+  private static final int PROVISIONAL_ALLOWED_NUMBER_OF_USERS = 9999;
+
+  /**
+   * How often one invitation may forward the DPA. Small on purpose: a real forward needs one, a
+   * mistyped recipient address needs a second, and anything beyond that is far more likely to be
+   * abuse of an anonymous endpoint that mails live signing links than a genuine need.
+   */
+  static final int MAX_DPA_FORWARDS_PER_INVITE = 3;
+
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull CreateAdminService createAdminService;
@@ -60,6 +81,8 @@ public class TenantAdminOnboardingService {
   private final @NonNull IdentityProfileLookup identityProfileLookup;
   private final @NonNull TenantCreationClient tenantCreationClient;
   private final @NonNull OperatorDpaContentClient operatorDpaContentClient;
+  private final @NonNull PublicDpaForwardClient publicDpaForwardClient;
+  private final @NonNull DpaForwardEmailService dpaForwardEmailService;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
   /**
@@ -171,17 +194,31 @@ public class TenantAdminOnboardingService {
       throw new NotFoundException("Reservation does not match this invite");
     }
 
-    OperatorDpa operatorDpa = operatorDpaContentClient.fetchPublishedDpa();
-    if (operatorDpa == null) {
-      // Nothing to accept: the acceptance would be unrecordable and the tenant would be created
-      // straight into the non-actionable DPA blocker. Refuse before touching the invite.
-      log.error(
-          "Tenant-admin onboarding registration refused for invite {}: the platform operator has"
-              + " published no data processing agreement, so the acceptance cannot be recorded",
-          invite.getId());
-      throw new InternalServerErrorException(
-          "No data processing agreement is published by the platform operator — publish it before"
-              + " tenant admins can complete the onboarding");
+    // ORISO-Admin#722: an admin who is not authorised to sign forwards the DPA instead of
+    // accepting it. The forward is recorded server-side on the invite (dpaForwardedAt via
+    // forwardDpa), so registration without an own acceptance is only possible when a forward
+    // genuinely happened — never on the client's say-so. The backend legal gate stays in force
+    // until the forwarded signature lands.
+    boolean dpaForwarded = invite.getDpaForwardedAt() != null;
+    if (!command.dpaAccepted() && !dpaForwarded) {
+      throw new BadRequestException(
+          "The data processing agreement must be accepted or forwarded to an authorised signer");
+    }
+
+    OperatorDpa operatorDpa = null;
+    if (command.dpaAccepted()) {
+      operatorDpa = operatorDpaContentClient.fetchPublishedDpa();
+      if (operatorDpa == null) {
+        // Nothing to accept: the acceptance would be unrecordable and the tenant would be created
+        // straight into the non-actionable DPA blocker. Refuse before touching the invite.
+        log.error(
+            "Tenant-admin onboarding registration refused for invite {}: the platform operator has"
+                + " published no data processing agreement, so the acceptance cannot be recorded",
+            invite.getId());
+        throw new InternalServerErrorException(
+            "No data processing agreement is published by the platform operator — publish it"
+                + " before tenant admins can complete the onboarding");
+      }
     }
 
     int claimed = accountInviteRepository.claimForAcceptance(invite.getId(), null, now);
@@ -210,17 +247,36 @@ public class TenantAdminOnboardingService {
               .orElseThrow(() -> new NotFoundException("Account invite not found"));
       claimedInvite.setAcceptedByUserId(admin.getId());
       claimedInvite.setTotpPendingSecret(otpInfo.secret());
+      if (command.dpaAccepted()) {
+        // The own acceptance IS the signature (recorded below as the tenant's U9 admin
+        // signature), so stamp it on the invite: the Admin invite progress board proves its
+        // final "Vertrag unterschrieben" phase from dpa_signed_at (ORISO-Admin#896, epic #725).
+        // Rollback-safe: a tenant-creation failure below rolls this write back with the rest of
+        // the transaction. A forwarded DPA stays pending here - only the DPA_SIGNED_NOTICE chain
+        // may stamp it once TenantService verified the external signature actually landed.
+        claimedInvite.setDpaSignedAt(now);
+      }
       claimedInvite.setUpdateDate(now);
       accountInviteRepository.save(claimedInvite);
 
       MultilingualTenantDTO created =
           tenantCreationClient.createTenant(
-              buildTenantDto(invite, command, buildDpaAcceptance(command, admin, operatorDpa)));
-      log.info(
-          "Tenant-admin onboarding recorded the DPA acceptance of invite {} against operator DPA"
-              + " version {}",
-          invite.getId(),
-          operatorDpa.version());
+              buildTenantDto(
+                  invite,
+                  command,
+                  command.dpaAccepted() ? buildDpaAcceptance(command, admin, operatorDpa) : null));
+      if (command.dpaAccepted()) {
+        log.info(
+            "Tenant-admin onboarding recorded the DPA acceptance of invite {} against operator DPA"
+                + " version {}",
+            invite.getId(),
+            operatorDpa.version());
+      } else {
+        log.info(
+            "Tenant-admin onboarding of invite {} completed without an own DPA acceptance — the"
+                + " agreement was forwarded to an authorised signer and stays pending",
+            invite.getId());
+      }
       Long tenantId =
           created != null && created.getId() != null ? created.getId() : invite.getTenantId();
       return new TenantAdminRegistrationResult(tenantId, otpInfo.secret(), otpInfo.secretQrCode());
@@ -229,6 +285,242 @@ public class TenantAdminOnboardingService {
       // state and must be compensated explicitly so a failed registration stays retryable.
       identityAccountRemover.rollbackUser(admin.getId());
       throw exception;
+    }
+  }
+
+  /**
+   * Creates a DPA sign link for the invite's reserved tenant because the onboarding administrator
+   * declared they are not authorised to sign (ORISO-Admin#722, wizard step 1). The invite token is
+   * the credential; the actual link creation is delegated to the TenantService's public forward
+   * endpoint, which validates the invite's tenant-ID reservation pair fail-closed
+   * (ORISO-TenantService#179).
+   *
+   * <p>Bounded at {@value #MAX_DPA_FORWARDS_PER_INVITE} forwards per invitation, after which the
+   * call answers 400 and the wizard should tell the administrator to request a new invitation. The
+   * budget exists because this route is anonymous — the invite token in the path is the only
+   * credential — and every call mints a fresh sign token and mails a live signing link to whatever
+   * address the request carries; unbounded, that is a mail relay for someone else's tenant. An
+   * attempt whose mint fails is refunded, so a TenantService outage or throttle does not cost the
+   * administrator a retry — only attempts that actually created a link stay charged.
+   *
+   * <p>The forward is recorded on the invite ({@code dpaForwardedAt}): it is the server-side proof
+   * that lets {@link #registerTenantAdmin} accept a registration without an own DPA acceptance, and
+   * the anchor for resolving the DPA_SIGNED_NOTICE recipient of a pre-account forward
+   * (ORISO-UserService#1005). With a recipient address the sign link is also delivered by mail via
+   * the same {@code DPA_FORWARD} path the authenticated forward uses; without one the wizard gets
+   * the link back to share manually. Only an EMAIL_SENT, unexpired invite may forward — the DPA
+   * step is only reachable in that state.
+   *
+   * <p>Transaction shape (#1008 rule, applied here by the #1065 review): the locked load, the
+   * expiry transition, the budget check and the reservation of the attempt are ONE short database
+   * transaction; the TenantService mint and the mail dispatch run after it committed, never while
+   * the invite's row lock is held. A mint that produced no link repays the reserved attempt in a
+   * second short transaction.
+   */
+  public DpaForwardResult forwardDpa(String rawToken, String recipientEmail) {
+    ReservedDpaForward reserved = reserveDpaForwardAttempt(rawToken);
+    // Thrown only after the reserving transaction committed, so the persisted EXPIRED transition
+    // survives the link-death answer (what noRollbackFor bought on the old single-transaction
+    // shape of this method).
+    reserved.rethrowLinkDeath();
+    AccountInvite invite = reserved.invite();
+
+    // The provider contract is checked BEFORE anything is recorded and regardless of whether a
+    // mail follows. A missing or unparseable expiry is TenantService breaking its contract (see
+    // parseExpiry): recording it as a completed forward, or handing the raw value back on the
+    // recipient-less path, would turn a broken provider answer into a successful one.
+    //
+    // Same reasoning for the link itself: TenantService emits a path-only link when its base URL is
+    // unset (Pre-Dev). The mail path already resolves that against the configured App origin, but
+    // the recipient-less and mail-failed branches hand the link back for MANUAL sharing — a copied
+    // "/dpa-sign/<token>" has no origin and never reaches the DPA frontend. Normalise once here so
+    // the mail and the returned link cannot disagree.
+    //
+    // Both checks run INSIDE the compensated region: a 200 carrying no usable link leaves the
+    // caller with nothing, exactly like an outage or a throttle, so the reserved attempt has to be
+    // repaid the same way. Charging it would let three malformed provider answers exhaust an
+    // invitation's five forwards for good.
+    LocalDateTime expiresAt;
+    String signLink;
+    String rawExpiresAt;
+    try {
+      DpaSignInviteDTO signInvite =
+          publicDpaForwardClient.createForwardSignLink(
+              invite.getTenantId(), invite.getTenantIdReservationToken());
+      rawExpiresAt = signInvite.getExpiresAt();
+      expiresAt = parseExpiry(rawExpiresAt);
+      signLink = dpaForwardEmailService.toAbsoluteSignLink(signInvite.getSignLink());
+    } catch (RuntimeException exception) {
+      // The mint produced no usable link, so the reserved attempt is repaid: an upstream outage,
+      // a throttle or a malformed answer must not exhaust the forwards a legitimate invitation
+      // gets.
+      refundDpaForwardAttempt(rawToken);
+      throw exception;
+    }
+
+    recordDpaForward(rawToken);
+
+    // Only the MAIL degrades, and only after the link exists. Everything that can go wrong before
+    // this point still fails the call: an unknown or dead invite (404/410), a missing reservation,
+    // a throttled or rejected mint (429/410/409). Those produce no link, so there is nothing to
+    // hand back. Once the link IS minted it is live for 14 days and counts against the cap of five
+    // outstanding links, so failing here would burn a slot for nothing — which is exactly how an
+    // onboarding ended up with five unusable links and no mail. The caller gets the link with
+    // mailSent=false and shares it manually.
+    boolean mailSent = false;
+    if (!isBlank(recipientEmail)) {
+      try {
+        dpaForwardEmailService.sendSigningLink(
+            new DpaForwardEmailCommand(invite.getTenantId(), recipientEmail, signLink, expiresAt));
+        mailSent = true;
+      } catch (RuntimeException exception) {
+        // Swallowed deliberately, never silently: the link is the deliverable, the mail is the
+        // convenience. The address is not logged (PII) - the invite id identifies the case.
+        log.warn(
+            "DPA_FORWARD mail could not be delivered for invite {} (reserved tenant {}); the sign"
+                + " link was created and is returned for manual sharing",
+            invite.getId(),
+            invite.getTenantId(),
+            exception);
+      }
+    }
+    log.info(
+        "DPA forwarded from the onboarding wizard for invite {} (reserved tenant {}); mail sent:"
+            + " {}",
+        invite.getId(),
+        invite.getTenantId(),
+        mailSent);
+    return new DpaForwardResult(signLink, rawExpiresAt, mailSent);
+  }
+
+  /**
+   * The database-only head of {@link #forwardDpa}: locked load, state and expiry checks, budget
+   * check, and the reservation of one forward attempt ({@code dpaForwardCount + 1}) — all in one
+   * short transaction, so the pessimistic row lock of {@code findByTokenHash} is never held across
+   * the TenantService mint or the mail dispatch. Reserving under that lock is what keeps {@code
+   * MAX_DPA_FORWARDS_PER_INVITE} airtight: concurrent forwards serialize on the row and each sees
+   * the other's increment.
+   */
+  private ReservedDpaForward reserveDpaForwardAttempt(String rawToken) {
+    return inTransaction(
+        () -> {
+          AccountInvite invite = findTenantAdminInvite(rawToken);
+          LocalDateTime now = LocalDateTime.now();
+
+          if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
+            throw linkDeathException(invite);
+          }
+          AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
+          if (expired != null) {
+            // Returned, not thrown: the EXPIRED transition this just persisted must commit before
+            // the link-death exception leaves the flow.
+            return ReservedDpaForward.dead(expired);
+          }
+          if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
+            throw new InternalServerErrorException(
+                "Invite holds no authoritative tenant-ID reservation — re-issue the invite after"
+                    + " deploying the TenantService allocation endpoints (TEN-INV-U1)");
+          }
+          if (invite.getDpaForwardCount() >= MAX_DPA_FORWARDS_PER_INVITE) {
+            // Anonymous route, and every call mails a live signing link to a caller-supplied
+            // address: unbounded, this is a mail relay that delivers a valid signature link for
+            // someone else's tenant to any recipient, and each new link also kills the legitimate
+            // signer's outstanding one. The budget is per invite and is never replenished.
+            throw new BadRequestException(
+                "This invitation has already forwarded the data processing agreement "
+                    + MAX_DPA_FORWARDS_PER_INVITE
+                    + " times; ask the platform operator for a new invitation");
+          }
+          invite.setDpaForwardCount(invite.getDpaForwardCount() + 1);
+          invite.setUpdateDate(now);
+          accountInviteRepository.save(invite);
+          return ReservedDpaForward.reserved(invite);
+        });
+  }
+
+  /**
+   * Repays the attempt {@link #reserveDpaForwardAttempt} charged when the mint produced no link.
+   * The invite is reloaded under the row lock so a concurrent forward's increment is never
+   * clobbered by a stale in-memory copy; a vanished row makes the refund moot.
+   */
+  private void refundDpaForwardAttempt(String rawToken) {
+    inTransaction(
+        () -> {
+          accountInviteRepository
+              .findByTokenHash(AccountInviteService.hash(rawToken))
+              .ifPresent(
+                  invite -> {
+                    if (invite.getDpaForwardCount() > 0) {
+                      invite.setDpaForwardCount(invite.getDpaForwardCount() - 1);
+                      invite.setUpdateDate(LocalDateTime.now());
+                      accountInviteRepository.save(invite);
+                    }
+                  });
+          return null;
+        });
+  }
+
+  /**
+   * Records the server-side proof of the forward ({@code dpaForwardedAt}) once the link exists —
+   * the write that lets {@link #registerTenantAdmin} accept a registration without an own DPA
+   * acceptance. A locked reload for the same reason as the refund; best-effort against a vanished
+   * row, because the link is already live and the caller must still receive it.
+   */
+  private void recordDpaForward(String rawToken) {
+    inTransaction(
+        () -> {
+          accountInviteRepository
+              .findByTokenHash(AccountInviteService.hash(rawToken))
+              .ifPresent(
+                  invite -> {
+                    LocalDateTime now = LocalDateTime.now();
+                    invite.setDpaForwardedAt(now);
+                    invite.setUpdateDate(now);
+                    accountInviteRepository.save(invite);
+                  });
+          return null;
+        });
+  }
+
+  /**
+   * Outcome of {@link #reserveDpaForwardAttempt}: either a reserved attempt on a live invite, or a
+   * link-death answer whose EXPIRED transition already committed and must be thrown only now
+   * (mirrors {@link ResolvedOnboardingInvite}).
+   */
+  private record ReservedDpaForward(AccountInvite invite, AccountInviteLinkException linkDeath) {
+    static ReservedDpaForward reserved(AccountInvite invite) {
+      return new ReservedDpaForward(invite, null);
+    }
+
+    static ReservedDpaForward dead(AccountInviteLinkException linkDeath) {
+      return new ReservedDpaForward(null, linkDeath);
+    }
+
+    void rethrowLinkDeath() {
+      if (linkDeath != null) {
+        throw linkDeath;
+      }
+    }
+  }
+
+  /**
+   * The validity window TenantService actually issued. Never invented: the mail tells the signer
+   * how long they have to sign a legal document, and a guessed window is one the link does not
+   * honour — the API response would also be free to state a different one. A missing or unparseable
+   * value means the provider broke its contract, which is worth failing on rather than papering
+   * over.
+   */
+  private static LocalDateTime parseExpiry(String expiresAt) {
+    if (isBlank(expiresAt)) {
+      throw new InternalServerErrorException(
+          "TenantService returned a DPA sign link without an expiry; refusing to state a validity"
+              + " window the link may not honour");
+    }
+    try {
+      return LocalDateTime.parse(expiresAt);
+    } catch (java.time.format.DateTimeParseException exception) {
+      throw new InternalServerErrorException(
+          "TenantService returned an unparseable DPA sign link expiry: " + expiresAt);
     }
   }
 
@@ -374,9 +666,8 @@ public class TenantAdminOnboardingService {
       throw new BadRequestException(
           "account.password must be at least " + MIN_PASSWORD_LENGTH + " characters long");
     }
-    if (!command.dpaAccepted()) {
-      throw new BadRequestException("The data processing agreement must be accepted");
-    }
+    // dpaAccepted is validated against the invite's forward state in registerTenantAdmin: a
+    // missing acceptance is only acceptable when the DPA was forwarded to an authorised signer.
   }
 
   private CreateAdminDTO buildAdminDto(AccountInvite invite, RegisterTenantAdminCommand command) {
@@ -411,6 +702,11 @@ public class TenantAdminOnboardingService {
         .address(trimToNull(command.address()))
         .adminEmails(List.of(invite.getRecipientEmail()))
         .tenantIdReservationToken(invite.getTenantIdReservationToken())
+        // Licensing.allowedNumberOfUsers is required by the TenantService creation contract and
+        // its column has no database default, so leaving it out created tenants whose consultant
+        // allowance was null — the Admin tenant list then showed an empty "Max. erlaubte Berater"
+        // column and the number could only be repaired by hand.
+        .licensing(new Licensing().allowedNumberOfUsers(PROVISIONAL_ALLOWED_NUMBER_OF_USERS))
         .onboardingDpaAcceptance(dpaAcceptance);
   }
 
@@ -469,4 +765,15 @@ public class TenantAdminOnboardingService {
   /** The created (inactive) tenant plus the TOTP setup material for the 2FA step. */
   public record TenantAdminRegistrationResult(
       Long tenantId, String totpSecret, String totpQrCodeBase64) {}
+
+  /**
+   * The sign link created for the authorised signer (raw token embedded — show/copy, never log)
+   * plus its expiry as reported by TenantService (ISO local date-time string).
+   */
+  /**
+   * @param mailSent whether the DPA_FORWARD mail actually reached the mail service. False both when
+   *     no recipient was requested and when delivery failed — the link is live either way, so the
+   *     caller must offer it for manual sharing.
+   */
+  public record DpaForwardResult(String signUrl, String expiresAt, boolean mailSent) {}
 }

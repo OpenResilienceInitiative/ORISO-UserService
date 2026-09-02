@@ -10,6 +10,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -18,6 +19,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
+import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
@@ -51,6 +53,8 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.transaction.UnexpectedRollbackException;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -66,6 +70,7 @@ class CaseHandoverServiceTest {
   @Mock private EventNotificationService eventNotificationService;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+  @Mock private SessionSupervisorFacade sessionSupervisorFacade;
 
   private Consultant requester;
   private Consultant previous;
@@ -129,6 +134,60 @@ class CaseHandoverServiceTest {
     verify(sessionRepository).save(session);
     verify(eventNotificationService, atLeastOnce())
         .createEvent(any(), any(), any(), any(), any(), any(), any(), any(), any());
+  }
+
+  /**
+   * ADR-008 "Supervision (auto-assigned)": a takeover hands the case to a new owner, so the new
+   * owner's standing supervisor has to attach. Before this, only the enquiry-accept path did, and a
+   * case that changed hands silently ran unsupervised.
+   */
+  @Test
+  void requestAccess_attachesTheNewOwnersStandingSupervisor_WhenGranted() {
+    caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+
+    verify(sessionSupervisorFacade).attachStandingSupervisorIfAssigned(123L, requester);
+  }
+
+  @Test
+  void requestAccess_doesNotAttachAStandingSupervisor_WhenTheHandoverIsNotGranted() {
+    when(caseHandoverReasonPolicyRepository.findByEnabledTrueOrderByDisplayOrderAscCodeAsc())
+        .thenReturn(
+            List.of(reasonPolicy("OTHER_EMERGENCY", "Other emergency", false, false, true, 30)));
+
+    caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Needs cover.");
+
+    verify(sessionSupervisorFacade, never()).attachStandingSupervisorIfAssigned(any(), any());
+  }
+
+  /**
+   * The attach must not run inside this service's transaction. {@code addSupervisor} is itself
+   * transactional, so an exception it raises there (client opted out, supervisor already on the
+   * case, no Matrix user id) would mark the shared transaction rollback-only and kill the handover
+   * at commit — even though the facade swallows it. Deferring to after-commit is the whole point,
+   * so assert the deferral, not just the call.
+   *
+   * <p>It must also defer to the REQUIRES_NEW entry point, not the plain one: during afterCommit
+   * the committed transaction's resources are still bound to the thread, so a write through the
+   * plain method joins a transaction that can no longer commit and the SessionSupervisor row is
+   * lost after Matrix access has already been granted.
+   */
+  @Test
+  void requestAccess_defersTheSupervisorAttachToANewTransactionAfterTheHandoverHasCommitted() {
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+
+      verify(sessionSupervisorFacade, never())
+          .attachStandingSupervisorInNewTransaction(any(), any());
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(synchronization -> synchronization.afterCommit());
+
+      verify(sessionSupervisorFacade).attachStandingSupervisorInNewTransaction(123L, requester);
+      verify(sessionSupervisorFacade, never()).attachStandingSupervisorIfAssigned(any(), any());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
   }
 
   /**
@@ -555,6 +614,83 @@ class CaseHandoverServiceTest {
     assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
     assertEquals("ACCESS_GRANTED", request.getAuditOutcome());
     verify(sessionRepository).save(session);
+  }
+
+  /**
+   * A client-approved handover transfers ownership just as a granted requestAccess does, so the new
+   * owner's standing supervisor has to attach on this path too. Without this test a regression on
+   * the resolveClientConsent branch passes the whole suite.
+   */
+  @Test
+  void resolveClientConsent_attachesTheNewOwnersStandingSupervisor_WhenClientApproves() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    verify(sessionSupervisorFacade).attachStandingSupervisorIfAssigned(123L, requester);
+  }
+
+  /**
+   * The production path is transactional, so it takes the deferred branch, not the
+   * no-synchronization fallback the test above exercises. Assert the real one: nothing before the
+   * commit, then the REQUIRES_NEW entry point and never the plain method.
+   */
+  @Test
+  void resolveClientConsent_defersTheSupervisorAttachToANewTransaction_WhenClientApproves() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+      verify(sessionSupervisorFacade, never())
+          .attachStandingSupervisorInNewTransaction(any(), any());
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(synchronization -> synchronization.afterCommit());
+
+      verify(sessionSupervisorFacade).attachStandingSupervisorInNewTransaction(123L, requester);
+      verify(sessionSupervisorFacade, never()).attachStandingSupervisorIfAssigned(any(), any());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+  }
+
+  /**
+   * The facade swallows its own failures, but the REQUIRES_NEW commit happens after that catch
+   * returns, so a rollback-only transaction throws out of the proxy. The handover has already
+   * committed by then; letting it escape would 500 a successful takeover.
+   */
+  @Test
+  void requestAccess_swallowsASupervisorAttachFailureRaisedByTheNewTransactionsCommit() {
+    doThrow(new UnexpectedRollbackException("transaction rolled back"))
+        .when(sessionSupervisorFacade)
+        .attachStandingSupervisorInNewTransaction(any(), any());
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(synchronization -> synchronization.afterCommit());
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(sessionSupervisorFacade).attachStandingSupervisorInNewTransaction(123L, requester);
+  }
+
+  @Test
+  void resolveClientConsent_doesNotAttachAStandingSupervisor_WhenClientDeclines() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+
+    caseHandoverService.resolveClientConsent(123L, 88L, false);
+
+    verify(sessionSupervisorFacade, never()).attachStandingSupervisorIfAssigned(any(), any());
   }
 
   @Test
