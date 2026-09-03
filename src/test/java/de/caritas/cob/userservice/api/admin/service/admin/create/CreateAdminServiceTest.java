@@ -10,13 +10,16 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -117,5 +120,77 @@ class CreateAdminServiceTest {
     assertThat(exception.getCustomHttpHeaders().getFirst("X-Reason"))
         .isEqualTo(HttpStatusExceptionReason.ROLE_NOT_FOUND.name());
     verify(identityAccountRemover).rollbackUser("kc-user-id");
+  }
+
+  @Test
+  void createNewAgencyAdmin_Should_RejectForeignTenantId_WhenCallerIsTenantScoped() {
+    // given a tenant admin of tenant 9 trying to create an agency admin for tenant 7
+    ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+
+    CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(7);
+
+    // when, then
+    ForbiddenException exception =
+        assertThrows(
+            ForbiddenException.class,
+            () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
+
+    assertThat(exception.getMessage())
+        .isEqualTo("Admin accounts can only be created for the tenant of the calling admin");
+    verifyNoInteractions(identityClient);
+    verifyNoInteractions(adminRepository);
+  }
+
+  @Test
+  void createNewAgencyAdmin_Should_KeepOwnTenantId_WhenCallerIsTenantScoped() {
+    // given
+    ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    givenKeycloakCreatesUser();
+
+    CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(9);
+
+    // when
+    Admin admin = createAdminService.createNewAgencyAdmin(createAdminDTO);
+
+    // then
+    assertThat(admin.getTenantId()).isEqualTo(9L);
+    verify(identityAccountRemover, never()).rollbackUser(anyString());
+  }
+
+  @Test
+  void createNewAgencyAdmin_Should_AllowForeignTenantId_WhenCallerIsPlatformAdmin() {
+    // given
+    ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    givenKeycloakCreatesUser();
+
+    CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(7);
+
+    // when
+    Admin admin = createAdminService.createNewAgencyAdmin(createAdminDTO);
+
+    // then
+    assertThat(admin.getTenantId()).isEqualTo(7L);
+  }
+
+  private CreateAdminDTO givenValidCreateAdminDTO(Integer tenantId) {
+    CreateAdminDTO createAdminDTO = easyRandom.nextObject(CreateAdminDTO.class);
+    createAdminDTO.setUsername("valid_username");
+    createAdminDTO.setEmail("valid@email.com");
+    createAdminDTO.setTenantId(tenantId);
+    return createAdminDTO;
+  }
+
+  private void givenKeycloakCreatesUser() {
+    CreatedIdentity keycloakResponse = new CreatedIdentity();
+    keycloakResponse.setUserId("kc-user-id");
+    when(identityClient.createUser(any(), anyString(), anyString())).thenReturn(keycloakResponse);
+    when(adminRepository.save(any(Admin.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
   }
 }

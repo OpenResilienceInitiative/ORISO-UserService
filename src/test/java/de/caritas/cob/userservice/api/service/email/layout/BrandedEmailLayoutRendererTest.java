@@ -101,6 +101,16 @@ class BrandedEmailLayoutRendererTest {
   // --- branding fallbacks ---------------------------------------------------------------
 
   @Test
+  void render_Should_optTheRoundedCardOutOfTheCollapsedBorderModel() {
+    // border-radius has no effect on a collapsed-border table: clients that
+    // collapse table borders (or inherit a collapse reset) round the white
+    // background but draw the 1px outline square. The card opts out inline.
+    String html = render(tenantBranding(), "Hallo", ACCEPT_URL).html();
+
+    assertThat(html).contains("border-collapse:separate");
+  }
+
+  @Test
   void render_Should_useTheTenantLogo_When_ALogoUrlIsConfigured() {
     String html = render(tenantBranding(), "Hallo", ACCEPT_URL).html();
 

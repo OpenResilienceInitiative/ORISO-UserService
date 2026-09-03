@@ -1,0 +1,19 @@
+-- ADR-022 decision 2 — the session consent pointer.
+--
+-- READ THIS BEFORE "IMPROVING" THE COLUMN INTO A HISTORY TABLE.
+-- This is a POINTER, not a log. It holds the id of the legal-text version the
+-- room is currently cleared for, and it is OVERWRITTEN on re-consent. It must
+-- never become append-only, must never gain a timestamp/actor column, and must
+-- never be mirrored into a per-user consent event table. ADR-022 rejected a
+-- consent event log explicitly: it would create a behavioural record about
+-- anonymous help-seekers that does not exist today, for evidentiary value the
+-- legal-text publication history in ORISO-AgencyService already provides
+-- (ADR-021 decision 3). The column exists for CONTROL FLOW only — whether the
+-- composer may open — never as evidence.
+--
+-- The referenced target is a PUBLIC document version, so this adds no new
+-- category of personal data. No foreign key: the version lives in another
+-- service's database.
+--
+-- Guarded so the migration is idempotent (repo convention since changeset 0045).
+ALTER TABLE session ADD COLUMN IF NOT EXISTS consented_legal_version_id BIGINT NULL;
