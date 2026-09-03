@@ -18,8 +18,10 @@ import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest.Status;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantTopic;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.SessionTopic;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepository;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
@@ -31,10 +33,13 @@ import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.function.Function;
@@ -47,6 +52,7 @@ import lombok.NoArgsConstructor;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -257,6 +263,13 @@ public class CaseHandoverService {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
 
+  /**
+   * When topics are off, a department degenerates to the agency. When they are on, an empty topic
+   * set must not widen the search to every case in the agency (#202).
+   */
+  @Value("${feature.topics.enabled:false}")
+  private boolean topicsEnabled;
+
   public List<CaseHandoverReason> listReasons() {
     List<CaseHandoverReasonPolicy> policies =
         caseHandoverReasonPolicyRepository.findByEnabledTrueOrderByDisplayOrderAscCodeAsc();
@@ -350,12 +363,12 @@ public class CaseHandoverService {
             ? List.of(SessionStatus.IN_ARCHIVE)
             : List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE);
     List<Session> candidates =
-        sessionRepository
-            .findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
-                agencyIds, requester, statuses);
+        sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+            agencyIds, requester, statuses);
 
     List<Session> matchingCandidates =
         candidates.stream()
+            .filter(session -> isInRequesterDepartment(session, requester))
             .filter(session -> matchesCandidateQuery(session, query))
             .collect(Collectors.toList());
     List<ConsultantSessionResponseDTO> page =
@@ -599,6 +612,58 @@ public class CaseHandoverService {
         .anyMatch(value -> value.contains(normalizedQuery));
   }
 
+  /**
+   * A department is an (agency × topic) pair. The counsellor's departments are the cartesian
+   * product of their agencies and their topics; a session is in scope when its agency is one of
+   * theirs and it shares at least one topic — the union across those departments (#202).
+   *
+   * <p>When {@code feature.topics.enabled=false} the topic dimension does not exist, so the
+   * department degenerates to the agency. When topics are on, an empty topic assignment must not
+   * fall back to every case in the agency: that would be wider than least-privilege.
+   */
+  private boolean isInRequesterDepartment(Session session, Consultant requester) {
+    if (session.getAgencyId() == null
+        || !consultantAgencyIds(requester).contains(session.getAgencyId())) {
+      return false;
+    }
+    Set<Long> requesterTopicIds = consultantTopicIds(requester);
+    if (requesterTopicIds.isEmpty()) {
+      return !topicsEnabled;
+    }
+    return !Collections.disjoint(sessionTopicIds(session), requesterTopicIds);
+  }
+
+  private Set<Long> consultantTopicIds(Consultant consultant) {
+    Set<ConsultantTopic> topics = consultant.getConsultantTopics();
+    if (topics == null) {
+      return Set.of();
+    }
+    return topics.stream()
+        .map(ConsultantTopic::getTopicId)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toSet());
+  }
+
+  /**
+   * The topics that place a session in a department: its main topic plus every topic assigned to
+   * it, so a session tagged with several topics is reachable from each corresponding department.
+   */
+  private Set<Long> sessionTopicIds(Session session) {
+    Set<Long> topicIds = new HashSet<>();
+    if (session.getMainTopicId() != null) {
+      topicIds.add(session.getMainTopicId());
+    }
+    List<SessionTopic> sessionTopics = session.getSessionTopics();
+    if (sessionTopics != null) {
+      sessionTopics.stream()
+          .filter(Objects::nonNull)
+          .map(SessionTopic::getTopicId)
+          .filter(Objects::nonNull)
+          .forEach(topicIds::add);
+    }
+    return topicIds;
+  }
+
   private String nullable(Object value) {
     return value == null ? "" : String.valueOf(value);
   }
@@ -644,8 +709,7 @@ public class CaseHandoverService {
     if (isActiveOwner(session, consultant)) {
       return;
     }
-    if (session.getAgencyId() == null
-        || !consultantAgencyIds(consultant).contains(session.getAgencyId())) {
+    if (!isInRequesterDepartment(session, consultant)) {
       throw new ForbiddenException("Consultant is not eligible for this case");
     }
   }
