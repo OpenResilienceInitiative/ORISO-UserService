@@ -23,6 +23,22 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   Optional<AccountInvite> findByTokenHash(String tokenHash);
 
   /**
+   * Re-reads one invite row under the same PESSIMISTIC_WRITE lock as {@link
+   * #findByTokenHash(String)} — the read half of a targeted-field update (#1008 review).
+   *
+   * <p>The public onboarding flows deliberately drop out of their transaction for every remote call
+   * (Agency/Topic/Keycloak/DPA), so the invite they carry across such a call is a DETACHED
+   * snapshot. Saving that snapshot afterwards would merge every column as it looked BEFORE the call
+   * — and because {@link AccountInvite} carries neither {@code @Version} nor
+   * {@code @DynamicUpdate}, a concurrent update of an unrelated field would be silently overwritten
+   * (lost update). Writes therefore re-read the row here, inside a short transaction, and set only
+   * the fields they own.
+   */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT i FROM AccountInvite i WHERE i.id = :id")
+  Optional<AccountInvite> findByIdForUpdate(@Param("id") Long id);
+
+  /**
    * Lock-free role probe for the shared public onboarding routes (#1008 review): the route decides
    * from the invite's target role which onboarding flow answers, and that flow then loads the very
    * same row under {@link #findByTokenHash}'s pessimistic lock. Reading the whole entity through
