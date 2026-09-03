@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import java.util.List;
@@ -26,6 +27,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixRtcCallPolicyServiceTest {
@@ -53,7 +55,8 @@ class MatrixRtcCallPolicyServiceTest {
                 sessionSupervisorRepository,
                 teamDiscussionRepository),
             tenantService,
-            matrixSynapseService);
+            matrixSynapseService,
+            correlationIdHasher());
     when(matrixSynapseService.getRoomMembers(ROOM_ID))
         .thenReturn(Optional.of(List.of(MATRIX_USER_ID)));
   }
@@ -231,6 +234,53 @@ class MatrixRtcCallPolicyServiceTest {
         .thenThrow(new IllegalStateException("tenant service unavailable"));
 
     assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
+  }
+
+  @Test
+  void resolvesRoomLookupInTechnicalTenantContext() {
+    // The call-policy endpoint is whitelisted from HttpTenantFilter, so resolve() runs
+    // without tenant context. TenantAspect would then enable the Hibernate tenantFilter
+    // with tenantId=null and the room lookup could never match; only technical context
+    // disables the filter.
+    var session = session(ConversationType.AGENCY_COUNSELLING);
+    var tenantDuringLookup = new java.util.concurrent.atomic.AtomicReference<Long>();
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID))
+        .thenAnswer(
+            invocation -> {
+              tenantDuringLookup.set(TenantContext.getCurrentTenant());
+              return Optional.of(session);
+            });
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(tenant(enabledSettings()));
+
+    TenantContext.clear();
+    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(new CallMediaPolicy(true, true));
+    assertThat(tenantDuringLookup.get()).isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
+  void restoresCallerTenantContextAfterResolution() {
+    var session = session(ConversationType.AGENCY_COUNSELLING);
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(session));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(tenant(enabledSettings()));
+
+    TenantContext.setCurrentTenant(42L);
+    try {
+      assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID))
+          .isEqualTo(new CallMediaPolicy(true, true));
+      assertThat(TenantContext.getCurrentTenant()).isEqualTo(42L);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  private MatrixRtcCorrelationIdHasher correlationIdHasher() {
+    var hasher = new MatrixRtcCorrelationIdHasher();
+    ReflectionTestUtils.setField(hasher, "secret", "test-hmac-secret");
+    ReflectionTestUtils.invokeMethod(hasher, "init");
+    return hasher;
   }
 
   private Session session(ConversationType conversationType) {

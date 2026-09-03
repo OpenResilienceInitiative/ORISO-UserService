@@ -118,6 +118,7 @@ public class AccountInviteService {
               .departmentId(command.departmentId())
               .expiresAt(resolveExpiry(now, command.expiresInDays()))
               .status(AccountInviteStatus.DRAFT)
+              .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
               .emailVerificationStatus(EmailVerificationStatus.PENDING)
               .twoFactorStatus(defaultTwoFactorStatus(command.targetRole()))
               .createdByUserId(authenticatedUser.getUserId())
@@ -374,6 +375,30 @@ public class AccountInviteService {
       return invite;
     }
     throw new AccountInviteLinkException(AccountInviteLinkException.Reason.CONSUMED);
+  }
+
+  /** Resolves an invite by its raw link token without any state checks. */
+  @Transactional(readOnly = true)
+  public AccountInvite findInviteByToken(String rawToken) {
+    if (isBlank(rawToken)) {
+      throw new BadRequestException("Invite token is required");
+    }
+    return accountInviteRepository
+        .findByTokenHash(hash(rawToken))
+        .orElseThrow(() -> new NotFoundException("Account invite not found"));
+  }
+
+  @Transactional
+  public AccountInvite requireActiveInvite(String rawToken) {
+    AccountInvite invite = findInviteByToken(rawToken);
+    LocalDateTime now = LocalDateTime.now();
+    if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
+      throw new BadRequestException("Account invite expired");
+    }
+    if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
+      throw new BadRequestException("Account invite is not active");
+    }
+    return invite;
   }
 
   public AccountAccessGateStatus calculateAccessGate(AccountInvite invite) {

@@ -26,6 +26,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
@@ -53,6 +54,7 @@ public class UserAccountServiceTest {
   @Mock private ConsultantService consultantService;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityEmailAddressUpdater identityEmailAddressUpdater;
   @Mock private IdentityDeactivator identityDeactivator;
   @Mock private UserHelper userHelper;
   @Mock private AppointmentService appointmentService;
@@ -191,7 +193,7 @@ public class UserAccountServiceTest {
 
     this.accountProvider.changeUserAccountEmailAddress(Optional.of("newMail"));
 
-    verify(identityClient).changeEmailAddress("newMail");
+    verify(identityEmailAddressUpdater).updateCurrentUserEmail("newMail");
     consultant.setEmail("newMail");
     verify(this.consultantService, times(1)).saveConsultant(consultant);
     verify(this.userService, times(2)).getUser(any());
@@ -209,7 +211,7 @@ public class UserAccountServiceTest {
     final String newMail = "newMail";
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
-    verify(identityClient).changeEmailAddress(newMail);
+    verify(identityEmailAddressUpdater).updateCurrentUserEmail(newMail);
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
@@ -229,7 +231,7 @@ public class UserAccountServiceTest {
     final String newMail = "newMail";
     this.accountProvider.changeUserAccountEmailAddress(Optional.of(newMail));
 
-    verify(identityClient).changeEmailAddress(newMail);
+    verify(identityEmailAddressUpdater).updateCurrentUserEmail(newMail);
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), newMail);
     user.setEmail(newMail);
     verify(this.userService, times(1)).saveUser(user);
@@ -250,8 +252,8 @@ public class UserAccountServiceTest {
 
     accountProvider.changeUserAccountEmailAddress(Optional.empty());
 
-    verify(identityClient).deleteEmailAddress();
-    verify(identityClient, never()).changeEmailAddress(anyString());
+    verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
+    verify(identityEmailAddressUpdater, never()).updateCurrentUserEmail(anyString());
     consultant.setEmail(dummyEmail);
     verify(consultantService).saveConsultant(consultant);
     verify(userService, times(2)).getUser(any());
@@ -272,8 +274,8 @@ public class UserAccountServiceTest {
 
     accountProvider.changeUserAccountEmailAddress(Optional.empty());
 
-    verify(identityClient).deleteEmailAddress();
-    verify(identityClient, never()).changeEmailAddress(anyString());
+    verify(identityEmailAddressUpdater).deleteCurrentUserEmail();
+    verify(identityEmailAddressUpdater, never()).updateCurrentUserEmail(anyString());
     verify(this.appointmentService, times(1)).updateAskerEmail(user.getUserId(), dummyEmail);
     user.setEmail(dummyEmail);
     verify(userService).saveUser(user);

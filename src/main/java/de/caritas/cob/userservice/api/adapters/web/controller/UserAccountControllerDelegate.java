@@ -23,8 +23,8 @@ import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.KeycloakUserDataProvider;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
+import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
@@ -162,7 +162,7 @@ class UserAccountControllerDelegate {
     return identityClientConfig.isOtpAllowed(authenticatedUser.getRoles());
   }
 
-  private OtpInfoDTO retrieveOtpCredentialIfAllowed() {
+  private IdentityOtpCredential retrieveOtpCredentialIfAllowed() {
     if (!isOtpAllowed()) {
       return null;
     }
@@ -177,7 +177,7 @@ class UserAccountControllerDelegate {
       // A failed Keycloak lookup must not look like role-policy denial. An empty
       // DTO keeps 2FA enabled in the response while safely reporting no active
       // credential, so users can still open setup/reset controls.
-      return new OtpInfoDTO();
+      return IdentityOtpCredential.empty();
     }
   }
 
@@ -299,8 +299,14 @@ class UserAccountControllerDelegate {
       DeleteUserAccountDTO deleteUserAccountDTO) {
     var username = authenticatedUser.getUsername();
     var password = deleteUserAccountDTO.getPassword();
-    var encodedUsername = usernameTranscoder.encodeUsername(username);
-    if (!identityManager.validatePasswordIgnoring2fa(encodedUsername, password)) {
+    var passwordValid = identityManager.validatePasswordIgnoring2fa(username, password);
+    if (!passwordValid) {
+      var encodedUsername = usernameTranscoder.encodeUsername(username);
+      passwordValid =
+          !encodedUsername.equals(username)
+              && identityManager.validatePasswordIgnoring2fa(encodedUsername, password);
+    }
+    if (!passwordValid) {
       var message = String.format("Could not log in user %s into Keycloak", username);
       throw new BadRequestException(message);
     }

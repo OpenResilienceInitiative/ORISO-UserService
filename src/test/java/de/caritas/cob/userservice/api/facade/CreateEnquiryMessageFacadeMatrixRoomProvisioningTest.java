@@ -100,6 +100,16 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   // service is swapped in via setField in @BeforeEach so the orchestration actually runs.
   @Mock private AgencyPreAssignmentRoomService injectedRoomServicePlaceholder;
 
+  /* ADR-018 Erstantwort collaborators — mocked so this test keeps its focus on
+  Matrix room provisioning. */
+  @Mock
+  private de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPayloadBuilder
+      erstantwortPayloadBuilder;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService
+      matrixSessionSystemMessageService;
+
   // Room-provisioning collaborators of the REAL AgencyPreAssignmentRoomService.
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
 

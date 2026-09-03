@@ -20,6 +20,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
+import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
@@ -46,6 +48,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 class AccountInviteControllerTest {
 
   @Mock private AccountInviteService accountInviteService;
+  @Mock private CounsellorInviteProvisioningService counsellorInviteProvisioningService;
   @Mock private InviteEmailTemplateService templateService;
   @Mock private InviteEmailDeliveryRepository deliveryRepository;
   @Mock private InviteEmailPreviewService previewService;
@@ -56,7 +59,11 @@ class AccountInviteControllerTest {
   void setUp() {
     controller =
         new AccountInviteController(
-            accountInviteService, templateService, deliveryRepository, previewService);
+            accountInviteService,
+            counsellorInviteProvisioningService,
+            templateService,
+            deliveryRepository,
+            previewService);
   }
 
   @Test
@@ -171,9 +178,14 @@ class AccountInviteControllerTest {
     // Business reason: valid invitation acceptance should transition invite state and return
     // confirmation data.
     var request = new AccountInviteController.AcceptInviteRequestDTO();
+    request.username = "invited-counsellor";
+    request.password = "test-password";
+    request.formalLanguage = true;
     request.acceptedByUserId = "user-1";
     var invite = sampleInvite();
-    when(accountInviteService.acceptInvite("token-1", "user-1")).thenReturn(invite);
+    var command =
+        new ProvisionCounsellorCommand("invited-counsellor", "test-password", true, "user-1");
+    when(counsellorInviteProvisioningService.acceptInvite("token-1", command)).thenReturn(invite);
     when(accountInviteService.calculateAccessGate(invite))
         .thenReturn(AccountAccessGateStatus.READY);
     when(deliveryRepository.findFirstByAccountInviteIdOrderByCreateDateDesc(10L))
@@ -184,7 +196,7 @@ class AccountInviteControllerTest {
     var response = controller.acceptInvite("token-1", request);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(accountInviteService).acceptInvite("token-1", "user-1");
+    verify(counsellorInviteProvisioningService).acceptInvite("token-1", command);
     // No pending mandatory 2FA on this invite: the onboarding phase is terminal.
     assertNotNull(response.getBody());
     assertEquals("COMPLETED", response.getBody().phase);
@@ -197,7 +209,7 @@ class AccountInviteControllerTest {
     var invite = sampleInvite();
     invite.setStatus(AccountInviteStatus.ACCEPTED);
     invite.setTwoFactorStatus(TwoFactorGateStatus.PENDING_SETUP);
-    when(accountInviteService.acceptInvite("token-3", null)).thenReturn(invite);
+    when(counsellorInviteProvisioningService.acceptInvite("token-3", null)).thenReturn(invite);
     when(accountInviteService.calculateAccessGate(invite))
         .thenReturn(AccountAccessGateStatus.BLOCKED_TWO_FACTOR);
 
@@ -211,18 +223,32 @@ class AccountInviteControllerTest {
   }
 
   @Test
+  void getInvite_validTokenReturnsRecipientDetailsWithoutAcceptingIt() {
+    var invite = sampleInvite();
+    when(accountInviteService.requireActiveInvite("token-details")).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
+
+    var response = controller.getInvite("token-details");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(invite.getRecipientEmail(), response.getBody().recipientEmail);
+    verify(accountInviteService).requireActiveInvite("token-details");
+  }
+
+  @Test
   void acceptInvite_nullBody_passesNullAcceptedByUserId() {
     // Business reason: anonymous acceptance flows must still work without explicit requester
     // payload.
     var invite = sampleInvite();
-    when(accountInviteService.acceptInvite("token-2", null)).thenReturn(invite);
+    when(counsellorInviteProvisioningService.acceptInvite("token-2", null)).thenReturn(invite);
     when(accountInviteService.calculateAccessGate(invite))
         .thenReturn(AccountAccessGateStatus.READY);
 
     var response = controller.acceptInvite("token-2", null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(accountInviteService).acceptInvite("token-2", null);
+    verify(counsellorInviteProvisioningService).acceptInvite("token-2", null);
   }
 
   @Test

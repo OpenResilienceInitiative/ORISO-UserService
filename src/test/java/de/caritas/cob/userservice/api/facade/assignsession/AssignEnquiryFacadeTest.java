@@ -79,6 +79,10 @@ class AssignEnquiryFacadeTest {
   @Mock EventNotificationService eventNotificationService;
   @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
   @Mock de.caritas.cob.userservice.api.facade.TeamDiscussionFacade teamDiscussionFacade;
+
+  /* ADR-018 §9: the anonymous consent guard. Mocked here — this test covers the
+  Matrix room mechanics of assignment, and the guard has its own tests. */
+  @Mock AnonymousEnquiryConsentGuard anonymousEnquiryConsentGuard;
   @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";

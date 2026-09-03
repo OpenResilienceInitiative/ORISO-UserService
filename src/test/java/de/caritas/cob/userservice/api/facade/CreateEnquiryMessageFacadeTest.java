@@ -18,6 +18,8 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
+import de.caritas.cob.userservice.api.service.erstantwort.ErstantwortPayloadBuilder;
+import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.AgencyPreAssignmentRoomService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -50,6 +52,13 @@ class CreateEnquiryMessageFacadeTest {
   @Mock private TopicConsultantRoutingService topicConsultantRoutingService;
   @Mock private EventNotificationService eventNotificationService;
   @Mock private AgencyPreAssignmentRoomService agencyPreAssignmentRoomService;
+
+  /* ADR-018: the Erstantwort is posted at the end of a successful dispatch.
+  Mocked, not stubbed — these tests are about the dispatch itself, and the
+  Erstantwort has its own tests in service/erstantwort. */
+  @Mock private ErstantwortPayloadBuilder erstantwortPayloadBuilder;
+  @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+
   @InjectMocks private CreateEnquiryMessageFacade facade;
 
   private User user;

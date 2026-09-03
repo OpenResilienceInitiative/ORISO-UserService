@@ -338,6 +338,25 @@ selected registered system accounts such as the per-tenant
   and performs the requested-set intersection in-process. The code-level bound
   is therefore zero identity calls for an empty role set and exactly one for a
   non-empty set, instead of up to one `userHasRole` request per candidate role.
+- Consultant role assignment uses the focused `IdentityRoleUpdater` batch
+  port. Empty requests cause no identity traffic. Each non-empty attempt makes
+  one assigned-role list request, deduplicates the requested roles and skips
+  already assigned roles. For `M` missing roles, the adapter performs `M`
+  targeted role-representation lookups, one batch add and one complete-set
+  visibility read; visibility may be read at most three more times under the
+  existing bounded retry policy. An unauthorized admin session refreshes once
+  and retries the complete idempotent attempt once. This replaces one complete
+  add-and-visibility sequence per requested role while documenting the
+  remaining provider lookups instead of claiming a constant total call count.
+- Admin and consultant profile mutations use the focused
+  `IdentityProfileUpdater` with exactly five provider-neutral values: username,
+  email, tenant ID, first name and last name. Every mutation resolves the target
+  once and reads its current representation once. An unchanged email performs
+  no availability search and one update; a changed available email performs one
+  availability search and one update; a changed unavailable email performs one
+  availability search, preserves the conflict response and performs no update.
+  The adapter applies no automatic retry, so provider failures retain their
+  existing propagation behavior.
 - The unused identity session-close command was removed from the broad output
   port, the Keycloak facade and its authentication collaborator. Repository-wide
   tracing found no production consumer, so the removed path has an exact
@@ -374,7 +393,7 @@ whole codebase as modular:
 
 | Module | Enforced seam | Remaining debt |
 | --- | --- | --- |
-| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. `IdentityClient` returns application-owned `CreatedIdentity` for user creation. Magic-link exchange returns the separate provider-neutral `api.model.identity.IdentitySession`; only Keycloak adapters own grant fields and provider response parsing. Profile email propagation uses the `MessageClient` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Password writers depend on `IdentityPasswordUpdater`. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`. | Identity creation still accepts the web-layer `UserDTO`, and other identity operations on the broad port remain to be narrowed further. |
+| Identity/profile | User web entry points use `AccountManaging` and `IdentityManaging`; `service.identity` and `service.user` cannot import concrete identity/chat adapters. `IdentityClient` returns application-owned `CreatedIdentity` for user creation. Magic-link exchange returns the separate provider-neutral `api.model.identity.IdentitySession`; only Keycloak adapters own grant fields and provider response parsing. Profile email propagation uses the `MessageClient` port. Registration-time dummy-email replacement uses the focused provider-neutral `IdentityDummyEmailUpdater` port. Strict deletion and best-effort rollback use the focused provider-neutral `IdentityAccountRemover` port. Realm-role reads use the focused `IdentityRoleLookup` port; consultant role writers use the focused batch `IdentityRoleUpdater` port and the broad identity command client no longer owns role ensuring. Account, asker, consultant and anonymous-user deactivation use the focused provider-neutral `IdentityDeactivator` port. Password writers depend on `IdentityPasswordUpdater`. Authenticated profile reads use `IdentityProfileLookup` and a five-field provider-neutral `IdentityProfile`. Admin and consultant profile writes use `IdentityProfileUpdater` and a five-field provider-neutral `IdentityProfileUpdate`; the broad identity command client no longer accepts web-layer profile DTOs. Account email writes use the focused `IdentityEmailAddressUpdater`; validation, normalization, authenticated-user resolution and provider persistence remain adapter-owned. OTP credential management and email verification use the focused `IdentitySecondFactor` output port and provider-neutral values; generated Keycloak DTOs and string-keyed maps stay inside the adapter. | Identity creation still accepts the web-layer `UserDTO`, and other identity operations on the broad port remain to be narrowed further. |
 | Admin | Chat account creation/update, room checks and group membership use `MatrixUserClient`, `MessageClient` and transport-neutral member IDs; identity creation consumes the neutral `CreatedIdentity` result; `api.admin` cannot import concrete Matrix adapters. | The large admin controller still composes many services, and identity creation still receives the web-layer `UserDTO`. |
 | Session/consultant | Room provisioning and assignment depend on `SessionRoomGateway` and `SessionAssignmentChatGateway`; their adapters own Matrix DTOs, credentials and failure policy. Both protected application packages have executable import boundaries. | Session/consultant orchestration remains broad even though the Rocket.Chat transport has been removed. |
 
@@ -398,6 +417,13 @@ Spring identity mocks to provide the focused port.
 The role-read contract keeps full realm-role reads behind the focused
 `IdentityRoleLookup` port and prevents per-candidate role checks from returning
 to consultant-agency validation.
+The role-write contract requires both active consultant role writers and shared
+Spring identity mocks to use the focused batch `IdentityRoleUpdater` port, and
+prevents singular role ensuring from returning to the broad identity client.
+The profile-write contract keeps web and Keycloak transport types out of the
+focused `IdentityProfileUpdate` value, requires both active application writers
+and shared Spring mocks to use the `IdentityProfileUpdater` port, and removes
+profile writes from the broad identity client.
 
 Registration-time dummy-email replacement now retains only username and tenant
 metadata in a provider-neutral value. The Keycloak adapter computes the dummy
@@ -425,12 +451,80 @@ deactivation action keeps its existing best-effort error handling; the account,
 asker and consultant deletion flows remain strict and preserve their existing
 ordering around lifecycle and persistence changes.
 
+A dedicated second-factor boundary contract keeps OTP and email-verification
+operations out of the broad `IdentityClient` contract. Each of the five
+operations performs exactly one provider request on its normal path. An initial
+unauthorized response can trigger at most one token refresh and one repeated
+provider request, for a maximum of two attempts. Retry measurements use five
+fixed low-cardinality operation tags (`otp-fetch`, `otp-setup`, `otp-delete`,
+`email-verification-start` and `email-verification-finish`) and contain no
+username or other user data. The application passes the encoded username
+through the focused port; the Keycloak adapter owns provider-specific decoding,
+while the verified email mutation continues to use the decoded username.
+External APIs, schemas and configuration remain unchanged, and this refactor
+does not reduce the number of second-factor provider calls.
+
+A dedicated email-mutation contract prevents `IdentityManager` and
+`UserAccountService` from returning to the broad `IdentityClient` for account
+email writes. A changed current-account email performs one representation read,
+one availability search with an exact email match and one provider update. An
+unchanged email stops after the representation read with no availability search
+or update. Current account deletion follows the same focused path with the
+adapter-owned dummy email. A completed email verification performs one username
+lookup and at most one provider update; an unchanged verified email remains a
+no-op after that lookup. Lowercase normalization uses the locale-independent
+root locale. External APIs, schemas and configuration remain unchanged. These
+are source-and-local-test guarantees until the branch is merged, deployed and
+verified on PreDev.
+
 This is a ratcheted incremental modularization, not a claim that all three
 domains are already isolated. Rocket.Chat removal is complete in production
 source, and identity create-user results are provider-neutral via `CreatedIdentity`. The next safe sequence
 is further non-authentication identity transport cleanup, then the Admin controller
 composition boundary, then smaller Session orchestration boundaries. Each step
 must add a failing boundary contract before moving dependencies.
+
+## Scheduler replica safety
+
+The hourly enquiry-notification workflow acquires the global, durable
+`scheduled_task_claim` named `enquiry-notification` before it reads sessions,
+agencies or consultants and before it sends mail. The claim lasts 30 minutes,
+shorter than the hourly schedule. A losing replica exits without downstream
+work; an expired claim can be renewed.
+
+The regression proof starts with the unfixed behavior: two concurrent service
+instances produced two mail batches. The fixed focused suite verifies one
+batch. `ScheduledTaskClaimMariaDbIT` then executes both the concurrent initial
+insert and the concurrent expired-claim renewal against MariaDB 11.0.6 with two
+separate transactions. Each race has exactly one winner; MariaDB's initial
+insert race is handled as an InnoDB deadlock/constraint conflict followed by a
+read of the winning active claim. The required MariaDB workflow runs this test
+together with schema drift, statistics projection and the other replica
+contracts.
+
+The anonymous-user deactivation scheduler uses the same lease primitive with
+the claim name `anonymous-user-deactivation` and a 30-minute duration below its
+hourly interval. A losing replica exits before setting the technical tenant
+context or invoking the lifecycle service. Its two-instance regression test
+first reproduced two workflow calls and now observes exactly one.
+
+The anonymous-user deletion scheduler likewise claims
+`anonymous-user-deletion` for 30 minutes before setting the technical tenant
+context or starting the irreversible deletion workflow. The red two-instance
+proof observed both replicas executing the workflow; the fixed regression
+observes one winner and no downstream work from the losing replica.
+
+The daily account-deletion scheduler claims `account-deletion` for 12 hours
+before establishing tenant context or starting database, Matrix and identity
+cleanup. This stays below the daily schedule interval. Its two-instance red
+proof observed duplicate workflow starts; the fixed regression observes one
+winner and no downstream work from the losing replica.
+
+The daily registered-only-user deletion scheduler returns without even
+claiming when both deletion modes are disabled. When either mode is enabled,
+it claims `registered-only-user-deletion` for 12 hours before tenant context,
+database, Matrix or identity cleanup. Its real two-instance regression enables
+both modes and observes one execution of each mode and no work from the loser.
 
 ## Microservice decision
 

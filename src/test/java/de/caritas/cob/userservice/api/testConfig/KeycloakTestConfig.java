@@ -80,9 +80,15 @@ public class KeycloakTestConfig {
       }
 
       @Override
-      public void changeEmailAddress(String emailAddress) {
-        log.debug("KeycloakService.changeEmailAddress called");
+      public void updateCurrentUserEmail(String emailAddress) {
+        log.debug("KeycloakService.updateCurrentUserEmail called");
       }
+
+      @Override
+      public void deleteCurrentUserEmail() {}
+
+      @Override
+      public void updateEmailByUsername(String username, String emailAddress) {}
 
       @Override
       public CreatedIdentity createUser(UserDTO user) {
@@ -123,11 +129,8 @@ public class KeycloakTestConfig {
       public void updatePassword(String userId, String password) {}
 
       @Override
-      public void updateUserData(
-          String userId, UserDTO userDTO, String firstName, String lastName) {}
-
-      @Override
-      public void updateEmail(String userId, String emailAddress) {}
+      public void updateProfile(
+          String userId, de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate profile) {}
 
       @Override
       public void rollbackUser(String userId) {}
