@@ -102,8 +102,8 @@ public class AgencyInviteLinkController {
   }
 
   // ---------------------------------------------------------------------------------------------
-  // POST /users/invitelinks/{token}/redeem — public; marks link used and returns registration
-  // metadata.
+  // POST /users/invitelinks/{token}/redeem — public; returns a new Live Chat session or
+  // registration routing metadata while the published link remains reusable until expiry.
   // ---------------------------------------------------------------------------------------------
   @PostMapping("/users/invitelinks/{token}/redeem")
   public ResponseEntity<RedeemResponseDTO> redeem(@PathVariable String token) {
