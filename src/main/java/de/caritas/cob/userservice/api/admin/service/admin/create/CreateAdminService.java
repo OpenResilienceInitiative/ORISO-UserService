@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.ws.rs.NotFoundException;
@@ -43,6 +44,7 @@ public class CreateAdminService {
   private boolean multitenancyWithSingleDomain;
 
   private final @NonNull IdentityClient identityClient;
+  private final @NonNull IdentityRoleUpdater identityRoleUpdater;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
@@ -106,7 +108,8 @@ public class CreateAdminService {
             : userHelper.getRandomPassword();
     try {
       identityPasswordUpdater.updatePassword(keycloakUserId, password);
-      getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
+      identityRoleUpdater.assignRoles(
+          keycloakUserId, getDefaultRoles(adminType).stream().map(UserRole::getValue).toList());
       return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
     } catch (CustomValidationHttpStatusException e) {
       identityAccountRemover.rollbackUser(keycloakUserId);
