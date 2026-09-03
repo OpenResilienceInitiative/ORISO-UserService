@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminSe
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountSettingsUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
@@ -56,6 +57,7 @@ public class UpdateAdminServiceIT {
         IdentityProfileLookup.class,
         IdentityProfileUpdater.class,
         IdentityRoleLookup.class,
+        IdentityAccountSettingsUpdater.class,
         IdentityRoleUpdater.class,
         IdentitySecondFactor.class,
         IdentityUsernameAvailability.class

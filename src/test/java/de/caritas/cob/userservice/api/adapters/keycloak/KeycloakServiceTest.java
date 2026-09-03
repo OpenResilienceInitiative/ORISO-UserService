@@ -1356,7 +1356,7 @@ public class KeycloakServiceTest {
     when(userRepresentation.getAttributes()).thenReturn(attributeMap);
 
     // when
-    this.keycloakService.changeLanguage("userId", "de");
+    this.keycloakService.changePreferredLanguage("userId", "de");
 
     // then
     verify(userResource, Mockito.never()).update(userRepresentation);
@@ -1380,7 +1380,7 @@ public class KeycloakServiceTest {
     when(userRepresentation.getAttributes()).thenReturn(attributeMap);
 
     // when
-    this.keycloakService.changeLanguage("userId", "de");
+    this.keycloakService.changePreferredLanguage("userId", "de");
 
     // then
     verify(userResource).update(userRepresentation);
@@ -1409,7 +1409,7 @@ public class KeycloakServiceTest {
     when(userRepresentation.getAttributes()).thenReturn(attributeMap);
 
     // when
-    this.keycloakService.changeLanguage("userId", "de");
+    this.keycloakService.changePreferredLanguage("userId", "de");
 
     // then
     verify(userResource).update(userRepresentation);
