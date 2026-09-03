@@ -320,7 +320,7 @@ public class CaseHandoverService {
   public CaseHandoverStatus getStatus(Long sessionId) {
     Consultant requester = retrieveCurrentConsultant();
     Session session = getSession(sessionId);
-    verifyEligibleSameAgency(session, requester);
+    verifyEligibleForSession(session, requester);
 
     if (isActiveOwner(session, requester)) {
       return CaseHandoverStatus.builder()
@@ -389,7 +389,7 @@ public class CaseHandoverService {
   public CaseHandoverStatus requestAccess(Long sessionId, String reasonCode, String explanation) {
     Consultant requester = retrieveCurrentConsultant();
     Session session = getSession(sessionId);
-    verifyEligibleSameAgency(session, requester);
+    verifyEligibleForSession(session, requester);
 
     if (isActiveOwner(session, requester)) {
       return getStatus(sessionId);
@@ -705,11 +705,11 @@ public class CaseHandoverService {
     return username == null ? null : new UsernameTranscoder().decodeUsername(username);
   }
 
-  private void verifyEligibleSameAgency(Session session, Consultant consultant) {
-    if (isActiveOwner(session, consultant)) {
+  private void verifyEligibleForSession(Session session, Consultant requester) {
+    if (isActiveOwner(session, requester)) {
       return;
     }
-    if (!isInRequesterDepartment(session, consultant)) {
+    if (!isInRequesterDepartment(session, requester)) {
       throw new ForbiddenException("Consultant is not eligible for this case");
     }
   }
