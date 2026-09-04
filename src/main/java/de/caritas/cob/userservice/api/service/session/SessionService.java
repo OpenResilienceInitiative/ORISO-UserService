@@ -906,7 +906,7 @@ public class SessionService {
     var consultantSessionDTO =
         new ConsultantSessionDTO()
             .isTeamSession(session.isTeamSession())
-            .supervision(supervisionMarkerService.buildFor(session.getId(), requester))
+            .supervision(supervisionMarkerService.buildFor(session, requester))
             .agencyId(session.getAgencyId())
             .consultingType(session.getConsultingTypeId())
             .id(session.getId())

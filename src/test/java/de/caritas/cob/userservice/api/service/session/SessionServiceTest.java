@@ -675,8 +675,7 @@ class SessionServiceTest {
     session.setUser(USER_WITH_MATRIX_ID);
     when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
     var marker = new SessionSupervisionDTO().supervisedByMe(true);
-    when(supervisionMarkerService.buildFor(session.getId(), CONSULTANT_WITH_AGENCY))
-        .thenReturn(marker);
+    when(supervisionMarkerService.buildFor(session, CONSULTANT_WITH_AGENCY)).thenReturn(marker);
 
     ConsultantSessionDTO result =
         sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY);

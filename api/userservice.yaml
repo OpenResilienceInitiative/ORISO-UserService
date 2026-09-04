@@ -2171,6 +2171,15 @@ components:
             Internal display names of the active supervisors, same order as
             supervisorConsultantIds (internal display name, else public display name, else
             username). Never a real name.
+        counsellorDisplayName:
+          type: string
+          example: "Counsellor Chris"
+          description: >-
+            Internal display name of the session's assigned (responsible) consultant, resolved by
+            the same #996 rule as supervisorDisplayNames (internal display name, else public display
+            name, else username). Never a real name. Absent when the session has no consultant yet
+            (enquiry not taken). Lets a supervisor's panel title the case by its counsellor without
+            a second lookup.
 
     SessionConsentDTO:
       type: object
