@@ -50,6 +50,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import jakarta.servlet.http.Cookie;
@@ -149,6 +150,7 @@ class UserControllerConsultantE2EIT {
 
   @BeforeEach
   void setUp() {
+    TenantContext.clear();
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
@@ -159,6 +161,7 @@ class UserControllerConsultantE2EIT {
 
   @AfterEach
   void reset() {
+    TenantContext.clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
       userRepository.save(user);

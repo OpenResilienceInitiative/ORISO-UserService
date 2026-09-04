@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.TutorialProgress;
 import de.caritas.cob.userservice.api.port.out.TutorialProgressRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.AfterEach;
@@ -42,6 +43,7 @@ class TutorialStatisticsControllerE2EIT {
 
   @BeforeEach
   void seedProgressAcrossTenants() {
+    TenantContext.clear();
     tutorialProgressRepository.deleteAll();
     save("user-a", "frontend", "consultant-walkthrough", 1, "completed", 2L);
     save("user-b", "frontend", "consultant-walkthrough", 1, "completed", 2L);
@@ -52,6 +54,7 @@ class TutorialStatisticsControllerE2EIT {
   @AfterEach
   void cleanUp() {
     tutorialProgressRepository.deleteAll();
+    TenantContext.clear();
   }
 
   private void save(
@@ -100,6 +103,7 @@ class TutorialStatisticsControllerE2EIT {
 
   @Test
   void tutorialStatistics_tenantAdminSeesOnlyOwnTenantWithCorrectCounts() throws Exception {
+    TenantContext.setCurrentTenant(2L);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
     when(authenticatedUser.getTenantId()).thenReturn(2L);
 
