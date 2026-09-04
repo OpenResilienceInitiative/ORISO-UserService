@@ -327,6 +327,48 @@ class ConsultantDtoMapperTest {
   }
 
   @Test
+  void consultantResponseDtoOf_Should_MapAbsence_When_ConsultantIsAbsent() {
+    ConsultantDtoMapper consultantDtoMapper = givenAMapper();
+    Consultant consultant =
+        Consultant.builder()
+            .id("consultantId")
+            .matrixUserId("rcId")
+            .username("username")
+            .firstName("Firstname")
+            .lastName("Lastname")
+            .email("mail@example.com")
+            .absent(true)
+            .absenceMessage("I am out of office")
+            .build();
+
+    var result = consultantDtoMapper.consultantResponseDtoOf(consultant, List.of(), false);
+
+    assertThat(result.getAbsent()).isTrue();
+    assertThat(result.getAbsenceMessage()).isEqualTo("I am out of office");
+  }
+
+  @Test
+  void consultantResponseDtoOf_Should_NotExposeAbsenceMessage_When_ConsultantIsNotAbsent() {
+    ConsultantDtoMapper consultantDtoMapper = givenAMapper();
+    Consultant consultant =
+        Consultant.builder()
+            .id("consultantId")
+            .matrixUserId("rcId")
+            .username("username")
+            .firstName("Firstname")
+            .lastName("Lastname")
+            .email("mail@example.com")
+            .absent(false)
+            .absenceMessage("I am out of office")
+            .build();
+
+    var result = consultantDtoMapper.consultantResponseDtoOf(consultant, List.of(), false);
+
+    assertThat(result.getAbsent()).isFalse();
+    assertThat(result.getAbsenceMessage()).isNull();
+  }
+
+  @Test
   void consultantLinkOf_Should_BuildGetLink_When_MethodIsDefault() {
     ConsultantDtoMapper consultantDtoMapper = givenAMapper();
 

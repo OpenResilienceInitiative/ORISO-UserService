@@ -69,7 +69,9 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
             .consultantId(consultant.getId())
             .publicSlug(consultant.getPublicSlug())
             .agencies(agencyDtoList)
-            .isSupervisor(consultant.isSupervisor());
+            .isSupervisor(consultant.isSupervisor())
+            .absent(consultant.isAbsent())
+            .absenceMessage(consultant.isAbsent() ? consultant.getAbsenceMessage() : null);
 
     if (mapNames) {
       consultantResponseDto.firstName(consultant.getFirstName()).lastName(consultant.getLastName());
