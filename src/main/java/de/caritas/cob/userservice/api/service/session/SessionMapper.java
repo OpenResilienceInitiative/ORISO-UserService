@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionSupervisionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
@@ -18,10 +19,14 @@ import de.caritas.cob.userservice.api.helper.SessionDataKeyRegistration;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorMarkerRow;
 import java.sql.Date;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
+import java.util.function.Function;
 import lombok.RequiredArgsConstructor;
 
 /** Mapper class to map a {@link Session} to possible dto objects. */
@@ -82,6 +87,61 @@ public class SessionMapper {
         .consentRequired(
             session.isConsentGateApplicable() && isNull(session.getConsentedLegalVersionId()))
         .topic(new SessionTopicDTO().id(session.getMainTopicId()));
+  }
+
+  /**
+   * Builds the ADR-008 supervision marker of one session as seen by the requesting consultant.
+   *
+   * <p>{@code supervisedByMe} is true exactly when the requester is one of the active supervisors —
+   * the reason a supervised case shows up in their list at all. Ids and display names are parallel
+   * lists in row order. Always returns an object (empty marker when nothing is supervised), so the
+   * frontend needs no null check on consultant-facing lists.
+   *
+   * @param activeSupervisors the active supervisor rows of this session (nullable = none)
+   * @param requestingConsultantId the requester's keycloak id (nullable = nobody)
+   * @param displayName resolves the display name shown to colleagues for one row
+   * @return the marker, never null
+   */
+  public SessionSupervisionDTO toSupervisionDTO(
+      List<SessionSupervisorMarkerRow> activeSupervisors,
+      String requestingConsultantId,
+      Function<SessionSupervisorMarkerRow, String> displayName) {
+    return toSupervisionDTO(activeSupervisors, requestingConsultantId, displayName, null);
+  }
+
+  /**
+   * {@link #toSupervisionDTO(List, String, Function)} plus the counsellor's internal display name,
+   * so a supervisor's panel can title the case by its responsible consultant without a second
+   * lookup (the public consultant endpoint hides the name of a non-public consultant).
+   *
+   * @param activeSupervisors the active supervisor rows of this session (nullable = none)
+   * @param requestingConsultantId the requester's keycloak id (nullable = nobody)
+   * @param displayName resolves the display name shown to colleagues for one row
+   * @param counsellorDisplayName the assigned consultant's internal display name (#996 rule),
+   *     nullable when the session has no consultant
+   * @return the marker, never null
+   */
+  public SessionSupervisionDTO toSupervisionDTO(
+      List<SessionSupervisorMarkerRow> activeSupervisors,
+      String requestingConsultantId,
+      Function<SessionSupervisorMarkerRow, String> displayName,
+      String counsellorDisplayName) {
+    List<String> ids = new ArrayList<>();
+    List<String> names = new ArrayList<>();
+    boolean supervisedByMe = false;
+    if (nonNull(activeSupervisors)) {
+      for (var row : activeSupervisors) {
+        ids.add(row.consultantId());
+        names.add(displayName.apply(row));
+        supervisedByMe |=
+            nonNull(requestingConsultantId) && requestingConsultantId.equals(row.consultantId());
+      }
+    }
+    return new SessionSupervisionDTO()
+        .supervisedByMe(supervisedByMe)
+        .supervisorConsultantIds(ids)
+        .supervisorDisplayNames(names)
+        .counsellorDisplayName(counsellorDisplayName);
   }
 
   private SessionUserDTO convertToSessionUserDTO(Session session) {

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
@@ -43,6 +44,22 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
           + "AND ss.isActive = true")
   List<SessionSupervisor> findActiveSupervisionsByConsultantId(
       @Param("consultantId") String consultantId);
+
+  /**
+   * ADR-008 list marker: every active supervisor of every given session in ONE query, projected to
+   * the columns the marker needs. Callers group the rows by {@link
+   * SessionSupervisorMarkerRow#sessionId()}; sessions without supervisors simply yield no row.
+   *
+   * @param sessionIds the sessions of one list page (or a singleton for a single read)
+   * @return the marker rows, unordered
+   */
+  @Query(
+      "SELECT new de.caritas.cob.userservice.api.port.out.SessionSupervisorMarkerRow("
+          + "ss.session.id, c.id, c.username, c.displayName, c.internalDisplayName) "
+          + "FROM SessionSupervisor ss JOIN ss.supervisorConsultant c "
+          + "WHERE ss.session.id IN :sessionIds AND ss.isActive = true")
+  List<SessionSupervisorMarkerRow> findActiveMarkerRowsBySessionIdIn(
+      @Param("sessionIds") Collection<Long> sessionIds);
 
   /**
    * Find active supervisor relationship for a session and consultant.

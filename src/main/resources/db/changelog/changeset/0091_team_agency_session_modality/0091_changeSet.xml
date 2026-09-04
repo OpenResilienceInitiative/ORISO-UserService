@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- ADR-006 addendum 2026-09-04: team-agency 1:1 cases were persisted as INTERNAL_GROUP because
+       saveSession derived the modality from is_team_session. Re-stamps those rows by registration
+       type; real group chats (group_chat_participant row / shared chat room / system user) are left
+       alone. Data-only, no schema change. See migrate.sql.
+
+       Guarded twice: the SQL's WHERE clause excludes already-corrected rows, and runOnChange lets a
+       later edit of migrate.sql re-apply without a new id. -->
+  <changeSet id="0091-team-agency-session-modality" author="frank" runOnChange="true">
+    <preConditions onFail="MARK_RAN">
+      <tableExists tableName="session"/>
+      <tableExists tableName="group_chat_participant"/>
+      <tableExists tableName="chat"/>
+      <columnExists tableName="session" columnName="conversation_type"/>
+    </preConditions>
+    <sqlFile
+      path="db/changelog/changeset/0091_team_agency_session_modality/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"
+      encoding="UTF-8"/>
+    <rollback>
+      <comment>The previous INTERNAL_GROUP label was the defect; there is nothing correct to
+        restore. Rolling back is a no-op.</comment>
+      <sql>SELECT 1;</sql>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>
