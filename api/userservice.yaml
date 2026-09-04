@@ -2901,7 +2901,7 @@ components:
         absenceMessage:
           type: string
           example: I am absent until...
-          description: The out-of-office message; only present when absent is true, otherwise omitted
+          description: The out-of-office message; carries a value only while absent is true, otherwise null
         agencies:
           type: array
           items:
