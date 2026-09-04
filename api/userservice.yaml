@@ -2137,6 +2137,40 @@ components:
             true when Gate 2 applies to this session and no consent pointer is recorded, i.e. the
             client must show the consent gate instead of the composer. Internal rooms (no
             help-seeker) always report false. Additive - older clients can ignore it.
+        supervision:
+          $ref: '#/components/schemas/SessionSupervisionDTO'
+
+    SessionSupervisionDTO:
+      type: object
+      description: >-
+        ADR-008 supervision marker for consultant-facing session lists. Filled for the requesting
+        consultant only; absent on advice-seeker responses. Additive - older clients can ignore it.
+      required:
+        - supervisedByMe
+        - supervisorConsultantIds
+        - supervisorDisplayNames
+      properties:
+        supervisedByMe:
+          type: boolean
+          example: true
+          description: >-
+            true when the requesting consultant is an active SessionSupervisor of this session,
+            i.e. the entry is in their list because they supervise it, not because they counsel it.
+        supervisorConsultantIds:
+          type: array
+          items:
+            type: string
+          example: ["926b9777-4eef-443d-925a-4aa534797bd7"]
+          description: Keycloak ids of all active supervisors of this session (empty when none).
+        supervisorDisplayNames:
+          type: array
+          items:
+            type: string
+          example: ["Supervisor Sam"]
+          description: >-
+            Internal display names of the active supervisors, same order as
+            supervisorConsultantIds (internal display name, else public display name, else
+            username). Never a real name.
 
     SessionConsentDTO:
       type: object
@@ -2307,6 +2341,8 @@ components:
           pattern: "^[a-zA-Z0-9]{1,8}$"
           maxLength: 8
           example: '12345678'
+        supervision:
+          $ref: '#/components/schemas/SessionSupervisionDTO'
 
     UserChatDTO:
       type: object
