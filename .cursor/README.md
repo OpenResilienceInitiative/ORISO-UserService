@@ -48,7 +48,7 @@ Large feature. Do not skip planning.
 3. If Superpowers is installed: brainstorming then writing-plans. If not: spike-doc then
    task-implementation-doc under docs/agent-tasks/YYYY-MM-DD_short-name/.
 4. Implement with TDD (RED → GREEN → REFACTOR). One behavior at a time.
-5. Verify with AGENTS.md commands. PR against origin/dev. Do not merge.
+5. Verify with AGENTS.md commands. PR against `dev`. Do not merge.
 6. Update the GitHub issue with the proof template below and attach screenshots.
 ```
 
