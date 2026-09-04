@@ -43,6 +43,7 @@ public class TenantContextCleanupFilter extends OncePerRequestFilter {
   protected void doFilterInternal(
       HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
       throws ServletException, IOException {
+    TenantContext.clear();
     try {
       filterChain.doFilter(request, response);
     } finally {
