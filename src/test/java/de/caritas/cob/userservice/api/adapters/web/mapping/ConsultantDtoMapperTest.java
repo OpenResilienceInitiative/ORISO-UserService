@@ -344,13 +344,10 @@ class ConsultantDtoMapperTest {
 
     var result = consultantDtoMapper.consultantResponseDtoOf(consultant, List.of(), false);
 
-    // Asserted on the wire format, not on the accessor: the generated DTO's
-    // optional-string representation is not stable across environments, while
-    // the JSON the browser reads is exactly the contract that matters here.
-    assertThat(serialize(result))
-        .contains("\"absent\":true")
-        .contains("\"absenceMessage\":\"I am out of office\"");
-  }
+    var mapper = JsonMapper.builder().build();
+    var tree = mapper.readTree(mapper.writeValueAsString(result));
+    assertThat(tree.path("absent").asBoolean()).isTrue();
+    assertThat(tree.path("absenceMessage").asText()).isEqualTo("I am out of office");
 
   @Test
   void consultantResponseDtoOf_Should_NotExposeAbsenceMessage_When_ConsultantIsNotAbsent() {
