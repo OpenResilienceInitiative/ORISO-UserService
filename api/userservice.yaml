@@ -2900,8 +2900,9 @@ components:
           description: Flag that indicates if the consultant is currently absent
         absenceMessage:
           type: string
+          nullable: true
           example: I am absent until...
-          description: The out-of-office message the consultant published for their absence
+          description: The out-of-office message; only returned when absent is true, otherwise null/omitted
         agencies:
           type: array
           items:
