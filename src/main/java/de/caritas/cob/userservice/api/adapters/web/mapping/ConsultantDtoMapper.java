@@ -70,8 +70,14 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
             .publicSlug(consultant.getPublicSlug())
             .agencies(agencyDtoList)
             .isSupervisor(consultant.isSupervisor())
-            .absent(consultant.isAbsent())
-            .absenceMessage(consultant.isAbsent() ? consultant.getAbsenceMessage() : null);
+            .absent(consultant.isAbsent());
+
+    // Only published while the counsellor is actually away: this endpoint is
+    // unauthenticated, so a stale message from someone who has already returned
+    // must not be left readable there.
+    if (consultant.isAbsent()) {
+      consultantResponseDto.absenceMessage(consultant.getAbsenceMessage());
+    }
 
     if (mapNames) {
       consultantResponseDto.firstName(consultant.getFirstName()).lastName(consultant.getLastName());

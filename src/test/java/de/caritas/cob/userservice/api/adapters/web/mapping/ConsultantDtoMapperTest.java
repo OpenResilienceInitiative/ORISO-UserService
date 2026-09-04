@@ -29,6 +29,7 @@ import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+import tools.jackson.databind.json.JsonMapper;
 
 @ExtendWith(MockitoExtension.class)
 class ConsultantDtoMapperTest {
@@ -343,8 +344,12 @@ class ConsultantDtoMapperTest {
 
     var result = consultantDtoMapper.consultantResponseDtoOf(consultant, List.of(), false);
 
-    assertThat(result.getAbsent()).isTrue();
-    assertThat(result.getAbsenceMessage()).isEqualTo("I am out of office");
+    // Asserted on the wire format, not on the accessor: the generated DTO's
+    // optional-string representation is not stable across environments, while
+    // the JSON the browser reads is exactly the contract that matters here.
+    assertThat(serialize(result))
+        .contains("\"absent\":true")
+        .contains("\"absenceMessage\":\"I am out of office\"");
   }
 
   @Test
@@ -364,8 +369,11 @@ class ConsultantDtoMapperTest {
 
     var result = consultantDtoMapper.consultantResponseDtoOf(consultant, List.of(), false);
 
-    assertThat(result.getAbsent()).isFalse();
-    assertThat(result.getAbsenceMessage()).isNull();
+    assertThat(serialize(result)).contains("\"absent\":false").doesNotContain("I am out of office");
+  }
+
+  private String serialize(Object dto) {
+    return JsonMapper.builder().build().writeValueAsString(dto);
   }
 
   @Test
