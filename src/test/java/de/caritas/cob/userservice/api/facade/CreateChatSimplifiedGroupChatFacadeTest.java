@@ -224,6 +224,27 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   }
 
   @Test
+  void createSimplifiedGroupChatShouldStampTheSessionAsInternalGroupExplicitly() throws Exception {
+    // ADR-006 addendum 2026-09-04: the group-chat path is the ONLY producer of INTERNAL_GROUP
+    // sessions and stamps the modality itself. SessionService.saveSession no longer derives it
+    // from teamSession, because teamSession also means "Team-Beratungsstelle" 1:1 case.
+    ChatDTO chatDto = chatDtoWithConsultantIds(List.of("dummy-participant"));
+    // No series fields at all (the mock would answer 0 for repeatCount) -> internal team chat.
+    when(chatDto.getRepeatCount()).thenReturn((Integer) null);
+    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!room:matrix.org"));
+    when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("creator-token");
+
+    createChatFacade.createChatV2(chatDto, consultant);
+
+    ArgumentCaptor<Session> sessionCaptor = ArgumentCaptor.forClass(Session.class);
+    verify(sessionService, times(2)).saveSession(sessionCaptor.capture());
+    Session created = sessionCaptor.getAllValues().get(0);
+    assertThat(created.getConversationType()).isEqualTo(ConversationType.INTERNAL_GROUP);
+    assertThat(created.isTeamSession()).isTrue();
+  }
+
+  @Test
   void createSimplifiedGroupChatShouldStampBothRowsAsSelfHelpForOneOccurrenceSeries()
       throws Exception {
     ChatDTO chatDto = chatDtoWithConsultantIds(List.of("dummy-participant"));

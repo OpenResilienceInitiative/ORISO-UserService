@@ -51,6 +51,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionSupervisionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -62,6 +63,7 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
@@ -196,6 +198,7 @@ class SessionServiceTest {
   @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
+  @Mock private SessionSupervisionMarkerService supervisionMarkerService;
   @Mock private AgencyService agencyService;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
@@ -605,6 +608,80 @@ class SessionServiceTest {
         sessionDTO.getId() != null
             && sessionDTO.getFirstName() != null
             && sessionDTO.getLastName() != null);
+  }
+
+  // ---------------------------------------------------------------------------
+  // saveSession — ADR-006 modality default (teamSession != INTERNAL_GROUP)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void saveSession_Should_DefaultTeamAgencySessionToAgencyCounselling_NotInternalGroup() {
+    // A "Team-Beratungsstelle" 1:1 case: teamSession=true means every counsellor of the agency
+    // may see it. It is NOT an internal group chat — those stamp their type explicitly.
+    Session session = easyRandom.nextObject(Session.class);
+    session.setTeamSession(true);
+    session.setRegistrationType(REGISTERED);
+    session.setConversationType(null);
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertEquals(ConversationType.AGENCY_COUNSELLING, session.getConversationType());
+  }
+
+  @Test
+  void saveSession_Should_DefaultAnonymousTeamAgencySessionToLiveChat() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setTeamSession(true);
+    session.setRegistrationType(ANONYMOUS);
+    session.setConversationType(null);
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertEquals(ConversationType.LIVE_CHAT, session.getConversationType());
+  }
+
+  @Test
+  void saveSession_Should_KeepAnExplicitConversationType() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setTeamSession(true);
+    session.setRegistrationType(REGISTERED);
+    session.setConversationType(ConversationType.INTERNAL_GROUP);
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertEquals(ConversationType.INTERNAL_GROUP, session.getConversationType());
+  }
+
+  @Test
+  void saveSession_Should_DefaultRegisteredSingleSessionToAgencyCounselling() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setTeamSession(false);
+    session.setRegistrationType(REGISTERED);
+    session.setConversationType(null);
+    when(sessionRepository.save(session)).thenReturn(session);
+
+    sessionService.saveSession(session);
+
+    assertEquals(ConversationType.AGENCY_COUNSELLING, session.getConversationType());
+  }
+
+  @Test
+  void fetchSessionForConsultant_Should_CarryTheSupervisionMarkerForTheRequester() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setConsultant(CONSULTANT_WITH_AGENCY);
+    session.setUser(USER_WITH_MATRIX_ID);
+    when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+    var marker = new SessionSupervisionDTO().supervisedByMe(true);
+    when(supervisionMarkerService.buildFor(session.getId(), CONSULTANT_WITH_AGENCY))
+        .thenReturn(marker);
+
+    ConsultantSessionDTO result =
+        sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY);
+
+    assertEquals(marker, result.getSupervision());
   }
 
   @Test
@@ -1433,23 +1510,6 @@ class SessionServiceTest {
 
     assertThat(session.getConversationType())
         .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.LIVE_CHAT);
-  }
-
-  @Test
-  void saveSessionShouldDefaultTeamSessionsToInternalGroupBeforeRegistrationType() {
-    var session =
-        Session.builder()
-            .registrationType(ANONYMOUS)
-            .postcode("00000")
-            .status(SessionStatus.NEW)
-            .teamSession(true)
-            .build();
-    when(sessionRepository.save(session)).thenReturn(session);
-
-    sessionService.saveSession(session);
-
-    assertThat(session.getConversationType())
-        .isEqualTo(de.caritas.cob.userservice.api.model.ConversationType.INTERNAL_GROUP);
   }
 
   @Test

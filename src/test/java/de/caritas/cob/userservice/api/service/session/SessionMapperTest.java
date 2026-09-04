@@ -4,6 +4,8 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.toIsoTim
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANONYMOUS;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGISTERED;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasEntry;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -21,7 +23,9 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionData;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorMarkerRow;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 
@@ -315,5 +319,50 @@ class SessionMapperTest {
     assertEquals("Alice", response.getConsultant().getFirstName());
     assertEquals("Smith", response.getConsultant().getLastName());
     assertEquals("Alice S.", response.getConsultant().getDisplayName());
+  }
+
+  // ---------------------------------------------------------------------------
+  // toSupervisionDTO — ADR-008 supervisor marker for consultant session lists
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void toSupervisionDTOShouldMarkRequesterAsSupervisorAndListAllActiveSupervisors() {
+    var rows =
+        List.of(
+            new SessionSupervisorMarkerRow(1L, "sup-1", "u1", "Public One", "Internal One"),
+            new SessionSupervisorMarkerRow(1L, "sup-2", "u2", null, null));
+
+    var dto = new SessionMapper().toSupervisionDTO(rows, "sup-2", row -> row.consultantId() + "!");
+
+    assertThat(dto.getSupervisedByMe(), is(true));
+    assertThat(dto.getSupervisorConsultantIds(), contains("sup-1", "sup-2"));
+    assertThat(dto.getSupervisorDisplayNames(), contains("sup-1!", "sup-2!"));
+  }
+
+  @Test
+  void toSupervisionDTOShouldNotMarkRequesterWhoIsNotAmongTheSupervisors() {
+    var rows = List.of(new SessionSupervisorMarkerRow(1L, "sup-1", "u1", "Public One", null));
+
+    var dto = new SessionMapper().toSupervisionDTO(rows, "owner", row -> row.consultantId());
+
+    assertThat(dto.getSupervisedByMe(), is(false));
+    assertThat(dto.getSupervisorConsultantIds(), contains("sup-1"));
+  }
+
+  @Test
+  void toSupervisionDTOShouldReportEmptyMarkerWhenNothingIsSupervised() {
+    var dto = new SessionMapper().toSupervisionDTO(List.of(), "me", row -> row.consultantId());
+
+    assertThat(dto.getSupervisedByMe(), is(false));
+    assertThat(dto.getSupervisorConsultantIds(), is(empty()));
+    assertThat(dto.getSupervisorDisplayNames(), is(empty()));
+  }
+
+  @Test
+  void toSupervisionDTOShouldTreatNullRowsAndNullRequesterAsNothingSupervised() {
+    var dto = new SessionMapper().toSupervisionDTO(null, null, row -> row.consultantId());
+
+    assertThat(dto.getSupervisedByMe(), is(false));
+    assertThat(dto.getSupervisorConsultantIds(), is(empty()));
   }
 }

@@ -103,8 +103,14 @@ public class CreateChatFacade {
     session.setAgencyId(agencyId);
     session.setStatus(SessionStatus.IN_PROGRESS);
     session.setRegistrationType(RegistrationType.REGISTERED);
-    session.setTeamSession(true); // Mark as group chat
-    session.setConversationType(chat.getConversationType());
+    // teamSession keeps the group visible through the team-session queries. It is NOT the
+    // modality (ADR-006 addendum 2026-09-04): the modality is stamped explicitly here, because
+    // this facade is the only producer of INTERNAL_GROUP / SELF_HELP sessions.
+    session.setTeamSession(true);
+    session.setConversationType(
+        chat.getConversationType() == null
+            ? ConversationType.INTERNAL_GROUP
+            : chat.getConversationType());
     session.setLanguageCode(LanguageCode.de); // Default language
     session.setIsConsultantDirectlySet(false); // Not directly assigned
 

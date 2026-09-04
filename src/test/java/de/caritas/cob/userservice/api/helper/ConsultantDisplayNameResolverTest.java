@@ -63,4 +63,41 @@ class ConsultantDisplayNameResolverTest {
   void resolveMatrixDisplayName_Should_ReturnNull_When_ConsultantIsNull() {
     assertThat(resolver.resolveMatrixDisplayName(null)).isNull();
   }
+
+  // ---------------------------------------------------------------------------
+  // resolveInternalDisplayName — internal surfaces (team lists, supervision marker, #996)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  @DisplayName("internal surfaces prefer the internal display name")
+  void resolveInternalDisplayName_Should_PreferTheInternalDisplayName() {
+    assertThat(resolver.resolveInternalDisplayName("Team Angela", "Frau A.", "beraterin1"))
+        .isEqualTo("Team Angela");
+  }
+
+  @Test
+  @DisplayName("falls back to the public display name, then to the decoded username")
+  void resolveInternalDisplayName_Should_FallBackToPublicNameThenUsername() {
+    assertThat(resolver.resolveInternalDisplayName(" ", "Frau A.", "beraterin1"))
+        .isEqualTo("Frau A.");
+    assertThat(resolver.resolveInternalDisplayName(null, null, "beraterin1"))
+        .isEqualTo("beraterin1");
+  }
+
+  @Test
+  @DisplayName("an encoded internal name is treated as absent")
+  void resolveInternalDisplayName_Should_IgnoreAnEncodedInternalName() {
+    assertThat(resolver.resolveInternalDisplayName("enc.QW5nZWxh", null, "beraterin1"))
+        .isEqualTo("beraterin1");
+  }
+
+  @Test
+  @DisplayName("the entity overload applies the same rule")
+  void resolveInternalDisplayName_Should_AcceptTheConsultantEntity() {
+    var consultant = consultantWith("beraterin1", "Frau A.");
+    consultant.setInternalDisplayName("Team Angela");
+
+    assertThat(resolver.resolveInternalDisplayName(consultant)).isEqualTo("Team Angela");
+    assertThat(resolver.resolveInternalDisplayName((Consultant) null)).isNull();
+  }
 }
