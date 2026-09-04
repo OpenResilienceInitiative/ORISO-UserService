@@ -7,9 +7,13 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponse
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionSupervisionDTO;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorMarkerRow;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import java.util.ArrayList;
 import java.util.Collection;
+import java.util.HashMap;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
@@ -28,7 +32,12 @@ import org.springframework.stereotype.Service;
  * marker states it: {@code supervisedByMe} is true exactly when the requester is an active {@code
  * SessionSupervisor} of the session.
  *
- * <p>One batched query per list page, never one per session.
+ * <p>The marker also carries {@code counsellorDisplayName} — the assigned consultant's internal
+ * display name (#996 rule, never a real name) — because the consultant-facing list DTO exposes only
+ * id/firstName/lastName and the public consultant endpoint hides the display name of a non-public
+ * consultant; without it a supervisor's panel cannot title the case by its counsellor.
+ *
+ * <p>Two batched queries per list page (supervisor rows, counsellor names), never one per session.
  */
 @Service
 @RequiredArgsConstructor
@@ -36,6 +45,7 @@ public class SessionSupervisionMarkerService {
 
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
+  private final @NonNull ConsultantRepository consultantRepository;
 
   /**
    * Sets the supervision marker on every entry that carries a session id, as seen by the requester.
@@ -51,9 +61,13 @@ public class SessionSupervisionMarkerService {
       return entries;
     }
     Set<Long> sessionIds = new LinkedHashSet<>();
+    Set<String> counsellorIds = new LinkedHashSet<>();
     for (var entry : entries) {
       if (nonNull(entry.getSession()) && nonNull(entry.getSession().getId())) {
         sessionIds.add(entry.getSession().getId());
+        if (nonNull(entry.getConsultant()) && nonNull(entry.getConsultant().getId())) {
+          counsellorIds.add(entry.getConsultant().getId());
+        }
       }
     }
     if (sessionIds.isEmpty()) {
@@ -61,33 +75,56 @@ public class SessionSupervisionMarkerService {
     }
 
     var rowsBySession = loadRowsBySession(sessionIds);
+    var counsellorNames = loadCounsellorDisplayNames(counsellorIds);
     var mapper = new SessionMapper();
     for (var entry : entries) {
       var session = entry.getSession();
       if (nonNull(session) && nonNull(session.getId())) {
+        var counsellorId = nonNull(entry.getConsultant()) ? entry.getConsultant().getId() : null;
         session.setSupervision(
             mapper.toSupervisionDTO(
                 rowsBySession.getOrDefault(session.getId(), List.of()),
                 requester.getId(),
-                this::displayNameOf));
+                this::displayNameOf,
+                nonNull(counsellorId) ? counsellorNames.get(counsellorId) : null));
       }
     }
     return entries;
   }
 
   /**
-   * The marker of a single session (single-session read), same query and same rule as the list.
+   * The marker of a single session (single-session read), same query and same rule as the list. The
+   * counsellor name comes straight from {@code session.getConsultant()} — no extra query.
    *
-   * @param sessionId the session
+   * @param session the loaded session
    * @param requester the consultant reading it
-   * @return the marker, or null when either argument is missing
+   * @return the marker, or null when the session, its id or the requester is missing
    */
-  public SessionSupervisionDTO buildFor(Long sessionId, Consultant requester) {
-    if (isNull(sessionId) || isNull(requester)) {
+  public SessionSupervisionDTO buildFor(Session session, Consultant requester) {
+    if (isNull(session) || isNull(session.getId()) || isNull(requester)) {
       return null;
     }
+    var sessionId = session.getId();
     var rows = loadRowsBySession(Set.of(sessionId)).getOrDefault(sessionId, List.of());
-    return new SessionMapper().toSupervisionDTO(rows, requester.getId(), this::displayNameOf);
+    return new SessionMapper()
+        .toSupervisionDTO(
+            rows,
+            requester.getId(),
+            this::displayNameOf,
+            consultantDisplayNameResolver.resolveInternalDisplayName(session.getConsultant()));
+  }
+
+  /** One query for all counsellors of the page; id → internal display name (#996 rule). */
+  private Map<String, String> loadCounsellorDisplayNames(Collection<String> consultantIds) {
+    Map<String, String> names = new HashMap<>();
+    if (consultantIds.isEmpty()) {
+      return names;
+    }
+    for (var consultant : consultantRepository.findAllByIdIn(new ArrayList<>(consultantIds))) {
+      names.put(
+          consultant.getId(), consultantDisplayNameResolver.resolveInternalDisplayName(consultant));
+    }
+    return names;
   }
 
   private Map<Long, List<SessionSupervisorMarkerRow>> loadRowsBySession(

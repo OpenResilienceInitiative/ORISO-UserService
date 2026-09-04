@@ -364,5 +364,28 @@ class SessionMapperTest {
 
     assertThat(dto.getSupervisedByMe(), is(false));
     assertThat(dto.getSupervisorConsultantIds(), is(empty()));
+    assertThat(dto.getCounsellorDisplayName(), is(nullValue()));
+  }
+
+  @Test
+  void toSupervisionDTOShouldCarryTheCounsellorDisplayNameNextToTheSupervisors() {
+    var rows = List.of(new SessionSupervisorMarkerRow(1L, "sup-1", "u1", "Public One", null));
+
+    var dto =
+        new SessionMapper()
+            .toSupervisionDTO(rows, "sup-1", row -> row.consultantId(), "Anna (int)");
+
+    assertThat(dto.getSupervisedByMe(), is(true));
+    assertThat(dto.getSupervisorConsultantIds(), contains("sup-1"));
+    assertThat(dto.getCounsellorDisplayName(), is("Anna (int)"));
+  }
+
+  @Test
+  void toSupervisionDTOShouldLeaveTheCounsellorDisplayNameNullWhenNoneIsGiven() {
+    var dto =
+        new SessionMapper().toSupervisionDTO(List.of(), "me", row -> row.consultantId(), null);
+
+    assertThat(dto.getSupervisedByMe(), is(false));
+    assertThat(dto.getCounsellorDisplayName(), is(nullValue()));
   }
 }

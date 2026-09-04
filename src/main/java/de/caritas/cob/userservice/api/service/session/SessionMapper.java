@@ -106,6 +106,26 @@ public class SessionMapper {
       List<SessionSupervisorMarkerRow> activeSupervisors,
       String requestingConsultantId,
       Function<SessionSupervisorMarkerRow, String> displayName) {
+    return toSupervisionDTO(activeSupervisors, requestingConsultantId, displayName, null);
+  }
+
+  /**
+   * {@link #toSupervisionDTO(List, String, Function)} plus the counsellor's internal display name,
+   * so a supervisor's panel can title the case by its responsible consultant without a second
+   * lookup (the public consultant endpoint hides the name of a non-public consultant).
+   *
+   * @param activeSupervisors the active supervisor rows of this session (nullable = none)
+   * @param requestingConsultantId the requester's keycloak id (nullable = nobody)
+   * @param displayName resolves the display name shown to colleagues for one row
+   * @param counsellorDisplayName the assigned consultant's internal display name (#996 rule),
+   *     nullable when the session has no consultant
+   * @return the marker, never null
+   */
+  public SessionSupervisionDTO toSupervisionDTO(
+      List<SessionSupervisorMarkerRow> activeSupervisors,
+      String requestingConsultantId,
+      Function<SessionSupervisorMarkerRow, String> displayName,
+      String counsellorDisplayName) {
     List<String> ids = new ArrayList<>();
     List<String> names = new ArrayList<>();
     boolean supervisedByMe = false;
@@ -120,7 +140,8 @@ public class SessionMapper {
     return new SessionSupervisionDTO()
         .supervisedByMe(supervisedByMe)
         .supervisorConsultantIds(ids)
-        .supervisorDisplayNames(names);
+        .supervisorDisplayNames(names)
+        .counsellorDisplayName(counsellorDisplayName);
   }
 
   private SessionUserDTO convertToSessionUserDTO(Session session) {
