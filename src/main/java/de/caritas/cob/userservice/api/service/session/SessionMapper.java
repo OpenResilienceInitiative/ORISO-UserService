@@ -74,6 +74,11 @@ public class SessionMapper {
             nonNull(session.getUser()) && nonNull(session.getUser().getMatrixUserId())
                 ? session.getUser().getMatrixUserId()
                 : null)
+        /* ADR-002 silent membership: the room header shows only asker, assigned counsellor and
+        active supervisors, so the list/room DTO names the counsellor's Matrix id itself — never
+        the username. */
+        .consultantMatrixUserId(
+            nonNull(session.getConsultant()) ? session.getConsultant().getMatrixUserId() : null)
         .messageDate(toUnixTime(session.getEnquiryMessageDate()))
         .isTeamSession(session.isTeamSession())
         .language(LanguageCode.fromValue(session.getLanguageCode().name()))

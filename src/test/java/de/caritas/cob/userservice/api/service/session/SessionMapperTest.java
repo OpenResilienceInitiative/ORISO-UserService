@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForUserD
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.config.AppConfig;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionData;
@@ -177,6 +178,33 @@ class SessionMapperTest {
     SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
 
     assertNull(sessionDTO.getAskerMatrixUserId());
+  }
+
+  @Test
+  void convertToSessionDTO_Should_carryTheAssignedConsultantsMatrixUserId() {
+    // ADR-002 silent membership: the room header shows only asker, assigned counsellor and
+    // active supervisors, so the list/room DTO has to name the counsellor's Matrix id itself.
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setRegistrationType(REGISTERED);
+    Consultant consultant = new Consultant();
+    consultant.setMatrixUserId("@counsellor:matrix.example");
+    consultant.setUsername("must-not-leak");
+    session.setConsultant(consultant);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertEquals("@counsellor:matrix.example", sessionDTO.getConsultantMatrixUserId());
+  }
+
+  @Test
+  void convertToSessionDTO_Should_leaveConsultantMatrixUserIdNull_When_noConsultantIsAssigned() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setRegistrationType(REGISTERED);
+    session.setConsultant(null);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertNull(sessionDTO.getConsultantMatrixUserId());
   }
 
   @Test
