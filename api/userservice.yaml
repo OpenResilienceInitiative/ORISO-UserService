@@ -2894,6 +2894,15 @@ components:
           type: boolean
           example: true
           description: Flag that indicates if the consultant can be added as a supervisor
+        absent:
+          type: boolean
+          example: true
+          description: Flag that indicates if the consultant is currently absent
+        absenceMessage:
+          type: string
+          nullable: true
+          example: I am absent until...
+          description: The out-of-office message; carries a value only while absent is true, otherwise null
         agencies:
           type: array
           items:
