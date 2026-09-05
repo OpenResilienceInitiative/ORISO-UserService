@@ -2094,6 +2094,10 @@ components:
           type: string
           example: "@asker:matrix.example"
           description: Matrix user ID of the asker
+        consultantMatrixUserId:
+          type: string
+          example: "@consultant:matrix.example"
+          description: Matrix user id of the assigned consultant (null when no consultant is assigned)
         e2eLastMessage:
           $ref: '#/components/schemas/LastMessageDTO'
         lastMessage:
