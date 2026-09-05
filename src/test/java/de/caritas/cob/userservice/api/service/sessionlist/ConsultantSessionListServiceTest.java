@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.session.SessionFilter;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -37,6 +38,7 @@ class ConsultantSessionListServiceTest {
   @Mock private ChatService chatService;
   @Mock private ConsultantSessionEnricher consultantSessionEnricher;
   @Mock private ConsultantChatEnricher consultantChatEnricher;
+  @Mock private SessionSupervisionMarkerService supervisionMarkerService;
 
   @Test
   void
@@ -59,6 +61,20 @@ class ConsultantSessionListServiceTest {
       assertNotNull(consultantSessionResponseDTO.getSession());
     }
     verify(chatService, never()).getChatsForConsultant(CONSULTANT);
+  }
+
+  @Test
+  void retrieveSessionsForAuthenticatedConsultant_Should_AddTheSupervisionMarkerForTheRequester() {
+    when(sessionService.getRegisteredEnquiriesForConsultant(Mockito.any()))
+        .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
+    when(this.consultantSessionEnricher.updateRequiredConsultantSessionValues(
+            eq(CONSULTANT_SESSION_RESPONSE_DTO_LIST)))
+        .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
+
+    consultantSessionListService.retrieveSessionsForAuthenticatedConsultant(
+        CONSULTANT, createStandardSessionListQueryParameterObject(SESSION_STATUS_NEW));
+
+    verify(supervisionMarkerService).enrich(CONSULTANT_SESSION_RESPONSE_DTO_LIST, CONSULTANT);
   }
 
   @Test

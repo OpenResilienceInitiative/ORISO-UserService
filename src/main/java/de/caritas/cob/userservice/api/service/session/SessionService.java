@@ -80,6 +80,7 @@ public class SessionService {
   private final @NonNull ConsultingTypeManager consultingTypeManager;
   private final @Nullable ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
+  private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
 
   @Value("${feature.topics.enabled}")
   private boolean topicsFeatureEnabled;
@@ -288,12 +289,15 @@ public class SessionService {
    */
   public Session saveSession(Session session) {
     if (session.getConversationType() == null) {
+      /* ADR-006 addendum 2026-09-04: `teamSession` is NOT a modality. It also marks a
+       * "Team-Beratungsstelle" 1:1 case (every counsellor of the agency may see it), so deriving
+       * INTERNAL_GROUP from it labelled ordinary counselling as an internal group chat. The only
+       * producer of INTERNAL_GROUP/SELF_HELP sessions is CreateChatFacade, which stamps the
+       * modality explicitly before saving; everything that reaches this default is a 1:1 case. */
       session.setConversationType(
-          session.isTeamSession()
-              ? ConversationType.INTERNAL_GROUP
-              : session.getRegistrationType() == Session.RegistrationType.ANONYMOUS
-                  ? ConversationType.LIVE_CHAT
-                  : ConversationType.AGENCY_COUNSELLING);
+          session.getRegistrationType() == Session.RegistrationType.ANONYMOUS
+              ? ConversationType.LIVE_CHAT
+              : ConversationType.AGENCY_COUNSELLING);
     }
     return sessionRepository.save(session);
   }
@@ -881,7 +885,7 @@ public class SessionService {
             .orElseThrow(() -> new NotFoundException("Session with id %s not found.", sessionId));
 
     checkPermissionForConsultantSession(session, consultant);
-    return toConsultantSessionDTO(session);
+    return toConsultantSessionDTO(session, consultant);
   }
 
   private boolean isTeamSessionOrNew(Session session) {
@@ -897,11 +901,12 @@ public class SessionService {
         new BadRequestException(String.format("Consultant with id %s does not exist", userId));
   }
 
-  private ConsultantSessionDTO toConsultantSessionDTO(Session session) {
+  private ConsultantSessionDTO toConsultantSessionDTO(Session session, Consultant requester) {
 
     var consultantSessionDTO =
         new ConsultantSessionDTO()
             .isTeamSession(session.isTeamSession())
+            .supervision(supervisionMarkerService.buildFor(session, requester))
             .agencyId(session.getAgencyId())
             .consultingType(session.getConsultingTypeId())
             .id(session.getId())

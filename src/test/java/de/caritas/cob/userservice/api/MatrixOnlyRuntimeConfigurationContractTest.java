@@ -24,14 +24,25 @@ class MatrixOnlyRuntimeConfigurationContractTest {
         .contains("linux/amd64,linux/arm64")
         .contains("provenance: mode=max")
         .contains("sbom: true")
-        .contains("value: ${{ steps.build.outputs.digest }}");
+        .contains("value: ${{ steps.build.outputs.digest }}")
+        .contains("aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25");
+
+    // The vulnerability scan has to sit ahead of the publish. Scanning after
+    // `push: true` can only redden the run; the image is already in GHCR and the
+    // deploy scripts resolve a tag to a digest without reading workflow results
+    // (OpenResilienceInitiative/ORISO-Docs#88).
+    final var scanIndex = buildAction.indexOf("aquasecurity/trivy-action@");
+    final var publishIndex = buildAction.indexOf("push: ${{ inputs.push_to_ghcr }}");
+    assertThat(scanIndex).isGreaterThan(-1);
+    assertThat(publishIndex).isGreaterThan(-1);
+    assertThat(scanIndex)
+        .as("Trivy must run before the image is pushed to the registry")
+        .isLessThan(publishIndex);
+
     assertThat(mainWorkflow)
         .contains("id-token: write")
         .contains("attestations: write")
-        .contains("aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25")
         .contains("actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6")
-        .contains(
-            "image-ref: ${{ env.REGISTRY }}/${{ env.ORG }}/oriso-userservice@${{ steps.image.outputs.digest }}")
         .contains("subject-digest: ${{ steps.image.outputs.digest }}");
   }
 
