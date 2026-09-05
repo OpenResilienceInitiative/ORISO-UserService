@@ -20,9 +20,10 @@ import org.springframework.web.filter.OncePerRequestFilter;
  * <ul>
  *   <li>{@code HttpTenantFilter} cleared after the chain rather than in a {@code finally}, so a
  *       request that threw kept its tenant;
- *   <li>whitelisted paths skip that filter altogether, yet their handlers do establish a context —
- *       {@code CreateUserFacade#initializeTenantContextForRegistration} does exactly that for
- *       {@code /users/askers/new}, and nothing removed it afterwards.
+ *   <li>on a whitelisted path that filter still runs but skips tenant resolution, so it neither
+ *       sets nor clears anything, while the handler behind it does establish a context — {@code
+ *       CreateUserFacade#initializeTenantContextForRegistration} does exactly that for {@code
+ *       /users/askers/new}, and nothing removed it afterwards.
  * </ul>
  *
  * <p>Cleaning up here rather than inside the handler is deliberate. The context has to survive the
