@@ -78,6 +78,19 @@ class TeamDiscussionRetentionSchedulerTest {
     verifyNoMoreInteractions(retentionService);
   }
 
+  /** Even an early return must not leave a context on the pooled thread. */
+  @Test
+  void purgeExpiredDiscussions_clearsTheTenantContext_When_theClaimIsLost() {
+    when(taskClaimService.tryClaim(
+            TeamDiscussionRetentionScheduler.TASK_NAME, Duration.ofHours(12)))
+        .thenReturn(false);
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+
+    underTest.purgeExpiredDiscussions();
+
+    org.assertj.core.api.Assertions.assertThat(TenantContext.contextIsSet()).isFalse();
+  }
+
   /** A disabled job must not even take the claim, so nothing is logged or leased for nothing. */
   @Test
   void purgeExpiredDiscussions_doesNotClaim_When_theJobIsDisabled() {
