@@ -736,8 +736,11 @@ public class MatrixSynapseService implements MatrixUserClient {
   /**
    * Purges a Matrix room and its message history via the Synapse admin API.
    *
+   * <p>A room Synapse does not know (404) counts as purged: the goal of every caller is that the
+   * room no longer exists, and that is already the case. Any other failure is reported as false.
+   *
    * @param matrixRoomId the Matrix room ID
-   * @return true if successful, false otherwise
+   * @return true if the room is gone, false otherwise
    */
   public boolean purgeRoom(String matrixRoomId) {
     try {
@@ -767,6 +770,9 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.info("Successfully purged Matrix room: {}", matrixRoomId);
       return response.getStatusCode().is2xxSuccessful();
 
+    } catch (HttpClientErrorException.NotFound ex) {
+      log.info("Matrix room {} no longer exists; treating it as purged", matrixRoomId);
+      return true;
     } catch (Exception ex) {
       log.warn("Failed to purge Matrix room {}: {}", matrixRoomId, ex.getMessage());
       return false;
