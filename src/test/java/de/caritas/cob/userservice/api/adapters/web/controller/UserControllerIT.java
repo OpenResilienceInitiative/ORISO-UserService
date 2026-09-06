@@ -6,13 +6,18 @@ import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGI
 import static de.caritas.cob.userservice.api.testHelper.PathConstants.*;
 import static de.caritas.cob.userservice.api.testHelper.RequestBodyConstants.*;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.*;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
+import static org.slf4j.Logger.ROOT_LOGGER_NAME;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
@@ -30,6 +35,7 @@ import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.*;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.facade.*;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
@@ -89,6 +95,7 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mockito;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.hateoas.autoconfigure.HypermediaAutoConfiguration;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
@@ -1504,14 +1511,40 @@ class UserControllerIT {
     when(consultantAgencyService.isConsultantAssignedToAgency(CONSULTANT_ID, REQUESTED_AGENCY_ID))
         .thenReturn(false);
 
-    mvc.perform(
-            get(PATH_GET_CONSULTANTS_FOR_AGENCY)
-                .contentType(MediaType.APPLICATION_JSON)
-                .accept(MediaType.APPLICATION_JSON))
-        .andExpect(status().isForbidden())
-        .andExpect(content().string(""));
+    var rootLogger = (ch.qos.logback.classic.Logger) LoggerFactory.getLogger(ROOT_LOGGER_NAME);
+    var logAppender = new ListAppender<ILoggingEvent>();
+    logAppender.start();
+    rootLogger.addAppender(logAppender);
+    try {
+      mvc.perform(
+              get(PATH_GET_CONSULTANTS_FOR_AGENCY)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .accept(MediaType.APPLICATION_JSON))
+          .andExpect(status().isForbidden())
+          .andExpect(content().string(""));
+    } finally {
+      rootLogger.detachAppender(logAppender);
+    }
 
     verify(consultantAgencyService, never()).getConsultantsOfAgency(Mockito.anyLong());
+
+    // Through the real handler, not just the delegate: ForbiddenException logs itself via
+    // ApiResponseEntityExceptionHandler#handleForbidden, so a second warning here would mean the
+    // endpoint costs two log events per probe of the agencyId range.
+    // Warnings only. Spring's ExceptionHandlerExceptionResolver also emits a DEBUG "Resolved [...]"
+    // line for every handled exception; that is framework bookkeeping, off at production levels,
+    // and not what abuse would amplify.
+    var denialWarnings =
+        logAppender.list.stream()
+            .filter(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
+            .filter(event -> event.getFormattedMessage().contains("may not read its consultants"))
+            .toList();
+    assertThat(denialWarnings).hasSize(1);
+    assertThat(logAppender.list)
+        .filteredOn(event -> event.getLevel().isGreaterOrEqual(Level.WARN))
+        .as("no warning may carry the exception's stack trace")
+        .noneMatch(
+            event -> event.getFormattedMessage().contains(ForbiddenException.class.getName()));
   }
 
   private void givenCallerIsAssignedToRequestedAgency() {
