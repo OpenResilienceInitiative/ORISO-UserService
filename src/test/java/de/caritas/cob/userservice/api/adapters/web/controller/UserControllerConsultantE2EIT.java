@@ -18,6 +18,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.contains;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
@@ -880,7 +881,9 @@ class UserControllerConsultantE2EIT {
                 .param("agencyId", String.valueOf(agencyId))
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isForbidden())
-        .andExpect(jsonPath("$").doesNotExist());
+        // Asserted directly rather than via jsonPath: the handler returns an empty body, and a
+        // JSON-path assertion over an empty body proves nothing about what was withheld.
+        .andExpect(content().string(""));
   }
 
   @Test
