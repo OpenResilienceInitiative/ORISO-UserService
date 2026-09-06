@@ -52,7 +52,14 @@ public class TeamDiscussionOrphanCleanupService {
         orphans.size());
 
     if (isNotEmpty(workflowErrors)) {
-      workflowErrorMailService.buildAndSendErrorMail(workflowErrors);
+      try {
+        workflowErrorMailService.buildAndSendErrorMail(workflowErrors);
+      } catch (RuntimeException exception) {
+        log.error(
+            "Deletion workflow error notification failed; completed deletion results are retained. "
+                + "Failure type: {}",
+            exception.getClass().getSimpleName());
+      }
     }
     return workflowErrors;
   }
