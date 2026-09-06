@@ -25,6 +25,25 @@ In addition to that it provides different lists of sessions for consultants and 
 Moreover it also offers different workflows for deactivating expired group chats, deactivating old anonymous user accounts and deleting user accounts.
 On top of that the UserService includes useful admin API calls to administrate user accounts.
 
+## Required environment
+
+The service refuses to start when certain environment variables are unset, so a
+first local run needs them before anything else:
+
+```bash
+cp config.env.example config.env      # then fill every CHANGE_ME
+```
+
+`config.env.example` lists every variable the service will not start without,
+with a comment on each explaining what guards it. The reasoning behind those
+guards, and where to add the next required variable, is in
+[`docs/required-environment.md`](docs/required-environment.md); the database
+migration settings specifically are covered in
+[`docs/schema-migrations.md`](docs/schema-migrations.md).
+
+The full local setup — Java version, run script, frontend pairing — is in
+[`documentation/local-development.md`](documentation/local-development.md).
+
 ## Help and Documentation
 In the project [documentation](https://onlineberatung.github.io/documentation/docs/setup/setup-backend) you'll find information for setting up and running the project.
 You can find some detailled information of the service architecture and its processes in the repository [documentation](https://github.com/Onlineberatung/onlineBeratung-userService/tree/master/documentation).
