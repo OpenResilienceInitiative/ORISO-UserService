@@ -762,8 +762,9 @@ public class MatrixSynapseService implements MatrixUserClient {
    * purged it now or because it did not exist any more (#1116, #1118).
    *
    * @param matrixRoomId the Matrix room ID
-   * @return {@link RoomPurgeOutcome#ALREADY_GONE} on a 404 from Synapse, {@link
-   *     RoomPurgeOutcome#FAILED} on any other problem
+   * @return {@link RoomPurgeOutcome#PURGED} when Synapse accepted the purge, {@link
+   *     RoomPurgeOutcome#ALREADY_GONE} on a 404 from Synapse, {@link RoomPurgeOutcome#FAILED} on
+   *     any other problem
    */
   public RoomPurgeOutcome purgeRoomOrConfirmGone(String matrixRoomId) {
     try {

@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.teamdiscussionretention.scheduler;
 
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.api.workflow.teamdiscussionretention.service.TeamDiscussionRetentionService;
@@ -38,7 +39,12 @@ public class TeamDiscussionRetentionScheduler {
     if (!taskClaimService.tryClaim(TASK_NAME, claimDuration)) {
       return;
     }
-    tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
-    teamDiscussionRetentionService.purgeExpiredDiscussions();
+    try {
+      tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
+      teamDiscussionRetentionService.purgeExpiredDiscussions();
+    } finally {
+      // Scheduler threads are pooled; never leave the technical context behind for the next task.
+      TenantContext.clear();
+    }
   }
 }

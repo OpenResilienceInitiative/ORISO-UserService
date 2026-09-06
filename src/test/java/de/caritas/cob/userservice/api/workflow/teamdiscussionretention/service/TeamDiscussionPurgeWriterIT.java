@@ -1,6 +1,9 @@
 package de.caritas.cob.userservice.api.workflow.teamdiscussionretention.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import de.caritas.cob.userservice.api.model.TeamDiscussionParticipant;
@@ -13,7 +16,11 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.TestPropertySource;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Executes the retention queries and the purge delete against the H2 testing schema (#1116).
@@ -31,7 +38,7 @@ class TeamDiscussionPurgeWriterIT {
   private static final LocalDateTime NOW = LocalDateTime.of(2026, 9, 6, 12, 0);
   private static final LocalDateTime CUTOFF = NOW.minusDays(90);
 
-  @Autowired private TeamDiscussionRepository discussions;
+  @MockitoSpyBean private TeamDiscussionRepository discussions;
   @Autowired private TeamDiscussionParticipantRepository participants;
   @Autowired private TeamDiscussionPurgeWriter underTest;
 
@@ -87,6 +94,29 @@ class TeamDiscussionPurgeWriterIT {
     assertThat(participants.findAll())
         .extracting(TeamDiscussionParticipant::getTeamDiscussionId)
         .containsExactly(kept.getId());
+  }
+
+  /**
+   * The participant delete and the row delete are one unit: if the row cannot go, the participants
+   * must come back too, or the next run finds a discussion without its participant records.
+   */
+  @Test
+  @Transactional(propagation = Propagation.NOT_SUPPORTED)
+  void deleteDiscussionAndParticipants_rollsBackTheParticipantDelete_When_theRowDeleteFails() {
+    TeamDiscussion doomed = archived(1L, NOW.minusDays(200), NOW.minusDays(120));
+    participant(doomed, "consultant-a");
+    doThrow(new DataIntegrityViolationException("simulated")).when(discussions).deleteById(any());
+    try {
+      assertThatThrownBy(() -> underTest.deleteDiscussionAndParticipants(doomed))
+          .isInstanceOf(DataIntegrityViolationException.class);
+
+      assertThat(discussions.findById(doomed.getId())).isPresent();
+      assertThat(participants.findByTeamDiscussionId(doomed.getId())).hasSize(1);
+    } finally {
+      // No test transaction to roll back here, so clean up by hand.
+      participants.deleteAll();
+      discussions.deleteAll();
+    }
   }
 
   private TeamDiscussion archived(long sessionId, LocalDateTime created, LocalDateTime archived) {

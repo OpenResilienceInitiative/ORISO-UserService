@@ -99,9 +99,8 @@ public class TeamDiscussionRetentionService {
         matrixSynapseService.purgeRoomOrConfirmGone(discussion.getMatrixRoomId());
     if (outcome == RoomPurgeOutcome.FAILED) {
       log.warn(
-          "Team discussion {} (room {}, tenant {}) kept: Matrix purge failed, will retry next run",
+          "Team discussion {} (tenant {}) kept: Matrix purge failed, will retry next run",
           discussion.getId(),
-          discussion.getMatrixRoomId(),
           discussion.getTenantId());
       return false;
     }
@@ -110,11 +109,10 @@ public class TeamDiscussionRetentionService {
       return true;
     } catch (RuntimeException ex) {
       log.error(
-          "Team discussion {} (room {}, tenant {}) row could not be deleted after the room purge: {}",
+          "Team discussion {} (tenant {}) row could not be deleted after the room purge",
           discussion.getId(),
-          discussion.getMatrixRoomId(),
           discussion.getTenantId(),
-          ex.getMessage());
+          ex);
       return false;
     }
   }

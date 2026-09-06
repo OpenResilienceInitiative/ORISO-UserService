@@ -1,11 +1,13 @@
 package de.caritas.cob.userservice.api.workflow.teamdiscussionretention.scheduler;
 
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.api.workflow.teamdiscussionretention.service.TeamDiscussionRetentionService;
@@ -34,19 +36,39 @@ class TeamDiscussionRetentionSchedulerTest {
 
   @Test
   void purgeExpiredDiscussions_purgesUnderTheTechnicalTenantContext() {
-    when(taskClaimService.tryClaim("team-discussion-archive-retention", Duration.ofHours(12)))
+    when(taskClaimService.tryClaim(
+            TeamDiscussionRetentionScheduler.TASK_NAME, Duration.ofHours(12)))
         .thenReturn(true);
 
     underTest.purgeExpiredDiscussions();
 
-    verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
-    verify(retentionService).purgeExpiredDiscussions();
+    var inOrder = inOrder(tenantContextProvider, retentionService);
+    inOrder.verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
+    inOrder.verify(retentionService).purgeExpiredDiscussions();
+  }
+
+  /** The technical context must not leak into the next task on the pooled scheduler thread. */
+  @Test
+  void purgeExpiredDiscussions_clearsTheTenantContextAfterwards_evenWhenThePurgeThrows() {
+    when(taskClaimService.tryClaim(
+            TeamDiscussionRetentionScheduler.TASK_NAME, Duration.ofHours(12)))
+        .thenReturn(true);
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    org.mockito.Mockito.doThrow(new IllegalStateException("boom"))
+        .when(retentionService)
+        .purgeExpiredDiscussions();
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(underTest::purgeExpiredDiscussions)
+        .isInstanceOf(IllegalStateException.class);
+
+    org.assertj.core.api.Assertions.assertThat(TenantContext.contextIsSet()).isFalse();
   }
 
   /** Every replica runs the same cron, so exactly one of them may do the deleting. */
   @Test
   void purgeExpiredDiscussions_skipsAllDownstreamCalls_When_claimIsLost() {
-    when(taskClaimService.tryClaim("team-discussion-archive-retention", Duration.ofHours(12)))
+    when(taskClaimService.tryClaim(
+            TeamDiscussionRetentionScheduler.TASK_NAME, Duration.ofHours(12)))
         .thenReturn(false);
 
     underTest.purgeExpiredDiscussions();
