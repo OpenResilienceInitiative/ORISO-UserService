@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.enquirynotification.service;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
-import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deserializeNotificationSettingsOrDefaultIfNull;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_DAILY_ENQUIRY_NOTIFICATION;
 import static java.util.Arrays.asList;
 import static java.util.Objects.nonNull;
@@ -134,10 +133,9 @@ public class EnquiryNotificationService {
   private boolean wantsToReceiveNotifications(Consultant consultant) {
     if (releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS)) {
       return consultant.isNotificationsEnabled()
-          && deserializeNotificationSettingsOrDefaultIfNull(consultant)
-              .isInitialEnquiryNotificationEnabled();
+          && Boolean.TRUE.equals(consultant.getNotifyEnquiriesRepeating());
     } else {
-      return consultant.getNotifyEnquiriesRepeating();
+      return Boolean.TRUE.equals(consultant.getNotifyEnquiriesRepeating());
     }
   }
 

@@ -35,6 +35,8 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -64,6 +66,40 @@ class EnquiryNotificationServiceTest {
     setField(enquiryNotificationService, "claimDuration", Duration.ofMinutes(30));
     when(taskClaimService.tryClaim("enquiry-notification", Duration.ofMinutes(30)))
         .thenReturn(true);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "true,true,false,true,true",
+    "true,true,true,false,false",
+    "true,false,true,true,false",
+    "true,true,true,true,true",
+    "false,false,false,true,true",
+    "false,true,true,false,false"
+  })
+  void digestHonorsItsDedicatedPreference(
+      boolean newSettings, boolean master, boolean initial, boolean daily, boolean expected) {
+    when(releaseToggleService.isToggleEnabled(
+            de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle
+                .NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(newSettings);
+    when(sessionRepository.findByStatus(SessionStatus.NEW))
+        .thenReturn(openEnquiriesForAgency(1L, nowInUtc().minusHours(13), 1));
+    var recipient =
+        createConsultantAgencyWithConsultantsMailAddress(
+            "recipient@example.org", "Example Consultant", daily);
+    recipient.getConsultant().setNotificationsEnabled(master);
+    recipient
+        .getConsultant()
+        .setNotificationsSettings("{\"initialEnquiryNotificationEnabled\":" + initial + "}");
+    when(consultantAgencyService.findConsultantsByAgencyId(1L)).thenReturn(List.of(recipient));
+    when(agencyService.getAgencies(List.of(1L))).thenReturn(List.of(createAgency(1L, "Agency")));
+    enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
+    if (expected) {
+      verify(mailService).sendEmailNotification(org.mockito.ArgumentMatchers.any(MailsDTO.class));
+    } else {
+      verifyNoInteractions(mailService);
+    }
   }
 
   @Test
