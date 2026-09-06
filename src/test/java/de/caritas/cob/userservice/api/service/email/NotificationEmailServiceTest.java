@@ -58,6 +58,33 @@ class NotificationEmailServiceTest {
     TenantContext.clear();
   }
 
+  @Test
+  void keepsEachRecipientsBrandingWhenASchedulerBatchContainsDifferentTenants() {
+    when(branding.resolve(8L))
+        .thenReturn(
+            new EmailBranding(
+                "Träger Acht",
+                "https://app.example.org/service/tenant/public/branding/8/logo",
+                "#164f2b",
+                null,
+                null));
+    TenantContext.setCurrentTenant(7L);
+    var first = mail("daily-enquiry-notification").email("seven@example.org");
+    first.addTemplateDataItem(new TemplateDataDTO().key("tenantId").value("7"));
+    var second = mail("daily-enquiry-notification").email("eight@example.org");
+    second.addTemplateDataItem(new TemplateDataDTO().key("tenantId").value("8"));
+    service.send(new MailsDTO().mails(List.of(first, second)));
+    var rendered = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(dispatcher, times(2)).sendOrThrow(any(), any(), rendered.capture());
+    assertThat(rendered.getAllValues().get(0).html())
+        .contains("Träger Sieben", "/branding/7/logo")
+        .doesNotContain("Träger Acht");
+    assertThat(rendered.getAllValues().get(1).html())
+        .contains("Träger Acht", "/branding/8/logo")
+        .doesNotContain("Träger Sieben");
+    assertThat(TenantContext.getCurrentTenant()).isEqualTo(7L);
+  }
+
   @ParameterizedTest
   @CsvSource({
     "enquiry-notification-consultant, Neue Anfrage in Ihrer Beratungsstelle",

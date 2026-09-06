@@ -272,6 +272,11 @@ class InactiveAccountNotificationServiceTest {
     ArgumentCaptor<MailsDTO> mailCaptor = ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(mailCaptor.capture());
     assertThat(mailCaptor.getValue().getMails()).hasSize(1);
+    assertThat(mailCaptor.getValue().getMails().get(0).getTemplateData())
+        .contains(
+            new de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO()
+                .key("tenantId")
+                .value("1"));
     assertThat(mailCaptor.getValue().getMails().get(0).getEmail())
         .isEqualTo(recipientAdmin.getEmail());
     ArgumentCaptor<InactiveAccountNotificationAuditLog> auditCaptor =

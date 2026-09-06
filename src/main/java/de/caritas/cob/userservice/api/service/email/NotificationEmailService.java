@@ -76,6 +76,15 @@ public class NotificationEmailService {
           .filter(item -> item != null && item.getKey() != null && item.getValue() != null)
           .forEach(item -> attributes.put(item.getKey(), item.getValue()));
     }
+    // Scheduler batches have no tenant request context and may contain several tenants. The
+    // producer owns this metadata; resolve each mail independently instead of mutating thread
+    // state.
+    if (attributes.containsKey("tenantId")) {
+      tenantId = Long.parseLong(attributes.get("tenantId"));
+      if (tenantId < 0) {
+        throw new IllegalArgumentException("Notification tenant id must not be negative");
+      }
+    }
     String appUrl = attributes.getOrDefault("url", applicationBaseUrl);
     if (isBlank(appUrl)) {
       throw new IllegalArgumentException("Notification application URL is missing");

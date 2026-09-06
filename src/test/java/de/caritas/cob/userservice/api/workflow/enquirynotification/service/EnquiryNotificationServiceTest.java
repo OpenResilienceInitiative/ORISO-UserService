@@ -67,6 +67,24 @@ class EnquiryNotificationServiceTest {
   }
 
   @Test
+  void includesTheRecipientsTenantForBrandingOutsideARequestContext() {
+    when(sessionRepository.findByStatus(SessionStatus.NEW))
+        .thenReturn(openEnquiriesForAgency(1L, nowInUtc().minusHours(13), 1));
+    var recipient =
+        createConsultantAgencyWithConsultantsMailAddress(
+            "recipient@example.org", "Example Consultant");
+    recipient.getConsultant().setTenantId(7L);
+    when(consultantAgencyService.findConsultantsByAgencyId(1L)).thenReturn(List.of(recipient));
+    when(agencyService.getAgencies(List.of(1L))).thenReturn(List.of(createAgency(1L, "Agency")));
+    enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
+    var captured = ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(captured.capture());
+    org.assertj.core.api.Assertions.assertThat(
+            captured.getValue().getMails().get(0).getTemplateData())
+        .contains(new TemplateDataDTO().key("tenantId").value("7"));
+  }
+
+  @Test
   void
       sendEmailNotificationsForOpenEnquiries_Should_sendExpectedMailsToConsultantsOfAgency_When_agencyHasOpenEnquiries() {
     var openEnquiries = openEnquiriesForAgency(1L, nowInUtc().minusHours(13L), 3);
