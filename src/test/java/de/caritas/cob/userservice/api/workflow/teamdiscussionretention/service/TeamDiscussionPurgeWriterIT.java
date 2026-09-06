@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.TeamDiscussionParticipant;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import java.time.LocalDateTime;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
@@ -33,6 +34,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Import(TeamDiscussionPurgeWriter.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+// The writer opens a REQUIRES_NEW transaction, which cannot see rows an uncommitted test
+// transaction inserted. Run without a test transaction and clean up by hand instead.
+@Transactional(propagation = Propagation.NOT_SUPPORTED)
 class TeamDiscussionPurgeWriterIT {
 
   private static final LocalDateTime NOW = LocalDateTime.of(2026, 9, 6, 12, 0);
@@ -41,6 +45,25 @@ class TeamDiscussionPurgeWriterIT {
   @MockitoSpyBean private TeamDiscussionRepository discussions;
   @Autowired private TeamDiscussionParticipantRepository participants;
   @Autowired private TeamDiscussionPurgeWriter underTest;
+
+  @AfterEach
+  void cleanUp() {
+    participants.deleteAll();
+    discussions.deleteAll();
+  }
+
+  /** The guarantee in the class Javadoc is only real if the propagation enforces it. */
+  @Test
+  void deleteDiscussionAndParticipants_runsInItsOwnTransaction_regardlessOfTheCaller()
+      throws NoSuchMethodException {
+    var transactional =
+        TeamDiscussionPurgeWriter.class
+            .getMethod("deleteDiscussionAndParticipants", TeamDiscussion.class)
+            .getAnnotation(Transactional.class);
+
+    assertThat(transactional).isNotNull();
+    assertThat(transactional.propagation()).isEqualTo(Propagation.REQUIRES_NEW);
+  }
 
   @Test
   void findByStatusAndArchiveDateBefore_selectsOnlyArchivedDiscussionsPastTheCutoff() {
@@ -101,22 +124,16 @@ class TeamDiscussionPurgeWriterIT {
    * must come back too, or the next run finds a discussion without its participant records.
    */
   @Test
-  @Transactional(propagation = Propagation.NOT_SUPPORTED)
   void deleteDiscussionAndParticipants_rollsBackTheParticipantDelete_When_theRowDeleteFails() {
     TeamDiscussion doomed = archived(1L, NOW.minusDays(200), NOW.minusDays(120));
     participant(doomed, "consultant-a");
     doThrow(new DataIntegrityViolationException("simulated")).when(discussions).deleteById(any());
-    try {
-      assertThatThrownBy(() -> underTest.deleteDiscussionAndParticipants(doomed))
-          .isInstanceOf(DataIntegrityViolationException.class);
 
-      assertThat(discussions.findById(doomed.getId())).isPresent();
-      assertThat(participants.findByTeamDiscussionId(doomed.getId())).hasSize(1);
-    } finally {
-      // No test transaction to roll back here, so clean up by hand.
-      participants.deleteAll();
-      discussions.deleteAll();
-    }
+    assertThatThrownBy(() -> underTest.deleteDiscussionAndParticipants(doomed))
+        .isInstanceOf(DataIntegrityViolationException.class);
+
+    assertThat(discussions.findById(doomed.getId())).isPresent();
+    assertThat(participants.findByTeamDiscussionId(doomed.getId())).hasSize(1);
   }
 
   private TeamDiscussion archived(long sessionId, LocalDateTime created, LocalDateTime archived) {
