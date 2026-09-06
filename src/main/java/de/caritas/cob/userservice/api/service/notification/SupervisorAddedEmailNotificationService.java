@@ -87,7 +87,8 @@ public class SupervisorAddedEmailNotificationService {
               appUrl,
               appUrl,
               null,
-              themeColor));
+              themeColor,
+              tenantId));
     }
 
     if (hasValidConsultantEmail(supervisor)) {
@@ -100,7 +101,8 @@ public class SupervisorAddedEmailNotificationService {
               appUrl,
               consultantChatUrl,
               sessionId,
-              themeColor));
+              themeColor,
+              tenantId));
     }
   }
 
@@ -133,7 +135,8 @@ public class SupervisorAddedEmailNotificationService {
               appUrl,
               appUrl,
               null,
-              themeColor));
+              themeColor,
+              tenantId));
     }
 
     if (hasValidConsultantEmail(supervisor)) {
@@ -146,7 +149,8 @@ public class SupervisorAddedEmailNotificationService {
               appUrl,
               consultantChatUrl,
               sessionId,
-              themeColor));
+              themeColor,
+              tenantId));
     }
   }
 
@@ -162,7 +166,7 @@ public class SupervisorAddedEmailNotificationService {
     }
     String appUrl = resolveAppFrontendUrl(tenantData);
     String themeColor = resolveThemeColor(smtpSettings);
-    sendEmailSafely(smtpSettings, newEmail, renderEmailChanged(username, appUrl, themeColor));
+    sendEmailSafely(smtpSettings, newEmail, renderEmailChanged(username, appUrl, tenantId));
   }
 
   private Long resolveTenantId(User sessionUser, Consultant supervisor) {
@@ -318,7 +322,26 @@ public class SupervisorAddedEmailNotificationService {
       String ctaUrl,
       Long sessionId,
       String themeColor) {
-    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(appBaseUrl, themeColor));
+    return renderTeamChange(
+        languageCode,
+        statement,
+        appBaseUrl,
+        ctaUrl,
+        sessionId,
+        themeColor,
+        TenantContext.getCurrentTenant());
+  }
+
+  private OrisoEmailRenderer.RenderedEmail renderTeamChange(
+      LanguageCode languageCode,
+      String statement,
+      String appBaseUrl,
+      String ctaUrl,
+      Long sessionId,
+      String themeColor,
+      Long tenantId) {
+    Map<String, String> values =
+        new LinkedHashMap<>(emailBrand.valuesForTenant(appBaseUrl, tenantId));
     values.put("teamChangeStatement", statement);
     values.put("caseReference", sessionId == null ? "—" : "#" + sessionId);
     values.put("teamChangedAt", LocalDateTime.now().format(TIMESTAMP));
@@ -327,8 +350,8 @@ public class SupervisorAddedEmailNotificationService {
   }
 
   private OrisoEmailRenderer.RenderedEmail renderEmailChanged(
-      String username, String appUrl, String themeColor) {
-    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(appUrl, themeColor));
+      String username, String appUrl, Long tenantId) {
+    Map<String, String> values = new LinkedHashMap<>(emailBrand.valuesForTenant(appUrl, tenantId));
     values.put("username", username);
     return emailRenderer.render("email-geaendert", OrisoEmailRenderer.Tone.DE_FORMAL, values);
   }

@@ -64,6 +64,15 @@ public class TenantTemplateSupplier {
   }
 
   private RestrictedTenantDTO getRestrictedTenantDTOForSingleDomainMultitenancy() {
+    return tenantService.getRestrictedTenantData(getMainTenantSubdomain());
+  }
+
+  /** Resolves the real platform owner rather than treating technical tenant id zero as a row. */
+  public RestrictedTenantDTO getPlatformTenantData() {
+    return tenantService.getPlatformTenantData(getMainTenantSubdomain());
+  }
+
+  private String getMainTenantSubdomain() {
     ApplicationSettingsDTO applicationSettings =
         applicationSettingsService.getApplicationSettings();
     SettingDTO mainTenantSubdomainForSingleDomainMultitenancy =
@@ -75,8 +84,7 @@ public class TenantTemplateSupplier {
       throw new IllegalStateException("main tenant subdomain not found in app settings");
     }
 
-    var mainTenantSubdomain = mainTenantSubdomainForSingleDomainMultitenancy.getValue();
-    return tenantService.getRestrictedTenantData(mainTenantSubdomain);
+    return mainTenantSubdomainForSingleDomainMultitenancy.getValue();
   }
 
   private RestrictedTenantDTO getRestrictedTenantDTO() {

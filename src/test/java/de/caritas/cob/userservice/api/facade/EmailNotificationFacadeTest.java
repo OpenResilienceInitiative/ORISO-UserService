@@ -333,6 +333,29 @@ class EmailNotificationFacadeTest {
   }
 
   @Test
+  void clearsTenantContextWhenInquiryEmailIsSkipped() {
+    try {
+      emailNotificationFacade.sendInquiryAcceptedNotification(
+          USER_NO_EMAIL, CONSULTANT, new TenantData(42L, "tenant"));
+      assertThat(TenantContext.getCurrentTenant()).isNull();
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void clearsTenantContextWhenNewEnquirySupplierFails() {
+    when(newEnquiryEmailSupplier.generateEmails()).thenThrow(new RuntimeException("test failure"));
+    try {
+      emailNotificationFacade.sendNewEnquiryEmailNotification(
+          givenEnquirySession(), new TenantData(42L, "tenant"));
+      assertThat(TenantContext.getCurrentTenant()).isNull();
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
   void
       sendNewEnquiryEmailNotification_Should_SendEmailNotificationViaMailServiceHelperToConsultants() {
     givenNewEnquiryMailSupplierReturnNonEmptyMails();

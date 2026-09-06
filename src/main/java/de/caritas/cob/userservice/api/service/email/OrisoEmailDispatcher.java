@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.email;
 
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.service.notification.SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings;
 import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
@@ -30,30 +31,33 @@ public class OrisoEmailDispatcher {
   public boolean send(
       SupervisorAddedEmailSettings smtp, String recipient, OrisoEmailRenderer.RenderedEmail email) {
     try {
+      sendOrThrow(smtp, recipient, email);
+      return true;
+    } catch (SmtpSendException exception) {
+      log.error("ORISO email dispatch failed", exception);
+      return false;
+    }
+  }
+
+  /** Synchronous receipt boundary: returns only after SMTP accepts both MIME alternatives. */
+  public void sendOrThrow(
+      SupervisorAddedEmailSettings smtp, String recipient, OrisoEmailRenderer.RenderedEmail email) {
+    try {
       MimeMessage message = new MimeMessage(sessionFor(smtp));
       message.setFrom(new InternetAddress(smtp.getFrom()));
-      message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
-      // UTF-8 rather than the platform default: these subjects carry umlauts.
+      message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient, true));
       message.setSubject(email.subject(), "UTF-8");
       message.setContent(OrisoEmailMime.alternative(email));
       Transport.send(message);
-      return true;
     } catch (Exception exception) {
-      // A mail that cannot be sent must not fail the operation that triggered
-      // it — a registration that rolls back because the welcome mail bounced
-      // would be a far worse outcome than a missing mail.
-      log.error(
-          "Failed to send '{}' to a recipient of tenant SMTP host {}",
-          email.subject(),
-          smtp.getHost(),
-          exception);
-      return false;
+      throw new SmtpSendException("ORISO notification email could not be sent", exception);
     }
   }
 
   private Session sessionFor(SupervisorAddedEmailSettings smtp) {
     Properties props = new Properties();
     props.put("mail.smtp.auth", "true");
+    props.put("mail.smtp.ssl.checkserveridentity", "true");
     props.put("mail.smtp.host", smtp.getHost());
     props.put("mail.smtp.port", String.valueOf(smtp.getPort()));
     // Bounded, matching JakartaInviteMailTransport: an unresponsive SMTP host must not hang the

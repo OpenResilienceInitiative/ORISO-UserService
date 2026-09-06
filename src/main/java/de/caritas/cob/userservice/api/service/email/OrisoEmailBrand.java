@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.service.email;
 
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -12,18 +14,17 @@ import org.springframework.stereotype.Component;
 /**
  * Fills the brand placeholders every ORISO mail carries.
  *
- * <p>The target contract is ADR-021: seven brand values plus a sender identity, stored per Träger
- * in TenantService. TenantService does not have those fields yet, so this class supplies the
- * fallbacks the ADR specifies and takes the one value that does exist today — {@code
- * emailThemeColor} on the tenant SMTP settings — as the primary colour.
- *
- * <p>Every fallback is a working value. There is no state in which a mail goes out with an empty
- * organisation line, because a mail with a blank sender block is the kind that gets reported as
- * phishing.
+ * <p>Uses the same effective tenant branding as invite and legal mails. SMTP transport settings
+ * never select the product logo or colour. Explicit tenant IDs are available for async senders.
  */
 @Slf4j
 @Component
 public class OrisoEmailBrand {
+  private final EmailBrandingResolver brandingResolver;
+
+  public OrisoEmailBrand(EmailBrandingResolver brandingResolver) {
+    this.brandingResolver = brandingResolver;
+  }
 
   private static final Pattern HEX = Pattern.compile("^#([A-Fa-f0-9]{6})$");
 
@@ -36,26 +37,22 @@ public class OrisoEmailBrand {
   private static final String DEFAULT_PRIMARY = "#a5000a";
   private static final String DEFAULT_ACCENT = "#cc1e1c";
 
-  @Value("${email.brand.platform-name:Online-Beratung}")
-  private String platformName;
-
-  @Value("${email.brand.org-name:ORISO}")
-  private String orgName;
-
   @Value("${email.brand.org-address:}")
   private String orgAddress;
 
   @Value("${email.brand.contact-line:}")
   private String contactLine;
 
-  @Value("${email.brand.logo-url:}")
-  private String logoUrl;
-
   /**
    * @param appUrl absolute base URL of the app this mail links into
-   * @param tenantThemeColor the tenant's {@code emailThemeColor}, or null
+   * @param tenantThemeColor retained for existing callers; SMTP transport never selects branding
    */
   public Map<String, String> values(String appUrl, String tenantThemeColor) {
+    return valuesForTenant(appUrl, TenantContext.getCurrentTenant());
+  }
+
+  /** Explicit tenant identity survives asynchronous send paths and does not depend on cookies. */
+  public Map<String, String> valuesForTenant(String appUrl, Long tenantId) {
     if (!isNotBlank(appUrl)) {
       // Fail closed: a blank base turns every link in the mail into a bare path
       // (e.g. "/profile/settings") with no origin to resolve against. That is
@@ -66,18 +63,22 @@ public class OrisoEmailBrand {
     String base = trimTrailingSlash(appUrl);
     Map<String, String> values = new LinkedHashMap<>();
 
-    values.put("platformName", platformName);
-    values.put("orgName", orgName);
-    values.put("orgAddress", orgAddress);
-    values.put("contactLine", contactLine);
-    values.put("logoUrl", logoUrl);
-    values.put("primaryColor", readablePrimary(tenantThemeColor));
+    var branding = brandingResolver.resolve(tenantId);
+    values.put("platformName", branding.brandName());
+    values.put("orgName", branding.brandName());
+    values.put("orgAddress", orgAddress == null ? "" : orgAddress);
+    values.put("contactLine", contactLine == null ? "" : contactLine);
+    values.put("logoUrl", branding.logoUrl() == null ? "" : branding.logoUrl());
+    values.put("primaryColor", readablePrimary(branding.accentColor()));
     values.put("accentColor", DEFAULT_ACCENT);
 
     values.put("appUrl", base);
     values.put("settingsUrl", base + "/profile/settings");
-    values.put("privacyUrl", base + "/datenschutz");
-    values.put("imprintUrl", base + "/impressum");
+    values.put(
+        "privacyUrl",
+        branding.privacyUrl() == null ? base + "/datenschutz" : branding.privacyUrl());
+    values.put(
+        "imprintUrl", branding.imprintUrl() == null ? base + "/impressum" : branding.imprintUrl());
     values.put("unsubscribeUrl", base + "/profile/settings/notifications");
 
     return values;

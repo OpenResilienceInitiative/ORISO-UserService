@@ -43,15 +43,62 @@ class SupervisorAddedEmailNotificationServiceTest {
   // design system. A mock here would assert that a method was called; this
   // asserts that a mail comes out.
   @Spy private OrisoEmailRenderer emailRenderer = new OrisoEmailRenderer();
-  @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand();
+
+  private final de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver
+      brandingResolver =
+          org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver.class);
+  @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand(brandingResolver);
 
   @InjectMocks private SupervisorAddedEmailNotificationService service;
 
   @BeforeEach
   void injectValues() {
+    when(brandingResolver.resolve(any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.email.layout.EmailBranding(
+                "Online-Beratung", null, "#a5000a", null, null));
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
     ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org");
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.oriso.org");
+  }
+
+  @Test
+  void usesExplicitTenantBrandingAfterTheUrlResolverClearsThreadContext() throws Exception {
+    var resolver =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver.class);
+    when(resolver.resolve(any()))
+        .thenReturn(de.caritas.cob.userservice.api.service.email.layout.EmailBranding.neutral());
+    when(resolver.resolve(7L))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.email.layout.EmailBranding(
+                "Tenant Seven",
+                "https://app.oriso.org/service/tenant/public/branding/7/logo",
+                "#1c4f8f",
+                null,
+                null));
+    ReflectionTestUtils.setField(emailBrand, "brandingResolver", resolver);
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(
+            Optional.of(
+                new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
+                    "smtp.example.org", 587, false, "test", "test", "sender@example.org", null)));
+    var sent = new java.util.concurrent.atomic.AtomicReference<jakarta.mail.Message>();
+    try (var transport = org.mockito.Mockito.mockStatic(jakarta.mail.Transport.class)) {
+      transport
+          .when(() -> jakarta.mail.Transport.send(any(jakarta.mail.Message.class)))
+          .thenAnswer(
+              invocation -> {
+                sent.set(invocation.getArgument(0));
+                return null;
+              });
+      service.notifyEmailAddressChanged(
+          "username", "recipient@example.org", 7L, new TenantData(7L, "seven"), null);
+    }
+    var mime = (jakarta.mail.Multipart) sent.get().getContent();
+    assertThat((String) mime.getBodyPart(1).getContent())
+        .contains("Tenant Seven", "/branding/7/logo");
   }
 
   // ── notifySupervisorAdded early-return paths ──────────────────────────────

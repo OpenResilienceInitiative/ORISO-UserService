@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSuppli
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
+import java.net.URI;
 import java.util.Locale;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -82,30 +83,53 @@ public class EmailBrandingResolver {
 
   private String resolveLogoUrl(RestrictedTenantDTO tenant, Theming theming) {
     if (theming != null) {
-      String tenantLogo = firstAbsoluteUrl(theming.getLogo(), theming.getAssociationLogo());
+      String tenantLogo = firstPartyLogo(theming.getLogo(), theming.getAssociationLogo());
       if (tenantLogo != null) {
         return tenantLogo;
       }
-      if (!isBlank(theming.getLogo()) || !isBlank(theming.getAssociationLogo())) {
-        String baseUrl = resolveBrandingAssetBaseUrl(tenant);
-        if (!isBlank(baseUrl)) {
-          return baseUrl + "/service/tenant/public/branding/logo";
+      if (isStoredImage(theming.getLogo()) || isStoredImage(theming.getAssociationLogo())) {
+        String baseUrl = firstAbsoluteUrl(applicationBaseUrl);
+        if (!isBlank(baseUrl) && tenant != null && tenant.getId() != null) {
+          Long assetTenantId = tenant.getId();
+          return baseUrl + "/service/tenant/public/branding/" + assetTenantId + "/logo";
         }
       }
     }
-    return firstAbsoluteUrl(platformLogoUrl);
+    return firstPartyLogo(platformLogoUrl);
   }
 
-  private String resolveBrandingAssetBaseUrl(RestrictedTenantDTO tenant) {
-    if (tenant != null
-        && tenant.getId() != null
-        && !TenantContext.TECHNICAL_TENANT_ID.equals(tenant.getId())) {
-      String tenantBaseUrl = normalizeBaseUrl(tenantTemplateSupplier.getTenantBaseUrl(tenant));
-      if (!isBlank(tenantBaseUrl) && firstAbsoluteUrl(tenantBaseUrl) != null) {
-        return tenantBaseUrl;
+  private boolean isStoredImage(String value) {
+    return !isBlank(value) && firstAbsoluteUrl(value) == null;
+  }
+
+  /**
+   * Mail images stay on the configured application origin, without third-party tracking fetches.
+   */
+  private String firstPartyLogo(String... candidates) {
+    String configuredBase = firstAbsoluteUrl(applicationBaseUrl);
+    if (configuredBase == null) {
+      return null;
+    }
+    URI origin = URI.create(configuredBase);
+    for (String candidate : candidates) {
+      String absolute = firstAbsoluteUrl(candidate);
+      if (absolute == null) {
+        continue;
+      }
+      try {
+        URI image = URI.create(absolute);
+        if (image.getUserInfo() == null
+            && origin.getHost() != null
+            && origin.getHost().equalsIgnoreCase(image.getHost())
+            && origin.getScheme().equalsIgnoreCase(image.getScheme())
+            && origin.getPort() == image.getPort()) {
+          return absolute;
+        }
+      } catch (IllegalArgumentException ignored) {
+        // Invalid stored URL cannot become an outgoing image reference.
       }
     }
-    return firstAbsoluteUrl(applicationBaseUrl);
+    return null;
   }
 
   /**
@@ -176,7 +200,7 @@ public class EmailBrandingResolver {
 
   private RestrictedTenantDTO loadPlatformTenantQuietly() {
     try {
-      return tenantService.getPlatformTenantData();
+      return tenantTemplateSupplier.getPlatformTenantData();
     } catch (RuntimeException exception) {
       log.debug(
           "No platform branding available ({}) — using configured fallbacks",

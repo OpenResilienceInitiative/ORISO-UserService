@@ -498,8 +498,7 @@ public class EventNotificationService {
     if (!supervisorMessage
         && session.getUser() != null
         && session.getUser().getUserId() != null
-        && !session.getUser().getUserId().equals(senderUserId)
-        && !shouldSuppressNotification(session.getUser().getUserId(), roomId, null)) {
+        && !session.getUser().getUserId().equals(senderUserId)) {
       createMessageEventDeduplicated(
           "message.new",
           matrixEventId,
@@ -509,13 +508,13 @@ public class EventNotificationService {
           buildMessageParams(session, senderLabel, contentClass, "user", matrixEventId),
           buildSessionActionPathForRecipient(session, session.getUser().getUserId(), null),
           session.getId(),
-          session.getTenantId());
+          session.getTenantId(),
+          shouldSuppressNotification(session.getUser().getUserId(), roomId, null));
     }
 
     if (session.getConsultant() != null
         && session.getConsultant().getId() != null
-        && !session.getConsultant().getId().equals(senderUserId)
-        && !shouldSuppressNotification(session.getConsultant().getId(), roomId, null)) {
+        && !session.getConsultant().getId().equals(senderUserId)) {
       createMessageEventDeduplicated(
           "message.new",
           matrixEventId,
@@ -525,7 +524,8 @@ public class EventNotificationService {
           buildMessageParams(session, senderLabel, contentClass, "consultant", matrixEventId),
           buildSessionActionPathForRecipient(session, session.getConsultant().getId(), null),
           session.getId(),
-          session.getTenantId());
+          session.getTenantId(),
+          shouldSuppressNotification(session.getConsultant().getId(), roomId, null));
     }
   }
 
@@ -594,8 +594,7 @@ public class EventNotificationService {
     if (!supervisorMessage
         && session.getUser() != null
         && session.getUser().getUserId() != null
-        && !session.getUser().getUserId().equals(senderUserId)
-        && !shouldSuppressNotification(session.getUser().getUserId(), roomId, threadRootId)) {
+        && !session.getUser().getUserId().equals(senderUserId)) {
       createMessageEventDeduplicated(
           "thread.reply.new",
           matrixEventId,
@@ -606,13 +605,13 @@ public class EventNotificationService {
               session, senderLabel, contentClass, threadRootId, "user", matrixEventId),
           buildSessionActionPathForRecipient(session, session.getUser().getUserId(), threadRootId),
           session.getId(),
-          session.getTenantId());
+          session.getTenantId(),
+          shouldSuppressNotification(session.getUser().getUserId(), roomId, threadRootId));
     }
 
     if (session.getConsultant() != null
         && session.getConsultant().getId() != null
-        && !session.getConsultant().getId().equals(senderUserId)
-        && !shouldSuppressNotification(session.getConsultant().getId(), roomId, threadRootId)) {
+        && !session.getConsultant().getId().equals(senderUserId)) {
       createMessageEventDeduplicated(
           "thread.reply.new",
           matrixEventId,
@@ -624,7 +623,8 @@ public class EventNotificationService {
           buildSessionActionPathForRecipient(
               session, session.getConsultant().getId(), threadRootId),
           session.getId(),
-          session.getTenantId());
+          session.getTenantId(),
+          shouldSuppressNotification(session.getConsultant().getId(), roomId, threadRootId));
     }
   }
 
@@ -738,7 +738,8 @@ public class EventNotificationService {
       String params,
       String actionPath,
       Long sourceSessionId,
-      Long tenantId) {
+      Long tenantId,
+      boolean alreadyRead) {
     if (matrixEventId != null && !matrixEventId.isBlank()) {
       String deduplicationKey = eventType + ":" + matrixEventId;
       if (deduplicationKey.length() <= MAX_DEDUPLICATION_KEY_LENGTH) {
@@ -752,7 +753,8 @@ public class EventNotificationService {
             params,
             actionPath,
             sourceSessionId,
-            tenantId);
+            tenantId,
+            alreadyRead);
         return;
       }
       // An oversized key would fail the insert with a truncation error that the
@@ -762,16 +764,22 @@ public class EventNotificationService {
           eventType,
           MAX_DEDUPLICATION_KEY_LENGTH);
     }
-    createEvent(
-        recipientUserId,
-        eventType,
-        CATEGORY_MESSAGE,
-        title,
-        text,
-        params,
-        actionPath,
-        sourceSessionId,
-        tenantId);
+    var event =
+        buildEvent(
+            recipientUserId,
+            eventType,
+            CATEGORY_MESSAGE,
+            title,
+            text,
+            params,
+            actionPath,
+            sourceSessionId,
+            tenantId,
+            null);
+    if (alreadyRead) {
+      event.setReadDate(LocalDateTime.now());
+    }
+    eventNotificationRepository.save(event);
   }
 
   /**
@@ -820,6 +828,32 @@ public class EventNotificationService {
       String actionPath,
       Long sourceSessionId,
       Long tenantId) {
+    createEventOnce(
+        deduplicationKey,
+        recipientUserId,
+        eventType,
+        category,
+        title,
+        text,
+        params,
+        actionPath,
+        sourceSessionId,
+        tenantId,
+        false);
+  }
+
+  private void createEventOnce(
+      String deduplicationKey,
+      String recipientUserId,
+      String eventType,
+      String category,
+      String title,
+      String text,
+      String params,
+      String actionPath,
+      Long sourceSessionId,
+      Long tenantId,
+      boolean alreadyRead) {
     if (recipientUserId == null
         || recipientUserId.isBlank()
         || deduplicationKey == null
@@ -830,7 +864,7 @@ public class EventNotificationService {
     }
 
     try {
-      deduplicationWriter.persistInNewTransaction(
+      var event =
           buildEvent(
               recipientUserId,
               eventType,
@@ -841,7 +875,11 @@ public class EventNotificationService {
               actionPath,
               sourceSessionId,
               tenantId,
-              deduplicationKey));
+              deduplicationKey);
+      if (alreadyRead) {
+        event.setReadDate(LocalDateTime.now());
+      }
+      deduplicationWriter.persistInNewTransaction(event);
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
@@ -1039,12 +1077,12 @@ public class EventNotificationService {
         return false;
       }
 
-      // For room-level messages, suppress when recipient is on that room.
+      // Viewing the room marks the persisted event read, suppressing only announcement.
       if (threadRootId == null || threadRootId.isBlank()) {
         return true;
       }
 
-      // For thread replies, suppress only when recipient is actively inside same thread.
+      // Only the currently viewed thread is read; other thread replies remain unread.
       return threadRootId.equals(activeView.threadRootId);
     }
   }

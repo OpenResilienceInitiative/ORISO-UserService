@@ -7,7 +7,39 @@ import org.junit.jupiter.api.Test;
 
 class OrisoEmailBrandTest {
 
-  private final OrisoEmailBrand brand = new OrisoEmailBrand();
+  private final de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver resolver =
+      org.mockito.Mockito.mock(
+          de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver.class);
+  private final OrisoEmailBrand brand = new OrisoEmailBrand(resolver);
+
+  @org.junit.jupiter.api.BeforeEach
+  void configureBranding() {
+    org.mockito.Mockito.when(resolver.resolve(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(de.caritas.cob.userservice.api.service.email.layout.EmailBranding.neutral());
+  }
+
+  @Test
+  void usesTheExplicitTenantInsteadOfAmbientContextOrSmtpColour() {
+    org.mockito.Mockito.when(resolver.resolve(7L))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.email.layout.EmailBranding(
+                "Tenant Seven",
+                "https://app.example.org/service/tenant/public/branding/7/logo",
+                "#1c4f8f",
+                "https://app.example.org/legal",
+                "https://app.example.org/privacy"));
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(9L);
+    try {
+      var values = brand.valuesForTenant("https://app.example.org", 7L);
+      assertThat(values)
+          .containsEntry("orgName", "Tenant Seven")
+          .containsEntry("primaryColor", "#1c4f8f")
+          .containsEntry("logoUrl", "https://app.example.org/service/tenant/public/branding/7/logo")
+          .containsEntry("privacyUrl", "https://app.example.org/privacy");
+    } finally {
+      de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+    }
+  }
 
   @Test
   void keepsATenantColourThatCarriesWhiteText() {

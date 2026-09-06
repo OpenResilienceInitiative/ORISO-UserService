@@ -34,7 +34,12 @@ class WelcomeEmailServiceTest {
   // Real, so the test asserts that a mail comes out rather than that a method
   // was called.
   @Spy private OrisoEmailRenderer emailRenderer = new OrisoEmailRenderer();
-  @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand();
+
+  private final de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver
+      brandingResolver =
+          org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver.class);
+  @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand(brandingResolver);
 
   @InjectMocks private WelcomeEmailService service;
 
@@ -44,10 +49,12 @@ class WelcomeEmailServiceTest {
 
   @BeforeEach
   void setUp() {
+    when(brandingResolver.resolve(any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.email.layout.EmailBranding(
+                "Online-Beratung", null, "#a5000a", null, null));
     ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org");
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
-    ReflectionTestUtils.setField(emailBrand, "platformName", "Online-Beratung");
-    ReflectionTestUtils.setField(emailBrand, "orgName", "ORISO");
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtp));
   }

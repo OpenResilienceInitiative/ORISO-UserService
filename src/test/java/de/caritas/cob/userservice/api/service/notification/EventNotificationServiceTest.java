@@ -652,7 +652,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createMessageNotificationFromRoom_suppressesNotificationWhenRecipientIsActiveInRoom() {
+  void createMessageNotificationFromRoom_persistsReadNotificationWhenRecipientIsActiveInRoom() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -664,7 +664,9 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "!room-1:matrix.example", "sender", "hello");
 
-    verify(eventNotificationRepository, never()).save(any());
+    var saved = org.mockito.ArgumentCaptor.forClass(EventNotification.class);
+    verify(eventNotificationRepository).save(saved.capture());
+    assertThat(saved.getValue().getReadDate()).isNotNull();
   }
 
   @Test
@@ -688,7 +690,8 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createMessageNotificationFromRoom_suppressesConcurrentHeartbeatAtExpiry() {
+  void
+      createMessageNotificationFromRoom_persistsReadNotificationWhenConcurrentHeartbeatWinsAtExpiry() {
     AtomicLong nowNanos = new AtomicLong();
     AtomicBoolean refreshOnExpiryCheck = new AtomicBoolean();
     AtomicBoolean refreshing = new AtomicBoolean();
@@ -717,7 +720,9 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "!room-1:matrix.example", "sender", "heartbeat won expiry race");
 
-    verify(eventNotificationRepository, never()).save(any());
+    var saved = org.mockito.ArgumentCaptor.forClass(EventNotification.class);
+    verify(eventNotificationRepository).save(saved.capture());
+    assertThat(saved.getValue().getReadDate()).isNotNull();
   }
 
   @Test
@@ -739,7 +744,9 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "!room-1:matrix.example", "sender", "still actively viewed");
 
-    verify(eventNotificationRepository, never()).save(any());
+    var saved = org.mockito.ArgumentCaptor.forClass(EventNotification.class);
+    verify(eventNotificationRepository).save(saved.capture());
+    assertThat(saved.getValue().getReadDate()).isNotNull();
   }
 
   @Test
@@ -799,7 +806,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createThreadReplyNotificationFromRoom_suppressesWhenUserActiveInSameThread() {
+  void createThreadReplyNotificationFromRoom_persistsReadNotificationWhenUserActiveInSameThread() {
     eventNotificationService.updateActiveView(
         "asker-1", "!room-1:matrix.example", "thread-root-1", true);
 
@@ -813,7 +820,9 @@ class EventNotificationServiceTest {
     eventNotificationService.createThreadReplyNotificationFromRoom(
         "!room-1:matrix.example", "sender", "reply", "thread-root-1");
 
-    verify(eventNotificationRepository, never()).save(any());
+    var saved = org.mockito.ArgumentCaptor.forClass(EventNotification.class);
+    verify(eventNotificationRepository).save(saved.capture());
+    assertThat(saved.getValue().getReadDate()).isNotNull();
   }
 
   @Test

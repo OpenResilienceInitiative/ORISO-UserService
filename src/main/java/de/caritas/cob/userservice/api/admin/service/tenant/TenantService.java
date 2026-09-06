@@ -52,13 +52,17 @@ public class TenantService {
         .getRestrictedTenantDataByTenantId(tenantId);
   }
 
-  /** Explicit platform-branding lookup; generic tenant operations still reject technical id 0. */
-  @Cacheable(cacheNames = CacheManagerConfig.TENANT_CACHE, key = "'platform-branding'")
-  public RestrictedTenantDTO getPlatformTenantData() {
+  /**
+   * Main platform tenant, with technical scope explicit so ambient tenant overrides cannot leak.
+   */
+  @Cacheable(
+      cacheNames = CacheManagerConfig.TENANT_CACHE,
+      key = "'platform-branding:' + #mainTenantSubdomain")
+  public RestrictedTenantDTO getPlatformTenantData(String mainTenantSubdomain) {
     log.info("Calling tenant service to get platform branding data");
     return tenantServiceApiControllerFactory
         .createControllerApi()
-        .getRestrictedTenantDataByTenantId(TenantContext.TECHNICAL_TENANT_ID);
+        .getRestrictedTenantDataBySubdomain(mainTenantSubdomain, TenantContext.TECHNICAL_TENANT_ID);
   }
 
   public List<RestrictedTenantDTO> getRestrictedTenantData(Set<Long> tenantIds) {

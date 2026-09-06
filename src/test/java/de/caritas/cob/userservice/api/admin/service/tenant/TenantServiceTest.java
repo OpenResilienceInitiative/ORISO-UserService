@@ -46,6 +46,15 @@ class TenantServiceTest {
             new StubTenantServiceApiControllerFactory(tenantControllerApi), testCacheManager());
   }
 
+  @Test
+  void platformBrandingUsesMainSubdomainAndExplicitTechnicalOverride() {
+    var expected = new RestrictedTenantDTO().id(40L).subdomain("platform").name("Platform");
+    tenantControllerApi.subdomainResult = expected;
+    assertThat(tenantService.getPlatformTenantData("platform")).isSameAs(expected);
+    assertThat(tenantControllerApi.lastSubdomainOverride).isZero();
+    assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
+  }
+
   // Tenant resolution must reach the external tenant service on a cache miss.
   @Test
   void getRestrictedTenantData_validSubdomain_returnsDtoFromApi() {
@@ -309,6 +318,7 @@ class TenantServiceTest {
 
   static final class StubTenantControllerApi extends TenantControllerApi {
 
+    Long lastSubdomainOverride;
     RestrictedTenantDTO subdomainResult;
     RestrictedTenantDTO tenantIdResult;
     List<RestrictedTenantDTO> tenantIdsResult;
@@ -337,6 +347,7 @@ class TenantServiceTest {
 
     @Override
     public RestrictedTenantDTO getRestrictedTenantDataBySubdomain(String subdomain, Long tenantId) {
+      lastSubdomainOverride = tenantId;
       subdomainCalls.incrementAndGet();
       awaitLatch();
       if (subdomainException != null) {

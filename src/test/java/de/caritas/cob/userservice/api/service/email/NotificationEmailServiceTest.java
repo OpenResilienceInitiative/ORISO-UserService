@@ -1,0 +1,145 @@
+package de.caritas.cob.userservice.api.service.email;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.*;
+
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteSmtpSettings;
+import de.caritas.cob.userservice.api.service.email.layout.*;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.mailservice.generated.web.model.*;
+import java.util.List;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.mockito.ArgumentCaptor;
+import org.springframework.test.util.ReflectionTestUtils;
+
+class NotificationEmailServiceTest {
+  private final GlobalSmtpSettingsResolver smtp = mock(GlobalSmtpSettingsResolver.class);
+  private final OrisoEmailDispatcher dispatcher = mock(OrisoEmailDispatcher.class);
+  private final EmailBrandingResolver branding = mock(EmailBrandingResolver.class);
+  private NotificationEmailService service;
+
+  @BeforeEach
+  void setUp() {
+    when(smtp.resolve())
+        .thenReturn(
+            new InviteSmtpSettings(
+                "smtp.example.org", 587, false, "test", "test", "sender@example.org"));
+    when(branding.resolve(7L))
+        .thenReturn(
+            new EmailBranding(
+                "Träger Sieben",
+                "https://app.example.org/service/tenant/public/branding/7/logo",
+                "#1c4f8f",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"));
+    var brand = new OrisoEmailBrand(branding);
+    service =
+        new NotificationEmailService(
+            new OrisoEmailRenderer(),
+            brand,
+            branding,
+            new BrandedEmailLayoutRenderer(new EmailContentSanitizer()),
+            smtp,
+            dispatcher);
+    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org");
+    TenantContext.setCurrentTenant(7L);
+  }
+
+  @AfterEach
+  void tearDown() {
+    TenantContext.clear();
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "enquiry-notification-consultant, Neue Anfrage in Ihrer Beratungsstelle",
+    "direct-enquiry-notification-consultant, Eine Anfrage richtet sich direkt an Sie",
+    "assign-enquiry-notification, Neue Beratungsanfrage",
+    "daily-enquiry-notification, Ihre Tagesübersicht"
+  })
+  void sendsExistingDesignWithEffectiveBrandingAndBothParts(String template, String subject) {
+    service.send(new MailsDTO().mails(List.of(mail(template))));
+    var rendered = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(dispatcher).sendOrThrow(any(), eq("recipient@example.org"), rendered.capture());
+    assertThat(rendered.getValue().subject()).isEqualTo(subject);
+    assertThat(rendered.getValue().html())
+        .contains("Träger Sieben", "/branding/7/logo", "#1c4f8f")
+        .doesNotContain("{{");
+    assertThat(rendered.getValue().text())
+        .contains("https://app.example.org")
+        .doesNotContain("{{", "<table");
+  }
+
+  @Test
+  void preservesFreeTextSubjectAndMeaningInBothParts() {
+    var mail = mail("free-text");
+    mail.addTemplateDataItem(
+        new TemplateDataDTO().key("subject").value("Ihre Anfrage wurde angenommen"));
+    mail.addTemplateDataItem(
+        new TemplateDataDTO()
+            .key("text")
+            .value("Gute Nachrichten: Müller & Team hat Ihre Anfrage angenommen."));
+    service.send(new MailsDTO().mails(List.of(mail)));
+    var rendered = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(dispatcher).sendOrThrow(any(), any(), rendered.capture());
+    assertThat(rendered.getValue().subject()).isEqualTo("Ihre Anfrage wurde angenommen");
+    assertThat(rendered.getValue().html()).contains("Müller &amp; Team").doesNotContain("{{");
+    assertThat(rendered.getValue().text()).contains("Müller & Team");
+  }
+
+  @Test
+  void doesNotSendCounsellorHandoverCopyToAnAdviceSeeker() {
+    service.send(new MailsDTO().mails(List.of(mail("reassign-request-notification"))));
+    var rendered = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(dispatcher).sendOrThrow(any(), any(), rendered.capture());
+    assertThat(rendered.getValue().text())
+        .contains("Beratung")
+        .doesNotContain("an Sie zu übergeben", "Bis Sie zustimmen");
+  }
+
+  @Test
+  void failsBeforeAnyDeliveryForUnsupportedOccasions() {
+    assertThatThrownBy(
+            () ->
+                service.send(
+                    new MailsDTO()
+                        .mails(
+                            List.of(mail("enquiry-notification-consultant"), mail("unsupported")))))
+        .isInstanceOf(IllegalArgumentException.class);
+    verifyNoInteractions(dispatcher);
+  }
+
+  @Test
+  void propagatesSmtpFailureInsteadOfReportingAcceptance() {
+    doThrow(new SmtpSendException("test transport failure"))
+        .when(dispatcher)
+        .sendOrThrow(any(), any(), any());
+    assertThatThrownBy(
+            () ->
+                service.send(
+                    new MailsDTO().mails(List.of(mail("enquiry-notification-consultant")))))
+        .isInstanceOf(SmtpSendException.class);
+  }
+
+  private MailDTO mail(String template) {
+    return new MailDTO()
+        .template(template)
+        .email("recipient@example.org")
+        .language(LanguageCode.DE)
+        .templateData(
+            new java.util.ArrayList<>(
+                List.of(
+                    new TemplateDataDTO().key("url").value("https://app.example.org"),
+                    new TemplateDataDTO().key("beratungsstelle").value("Beratungsstelle"),
+                    new TemplateDataDTO().key("plz").value("12345"),
+                    new TemplateDataDTO().key("enquiries").value("3"))));
+  }
+}
