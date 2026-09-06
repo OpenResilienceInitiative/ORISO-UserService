@@ -154,8 +154,7 @@ class UserConsultantControllerDelegate {
               + " to",
           consultantId,
           agencyId);
-      throw new ForbiddenException(
-          "Consultant is not a member of the requested agency and may not read its consultants");
+      throw new ForbiddenException("Consultant is not a member of the requested agency and may not read its consultants", ex -> {});
     }
   }
 
