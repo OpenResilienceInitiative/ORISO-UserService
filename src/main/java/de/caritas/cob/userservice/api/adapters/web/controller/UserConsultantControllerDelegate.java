@@ -135,10 +135,20 @@ class UserConsultantControllerDelegate {
    * <p>A rejection is a 403 rather than an empty list: the caller is authenticated and asking for
    * something real, and answering 200 with nothing would make a genuine authorization failure look
    * like an agency that happens to have no consultants.
+   *
+   * <p>Deliberately check-then-act rather than one caller-scoped roster query. The window between
+   * the two reads is not attacker-controllable, and revoking the caller's own assignment does not
+   * change the roster they would receive, so a request straddling that window returns data they
+   * were authorized to read moments earlier. Folding the membership predicate into the roster query
+   * would also cost the 403 above: an unauthorized caller and an empty agency would both come back
+   * empty. Same shape as {@code TeamDiscussionFacade#requireEligibleConsultant}.
    */
   private void verifyCallerBelongsToAgency(Long agencyId) {
     var consultantId = authenticatedUser.getUserId();
     if (!consultantAgencyService.isConsultantAssignedToAgency(consultantId, agencyId)) {
+      // The logged id is the opaque Keycloak UUID, never a name, email or Matrix id, and matches
+      // what the admin authorization guards already record on a denial. Without it the warning
+      // cannot be attributed to anyone: MDC carries only the request correlation id.
       log.warn(
           "Consultant {} requested the consultant roster of agency {}, which they are not assigned"
               + " to",

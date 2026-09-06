@@ -842,6 +842,8 @@ class UserControllerConsultantE2EIT {
   void getConsultantsShouldRespondWithDisplayNameAndUsername() throws Exception {
     var agencyId = givenAnAgencyIdWithDefaultLanguageOnly();
     givenMatrixDisplayNames(agencyId, "user1", "user2", "user3");
+    // Before #1107 the authority alone was enough and the caller's agency did not matter.
+    givenCallerIsAConsultantOfAgency(agencyId);
 
     mockMvc
         .perform(
@@ -858,6 +860,27 @@ class UserControllerConsultantE2EIT {
         .andExpect(jsonPath("[1].username", startsWith("enc.")))
         .andExpect(jsonPath("[2].displayName", is("user3")))
         .andExpect(jsonPath("[2].username", startsWith("enc.")));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.VIEW_AGENCY_CONSULTANTS)
+  void getConsultantsShouldRespondWithForbiddenWhenCallerIsNotInTheRequestedAgency()
+      throws Exception {
+    // #1107 end to end: the authority is present and the agency is real, but the caller is not a
+    // member of it. This is the exact request that used to return the whole roster.
+    var agencyId = givenAnAgencyIdWithDefaultLanguageOnly();
+    givenMatrixDisplayNames(agencyId, "user1", "user2", "user3");
+    when(authenticatedUser.getUserId()).thenReturn(UUID.randomUUID().toString());
+
+    mockMvc
+        .perform(
+            get("/users/consultants")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .param("agencyId", String.valueOf(agencyId))
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isForbidden())
+        .andExpect(jsonPath("$").doesNotExist());
   }
 
   @Test
@@ -1134,6 +1157,15 @@ class UserControllerConsultantE2EIT {
       when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
       when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
     }
+  }
+
+  private void givenCallerIsAConsultantOfAgency(long agencyId) {
+    var member =
+        consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNull(agencyId).stream()
+            .map(ConsultantAgency::getConsultant)
+            .findFirst()
+            .orElseThrow();
+    when(authenticatedUser.getUserId()).thenReturn(member.getId());
   }
 
   private long givenAnAgencyIdWithDefaultLanguageOnly() {
