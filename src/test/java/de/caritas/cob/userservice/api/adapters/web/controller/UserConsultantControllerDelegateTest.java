@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowableOfType;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -9,6 +10,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
@@ -36,6 +40,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 
 @ExtendWith(MockitoExtension.class)
@@ -115,6 +120,37 @@ class UserConsultantControllerDelegateTest {
         .isInstanceOf(ForbiddenException.class);
 
     verify(consultantAgencyService, never()).getConsultantsOfAgency(any());
+  }
+
+  @Test
+  void getConsultantsLogsADeniedRosterRequestExactlyOnceAndWithoutAStackTrace() {
+    // The endpoint invites enumeration, so a refusal must not cost two warnings — one here plus
+    // ForbiddenException's default stack-trace logger — nor print a trace for what is an expected
+    // authorization outcome.
+    when(authenticatedUser.getUserId()).thenReturn(CALLER_ID);
+    when(consultantAgencyService.isConsultantAssignedToAgency(CALLER_ID, OTHER_AGENCY_ID))
+        .thenReturn(false);
+
+    // Root, not LogService: "exactly once" has to mean once in total, so that re-adding a
+    // delegate-side log.warn next to the exception fails here rather than slipping through.
+    var logger = (Logger) LoggerFactory.getLogger(org.slf4j.Logger.ROOT_LOGGER_NAME);
+    var appender = new ListAppender<ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    try {
+      var denial =
+          catchThrowableOfType(
+              ForbiddenException.class, () -> delegate.getConsultants(OTHER_AGENCY_ID));
+      // The handler is what logs; do what ApiResponseEntityExceptionHandler#handleForbidden does.
+      denial.executeLogging();
+    } finally {
+      logger.detachAppender(appender);
+    }
+
+    assertThat(appender.list).hasSize(1);
+    assertThat(appender.list.get(0).getFormattedMessage())
+        .contains(CALLER_ID, String.valueOf(OTHER_AGENCY_ID))
+        .doesNotContain("\tat ", ForbiddenException.class.getName());
   }
 
   @Test

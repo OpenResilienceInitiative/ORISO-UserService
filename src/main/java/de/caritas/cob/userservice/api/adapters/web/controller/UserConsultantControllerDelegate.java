@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import jakarta.validation.constraints.NotNull;
 import java.net.URLDecoder;
@@ -26,7 +27,6 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -34,7 +34,6 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
-@Slf4j
 class UserConsultantControllerDelegate {
 
   private final @NotNull AuthenticatedUser authenticatedUser;
@@ -136,6 +135,14 @@ class UserConsultantControllerDelegate {
    * something real, and answering 200 with nothing would make a genuine authorization failure look
    * like an agency that happens to have no consultants.
    *
+   * <p>The denial is logged once, by the exception itself. {@code ForbiddenException}'s default
+   * logger prints a whole stack trace per refusal, which is noise for an expected authorization
+   * outcome and real log volume when someone walks the agencyId range, so this throw picks the
+   * single-line {@code LogService#logForbidden(String)} instead — the same "choose the logging
+   * method" route {@code SessionToConsultantVerifier} takes. The diagnostic context lives in the
+   * exception message, which reaches the log but never the response: the handler answers 403 with
+   * no body.
+   *
    * <p>Deliberately check-then-act rather than one caller-scoped roster query. The window between
    * the two reads is not attacker-controllable, and revoking the caller's own assignment does not
    * change the roster they would receive, so a request straddling that window returns data they
@@ -146,15 +153,10 @@ class UserConsultantControllerDelegate {
   private void verifyCallerBelongsToAgency(Long agencyId) {
     var consultantId = authenticatedUser.getUserId();
     if (!consultantAgencyService.isConsultantAssignedToAgency(consultantId, agencyId)) {
-      // The logged id is the opaque Keycloak UUID, never a name, email or Matrix id, and matches
-      // what the admin authorization guards already record on a denial. Without it the warning
-      // cannot be attributed to anyone: MDC carries only the request correlation id.
-      log.warn(
-          "Consultant {} requested the consultant roster of agency {}, which they are not assigned"
-              + " to",
-          consultantId,
-          agencyId);
-      throw new ForbiddenException("Consultant is not a member of the requested agency and may not read its consultants", ex -> {});
+      throw new ForbiddenException(
+          "Consultant %s is not a member of agency %s and may not read its consultants"
+              .formatted(consultantId, agencyId),
+          denial -> LogService.logForbidden(denial.getMessage()));
     }
   }
 
