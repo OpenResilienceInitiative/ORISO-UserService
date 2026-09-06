@@ -733,18 +733,44 @@ public class MatrixSynapseService implements MatrixUserClient {
     }
   }
 
+  /** Outcome of a Synapse room purge, distinguishing "already gone" from a genuine failure. */
+  public enum RoomPurgeOutcome {
+    /** Synapse accepted the purge. */
+    PURGED,
+    /** Synapse does not know the room id any more, so there is nothing left to purge. */
+    ALREADY_GONE,
+    /** The purge did not happen and the room may still exist. */
+    FAILED
+  }
+
   /**
    * Purges a Matrix room and its message history via the Synapse admin API.
+   *
+   * <p>A room Synapse no longer knows counts as a failure here, which is what the account and chat
+   * deletion workflows expect. Callers that must not orphan a still-existing room but may forget a
+   * vanished one use {@link #purgeRoomOrConfirmGone(String)} instead.
    *
    * @param matrixRoomId the Matrix room ID
    * @return true if successful, false otherwise
    */
   public boolean purgeRoom(String matrixRoomId) {
+    return purgeRoomOrConfirmGone(matrixRoomId) == RoomPurgeOutcome.PURGED;
+  }
+
+  /**
+   * Purges a Matrix room and reports whether the room is gone afterwards, either because Synapse
+   * purged it now or because it did not exist any more (#1116, #1118).
+   *
+   * @param matrixRoomId the Matrix room ID
+   * @return {@link RoomPurgeOutcome#ALREADY_GONE} on a 404 from Synapse, {@link
+   *     RoomPurgeOutcome#FAILED} on any other problem
+   */
+  public RoomPurgeOutcome purgeRoomOrConfirmGone(String matrixRoomId) {
     try {
       String adminToken = getAdminToken();
       if (adminToken == null) {
         log.warn("Could not get admin token for Matrix room purge");
-        return false;
+        return RoomPurgeOutcome.FAILED;
       }
 
       var url =
@@ -764,12 +790,20 @@ public class MatrixSynapseService implements MatrixUserClient {
           restTemplate.exchange(
               url, org.springframework.http.HttpMethod.DELETE, request, String.class);
 
+      if (!response.getStatusCode().is2xxSuccessful()) {
+        log.warn(
+            "Failed to purge Matrix room {}: status {}", matrixRoomId, response.getStatusCode());
+        return RoomPurgeOutcome.FAILED;
+      }
       log.info("Successfully purged Matrix room: {}", matrixRoomId);
-      return response.getStatusCode().is2xxSuccessful();
+      return RoomPurgeOutcome.PURGED;
 
+    } catch (HttpClientErrorException.NotFound ex) {
+      log.info("Matrix room {} no longer exists, nothing to purge", matrixRoomId);
+      return RoomPurgeOutcome.ALREADY_GONE;
     } catch (Exception ex) {
       log.warn("Failed to purge Matrix room {}: {}", matrixRoomId, ex.getMessage());
-      return false;
+      return RoomPurgeOutcome.FAILED;
     }
   }
 
