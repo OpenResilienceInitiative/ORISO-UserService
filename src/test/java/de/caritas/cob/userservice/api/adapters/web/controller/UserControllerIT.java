@@ -126,6 +126,9 @@ import org.springframework.test.web.servlet.MockMvc;
     })
 class UserControllerIT {
 
+  /** The agencyId carried by PATH_GET_CONSULTANTS_FOR_AGENCY. */
+  private static final long REQUESTED_AGENCY_ID = 10L;
+
   private final String VALID_ENQUIRY_MESSAGE_BODY = "{\"message\": \"" + MESSAGE + "\"}";
   private final User USER = new User(USER_ID, null, "username", "name@domain.de", false);
   private final Consultant TEAM_CONSULTANT =
@@ -1443,6 +1446,7 @@ class UserControllerIT {
 
   @Test
   void getConsultants_Should_ReturnNoContent_WhenNoConsultantInDbFound() throws Exception {
+    givenCallerIsAssignedToRequestedAgency();
 
     mvc.perform(
             get(PATH_GET_CONSULTANTS_FOR_AGENCY)
@@ -1454,6 +1458,7 @@ class UserControllerIT {
   @Test
   void getConsultants_Should_ReturnInternalServerError_WhenConsultantAgencyServiceThrowsException()
       throws Exception {
+    givenCallerIsAssignedToRequestedAgency();
 
     when(consultantAgencyService.getConsultantsOfAgency(Mockito.anyLong()))
         .thenThrow(new ServiceException(ERROR));
@@ -1469,6 +1474,7 @@ class UserControllerIT {
   void
       getConsultants_Should_ReturnOkAndValidContent_WhenConsultantAgencyServiceReturnsListWithEntries()
           throws Exception {
+    givenCallerIsAssignedToRequestedAgency();
 
     when(consultantAgencyService.getConsultantsOfAgency(Mockito.anyLong()))
         .thenReturn(CONSULTANT_RESPONSE_DTO_LIST);
@@ -1487,6 +1493,31 @@ class UserControllerIT {
                 .accept(MediaType.APPLICATION_JSON))
         .andExpect(status().isOk())
         .andExpect(content().json(validConsultantResponseDtoResult));
+  }
+
+  @Test
+  void getConsultants_Should_ReturnForbidden_WhenCallerIsNotAssignedToRequestedAgency()
+      throws Exception {
+    // #1107: VIEW_AGENCY_CONSULTANTS is carried by every consultant, so before the membership
+    // check one query parameter enumerated any agency's roster within the tenant.
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(consultantAgencyService.isConsultantAssignedToAgency(CONSULTANT_ID, REQUESTED_AGENCY_ID))
+        .thenReturn(false);
+
+    mvc.perform(
+            get(PATH_GET_CONSULTANTS_FOR_AGENCY)
+                .contentType(MediaType.APPLICATION_JSON)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isForbidden())
+        .andExpect(content().string(""));
+
+    verify(consultantAgencyService, never()).getConsultantsOfAgency(Mockito.anyLong());
+  }
+
+  private void givenCallerIsAssignedToRequestedAgency() {
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(consultantAgencyService.isConsultantAssignedToAgency(CONSULTANT_ID, REQUESTED_AGENCY_ID))
+        .thenReturn(true);
   }
 
   /** Method: assignSession (role: consultant) */

@@ -2,7 +2,9 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -16,6 +18,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -39,6 +42,8 @@ import org.springframework.http.HttpStatus;
 class UserConsultantControllerDelegateTest {
 
   private static final long AGENCY_ID = 42L;
+  private static final long OTHER_AGENCY_ID = 43L;
+  private static final String CALLER_ID = "caller-consultant-id";
   private static final String ADMIN_ID = "admin-id";
   private static final UUID CONSULTANT_ID = UUID.fromString("65c1095e-b977-493a-a34f-064b729d1d6c");
 
@@ -67,6 +72,7 @@ class UserConsultantControllerDelegateTest {
   @Test
   void getConsultantsShouldReturnOkWhenConsultantsExist() {
     var consultants = List.of(new ConsultantResponseDTO());
+    givenCallerIsAssignedTo(AGENCY_ID);
     when(consultantAgencyService.getConsultantsOfAgency(AGENCY_ID)).thenReturn(consultants);
 
     var response = delegate.getConsultants(AGENCY_ID);
@@ -77,11 +83,61 @@ class UserConsultantControllerDelegateTest {
 
   @Test
   void getConsultantsShouldReturnNoContentWhenConsultantsAreMissing() {
+    givenCallerIsAssignedTo(AGENCY_ID);
     when(consultantAgencyService.getConsultantsOfAgency(AGENCY_ID)).thenReturn(List.of());
 
     var response = delegate.getConsultants(AGENCY_ID);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
+  }
+
+  @Test
+  void getConsultantsRejectsAnAgencyTheCallerIsNotAssignedTo() {
+    // #1107: VIEW_AGENCY_CONSULTANTS says the caller may read *an* agency roster, not which one.
+    // Every consultant carries it, so before this check one query parameter enumerated any agency.
+    when(authenticatedUser.getUserId()).thenReturn(CALLER_ID);
+    when(consultantAgencyService.isConsultantAssignedToAgency(CALLER_ID, OTHER_AGENCY_ID))
+        .thenReturn(false);
+
+    assertThatThrownBy(() -> delegate.getConsultants(OTHER_AGENCY_ID))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void getConsultantsDoesNotQueryTheRosterItRejects() {
+    // The roster must not be read at all, so a rejection cannot leak through a log, a metric or a
+    // later refactor that starts returning what was already fetched.
+    when(authenticatedUser.getUserId()).thenReturn(CALLER_ID);
+    when(consultantAgencyService.isConsultantAssignedToAgency(CALLER_ID, OTHER_AGENCY_ID))
+        .thenReturn(false);
+
+    assertThatThrownBy(() -> delegate.getConsultants(OTHER_AGENCY_ID))
+        .isInstanceOf(ForbiddenException.class);
+
+    verify(consultantAgencyService, never()).getConsultantsOfAgency(any());
+  }
+
+  @Test
+  void getConsultantsServesEveryAgencyTheCallerBelongsTo() {
+    // Multi-agency consultants are normal; membership is per agency, not one home agency.
+    var first = List.of(new ConsultantResponseDTO().consultantId("in-agency-42"));
+    var second = List.of(new ConsultantResponseDTO().consultantId("in-agency-43"));
+    when(authenticatedUser.getUserId()).thenReturn(CALLER_ID);
+    when(consultantAgencyService.isConsultantAssignedToAgency(CALLER_ID, AGENCY_ID))
+        .thenReturn(true);
+    when(consultantAgencyService.isConsultantAssignedToAgency(CALLER_ID, OTHER_AGENCY_ID))
+        .thenReturn(true);
+    when(consultantAgencyService.getConsultantsOfAgency(AGENCY_ID)).thenReturn(first);
+    when(consultantAgencyService.getConsultantsOfAgency(OTHER_AGENCY_ID)).thenReturn(second);
+
+    assertThat(delegate.getConsultants(AGENCY_ID).getBody()).isSameAs(first);
+    assertThat(delegate.getConsultants(OTHER_AGENCY_ID).getBody()).isSameAs(second);
+  }
+
+  private void givenCallerIsAssignedTo(long agencyId) {
+    when(authenticatedUser.getUserId()).thenReturn(CALLER_ID);
+    when(consultantAgencyService.isConsultantAssignedToAgency(CALLER_ID, agencyId))
+        .thenReturn(true);
   }
 
   @Test

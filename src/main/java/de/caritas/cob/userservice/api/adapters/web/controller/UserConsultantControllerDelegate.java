@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
@@ -25,6 +26,7 @@ import java.util.UUID;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.validator.routines.EmailValidator;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -32,6 +34,7 @@ import org.springframework.stereotype.Component;
 
 @Component
 @RequiredArgsConstructor
+@Slf4j
 class UserConsultantControllerDelegate {
 
   private final @NotNull AuthenticatedUser authenticatedUser;
@@ -49,6 +52,7 @@ class UserConsultantControllerDelegate {
   }
 
   ResponseEntity<List<ConsultantResponseDTO>> getConsultants(Long agencyId) {
+    verifyCallerBelongsToAgency(agencyId);
     var consultants = consultantAgencyService.getConsultantsOfAgency(agencyId);
 
     return isNotEmpty(consultants)
@@ -121,6 +125,28 @@ class UserConsultantControllerDelegate {
         consultantDtoMapper.consultantResponseDtoOf(consultant, onlineAgencies, false);
 
     return new ResponseEntity<>(consultantDto, HttpStatus.OK);
+  }
+
+  /**
+   * VIEW_AGENCY_CONSULTANTS says the caller may read an agency roster, not which agency's. Every
+   * consultant carries that authority, so without this the agencyId query parameter alone
+   * enumerated any agency in the tenant (#1107).
+   *
+   * <p>A rejection is a 403 rather than an empty list: the caller is authenticated and asking for
+   * something real, and answering 200 with nothing would make a genuine authorization failure look
+   * like an agency that happens to have no consultants.
+   */
+  private void verifyCallerBelongsToAgency(Long agencyId) {
+    var consultantId = authenticatedUser.getUserId();
+    if (!consultantAgencyService.isConsultantAssignedToAgency(consultantId, agencyId)) {
+      log.warn(
+          "Consultant {} requested the consultant roster of agency {}, which they are not assigned"
+              + " to",
+          consultantId,
+          agencyId);
+      throw new ForbiddenException(
+          "Consultant is not a member of the requested agency and may not read its consultants");
+    }
   }
 
   private String determineDecodedInfix(String query) {

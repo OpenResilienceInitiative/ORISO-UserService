@@ -2890,6 +2890,12 @@ components:
           example: nikunj-rohit
         username:
           type: string
+          description: >-
+            The Keycloak username. Kept deliberately (#1107): ORISO-Frontend uses it as the third
+            fallback for a consultant's display label, after "firstName lastName" and displayName,
+            so dropping it would degrade that case to a raw id. It is populated only on the two
+            authenticated list endpoints; the unauthenticated public-data endpoint leaves it unset.
+            Removing it is a cross-repo change - retire the frontend fallback first.
         isSupervisor:
           type: boolean
           example: true
