@@ -33,17 +33,17 @@ public class TeamDiscussionRetentionScheduler {
   /** Entry method to purge discussions that have outlived their retention period. */
   @Scheduled(cron = "${team-discussion.archive.retention.cron:0 45 3 * * ?}")
   public void purgeExpiredDiscussions() {
-    if (!teamDiscussionRetentionService.isEnabled()) {
-      return;
-    }
-    if (!taskClaimService.tryClaim(TASK_NAME, claimDuration)) {
-      return;
-    }
     try {
+      if (!teamDiscussionRetentionService.isEnabled()) {
+        return;
+      }
+      if (!taskClaimService.tryClaim(TASK_NAME, claimDuration)) {
+        return;
+      }
       tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
       teamDiscussionRetentionService.purgeExpiredDiscussions();
     } finally {
-      // Scheduler threads are pooled; never leave the technical context behind for the next task.
+      // Scheduler threads are pooled; never leave any tenant context behind for the next task.
       TenantContext.clear();
     }
   }
