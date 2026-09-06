@@ -56,6 +56,13 @@
 		<!-- Spring Boot 4.0.7 still manages HttpCore 5.3.6; 5.4.3 fixes
 		     CVE-2026-54399 and is compatible with the managed HttpClient 5.5.2. -->
 		<httpcore5.version>5.4.3</httpcore5.version>
+		<!-- Spring Boot 4.0.7 manages Tomcat 11.0.22; 4.0.8 and 4.1.1 still
+		     manage 11.0.24. The image CVE gate fails on three CRITICAL findings
+		     that are only fixed in 11.0.25: CVE-2026-65182 (security-constraint
+		     bypass), CVE-2026-65905 (DIGEST authenticator replay), CVE-2026-68525
+		     (FORM authentication bypass). A Boot upgrade does not remove the need
+		     for this override. Drop it once the Boot BOM manages >= 11.0.25. -->
+		<tomcat.version>11.0.25</tomcat.version>
 		<!-- Spring Boot 4.0.7 under-pins the RabbitMQ Java client at 5.27.1 (via
 		     spring-boot-starter-amqp -> spring-rabbit 4.0.4). 5.33.1 is the lowest
 		     version that clears all three HIGH findings of the image CVE gate:
