@@ -10,11 +10,13 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.admin.facade.AdminUserFacade;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import jakarta.validation.constraints.NotNull;
 import java.net.URLDecoder;
@@ -49,6 +51,7 @@ class UserConsultantControllerDelegate {
   }
 
   ResponseEntity<List<ConsultantResponseDTO>> getConsultants(Long agencyId) {
+    verifyCallerBelongsToAgency(agencyId);
     var consultants = consultantAgencyService.getConsultantsOfAgency(agencyId);
 
     return isNotEmpty(consultants)
@@ -121,6 +124,40 @@ class UserConsultantControllerDelegate {
         consultantDtoMapper.consultantResponseDtoOf(consultant, onlineAgencies, false);
 
     return new ResponseEntity<>(consultantDto, HttpStatus.OK);
+  }
+
+  /**
+   * VIEW_AGENCY_CONSULTANTS says the caller may read an agency roster, not which agency's. Every
+   * consultant carries that authority, so without this the agencyId query parameter alone
+   * enumerated any agency in the tenant (#1107).
+   *
+   * <p>A rejection is a 403 rather than an empty list: the caller is authenticated and asking for
+   * something real, and answering 200 with nothing would make a genuine authorization failure look
+   * like an agency that happens to have no consultants.
+   *
+   * <p>The denial is logged once, by the exception itself. {@code ForbiddenException}'s default
+   * logger prints a whole stack trace per refusal, which is noise for an expected authorization
+   * outcome and real log volume when someone walks the agencyId range, so this throw picks the
+   * single-line {@code LogService#logForbidden(String)} instead — the same "choose the logging
+   * method" route {@code SessionToConsultantVerifier} takes. The diagnostic context lives in the
+   * exception message, which reaches the log but never the response: the handler answers 403 with
+   * no body.
+   *
+   * <p>Deliberately check-then-act rather than one caller-scoped roster query. The window between
+   * the two reads is not attacker-controllable, and revoking the caller's own assignment does not
+   * change the roster they would receive, so a request straddling that window returns data they
+   * were authorized to read moments earlier. Folding the membership predicate into the roster query
+   * would also cost the 403 above: an unauthorized caller and an empty agency would both come back
+   * empty. Same shape as {@code TeamDiscussionFacade#requireEligibleConsultant}.
+   */
+  private void verifyCallerBelongsToAgency(Long agencyId) {
+    var consultantId = authenticatedUser.getUserId();
+    if (!consultantAgencyService.isConsultantAssignedToAgency(consultantId, agencyId)) {
+      throw new ForbiddenException(
+          "Consultant %s is not a member of agency %s and may not read its consultants"
+              .formatted(consultantId, agencyId),
+          denial -> LogService.logForbidden(denial.getMessage()));
+    }
   }
 
   private String determineDecodedInfix(String query) {
