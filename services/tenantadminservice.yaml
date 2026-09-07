@@ -918,6 +918,28 @@ paths:
           description: NOT FOUND - unknown media id
         '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenantadmin/{id}/permission-policies:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema:
+          type: integer
+          format: int64
+    get:
+      tags:
+        - tenant-controller
+      operationId: getTenantPermissionPolicies
+      summary: Gets the resolved permission policies for one tenant
+      responses:
+        '200':
+          description: Resolved tenant policies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantPermissionPolicies'
+        '403':
+          description: Caller cannot access this tenant
 components:
   schemas:
     TranslationApiKeysDTO:
@@ -1578,6 +1600,122 @@ components:
           $ref: '#/components/schemas/TenantAdminAllowedPermissionToggles'
         enforcedPermissionToggles:
           $ref: '#/components/schemas/TenantAdminAllowedPermissionToggles'
+        permissionPolicies:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/BooleanPermissionPolicy'
+        caseHandoverPolicies:
+          $ref: '#/components/schemas/CaseHandoverPolicies'
+    PermissionPolicyMode:
+      type: string
+      enum: [ENFORCED, SUGGESTED]
+    BooleanPermissionPolicy:
+      type: object
+      required: [value, mode]
+      properties:
+        value:
+          type: boolean
+        mode:
+          $ref: '#/components/schemas/PermissionPolicyMode'
+        inherited:
+          type: boolean
+          readOnly: true
+    IntegerPermissionPolicy:
+      type: object
+      required: [value, mode]
+      properties:
+        value:
+          type: integer
+          minimum: 15
+          multipleOf: 15
+        mode:
+          $ref: '#/components/schemas/PermissionPolicyMode'
+        inherited:
+          type: boolean
+          readOnly: true
+    StringListPermissionPolicy:
+      type: object
+      required: [value, mode]
+      properties:
+        value:
+          type: array
+          uniqueItems: true
+          items:
+            type: string
+        mode:
+          $ref: '#/components/schemas/PermissionPolicyMode'
+        inherited:
+          type: boolean
+          readOnly: true
+    MultilingualTextPermissionPolicy:
+      type: object
+      required: [value, mode]
+      properties:
+        value:
+          type: object
+          additionalProperties:
+            type: string
+        mode:
+          $ref: '#/components/schemas/PermissionPolicyMode'
+        inherited:
+          type: boolean
+          readOnly: true
+    CaseHandoverReasonPolicy:
+      type: object
+      required:
+        - code
+        - labels
+        - enabled
+        - accessAllowed
+        - clientConsentRequired
+        - approvalRoles
+        - clientNotificationTemplates
+      properties:
+        code:
+          type: string
+          enum:
+            - COUNSELLOR_ASKED_FOR_ADVICE
+            - COUNSELLOR_ON_HOLIDAY
+            - OTHER_EMERGENCY
+            - COUNSELLOR_IS_ILL
+            - COUNSELLOR_LEFT
+        labels:
+          $ref: '#/components/schemas/MultilingualTextPermissionPolicy'
+        enabled:
+          $ref: '#/components/schemas/BooleanPermissionPolicy'
+        accessAllowed:
+          $ref: '#/components/schemas/BooleanPermissionPolicy'
+        clientConsentRequired:
+          $ref: '#/components/schemas/BooleanPermissionPolicy'
+        approvalRoles:
+          $ref: '#/components/schemas/StringListPermissionPolicy'
+        clientNotificationTemplates:
+          $ref: '#/components/schemas/MultilingualTextPermissionPolicy'
+        maxAccessDurationMinutes:
+          allOf:
+            - $ref: '#/components/schemas/IntegerPermissionPolicy'
+          description: Required only for COUNSELLOR_ASKED_FOR_ADVICE; absent for non-expiring takeover reasons.
+    CaseHandoverPolicies:
+      type: object
+      required: [reasons]
+      properties:
+        reasons:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/CaseHandoverReasonPolicy'
+    TenantPermissionPolicies:
+      type: object
+      required: [tenantId, policies]
+      properties:
+        tenantId:
+          type: integer
+          format: int64
+        policies:
+          type: object
+          additionalProperties:
+            $ref: '#/components/schemas/BooleanPermissionPolicy'
+        caseHandoverPolicies:
+          $ref: '#/components/schemas/CaseHandoverPolicies'
     TenantAdminAllowedPermissionToggles:
       type: object
       properties:
