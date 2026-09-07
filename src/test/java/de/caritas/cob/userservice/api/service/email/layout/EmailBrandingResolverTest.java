@@ -163,6 +163,24 @@ class EmailBrandingResolverTest {
         .isEqualTo("https://app.oriso.org/service/tenant/public/branding/40/logo");
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.NullSource
+  @org.junit.jupiter.params.provider.ValueSource(longs = 0L)
+  void platformMailReflectsLogoAdditionAndRemoval(Long contextTenantId) {
+    var updated =
+        new RestrictedTenantDTO()
+            .id(1L)
+            .name("Platform")
+            .theming(new Theming().logo("data:image/png;base64,iVBORw0KGgo="));
+    var removed = new RestrictedTenantDTO().id(1L).name("Platform").theming(new Theming());
+    when(tenantTemplateSupplier.getPlatformTenantData()).thenReturn(updated, removed);
+
+    var resolver = resolver("");
+    assertThat(resolver.resolve(contextTenantId).logoUrl())
+        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/1/logo");
+    assertThat(resolver.resolve(contextTenantId).logoUrl()).isNull();
+  }
+
   @Test
   void refusesThirdPartyLogoUrlsInsteadOfLeakingMailReads() {
     Theming theming = new Theming();

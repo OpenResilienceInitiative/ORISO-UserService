@@ -53,11 +53,10 @@ public class TenantService {
   }
 
   /**
-   * Main platform tenant, with technical scope explicit so ambient tenant overrides cannot leak.
+   * Current platform mail branding, with technical scope explicit so ambient tenant overrides
+   * cannot leak. Branding must reflect saved logo additions and removals without waiting for cache
+   * expiry.
    */
-  @Cacheable(
-      cacheNames = CacheManagerConfig.TENANT_CACHE,
-      key = "'platform-branding:' + #mainTenantSubdomain")
   public RestrictedTenantDTO getPlatformTenantData(String mainTenantSubdomain) {
     log.info("Calling tenant service to get platform branding data");
     return tenantServiceApiControllerFactory
