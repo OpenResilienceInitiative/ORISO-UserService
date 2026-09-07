@@ -1,4 +1,4 @@
-package de.caritas.cob.userservice.api.workflow.delete.service;
+package de.caritas.cob.userservice.api.workflow.teamdiscussionretention.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -24,23 +24,27 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Executes the purge delete against the H2 testing schema (#1118). The participant table has no
- * foreign key to lean on, so only a real execution proves the two deletes are one unit.
+ * Executes the retention queries and the purge delete against the H2 testing schema (#1116).
+ *
+ * <p>The selection predicate decides which team rooms are wiped, and the participant table has no
+ * foreign key to lean on, so only a real execution proves the right rows go and nothing is left
+ * behind.
  */
 @DataJpaTest
-@Import(TeamDiscussionDeletionWriter.class)
+@Import(TeamDiscussionPurgeWriter.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 // The writer opens a REQUIRES_NEW transaction, which cannot see rows an uncommitted test
 // transaction inserted. Run without a test transaction and clean up by hand instead.
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-class TeamDiscussionDeletionWriterIT {
+class TeamDiscussionPurgeWriterIT {
 
   private static final LocalDateTime NOW = LocalDateTime.of(2026, 9, 6, 12, 0);
+  private static final LocalDateTime CUTOFF = NOW.minusDays(90);
 
   @MockitoSpyBean private TeamDiscussionRepository discussions;
   @Autowired private TeamDiscussionParticipantRepository participants;
-  @Autowired private TeamDiscussionDeletionWriter underTest;
+  @Autowired private TeamDiscussionPurgeWriter underTest;
 
   @AfterEach
   void cleanUp() {
@@ -53,7 +57,7 @@ class TeamDiscussionDeletionWriterIT {
   void deleteDiscussionAndParticipants_runsInItsOwnTransaction_regardlessOfTheCaller()
       throws NoSuchMethodException {
     var transactional =
-        TeamDiscussionDeletionWriter.class
+        TeamDiscussionPurgeWriter.class
             .getMethod("deleteDiscussionAndParticipants", TeamDiscussion.class)
             .getAnnotation(Transactional.class);
 
@@ -62,9 +66,39 @@ class TeamDiscussionDeletionWriterIT {
   }
 
   @Test
+  void findByStatusAndArchiveDateBefore_selectsOnlyArchivedDiscussionsPastTheCutoff() {
+    TeamDiscussion stale = archived(1L, NOW.minusDays(200), NOW.minusDays(120));
+    archived(2L, NOW.minusDays(200), NOW.minusDays(10));
+    open(3L, NOW.minusDays(200));
+
+    var expired =
+        discussions.findByStatusAndArchiveDateBefore(TeamDiscussion.Status.ARCHIVED, CUTOFF);
+
+    assertThat(expired).extracting(TeamDiscussion::getId).containsExactly(stale.getId());
+  }
+
+  /** OPEN means "not archived", not "abandoned": an open discussion is never selected. */
+  @Test
+  void findByStatusAndArchiveDateBefore_neverSelectsAnOpenDiscussion_howeverOld() {
+    open(1L, NOW.minusDays(3650));
+
+    assertThat(discussions.findByStatusAndArchiveDateBefore(TeamDiscussion.Status.ARCHIVED, CUTOFF))
+        .isEmpty();
+  }
+
+  /** Strictly before: a row exactly on the cutoff is still inside its retention period. */
+  @Test
+  void cutoffIsExclusive() {
+    archived(1L, NOW.minusDays(200), CUTOFF);
+
+    assertThat(discussions.findByStatusAndArchiveDateBefore(TeamDiscussion.Status.ARCHIVED, CUTOFF))
+        .isEmpty();
+  }
+
+  @Test
   void deleteDiscussionAndParticipants_removesTheRowAndAllItsParticipants_andNothingElse() {
-    TeamDiscussion doomed = discussion(1L);
-    TeamDiscussion kept = discussion(2L);
+    TeamDiscussion doomed = archived(1L, NOW.minusDays(200), NOW.minusDays(120));
+    TeamDiscussion kept = archived(2L, NOW.minusDays(200), NOW.minusDays(10));
     participant(doomed, "consultant-a");
     participant(doomed, "consultant-b");
     participant(kept, "consultant-a");
@@ -85,11 +119,9 @@ class TeamDiscussionDeletionWriterIT {
    */
   @Test
   void deleteDiscussionAndParticipants_rollsBackTheParticipantDelete_When_theRowDeleteFails() {
-    TeamDiscussion doomed = discussion(1L);
+    TeamDiscussion doomed = archived(1L, NOW.minusDays(200), NOW.minusDays(120));
     participant(doomed, "consultant-a");
-    doThrow(new DataIntegrityViolationException("simulated"))
-        .when(discussions)
-        .delete(any(TeamDiscussion.class));
+    doThrow(new DataIntegrityViolationException("simulated")).when(discussions).deleteById(any());
 
     assertThatThrownBy(() -> underTest.deleteDiscussionAndParticipants(doomed))
         .isInstanceOf(DataIntegrityViolationException.class);
@@ -98,12 +130,25 @@ class TeamDiscussionDeletionWriterIT {
     assertThat(participants.findByTeamDiscussionId(doomed.getId())).hasSize(1);
   }
 
-  private TeamDiscussion discussion(long sessionId) {
+  private TeamDiscussion archived(long sessionId, LocalDateTime created, LocalDateTime archived) {
     return discussions.save(
         TeamDiscussion.builder()
             .sessionId(sessionId)
             .matrixRoomId("!room-" + sessionId + ":matrix.example.com")
-            .createDate(NOW.minusDays(10))
+            .status(TeamDiscussion.Status.ARCHIVED)
+            .createDate(created)
+            .archiveDate(archived)
+            .tenantId(1L)
+            .build());
+  }
+
+  private TeamDiscussion open(long sessionId, LocalDateTime created) {
+    return discussions.save(
+        TeamDiscussion.builder()
+            .sessionId(sessionId)
+            .matrixRoomId("!room-" + sessionId + ":matrix.example.com")
+            .status(TeamDiscussion.Status.OPEN)
+            .createDate(created)
             .tenantId(1L)
             .build());
   }
@@ -113,7 +158,7 @@ class TeamDiscussionDeletionWriterIT {
         TeamDiscussionParticipant.builder()
             .teamDiscussionId(discussion.getId())
             .consultantId(consultantId)
-            .joinDate(NOW.minusDays(5))
+            .joinDate(NOW.minusDays(150))
             .build());
   }
 }

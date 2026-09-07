@@ -15,6 +15,7 @@ import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.teamdiscussionretention.service.TeamDiscussionPurgeWriter;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -34,7 +35,7 @@ class TeamDiscussionPurgeServiceTest {
 
   @InjectMocks private TeamDiscussionPurgeService teamDiscussionPurgeService;
 
-  @Mock private TeamDiscussionDeletionWriter deletionWriter;
+  @Mock private TeamDiscussionPurgeWriter deletionWriter;
   @Mock private MatrixSynapseService matrixSynapseService;
 
   private LogbackCaptor logCaptor;

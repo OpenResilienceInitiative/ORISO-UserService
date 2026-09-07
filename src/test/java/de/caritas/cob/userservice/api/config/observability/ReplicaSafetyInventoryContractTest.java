@@ -45,6 +45,7 @@ class ReplicaSafetyInventoryContractTest {
           "handshake-expiry-scheduler",
           "support-room-expiry-scheduler",
           "event-notification-retention-scheduler",
+          "team-discussion-retention-scheduler",
           "team-discussion-orphan-cleanup-scheduler");
 
   @Test

@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
+import de.caritas.cob.userservice.api.workflow.teamdiscussionretention.service.TeamDiscussionPurgeWriter;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -24,7 +25,8 @@ import org.springframework.stereotype.Service;
  * MatrixSynapseService#purgeRoom(String)}.
  *
  * <p>The participant rows and the discussion row go together in one transaction of their own
- * ({@link TeamDiscussionDeletionWriter}), opened only after the Synapse call has returned.
+ * ({@link TeamDiscussionPurgeWriter}, shared with the retention job of #1116), opened only after
+ * the Synapse call has returned.
  */
 @Slf4j
 @Service
@@ -34,7 +36,7 @@ public class TeamDiscussionPurgeService {
   static final String MATRIX_ROOM_ERROR_REASON = "Unable to purge team discussion Matrix room";
   static final String DATABASE_ERROR_REASON = "Unable to delete team discussion";
 
-  private final @NonNull TeamDiscussionDeletionWriter deletionWriter;
+  private final @NonNull TeamDiscussionPurgeWriter deletionWriter;
   private final @NonNull MatrixSynapseService matrixSynapseService;
 
   /**
