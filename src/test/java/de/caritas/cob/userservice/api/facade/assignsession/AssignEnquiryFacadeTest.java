@@ -80,9 +80,6 @@ class AssignEnquiryFacadeTest {
   @Mock de.caritas.cob.userservice.api.facade.SessionSupervisorFacade sessionSupervisorFacade;
   @Mock de.caritas.cob.userservice.api.facade.TeamDiscussionFacade teamDiscussionFacade;
 
-  /* ADR-018 §9: the anonymous consent guard. Mocked here — this test covers the
-  Matrix room mechanics of assignment, and the guard has its own tests. */
-  @Mock AnonymousEnquiryConsentGuard anonymousEnquiryConsentGuard;
   @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
@@ -233,6 +230,30 @@ class AssignEnquiryFacadeTest {
     verify(eventNotificationService)
         .createInquiryAcceptedNotification(
             ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+  }
+
+  @Test
+  void assignAnonymousEnquiry_Should_Succeed_When_TheAdviceSeekerHasNotConsentedYet()
+      throws Exception {
+    /* The regression this whole change exists for (ADR-018 §9, rewritten
+    2026-09-07). The entry room reveals the counselling centre only once the case
+    has been accepted, so it asks for consent only afterwards. While the barrier
+    sat on the assignment, the accept answered 409 for every anonymous live chat
+    and the advice seeker waited forever. Nothing about a missing consent may
+    stop an assignment again — the barrier lives on the write path now, in
+    SessionWriteConsentGuard. */
+    ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.getUser().setDataPrivacyConfirmation(null);
+    ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setConsentedLegalVersionId(null);
+
+    assignEnquiryFacade.assignAnonymousEnquiry(
+        ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(sessionService)
+        .updateConsultantAndStatusForSession(
+            ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT,
+            CONSULTANT_WITH_AGENCY,
+            Session.SessionStatus.IN_PROGRESS);
+    verify(sessionRoomGateway).createRoomAsUser(any(), any(), any());
   }
 
   // ---------------------------------------------------------------------------
