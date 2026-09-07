@@ -36,6 +36,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 class SupervisorAddedEmailNotificationServiceTest {
 
   @Mock private SystemNotificationEmailSettingsService emailSettingsService;
+  @Mock private TenantSystemEmailDeliveryClient deliveryClient;
   @Mock private UserService userService;
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
   // Real instances rather than mocks: these tests exercise the whole send path,
@@ -51,6 +52,43 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand(brandingResolver);
 
   @InjectMocks private SupervisorAddedEmailNotificationService service;
+
+  @Test
+  void emailChangeDoesNotRequireTenantPasswordInUserService() {
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(Optional.empty());
+    service.notifyEmailAddressChanged("test-user", "recipient@example.org", 40L, null, "token");
+    verify(emailRenderer).render(eq("email-geaendert"), any(), any());
+  }
+
+  @Test
+  void emailChangeWorksWithoutARequestScopedSmtpLookup() {
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenThrow(new IllegalStateException("No request context on async thread"));
+    assertThatCode(
+            () ->
+                service.notifyEmailAddressChanged(
+                    "test-user", "recipient@example.org", 40L, null, "token"))
+        .doesNotThrowAnyException();
+    verify(emailRenderer).render(eq("email-geaendert"), any(), any());
+  }
+
+  @Test
+  void supervisorEventsRejectUnknownAndNonpositiveTenantBeforeRendering() {
+    for (Long tenantId : java.util.Arrays.asList(null, 0L, -1L)) {
+      var tenant = new TenantData(tenantId, "test");
+      var user = mock(User.class);
+      var consultant = mock(Consultant.class);
+      assertThatCode(
+              () -> service.notifySupervisorAdded(user, consultant, "Name", 1L, tenant, null))
+          .doesNotThrowAnyException();
+      assertThatCode(
+              () -> service.notifySupervisorRemoved(user, consultant, "Name", 1L, tenant, null))
+          .doesNotThrowAnyException();
+    }
+    org.mockito.Mockito.verifyNoInteractions(deliveryClient, tenantTemplateSupplier, userService);
+    verify(emailRenderer, never()).render(any(), any(), any());
+  }
 
   @BeforeEach
   void injectValues() {
@@ -84,27 +122,22 @@ class SupervisorAddedEmailNotificationServiceTest {
             Optional.of(
                 new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
                     "smtp.example.org", 587, false, "test", "test", "sender@example.org", null)));
-    var sent = new java.util.concurrent.atomic.AtomicReference<jakarta.mail.Message>();
-    try (var transport = org.mockito.Mockito.mockStatic(jakarta.mail.Transport.class)) {
-      transport
-          .when(() -> jakarta.mail.Transport.send(any(jakarta.mail.Message.class)))
-          .thenAnswer(
-              invocation -> {
-                sent.set(invocation.getArgument(0));
-                return null;
-              });
-      service.notifyEmailAddressChanged(
-          "username", "recipient@example.org", 7L, new TenantData(7L, "seven"), null);
-    }
-    var mime = (jakarta.mail.Multipart) sent.get().getContent();
-    assertThat((String) mime.getBodyPart(1).getContent())
-        .contains("Tenant Seven", "/branding/7/logo");
+    service.notifyEmailAddressChanged(
+        "username", "recipient@example.org", 7L, new TenantData(7L, "seven"), null);
+    var rendered = org.mockito.ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(deliveryClient)
+        .send(
+            eq(7L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.EMAIL_ADDRESS_CHANGED),
+            eq("recipient@example.org"),
+            rendered.capture());
+    assertThat(rendered.getValue().html()).contains("Tenant Seven", "/branding/7/logo");
   }
 
   // ── notifySupervisorAdded early-return paths ──────────────────────────────
 
   @Test
-  void notifySupervisorAdded_Should_ReturnEarly_When_SmtpSettingsNotAvailable() {
+  void notifySupervisorAdded_Should_DelegateWithoutLocalSmtpSettings() {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.empty());
 
@@ -116,7 +149,8 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     service.notifySupervisorAdded(user, supervisor, "Sup Name", 42L, null, "token");
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(1L), eq("token"));
+    verify(deliveryClient, org.mockito.Mockito.times(2))
+        .send(eq(1L), eq(TenantSystemEmailDeliveryClient.Purpose.SUPERVISOR_ADDED), any(), any());
   }
 
   @Test
@@ -140,10 +174,16 @@ class SupervisorAddedEmailNotificationServiceTest {
     // user.tenantId == null
     Consultant supervisor = new Consultant();
     supervisor.setTenantId(5L);
+    supervisor.setEmail("supervisor@example.org");
 
     service.notifySupervisorAdded(user, supervisor, "Name", 1L, null, null);
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(5L), any());
+    verify(deliveryClient)
+        .send(
+            eq(5L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.SUPERVISOR_ADDED),
+            eq("supervisor@example.org"),
+            any());
   }
 
   @Test
@@ -153,12 +193,18 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     User user = new User();
     user.setTenantId(99L);
+    user.setEmail("asker@example.org");
     TenantData tenantData = new TenantData();
     tenantData.setTenantId(7L);
 
     service.notifySupervisorAdded(user, null, "Name", 1L, tenantData, null);
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(7L), any());
+    verify(deliveryClient)
+        .send(
+            eq(7L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.SUPERVISOR_ADDED),
+            eq("asker@example.org"),
+            any());
   }
 
   @Test
@@ -185,17 +231,23 @@ class SupervisorAddedEmailNotificationServiceTest {
   // ── notifySupervisorRemoved early-return paths ────────────────────────────
 
   @Test
-  void notifySupervisorRemoved_Should_ReturnEarly_When_SmtpSettingsNotAvailable() {
+  void notifySupervisorRemoved_Should_DelegateWithoutLocalSmtpSettings() {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.empty());
 
     User user = new User();
     user.setTenantId(3L);
+    user.setEmail("asker@example.org");
     Consultant supervisor = new Consultant();
 
     service.notifySupervisorRemoved(user, supervisor, "Sup", 20L, null, "tok");
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(3L), eq("tok"));
+    verify(deliveryClient)
+        .send(
+            eq(3L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.SUPERVISOR_REMOVED),
+            eq("asker@example.org"),
+            any());
   }
 
   @Test
@@ -229,13 +281,18 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void notifyEmailAddressChanged_Should_ReturnEarly_When_SmtpSettingsNotAvailable() {
+  void notifyEmailAddressChanged_Should_DelegateWithoutLocalSmtpSettings() {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(eq(2L), any()))
         .thenReturn(Optional.empty());
 
     service.notifyEmailAddressChanged("user1", "new@example.com", 2L, null, "tok");
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(2L), eq("tok"));
+    verify(deliveryClient)
+        .send(
+            eq(2L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.EMAIL_ADDRESS_CHANGED),
+            eq("new@example.com"),
+            any());
   }
 
   @Test
@@ -325,6 +382,7 @@ class SupervisorAddedEmailNotificationServiceTest {
         .thenReturn(Optional.of(settings));
     Consultant supervisor = new Consultant();
     supervisor.setTenantId(5L);
+    supervisor.setEmail("supervisor@example.org");
 
     assertThatCode(() -> service.notifySupervisorAdded(null, supervisor, "Sup", 1L, null, null))
         .doesNotThrowAnyException();
