@@ -7,5 +7,10 @@ public interface IdentityAuthentication {
 
   boolean logout(String refreshToken);
 
+  /** Ends a caller-owned session without requiring a current HTTP request. */
+  default boolean logout(String refreshToken, String accessToken) {
+    return logout(refreshToken);
+  }
+
   boolean verifyPasswordIgnoringSecondFactor(String username, String password);
 }

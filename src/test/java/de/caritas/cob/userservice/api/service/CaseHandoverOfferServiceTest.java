@@ -157,6 +157,15 @@ class CaseHandoverOfferServiceTest {
     assertEquals(owner, session.getConsultant(), "the case must not move before acceptance");
     verify(sessionRepository, never()).save(any());
     assertEquals("PENDING_RECIPIENT_ACCEPT", offer.getStatus());
+    verify(eventNotificationService)
+        .buildCaseHandoverOfferParams(
+            eq(session),
+            any(),
+            any(),
+            eq("PLANNED_ABSENCE"),
+            any(),
+            any(),
+            eq(CaseHandoverRequest.AccessType.TAKEOVER));
   }
 
   @Test
@@ -321,6 +330,15 @@ class CaseHandoverOfferServiceTest {
     var status = caseHandoverService.acceptOffer(55L);
     assertEquals(owner, session.getConsultant());
     assertEquals("CO_ACCESS", status.getAccessType());
+    verify(eventNotificationService)
+        .buildCaseHandoverOfferParams(
+            eq(session),
+            any(),
+            any(),
+            eq("ADVICE_REQUESTED"),
+            any(),
+            eq(55L),
+            eq(CaseHandoverRequest.AccessType.CO_ACCESS));
     assertEquals(open.getResolvedAt().plusMinutes(75), open.getExpiresAt());
     verify(sessionRepository, never()).save(any());
     verify(caseHandoverEmailNotification, never())

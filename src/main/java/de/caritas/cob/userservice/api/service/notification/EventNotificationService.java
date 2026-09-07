@@ -449,7 +449,20 @@ public class EventNotificationService {
       String reasonCode,
       String reasonLabel,
       Long offerId) {
+    return buildCaseHandoverOfferParams(
+        session, fromConsultantName, toConsultantName, reasonCode, reasonLabel, offerId, null);
+  }
+
+  public String buildCaseHandoverOfferParams(
+      Session session,
+      String fromConsultantName,
+      String toConsultantName,
+      String reasonCode,
+      String reasonLabel,
+      Long offerId,
+      de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType accessType) {
     Map<String, Object> params = baseParams(session);
+    if (accessType != null) params.put("accessType", accessType.name());
     putIfPresent(params, "fromConsultantName", fromConsultantName);
     putIfPresent(params, "toConsultantName", toConsultantName);
     putIfPresent(params, "reasonCode", reasonCode);

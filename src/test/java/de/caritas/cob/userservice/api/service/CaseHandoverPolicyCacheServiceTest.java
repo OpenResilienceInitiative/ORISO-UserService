@@ -4,16 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.model.TenantCaseHandoverPolicyCache;
 import de.caritas.cob.userservice.api.port.out.TenantCaseHandoverPolicyCacheRepository;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
-import de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantPermissionPolicies;
 import java.time.Clock;
@@ -34,8 +31,7 @@ import org.springframework.web.client.RestClientException;
 class CaseHandoverPolicyCacheServiceTest {
 
   @Mock private TenantCaseHandoverPolicyCacheRepository repository;
-  @Mock private TenantAdminServiceApiControllerFactory tenantServiceFactory;
-  @Mock private TenantControllerApi tenantControllerApi;
+  @Mock private TenantCaseHandoverPolicyReadClient tenantControllerApi;
   @Mock private ScheduledTaskClaimService scheduledTaskClaimService;
   private final Clock clock = Clock.fixed(Instant.parse("2026-08-16T10:00:00Z"), ZoneOffset.UTC);
   private CaseHandoverPolicyCacheService service;
@@ -44,8 +40,7 @@ class CaseHandoverPolicyCacheServiceTest {
   void setUp() {
     service =
         new CaseHandoverPolicyCacheService(
-            repository, tenantServiceFactory, scheduledTaskClaimService, clock);
-    lenient().when(tenantServiceFactory.createControllerApi()).thenReturn(tenantControllerApi);
+            repository, tenantControllerApi, scheduledTaskClaimService, clock);
     when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
   }
 
@@ -124,6 +119,28 @@ class CaseHandoverPolicyCacheServiceTest {
     assertThat(reasons.get("COUNSELLOR_ON_HOLIDAY").getClientConsentRequired().getValue())
         .isFalse();
     assertThat(cache.getStaleSince()).isNotNull();
+  }
+
+  @Test
+  void failedRefreshNeverLogsDownstreamBodyOrThrowable() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder().tenantId(42L).policies("{\"reasons\":{}}").build();
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("synthetic-sensitive-provider-body"));
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(
+            CaseHandoverPolicyCacheService.class)) {
+      service.refresh(42L);
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain("synthetic-sensitive-provider-body");
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+      assertThat(logs.hasWarnLog()).isTrue();
+    }
   }
 
   @Test

@@ -117,6 +117,29 @@ class EventNotificationServiceTest {
     assertThat(parsed.get("caseHandoverRequestId").asLong()).isEqualTo(88L);
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.class)
+  @org.junit.jupiter.params.provider.NullSource
+  void offerParamsCarryOnlyExplicitFrozenAccessType(
+      de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType accessType)
+      throws Exception {
+    var params =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverOfferParams(
+                sessionMock(),
+                "Sender",
+                "Recipient",
+                "LEGACY_UNRELATED_REASON",
+                "Frozen label",
+                88L,
+                accessType));
+    if (accessType == null) assertThat(params.has("accessType")).isFalse();
+    else assertThat(params.get("accessType").asText()).isEqualTo(accessType.name());
+    assertThat(params.get("reasonCode").asText()).isEqualTo("LEGACY_UNRELATED_REASON");
+    assertThat(params.get("reasonLabel").asText()).isEqualTo("Frozen label");
+  }
+
   @Test
   void buildCaseHandoverOfferParams_neverCarriesTheCounsellorWrittenExplanation() throws Exception {
     JsonNode parsed =

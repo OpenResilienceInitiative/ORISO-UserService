@@ -1032,7 +1032,8 @@ public class CaseHandoverService {
             resolveConsultantName(offer.getTargetConsultant()),
             offer.getReasonCode(),
             offer.getReasonLabel(),
-            offer.getId()),
+            offer.getId(),
+            offer.getAccessType()),
         buildConsultantSessionActionPath(session),
         session.getId(),
         session.getTenantId());
