@@ -132,6 +132,7 @@ class RequiredCiContractTest(unittest.TestCase):
 
         self.assertEqual(23, result.returncode)
         for mariadb_owned_test in (
+            "CaseHandoverSchemaPreservationIT",
             "DatabaseChangelogDriftIT",
             "AdminStatisticsRepositoryMariaDbIT",
             "ProvisioningCompensationMariaDbIT",
