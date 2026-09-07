@@ -486,6 +486,17 @@
       "decision": "Leases the run through ScheduledTaskClaimService; the purge itself is an idempotent bulk delete of expired rows.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "bounded"
+    },
+    {
+      "id": "team-discussion-retention-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/teamdiscussionretention/scheduler/TeamDiscussionRetentionScheduler.java",
+      "kind": "scheduler",
+      "owner": "team-discussion",
+      "risk": "duplicate-side-effect",
+      "components": ["purgeExpiredDiscussions"],
+      "decision": "Leases the run through ScheduledTaskClaimService. Each expired discussion is purged from Synapse before its row and participants are deleted in one transaction, so a second replica or a retried run finds either the whole discussion or nothing; a room Synapse no longer knows is treated as already purged.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "bounded"
     }
   ]
 }

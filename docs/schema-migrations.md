@@ -44,6 +44,12 @@ Liquibase back on" no longer look the same from the outside.
 
 Hibernate validation stays required either way.
 
+`config.env.example` uses that hatch for local development: the documented local
+setup talks to the remote dev database, which the deployed dev UserService
+migrates, so a laptop must not run Liquibase against it. Every variable the
+service will not start without, this pair included, is listed in
+[`required-environment.md`](required-environment.md).
+
 ## Auditing an environment
 
 ```bash
