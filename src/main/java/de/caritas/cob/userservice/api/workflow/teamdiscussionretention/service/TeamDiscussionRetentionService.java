@@ -5,7 +5,6 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.RoomP
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import java.time.LocalDateTime;
-import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
@@ -23,10 +22,12 @@ import org.springframework.stereotype.Service;
  * seeker in plain text. ADR-016 §3 assumed an archive auto-deletion that never existed; this job is
  * the replacement decided in the addendum of 2026-09-05.
  *
- * <p>The period starts at {@code archive_date}. A discussion that was never archived and is still
- * {@code OPEN} is measured from {@code create_date} under the same period, so an abandoned
- * discussion cannot outlive an archived one. Cutoffs use the same local clock that stamps those
- * columns in {@code TeamDiscussionFacade}.
+ * <p>The period starts at {@code archive_date} and only {@code ARCHIVED} discussions are eligible.
+ * An {@code OPEN} discussion is deliberately left alone: the entity carries no activity signal, so
+ * "open" means "not archived", not "abandoned", and purging it by creation date would delete a room
+ * still in use. A discussion whose session is deleted is purged by the deletion workflow instead
+ * (#1118). The cutoff uses the same local clock that stamps {@code archive_date} in {@code
+ * TeamDiscussionFacade}.
  *
  * <p>The Matrix room is purged before the row goes. A failed purge keeps the row, so the pointer to
  * a room that may still exist is never lost and the next run retries; a room Synapse no longer
@@ -62,13 +63,9 @@ public class TeamDiscussionRetentionService {
     }
     LocalDateTime cutoff = LocalDateTime.now().minusDays(retentionDays);
 
-    List<TeamDiscussion> expired = new ArrayList<>();
-    expired.addAll(
+    List<TeamDiscussion> expired =
         teamDiscussionRepository.findByStatusAndArchiveDateBefore(
-            TeamDiscussion.Status.ARCHIVED, cutoff));
-    expired.addAll(
-        teamDiscussionRepository.findByStatusAndCreateDateBefore(
-            TeamDiscussion.Status.OPEN, cutoff));
+            TeamDiscussion.Status.ARCHIVED, cutoff);
 
     Map<String, int[]> countsByTenant = new TreeMap<>();
     int purged = 0;

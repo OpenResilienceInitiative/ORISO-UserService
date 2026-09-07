@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
@@ -41,22 +42,18 @@ class TeamDiscussionRetentionServiceTest {
   }
 
   @Test
-  void purge_selectsArchivedByArchiveDateAndOpenByCreateDate_underTheSameCutoff() {
+  void purge_selectsOnlyArchivedDiscussions_byArchiveDate() {
     LocalDateTime before = LocalDateTime.now();
 
     underTest.purgeExpiredDiscussions();
     LocalDateTime after = LocalDateTime.now();
 
-    ArgumentCaptor<LocalDateTime> archivedCutoff = ArgumentCaptor.forClass(LocalDateTime.class);
-    ArgumentCaptor<LocalDateTime> openCutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+    ArgumentCaptor<LocalDateTime> cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
     verify(teamDiscussionRepository)
-        .findByStatusAndArchiveDateBefore(
-            eq(TeamDiscussion.Status.ARCHIVED), archivedCutoff.capture());
-    verify(teamDiscussionRepository)
-        .findByStatusAndCreateDateBefore(eq(TeamDiscussion.Status.OPEN), openCutoff.capture());
+        .findByStatusAndArchiveDateBefore(eq(TeamDiscussion.Status.ARCHIVED), cutoff.capture());
+    verifyNoMoreInteractions(teamDiscussionRepository);
 
-    assertThat(archivedCutoff.getValue()).isBetween(before.minusDays(90), after.minusDays(90));
-    assertThat(openCutoff.getValue()).isEqualTo(archivedCutoff.getValue());
+    assertThat(cutoff.getValue()).isBetween(before.minusDays(90), after.minusDays(90));
   }
 
   @Test
@@ -89,7 +86,7 @@ class TeamDiscussionRetentionServiceTest {
   @Test
   void purge_deletesTheRow_When_theRoomNoLongerExists() {
     TeamDiscussion discussion = discussion(7L);
-    when(teamDiscussionRepository.findByStatusAndCreateDateBefore(any(), any()))
+    when(teamDiscussionRepository.findByStatusAndArchiveDateBefore(any(), any()))
         .thenReturn(List.of(discussion));
     when(matrixSynapseService.purgeRoomOrConfirmGone(ROOM))
         .thenReturn(RoomPurgeOutcome.ALREADY_GONE);

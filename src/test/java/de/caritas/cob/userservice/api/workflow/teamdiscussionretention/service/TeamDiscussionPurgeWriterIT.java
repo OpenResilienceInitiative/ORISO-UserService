@@ -77,27 +77,21 @@ class TeamDiscussionPurgeWriterIT {
     assertThat(expired).extracting(TeamDiscussion::getId).containsExactly(stale.getId());
   }
 
-  /** An abandoned discussion is measured from creation, under the same period. */
+  /** OPEN means "not archived", not "abandoned": an open discussion is never selected. */
   @Test
-  void findByStatusAndCreateDateBefore_selectsOnlyOpenDiscussionsCreatedPastTheCutoff() {
-    TeamDiscussion abandoned = open(1L, NOW.minusDays(120));
-    open(2L, NOW.minusDays(10));
-    archived(3L, NOW.minusDays(200), NOW.minusDays(10));
+  void findByStatusAndArchiveDateBefore_neverSelectsAnOpenDiscussion_howeverOld() {
+    open(1L, NOW.minusDays(3650));
 
-    var expired = discussions.findByStatusAndCreateDateBefore(TeamDiscussion.Status.OPEN, CUTOFF);
-
-    assertThat(expired).extracting(TeamDiscussion::getId).containsExactly(abandoned.getId());
+    assertThat(discussions.findByStatusAndArchiveDateBefore(TeamDiscussion.Status.ARCHIVED, CUTOFF))
+        .isEmpty();
   }
 
   /** Strictly before: a row exactly on the cutoff is still inside its retention period. */
   @Test
-  void cutoffsAreExclusive() {
+  void cutoffIsExclusive() {
     archived(1L, NOW.minusDays(200), CUTOFF);
-    open(2L, CUTOFF);
 
     assertThat(discussions.findByStatusAndArchiveDateBefore(TeamDiscussion.Status.ARCHIVED, CUTOFF))
-        .isEmpty();
-    assertThat(discussions.findByStatusAndCreateDateBefore(TeamDiscussion.Status.OPEN, CUTOFF))
         .isEmpty();
   }
 

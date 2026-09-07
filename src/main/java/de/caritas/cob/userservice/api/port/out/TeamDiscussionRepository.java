@@ -20,12 +20,4 @@ public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, 
    */
   List<TeamDiscussion> findByStatusAndArchiveDateBefore(
       TeamDiscussion.Status status, LocalDateTime cutoff);
-
-  /**
-   * Discussions in the given status created strictly before the cutoff (#1116). With {@link
-   * TeamDiscussion.Status#OPEN} this finds discussions that were never archived, so an abandoned
-   * discussion is measured from its creation date under the same period as an archived one.
-   */
-  List<TeamDiscussion> findByStatusAndCreateDateBefore(
-      TeamDiscussion.Status status, LocalDateTime cutoff);
 }
