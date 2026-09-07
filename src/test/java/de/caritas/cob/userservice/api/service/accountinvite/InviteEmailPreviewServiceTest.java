@@ -26,6 +26,8 @@ import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -92,15 +94,16 @@ class InviteEmailPreviewServiceTest {
         .thenReturn(new InviteMailSendReceipt("to@example.org", Instant.now()));
   }
 
-  @Test
-  void preview_Should_renderExactlyWhatTheDispatcherBuilds() {
+  @ParameterizedTest
+  @EnumSource(
+      value = InviteEmailTemplateKind.class,
+      names = {"TENANT_INVITE", "COUNSELLOR_INVITE"})
+  void preview_Should_renderExactlyWhatTheDispatcherBuilds(InviteEmailTemplateKind kind) {
     String subject = "Ihre Einladung";
     String body = "Hallo Maren Muster,\n\nbitte richten Sie Ihr Konto ein.";
 
     InviteEmailPreview preview =
-        previewService.preview(
-            new PreviewCommand(
-                null, InviteEmailTemplateKind.TENANT_INVITE, subject, body, null, "de"));
+        previewService.preview(new PreviewCommand(null, kind, subject, body, null, "de"));
 
     dispatchService.send("to@example.org", subject, body, preview.sampleAcceptUrl(), null, "de");
 
@@ -109,7 +112,29 @@ class InviteEmailPreviewServiceTest {
     verify(inviteMailTransport).send(any(), any(), any(), html.capture(), text.capture());
 
     assertThat(preview.html()).isEqualTo(html.getValue());
+    assertThat(preview.html()).contains("border-radius:24px", "border-radius:999px");
+    var document = org.jsoup.Jsoup.parse(preview.html());
+    assertThat(document.selectFirst(".oriso-invitation-header")).isNotNull();
+    assertThat(document.selectFirst(".oriso-invitation-card .oriso-invitation-header")).isNull();
+    assertThat(document.selectFirst(".oriso-invitation-card .oriso-invitation-footer")).isNull();
+    assertThat(document.selectFirst(".oriso-invitation-footer")).isNotNull();
+    assertThat(document.select("a").eachText()).contains("Einladung annehmen");
     assertThat(preview.plainText()).isEqualTo(text.getValue());
+  }
+
+  @Test
+  void signedNoticeRetainsExistingNoActionHtmlAndText() {
+    var brand = new EmailBranding("Nord", null, "#f8e71c", null, null);
+    var expected =
+        new BrandedEmailLayoutRenderer(new EmailContentSanitizer())
+            .render(
+                brand,
+                new de.caritas.cob.userservice.api.service.email.layout.BrandedEmailRequest(
+                    "DPA signed", "Agreement completed.", null, null, "en"));
+    var actual =
+        dispatchService.renderBrandedMail("DPA signed", "Agreement completed.", null, 40L, "en");
+    assertThat(actual).isEqualTo(expected);
+    assertThat(actual.html()).doesNotContain("oriso-invitation-card", "Accept invitation");
   }
 
   @Test

@@ -102,7 +102,11 @@ public class InviteMailDispatchService {
   public BrandedEmail renderBrandedMail(
       String subject, String bodyContent, String primaryActionUrl, Long tenantId, String language) {
     EmailBranding branding = emailBrandingResolver.resolve(tenantId);
-    return brandedEmailLayoutRenderer.render(
-        branding, new BrandedEmailRequest(subject, bodyContent, primaryActionUrl, null, language));
+    var request = new BrandedEmailRequest(subject, bodyContent, primaryActionUrl, null, language);
+    // Signed DPA notices share this transport but carry no invitation action. Preserve their
+    // existing presentation; both invitation preview and delivery use the modern frame.
+    return primaryActionUrl == null
+        ? brandedEmailLayoutRenderer.render(branding, request)
+        : brandedEmailLayoutRenderer.renderInvitation(branding, request);
   }
 }
