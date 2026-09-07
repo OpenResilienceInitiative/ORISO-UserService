@@ -776,6 +776,35 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void expireCoAccess_keepsMembershipWhenRequesterHasSinceBecomeActiveOwner() {
+    CaseHandoverRequest request = grantedAdviceRequest();
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    session.setConsultant(requester);
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(List.of("@requester:matrix")));
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.removeUserFromRoom(
+            "!room:matrix", "@requester:matrix", "previous-token"))
+        .thenReturn(true);
+    when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
+            CaseHandoverRequest.Status.GRANTED,
+            CaseHandoverRequest.AccessType.CO_ACCESS,
+            LocalDateTime.of(2026, 8, 16, 10, 0)))
+        .thenReturn(List.of(request));
+
+    assertEquals(1, caseHandoverService.expireCoAccess());
+
+    assertEquals(CaseHandoverRequest.Status.EXPIRED, request.getStatus());
+    assertEquals("ACCESS_EXPIRED", request.getAuditOutcome());
+    assertEquals(requester, session.getConsultant());
+    verify(matrixSynapseService, never()).removeUserFromRoom(anyString(), anyString(), anyString());
+    verify(caseHandoverRequestRepository).saveAll(List.of(request));
+  }
+
+  @Test
   void expireCoAccess_keepsTheLeaseGrantedWhenMatrixRemovalCannotBeConfirmed() {
     CaseHandoverRequest request = grantedAdviceRequest();
     session.setMatrixRoomId("!room:matrix");

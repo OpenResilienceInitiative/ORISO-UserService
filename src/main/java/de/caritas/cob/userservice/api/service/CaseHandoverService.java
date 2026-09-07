@@ -1844,6 +1844,11 @@ public class CaseHandoverService {
       if (requester == null || isBlank(requester.getMatrixUserId())) {
         return true;
       }
+      // The old temporary grant can expire after this advisor acquired independent ownership.
+      // Expire its audit row, but retain the membership required by the current owner role.
+      if (isActiveOwner(accessSession, requester)) {
+        return true;
+      }
       String roomId = accessSession.getMatrixRoomId();
       String requesterId = requester.getMatrixUserId();
       var membersBefore = matrixSynapseService.getRoomMembers(roomId);
