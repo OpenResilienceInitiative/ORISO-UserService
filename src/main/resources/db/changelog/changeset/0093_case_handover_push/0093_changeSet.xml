@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- PUSH direction on case_handover_request: direction, target_consultant_id, offer_expires_at.
+       One row per handover regardless of who started it, so the audit log and the client-consent
+       gate stay on a single path. See migrate.sql for why there is no foreign key and no
+       precondition. -->
+  <changeSet id="0093-case-handover-push" author="frank">
+    <sqlFile
+      path="db/changelog/changeset/0093_case_handover_push/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    <!-- Preserve offer/audit data when rolling the application back. -->
+    <rollback><empty/></rollback>
+  </changeSet>
+</databaseChangeLog>

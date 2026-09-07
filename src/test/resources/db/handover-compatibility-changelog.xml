@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <include file="db/changelog/changeset/0092_case_handover_neutral_reasons/0092_changeSet.xml"/>
+  <include file="db/changelog/changeset/0093_case_handover_push/0093_changeSet.xml"/>
+</databaseChangeLog>
