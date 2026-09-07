@@ -73,6 +73,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
@@ -248,6 +249,9 @@ class UserControllerE2EIT {
 
   @AfterEach
   void reset() {
+    // Testing disables HttpTenantFilter: clear registration context before fixture cleanup can
+    // fail.
+    TenantContext.clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
       userRepository.save(user);
@@ -291,6 +295,7 @@ class UserControllerE2EIT {
 
   @BeforeEach
   public void setUp() throws MatrixCreateUserException {
+    TenantContext.clear();
     MatrixCreateUserResponseDTO matrixCreateUserResponse = new MatrixCreateUserResponseDTO();
     matrixCreateUserResponse.setUserId("@test-user:matrix.oriso.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
