@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.email;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.*;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.service.notification.SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
@@ -56,8 +57,19 @@ public class NotificationEmailService {
             smtp.password(),
             smtp.from(),
             null);
+    int failures = 0;
     for (var delivery : deliveries) {
-      dispatcher.sendOrThrow(settings, delivery.recipient(), delivery.email());
+      try {
+        dispatcher.sendOrThrow(settings, delivery.recipient(), delivery.email());
+      } catch (SmtpSendException exception) {
+        // A failed recipient must not suppress later recipients. Do not retain SMTP exception
+        // details: providers may include addresses or other private message data in them.
+        failures++;
+      }
+    }
+    if (failures > 0) {
+      throw new SmtpSendException(
+          "Notification batch partially failed: " + failures + " of " + deliveries.size());
     }
   }
 

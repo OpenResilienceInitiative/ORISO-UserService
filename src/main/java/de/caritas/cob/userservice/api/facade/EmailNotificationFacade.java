@@ -228,13 +228,12 @@ public class EmailNotificationFacade {
               .applicationBaseUrl(applicationBaseUrl)
               .multiTenancyEnabled(multiTenancyEnabled)
               .build();
-      try {
-        sendMailTasksToMailService(reassignmentConfirmationEmailSupplier);
-      } catch (Exception exception) {
-        log.error(
-            "EmailNotificationFacade error: Failed to send reqssign confiration notification",
-            exception);
-      }
+      sendMailTasksToMailService(reassignmentConfirmationEmailSupplier);
+    } catch (Exception exception) {
+      // This async notification is best-effort, including account lookup. Keep private provider
+      // details out of the log and always release the worker's tenant context.
+      log.error(
+          "Failed to send reassignment confirmation ({})", exception.getClass().getSimpleName());
     } finally {
       TenantContext.clear();
     }

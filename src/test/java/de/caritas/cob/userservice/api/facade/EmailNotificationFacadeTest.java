@@ -34,7 +34,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.EmailNotificationException;
-import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -558,18 +557,27 @@ class EmailNotificationFacadeTest {
   }
 
   @Test
-  void
-      sendReassignConfirmationNotification_ShouldThrow_NotFoundEception_When_consultantDoesNotExist() {
-    assertThrows(
-        NotFoundException.class,
-        () -> {
-          var reassignmentNotification =
-              new EasyRandom().nextObject(ReassignmentNotificationDTO.class);
-          when(consultantService.getConsultant(any())).thenReturn(Optional.empty());
+  void sendReassignConfirmationNotificationContainsMissingConsultantAndClearsContext() {
+    var notification = new EasyRandom().nextObject(ReassignmentNotificationDTO.class);
+    when(consultantService.getConsultant(any())).thenReturn(Optional.empty());
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+        () ->
+            emailNotificationFacade.sendReassignConfirmationNotification(
+                notification,
+                new de.caritas.cob.userservice.api.tenant.TenantData(40L, "springfield")));
+    verifyNoInteractions(mailService);
+    assertThat(de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenantData()).isNull();
+  }
 
-          emailNotificationFacade.sendReassignConfirmationNotification(
-              reassignmentNotification, null);
-        });
+  @Test
+  void sendReassignConfirmationNotificationContainsMalformedPayloadAndClearsContext() {
+    org.junit.jupiter.api.Assertions.assertDoesNotThrow(
+        () ->
+            emailNotificationFacade.sendReassignConfirmationNotification(
+                new ReassignmentNotificationDTO(),
+                new de.caritas.cob.userservice.api.tenant.TenantData(40L, "springfield")));
+    verifyNoInteractions(mailService);
+    assertThat(de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenantData()).isNull();
   }
 
   // ---------------------------------------------------------------------------

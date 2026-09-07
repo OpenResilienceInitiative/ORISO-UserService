@@ -59,14 +59,15 @@ class InviteEmailPreviewServiceTest {
         new InviteAcceptUrlBuilder("https://app.oriso.org", "https://admin.oriso.org");
     dispatchService =
         new InviteMailDispatchService(
-            restTemplate,
-            applicationSettingsService,
+            new de.caritas.cob.userservice.api.service.email.GlobalSmtpSettingsResolver(
+                restTemplate,
+                applicationSettingsService,
+                "http://consultingtypeservice:8080/service",
+                "smtp-user",
+                "smtp-pass"),
             inviteMailTransport,
             emailBrandingResolver,
-            new BrandedEmailLayoutRenderer(new EmailContentSanitizer()),
-            "http://consultingtypeservice:8080/service",
-            "smtp-user",
-            "smtp-pass");
+            new BrandedEmailLayoutRenderer(new EmailContentSanitizer()));
     previewService =
         new InviteEmailPreviewService(
             templateRepository,

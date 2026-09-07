@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.service.accountinvite.mail;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
-import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.GlobalSmtpSettingsResolver;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmailLayoutRenderer;
@@ -10,9 +9,7 @@ import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 /**
  * Sends account-invite mails via the platform's global SMTP settings with a strict
@@ -44,21 +41,11 @@ public class InviteMailDispatchService {
   private final @NonNull BrandedEmailLayoutRenderer brandedEmailLayoutRenderer;
 
   public InviteMailDispatchService(
-      @NonNull RestTemplate restTemplate,
-      @NonNull ApplicationSettingsService applicationSettingsService,
+      @NonNull GlobalSmtpSettingsResolver smtpSettingsResolver,
       @NonNull InviteMailTransport inviteMailTransport,
       @NonNull EmailBrandingResolver emailBrandingResolver,
-      @NonNull BrandedEmailLayoutRenderer brandedEmailLayoutRenderer,
-      @Value("${consulting.type.service.api.url:}") String consultingTypeServiceApiUrl,
-      @Value("${smtp.user:}") String configuredSmtpUsername,
-      @Value("${smtp.password:}") String configuredSmtpPassword) {
-    this.smtpSettingsResolver =
-        new GlobalSmtpSettingsResolver(
-            restTemplate,
-            applicationSettingsService,
-            consultingTypeServiceApiUrl,
-            configuredSmtpUsername,
-            configuredSmtpPassword);
+      @NonNull BrandedEmailLayoutRenderer brandedEmailLayoutRenderer) {
+    this.smtpSettingsResolver = smtpSettingsResolver;
     this.inviteMailTransport = inviteMailTransport;
     this.emailBrandingResolver = emailBrandingResolver;
     this.brandedEmailLayoutRenderer = brandedEmailLayoutRenderer;

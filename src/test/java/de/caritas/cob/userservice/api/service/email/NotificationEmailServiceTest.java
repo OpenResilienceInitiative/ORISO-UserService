@@ -163,6 +163,30 @@ class NotificationEmailServiceTest {
   }
 
   @Test
+  void attemptsAllRecipientsAndReportsOnlyAggregateFailure() {
+    doThrow(new SmtpSendException("private-address@example.org provider detail"))
+        .when(dispatcher)
+        .sendOrThrow(any(), eq("first@example.org"), any());
+    doThrow(new SmtpSendException("third@example.org provider detail"))
+        .when(dispatcher)
+        .sendOrThrow(any(), eq("third@example.org"), any());
+    assertThatThrownBy(
+            () ->
+                service.send(
+                    new MailsDTO()
+                        .mails(
+                            List.of(
+                                mail("daily-enquiry-notification").email("first@example.org"),
+                                mail("daily-enquiry-notification").email("second@example.org"),
+                                mail("daily-enquiry-notification").email("third@example.org")))))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessage("Notification batch partially failed: 2 of 3")
+        .hasNoCause();
+    verify(dispatcher).sendOrThrow(any(), eq("second@example.org"), any());
+    verify(dispatcher).sendOrThrow(any(), eq("third@example.org"), any());
+  }
+
+  @Test
   void propagatesSmtpFailureInsteadOfReportingAcceptance() {
     doThrow(new SmtpSendException("test transport failure"))
         .when(dispatcher)
