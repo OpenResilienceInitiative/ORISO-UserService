@@ -187,7 +187,8 @@ public class EmailBrandingResolver {
       return loadPlatformTenantQuietly();
     }
     try {
-      return tenantService.getRestrictedTenantData(tenantId);
+      // Mail must reflect saved branding changes, including logo removal, without cache expiry.
+      return tenantService.getRestrictedTenantDataFresh(tenantId);
     } catch (RuntimeException exception) {
       // Expected for tenant-admin invites: the tenant is created only when the invite is accepted.
       log.debug(
