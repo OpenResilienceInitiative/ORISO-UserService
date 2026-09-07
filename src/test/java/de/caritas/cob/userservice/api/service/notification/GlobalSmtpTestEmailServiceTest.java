@@ -87,4 +87,50 @@ class GlobalSmtpTestEmailServiceTest {
     assertThat(sent.getAllRecipients()[0].toString()).isEqualTo("to@example.com");
     assertThat(sent.getContentType()).contains("multipart/alternative");
   }
+
+  @Test
+  void smtpDiagnosticUsesAdminCtaWithoutMovingFooterLinksUnderAdmin() {
+    ReflectionTestUtils.setField(service, "appBaseUrl", "https://predev.oriso.org///");
+    ReflectionTestUtils.setField(service, "emailRenderer", new OrisoEmailRenderer());
+    Map<String, String> values = new HashMap<>();
+    values.put("appUrl", "https://predev.oriso.org");
+    values.put("settingsUrl", "https://predev.oriso.org/profile/settings");
+    when(emailBrand.values(eq("https://predev.oriso.org///"), any())).thenReturn(values);
+    GlobalSmtpTestEmailDTO dto = new GlobalSmtpTestEmailDTO();
+    dto.setHost("smtp.invalid");
+    dto.setPort(587);
+    dto.setFrom("from@example.com");
+    OrisoEmailRenderer.RenderedEmail rendered =
+        ReflectionTestUtils.invokeMethod(service, "renderSmtpTest", dto);
+    assertThat(rendered.html()).contains("href=\"https://predev.oriso.org/admin\"");
+    assertThat(rendered.text()).contains("https://predev.oriso.org/admin");
+    assertThat(rendered.html()).contains("href=\"https://predev.oriso.org/profile/settings\"");
+    assertThat(rendered.html()).doesNotContain("/admin/profile", ".org//admin");
+  }
+
+  @Test
+  void smtpBasePropertyUsesDeploymentAppBaseAndPreservesExplicitOverride() throws Exception {
+    var environment = new org.springframework.core.env.StandardEnvironment();
+    environment.getPropertySources().remove("systemEnvironment");
+    environment.getPropertySources().remove("systemProperties");
+    var deployment = new HashMap<String, Object>();
+    deployment.put("APP_BASE_URL", "https://predev.oriso.org");
+    environment
+        .getPropertySources()
+        .addFirst(
+            new org.springframework.core.env.SystemEnvironmentPropertySource(
+                "deployment", deployment));
+    var properties =
+        org.springframework.core.io.support.PropertiesLoaderUtils.loadProperties(
+            new org.springframework.core.io.ClassPathResource("application.properties"));
+    environment
+        .getPropertySources()
+        .addLast(
+            new org.springframework.core.env.PropertiesPropertySource("application", properties));
+    assertThat(environment.getProperty("system.notification.frontend.base-url"))
+        .isEqualTo("https://predev.oriso.org");
+    deployment.put("SYSTEM_NOTIFICATION_FRONTEND_BASE_URL", "https://explicit.example.org");
+    assertThat(environment.getProperty("system.notification.frontend.base-url"))
+        .isEqualTo("https://explicit.example.org");
+  }
 }
