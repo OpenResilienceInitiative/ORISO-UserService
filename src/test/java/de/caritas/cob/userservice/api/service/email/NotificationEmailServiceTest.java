@@ -41,14 +41,7 @@ class NotificationEmailServiceTest {
                 "https://app.example.org/impressum",
                 "https://app.example.org/datenschutz"));
     var brand = new OrisoEmailBrand(branding);
-    service =
-        new NotificationEmailService(
-            new OrisoEmailRenderer(),
-            brand,
-            branding,
-            new BrandedEmailLayoutRenderer(new EmailContentSanitizer()),
-            smtp,
-            dispatcher);
+    service = new NotificationEmailService(new OrisoEmailRenderer(), brand, smtp, dispatcher);
     ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org");
     TenantContext.setCurrentTenant(7L);
   }
@@ -119,7 +112,32 @@ class NotificationEmailServiceTest {
     verify(dispatcher).sendOrThrow(any(), any(), rendered.capture());
     assertThat(rendered.getValue().subject()).isEqualTo("Ihre Anfrage wurde angenommen");
     assertThat(rendered.getValue().html()).contains("Müller &amp; Team").doesNotContain("{{");
-    assertThat(rendered.getValue().text()).contains("Müller & Team");
+    assertThat(rendered.getValue().text())
+        .contains("Müller & Team", "Zu Träger Sieben")
+        .doesNotContain("Einladung annehmen");
+    assertThat(rendered.getValue().html())
+        .contains("Zu Träger Sieben", "border-radius:24px")
+        .doesNotContain("Einladung annehmen");
+  }
+
+  @Test
+  void preservesAuthoredFormattingWithoutUnsafeHtmlInOperationalMessage() {
+    var mail = mail("free-text");
+    mail.addTemplateDataItem(new TemplateDataDTO().key("subject").value("Operational message"));
+    mail.addTemplateDataItem(
+        new TemplateDataDTO()
+            .key("text")
+            .value(
+                "<p>First &amp; second</p><ul><li>Keep this item</li></ul><script>unsafe()</script>"));
+    service.send(new MailsDTO().mails(List.of(mail)));
+    var rendered = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(dispatcher).sendOrThrow(any(), any(), rendered.capture());
+    assertThat(rendered.getValue().html())
+        .contains("<li>Keep this item</li>", "Zu Träger Sieben")
+        .doesNotContain("<script", "unsafe()", "Einladung annehmen");
+    assertThat(rendered.getValue().text())
+        .contains("First & second", "Keep this item")
+        .doesNotContain("<li>", "unsafe()", "Einladung annehmen");
   }
 
   @Test

@@ -3,9 +3,6 @@ package de.caritas.cob.userservice.api.service.email;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.*;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
-import de.caritas.cob.userservice.api.service.email.layout.BrandedEmailLayoutRenderer;
-import de.caritas.cob.userservice.api.service.email.layout.BrandedEmailRequest;
-import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.notification.SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
@@ -27,8 +24,6 @@ import org.springframework.stereotype.Service;
 public class NotificationEmailService {
   private final OrisoEmailRenderer renderer;
   private final OrisoEmailBrand brand;
-  private final EmailBrandingResolver brandingResolver;
-  private final BrandedEmailLayoutRenderer layout;
   private final GlobalSmtpSettingsResolver smtpSettingsResolver;
   private final OrisoEmailDispatcher dispatcher;
 
@@ -146,12 +141,7 @@ public class NotificationEmailService {
       }
       default -> throw new IllegalArgumentException("Unsupported notification occasion");
     }
-    var rendered =
-        layout.render(
-            brandingResolver.resolve(tenantId),
-            new BrandedEmailRequest(
-                subject, body, values.get("appUrl"), null, english ? "en" : "de"));
-    return new OrisoEmailRenderer.RenderedEmail(subject, rendered.html(), rendered.plainText());
+    return renderer.renderMessage(tone, values, subject, body);
   }
 
   private String required(Map<String, String> attributes, String key) {
