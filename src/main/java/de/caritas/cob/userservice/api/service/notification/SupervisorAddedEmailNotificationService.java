@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.notification;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
@@ -35,6 +36,7 @@ public class SupervisorAddedEmailNotificationService {
 
   private final @NonNull TenantSystemEmailDeliveryClient deliveryClient;
   private final @NonNull UserService userService;
+  private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull TenantTemplateSupplier tenantTemplateSupplier;
   private final @NonNull OrisoEmailRenderer emailRenderer;
   private final @NonNull OrisoEmailBrand emailBrand;
@@ -298,7 +300,7 @@ public class SupervisorAddedEmailNotificationService {
   private OrisoEmailRenderer.RenderedEmail renderEmailChanged(
       String username, String appUrl, Long tenantId) {
     Map<String, String> values = new LinkedHashMap<>(emailBrand.valuesForTenant(appUrl, tenantId));
-    values.put("username", username);
+    values.put("username", usernameTranscoder.decodeUsername(username));
     return emailRenderer.render("email-geaendert", OrisoEmailRenderer.Tone.DE_FORMAL, values);
   }
 

@@ -46,6 +46,22 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void longContactUsernameRemainsIntactInActualEmailChangedTemplate() throws Exception {
+    var values = brand();
+    String username = "alexander".repeat(7) + "@example.org";
+    values.put("username", username);
+    values.put("logoUrl", "");
+    var email = renderer.render("email-geaendert", OrisoEmailRenderer.Tone.DE_FORMAL, values);
+    assertThat(org.jsoup.Jsoup.parse(email.html()).body().text()).contains(username);
+    assertThat(email.text()).contains(username);
+    assertThat(email.html()).doesNotContain("{{");
+    String fixture = System.getProperty("email.layout.browserFixture");
+    if (fixture != null) {
+      java.nio.file.Files.writeString(java.nio.file.Path.of(fixture), email.html());
+    }
+  }
+
+  @Test
   void rendersBothMimePartsAndTheSubject() {
     Map<String, String> values = brand();
     values.put("loginUrl", "https://example.org/login?token=abc");

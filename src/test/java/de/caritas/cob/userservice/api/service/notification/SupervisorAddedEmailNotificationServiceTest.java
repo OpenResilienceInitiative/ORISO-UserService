@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
@@ -38,6 +39,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Mock private SystemNotificationEmailSettingsService emailSettingsService;
   @Mock private TenantSystemEmailDeliveryClient deliveryClient;
   @Mock private UserService userService;
+  @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
   // Real instances rather than mocks: these tests exercise the whole send path,
   // and the point of the port is that the path now produces a mail from the
@@ -52,6 +54,31 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand(brandingResolver);
 
   @InjectMocks private SupervisorAddedEmailNotificationService service;
+
+  @Test
+  void emailChangeShowsDecodedLoginInBothMimeParts() {
+    assertEmailChangeLogin(
+        usernameTranscoder.encodeUsername("bart.simpson@example.test"),
+        "bart.simpson@example.test");
+  }
+
+  @Test
+  void emailChangePreservesPlainLoginInBothMimeParts() {
+    assertEmailChangeLogin("Bart Simpson", "Bart Simpson");
+  }
+
+  private void assertEmailChangeLogin(String input, String expected) {
+    service.notifyEmailAddressChanged(input, "recipient@example.test", 40L, null, null);
+    var email = org.mockito.ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(deliveryClient)
+        .send(
+            eq(40L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.EMAIL_ADDRESS_CHANGED),
+            eq("recipient@example.test"),
+            email.capture());
+    assertThat(email.getValue().html()).contains(expected).doesNotContain("enc.");
+    assertThat(email.getValue().text()).contains(expected).doesNotContain("enc.");
+  }
 
   @Test
   void emailChangeDoesNotRequireTenantPasswordInUserService() {
