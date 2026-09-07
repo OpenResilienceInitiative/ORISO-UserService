@@ -44,7 +44,10 @@ class ReplicaSafetyInventoryContractTest {
           "registered-only-deletion-scheduler",
           "handshake-expiry-scheduler",
           "support-room-expiry-scheduler",
-          "event-notification-retention-scheduler");
+          "event-notification-retention-scheduler",
+          "case-handover-policy-refresh",
+          "case-handover-co-access-expiry",
+          "case-handover-offer-expiry");
 
   @Test
   void shouldInventoryEveryKnownReplicaLocalComponentWithAnActionableSignal() throws Exception {

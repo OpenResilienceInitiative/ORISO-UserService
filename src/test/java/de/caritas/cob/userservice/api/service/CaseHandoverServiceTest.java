@@ -1038,6 +1038,37 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void approvingHistoricalNullAccessInfersCurrentProviderDurationWithoutRewritingOriginalFacts() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setAccessType(null);
+    request.setMaxAccessDurationMinutes(null);
+    request.setExpiresAt(null);
+    request.setReasonLabel("Historical unchanged label");
+    request.setPolicyAuthority("Historical unchanged authority");
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(tenantPolicies("Current provider label", 180));
+
+    var result = caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    assertEquals("GRANTED", result.getStatus());
+    assertEquals("CO_ACCESS", result.getAccessType());
+    assertEquals(CaseHandoverRequest.AccessType.CO_ACCESS, request.getAccessType());
+    assertEquals(180, request.getMaxAccessDurationMinutes());
+    assertEquals(LocalDateTime.now(clock).plusMinutes(180), request.getExpiresAt());
+    assertEquals(previous, session.getConsultant());
+    assertEquals("COUNSELLOR_ASKED_FOR_ADVICE", request.getReasonCode());
+    assertEquals("Historical unchanged label", request.getReasonLabel());
+    assertEquals("Historical unchanged authority", request.getPolicyAuthority());
+    verify(caseHandoverPolicyCacheService).getEffective(7L);
+    verify(sessionRepository, never()).save(session);
+    verify(caseHandoverEmailNotification, never())
+        .ownershipGranted(any(), any(), any(), any(), any());
+    verify(caseHandoverEmailNotification, never()).takeoverConsentRequested(any(), any(), any());
+  }
+
+  @Test
   void reasonContractReportsCoAccessFromProviderLegacyCodeWithoutChangingConsent() {
     when(caseHandoverPolicyCacheService.getEffective(7L)).thenReturn(tenantPolicies("Advice", 180));
     var reason = caseHandoverService.listReasons(7L).getFirst();
