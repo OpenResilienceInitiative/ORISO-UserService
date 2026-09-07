@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.TeamDiscussionOrphanCleanupService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
@@ -15,7 +16,7 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class TeamDiscussionOrphanCleanupScheduler {
 
-  private static final String TASK_NAME = "team-discussion-orphan-cleanup";
+  static final String TASK_NAME = "team-discussion-orphan-cleanup";
 
   private final @NonNull TeamDiscussionOrphanCleanupService teamDiscussionOrphanCleanupService;
   private final @NonNull TenantContextProvider tenantContextProvider;
@@ -27,10 +28,16 @@ public class TeamDiscussionOrphanCleanupScheduler {
   /** Entry method to purge orphaned team discussions. */
   @Scheduled(cron = "${team.discussion.orphan.cleanup.cron:0 30 3 * * ?}")
   public void purgeOrphanedDiscussions() {
-    if (!taskClaimService.tryClaim(TASK_NAME, claimDuration)) {
-      return;
+    try {
+      if (!taskClaimService.tryClaim(TASK_NAME, claimDuration)) {
+        return;
+      }
+      tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
+      this.teamDiscussionOrphanCleanupService.purgeOrphanedDiscussions();
+    } finally {
+      // Scheduler threads are pooled: leave no tenant context behind on any exit path, so neither
+      // the technical context nor a leaked one from before reaches the next task.
+      TenantContext.clear();
     }
-    tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
-    this.teamDiscussionOrphanCleanupService.purgeOrphanedDiscussions();
   }
 }

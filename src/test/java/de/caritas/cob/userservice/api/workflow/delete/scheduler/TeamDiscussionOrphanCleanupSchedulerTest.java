@@ -1,10 +1,14 @@
 package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
-import static org.mockito.Mockito.verify;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
 
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.TeamDiscussionOrphanCleanupService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
@@ -32,18 +36,51 @@ class TeamDiscussionOrphanCleanupSchedulerTest {
 
   @Test
   void purgeOrphanedDiscussions_runsUnderTheTechnicalTenantContext() {
-    when(taskClaimService.tryClaim("team-discussion-orphan-cleanup", Duration.ofHours(12)))
+    when(taskClaimService.tryClaim(
+            TeamDiscussionOrphanCleanupScheduler.TASK_NAME, Duration.ofHours(12)))
         .thenReturn(true);
 
     scheduler.purgeOrphanedDiscussions();
 
-    verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
-    verify(teamDiscussionOrphanCleanupService).purgeOrphanedDiscussions();
+    var order = inOrder(tenantContextProvider, teamDiscussionOrphanCleanupService);
+    order.verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
+    order.verify(teamDiscussionOrphanCleanupService).purgeOrphanedDiscussions();
+  }
+
+  /** The technical context must not leak into the next task on the pooled scheduler thread. */
+  @Test
+  void purgeOrphanedDiscussions_clearsTheTenantContext_evenWhenTheCleanupThrows() {
+    when(taskClaimService.tryClaim(
+            TeamDiscussionOrphanCleanupScheduler.TASK_NAME, Duration.ofHours(12)))
+        .thenReturn(true);
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    doThrow(new IllegalStateException("boom"))
+        .when(teamDiscussionOrphanCleanupService)
+        .purgeOrphanedDiscussions();
+
+    assertThatThrownBy(scheduler::purgeOrphanedDiscussions)
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(TenantContext.contextIsSet()).isFalse();
+  }
+
+  /** Even an early return must not leave a context on the pooled thread. */
+  @Test
+  void purgeOrphanedDiscussions_clearsTheTenantContext_When_theClaimIsLost() {
+    when(taskClaimService.tryClaim(
+            TeamDiscussionOrphanCleanupScheduler.TASK_NAME, Duration.ofHours(12)))
+        .thenReturn(false);
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+
+    scheduler.purgeOrphanedDiscussions();
+
+    assertThat(TenantContext.contextIsSet()).isFalse();
   }
 
   @Test
   void purgeOrphanedDiscussions_skipsAllDownstreamCalls_When_claimIsLost() {
-    when(taskClaimService.tryClaim("team-discussion-orphan-cleanup", Duration.ofHours(12)))
+    when(taskClaimService.tryClaim(
+            TeamDiscussionOrphanCleanupScheduler.TASK_NAME, Duration.ofHours(12)))
         .thenReturn(false);
 
     scheduler.purgeOrphanedDiscussions();

@@ -6,8 +6,6 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
-import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository;
-import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import java.util.List;
@@ -24,6 +22,9 @@ import org.springframework.stereotype.Service;
  * kept: it is the only handle that still names the room, so a later run (session deletion again, or
  * the orphan clean-up) can retry. A room Synapse no longer knows counts as purged, see {@link
  * MatrixSynapseService#purgeRoom(String)}.
+ *
+ * <p>The participant rows and the discussion row go together in one transaction of their own
+ * ({@link TeamDiscussionDeletionWriter}), opened only after the Synapse call has returned.
  */
 @Slf4j
 @Service
@@ -33,8 +34,7 @@ public class TeamDiscussionPurgeService {
   static final String MATRIX_ROOM_ERROR_REASON = "Unable to purge team discussion Matrix room";
   static final String DATABASE_ERROR_REASON = "Unable to delete team discussion";
 
-  private final @NonNull TeamDiscussionRepository teamDiscussionRepository;
-  private final @NonNull TeamDiscussionParticipantRepository teamDiscussionParticipantRepository;
+  private final @NonNull TeamDiscussionDeletionWriter deletionWriter;
   private final @NonNull MatrixSynapseService matrixSynapseService;
 
   /**
@@ -75,8 +75,7 @@ public class TeamDiscussionPurgeService {
   private boolean deleteRows(
       TeamDiscussion discussion, List<DeletionWorkflowError> workflowErrors) {
     try {
-      teamDiscussionParticipantRepository.deleteAllByTeamDiscussionId(discussion.getId());
-      teamDiscussionRepository.delete(discussion);
+      deletionWriter.deleteDiscussionAndParticipants(discussion);
       return true;
     } catch (Exception e) {
       log.error("UserService delete workflow error: ", e);

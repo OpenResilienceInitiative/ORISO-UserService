@@ -5,10 +5,8 @@ import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTarge
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType.MATRIX;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.inOrder;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -16,8 +14,6 @@ import static org.mockito.Mockito.when;
 import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
-import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository;
-import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.time.LocalDateTime;
@@ -38,8 +34,7 @@ class TeamDiscussionPurgeServiceTest {
 
   @InjectMocks private TeamDiscussionPurgeService teamDiscussionPurgeService;
 
-  @Mock private TeamDiscussionRepository teamDiscussionRepository;
-  @Mock private TeamDiscussionParticipantRepository teamDiscussionParticipantRepository;
+  @Mock private TeamDiscussionDeletionWriter deletionWriter;
   @Mock private MatrixSynapseService matrixSynapseService;
 
   private LogbackCaptor logCaptor;
@@ -66,12 +61,9 @@ class TeamDiscussionPurgeServiceTest {
     assertThat(purged).isTrue();
     assertThat(workflowErrors).isEmpty();
     assertThat(logCaptor.count(Level.ERROR)).isZero();
-    var order =
-        inOrder(
-            matrixSynapseService, teamDiscussionParticipantRepository, teamDiscussionRepository);
+    var order = inOrder(matrixSynapseService, deletionWriter);
     order.verify(matrixSynapseService).purgeRoom(ROOM_ID);
-    order.verify(teamDiscussionParticipantRepository).deleteAllByTeamDiscussionId(7L);
-    order.verify(teamDiscussionRepository).delete(discussion);
+    order.verify(deletionWriter).deleteDiscussionAndParticipants(discussion);
   }
 
   /** The row is the only handle that still names the room, so it must survive a failed purge. */
@@ -91,8 +83,7 @@ class TeamDiscussionPurgeServiceTest {
     assertThat(error.getReason()).isEqualTo(TeamDiscussionPurgeService.MATRIX_ROOM_ERROR_REASON);
     assertThat(error.getTimestamp()).isNotNull();
     assertThat(logCaptor.contains(Level.ERROR, "UserService delete workflow error")).isTrue();
-    verifyNoInteractions(teamDiscussionParticipantRepository);
-    verify(teamDiscussionRepository, never()).delete(any(TeamDiscussion.class));
+    verifyNoInteractions(deletionWriter);
   }
 
   @Test
@@ -104,8 +95,7 @@ class TeamDiscussionPurgeServiceTest {
     assertThat(purged).isTrue();
     assertThat(workflowErrors).isEmpty();
     verifyNoInteractions(matrixSynapseService);
-    verify(teamDiscussionParticipantRepository).deleteAllByTeamDiscussionId(7L);
-    verify(teamDiscussionRepository).delete(discussion);
+    verify(deletionWriter).deleteDiscussionAndParticipants(discussion);
   }
 
   @Test
@@ -113,8 +103,8 @@ class TeamDiscussionPurgeServiceTest {
     var discussion = discussion(ROOM_ID);
     when(matrixSynapseService.purgeRoom(ROOM_ID)).thenReturn(true);
     doThrow(new RuntimeException("db down"))
-        .when(teamDiscussionParticipantRepository)
-        .deleteAllByTeamDiscussionId(anyLong());
+        .when(deletionWriter)
+        .deleteDiscussionAndParticipants(any(TeamDiscussion.class));
 
     var purged = teamDiscussionPurgeService.purge(discussion, workflowErrors);
 
@@ -126,7 +116,6 @@ class TeamDiscussionPurgeServiceTest {
     assertThat(error.getIdentifier()).isEqualTo("7");
     assertThat(error.getReason()).isEqualTo(TeamDiscussionPurgeService.DATABASE_ERROR_REASON);
     assertThat(logCaptor.contains(Level.ERROR, "UserService delete workflow error")).isTrue();
-    verify(teamDiscussionRepository, never()).delete(any(TeamDiscussion.class));
   }
 
   private static TeamDiscussion discussion(String roomId) {
