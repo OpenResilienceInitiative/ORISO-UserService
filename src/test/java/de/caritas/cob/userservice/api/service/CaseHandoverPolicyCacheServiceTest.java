@@ -4,17 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.TenantCaseHandoverPolicyCache;
 import de.caritas.cob.userservice.api.port.out.TenantCaseHandoverPolicyCacheRepository;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
-import de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantPermissionPolicies;
 import java.time.Clock;
@@ -38,8 +35,7 @@ import org.springframework.web.client.RestClientException;
 class CaseHandoverPolicyCacheServiceTest {
 
   @Mock private TenantCaseHandoverPolicyCacheRepository repository;
-  @Mock private TenantAdminServiceApiControllerFactory tenantServiceFactory;
-  @Mock private TenantControllerApi tenantControllerApi;
+  @Mock private TenantCaseHandoverPolicyReadClient tenantControllerApi;
   @Mock private ScheduledTaskClaimService scheduledTaskClaimService;
   private final Clock clock = Clock.fixed(Instant.parse("2026-08-16T10:00:00Z"), ZoneOffset.UTC);
   private CaseHandoverPolicyCacheService service;
@@ -48,9 +44,25 @@ class CaseHandoverPolicyCacheServiceTest {
   void setUp() {
     service =
         new CaseHandoverPolicyCacheService(
-            repository, tenantServiceFactory, scheduledTaskClaimService, clock);
-    lenient().when(tenantServiceFactory.createControllerApi()).thenReturn(tenantControllerApi);
-    lenient().when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
+            repository, tenantControllerApi, scheduledTaskClaimService, clock);
+    when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
+  }
+
+  @Test
+  void publicScheduledEntryPreservesSnapshotWhenAnotherReplicaOwnsLease() throws Exception {
+    assertThat(
+            CaseHandoverPolicyCacheService.class.getMethod("refreshKnownTenants").getReturnType())
+        .isEqualTo(void.class);
+    var cache =
+        TenantCaseHandoverPolicyCache.builder().tenantId(42L).policies("{\"reasons\":{}}").build();
+    when(repository.findAll()).thenReturn(java.util.List.of(cache));
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(scheduledTaskClaimService.tryClaim(
+            "case-handover-policy-refresh-42", java.time.Duration.ofMinutes(1)))
+        .thenReturn(false);
+    service.refreshKnownTenants();
+    verify(tenantControllerApi, never()).getTenantPermissionPolicies(any());
+    verify(repository, never()).save(any());
   }
 
   @Test
@@ -89,6 +101,50 @@ class CaseHandoverPolicyCacheServiceTest {
     assertThat(service.refresh(42L).getReasons()).isEmpty();
     assertThat(cache.getStaleSince()).isEqualTo(LocalDateTime.of(2026, 8, 16, 10, 0));
     verify(repository).save(cache);
+  }
+
+  @Test
+  void refresh_keeps180AndHolidayConsentFalseInLastKnownGoodDuringOutage() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder()
+            .tenantId(42L)
+            .policies(
+                "{\"reasons\":{\"COUNSELLOR_ASKED_FOR_ADVICE\":{\"code\":\"COUNSELLOR_ASKED_FOR_ADVICE\",\"maxAccessDurationMinutes\":{\"value\":180}},\"COUNSELLOR_ON_HOLIDAY\":{\"code\":\"COUNSELLOR_ON_HOLIDAY\",\"clientConsentRequired\":{\"value\":false}}}}")
+            .refreshedAt(LocalDateTime.of(2026, 8, 16, 9, 0))
+            .build();
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("Synthetic outage"));
+
+    var reasons = service.refresh(42L).getReasons();
+
+    assertThat(reasons.get("COUNSELLOR_ASKED_FOR_ADVICE").getMaxAccessDurationMinutes().getValue())
+        .isEqualTo(180);
+    assertThat(reasons.get("COUNSELLOR_ON_HOLIDAY").getClientConsentRequired().getValue())
+        .isFalse();
+    assertThat(cache.getStaleSince()).isNotNull();
+  }
+
+  @Test
+  void failedRefreshNeverLogsDownstreamBodyOrThrowable() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder().tenantId(42L).policies("{\"reasons\":{}}").build();
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("synthetic-sensitive-provider-body"));
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(
+            CaseHandoverPolicyCacheService.class)) {
+      service.refresh(42L);
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain("synthetic-sensitive-provider-body");
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+      assertThat(logs.hasWarnLog()).isTrue();
+    }
   }
 
   @Test

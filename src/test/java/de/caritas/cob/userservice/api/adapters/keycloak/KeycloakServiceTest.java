@@ -86,6 +86,7 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.client.RestClientException;
@@ -202,6 +203,28 @@ public class KeycloakServiceTest {
     } catch (BadRequestException badRequestException) {
       assertTrue(true, "Excepted BadRequestException thrown");
     }
+  }
+
+  @Test
+  public void explicitSessionLogoutUsesOwnTokensWithoutRequestScope() {
+    when(authenticatedUser.getAccessToken())
+        .thenThrow(new IllegalStateException("No request scope"));
+    when(restTemplate.postForEntity(anyString(), any(), ArgumentMatchers.<Class<Void>>any()))
+        .thenReturn(new ResponseEntity<>(HttpStatus.NO_CONTENT));
+
+    assertTrue(keycloakService.logout("synthetic-own-refresh", "synthetic-own-access"));
+
+    ArgumentCaptor<HttpEntity> request = ArgumentCaptor.forClass(HttpEntity.class);
+    verify(restTemplate)
+        .postForEntity(anyString(), request.capture(), ArgumentMatchers.<Class<Void>>any());
+    org.assertj.core.api.Assertions.assertThat(
+            request.getValue().getHeaders().getFirst("Authorization"))
+        .isEqualTo("Bearer synthetic-own-access");
+    org.assertj.core.api.Assertions.assertThat(
+            ((org.springframework.util.MultiValueMap<?, ?>) request.getValue().getBody())
+                .get("refresh_token"))
+        .isEqualTo(java.util.List.of("synthetic-own-refresh"));
+    verify(authenticatedUser, never()).getAccessToken();
   }
 
   @Test

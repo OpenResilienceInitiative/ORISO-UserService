@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.service;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.TenantCaseHandoverPolicyCache;
 import de.caritas.cob.userservice.api.port.out.TenantCaseHandoverPolicyCacheRepository;
@@ -26,7 +25,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class CaseHandoverPolicyCacheService {
 
   private final @NonNull TenantCaseHandoverPolicyCacheRepository repository;
-  private final @NonNull TenantAdminServiceApiControllerFactory tenantServiceFactory;
+  private final @NonNull TenantCaseHandoverPolicyReadClient tenantPolicyReadClient;
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
   private final ObjectMapper objectMapper = new ObjectMapper();
@@ -56,8 +55,7 @@ public class CaseHandoverPolicyCacheService {
                       "Case Handover policy refresh already in progress; retry shortly"));
     }
     try {
-      var response =
-          tenantServiceFactory.createControllerApi().getTenantPermissionPolicies(tenantId);
+      var response = tenantPolicyReadClient.getTenantPermissionPolicies(tenantId);
       if (response == null
           || !tenantId.equals(response.getTenantId())
           || response.getCaseHandoverPolicies() == null) {
@@ -82,7 +80,7 @@ public class CaseHandoverPolicyCacheService {
       log.warn(
           "Tenant {} Case Handover policy refresh failed; enforcing last-known-good snapshot: {}",
           tenantId,
-          exception.getMessage());
+          TenantCaseHandoverPolicyReadClient.failureSummary(exception));
       return deserialize(cache);
     }
   }
