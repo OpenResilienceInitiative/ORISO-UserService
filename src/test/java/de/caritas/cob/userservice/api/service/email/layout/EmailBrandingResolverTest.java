@@ -40,6 +40,47 @@ class EmailBrandingResolverTest {
     return tenant;
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"https://app.oriso.org/%zz", "https://[broken", "https:///missing-host"})
+  void malformedConfiguredBaseOmitsLogoWithoutAbortingMail(String base) {
+    Theming stored = new Theming();
+    stored.setLogo("data:image/png;base64,iVBORw0KGgo=");
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", stored));
+    var branding =
+        new EmailBrandingResolver(
+                tenantService,
+                tenantTemplateSupplier,
+                "ORISO",
+                "https://app.oriso.org/logo.png",
+                base)
+            .resolve(7L);
+    assertThat(branding.logoUrl()).isNull();
+    assertThat(branding.brandName()).isEqualTo("Nord");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "https://app.oriso.org,https://app.oriso.org:443/logo.png",
+    "https://app.oriso.org:443,https://app.oriso.org/logo.png",
+    "http://app.oriso.org,http://app.oriso.org:80/logo.png",
+    "http://app.oriso.org:80,http://app.oriso.org/logo.png"
+  })
+  void acceptsSameOriginWhenDefaultPortIsExplicit(String base, String logo) {
+    var branding =
+        new EmailBrandingResolver(tenantService, tenantTemplateSupplier, "ORISO", logo, base)
+            .resolve(null);
+    assertThat(branding.logoUrl()).isEqualTo(logo);
+  }
+
+  @Test
+  void stillRejectsDifferentPortAndScheme() {
+    for (String logo :
+        java.util.List.of("https://app.oriso.org:444/logo.png", "http://app.oriso.org/logo.png")) {
+      assertThat(resolver(logo).resolve(null).logoUrl()).isNull();
+    }
+  }
+
   // --- logo -----------------------------------------------------------------------------
 
   @Test

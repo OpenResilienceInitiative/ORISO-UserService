@@ -122,7 +122,7 @@ public class EmailBrandingResolver {
             && origin.getHost() != null
             && origin.getHost().equalsIgnoreCase(image.getHost())
             && origin.getScheme().equalsIgnoreCase(image.getScheme())
-            && origin.getPort() == image.getPort()) {
+            && effectivePort(origin) == effectivePort(image)) {
           return absolute;
         }
       } catch (IllegalArgumentException ignored) {
@@ -223,10 +223,26 @@ public class EmailBrandingResolver {
       if ((lower.startsWith("http://") || lower.startsWith("https://"))
           && trimmed.indexOf(' ') < 0
           && trimmed.indexOf('"') < 0) {
-        return trimmed;
+        try {
+          // Validate before any caller uses URI.create or builds an asset/footer from this base.
+          // A scheme prefix alone still accepts malformed escapes, brackets and missing hosts.
+          URI uri = URI.create(trimmed);
+          if (uri.getHost() != null) {
+            return trimmed;
+          }
+        } catch (IllegalArgumentException ignored) {
+          // Malformed configuration or stored links degrade to the text-only mail layout.
+        }
       }
     }
     return null;
+  }
+
+  private static int effectivePort(URI uri) {
+    if (uri.getPort() != -1) {
+      return uri.getPort();
+    }
+    return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
   }
 
   private static String normalizeBaseUrl(String value) {
