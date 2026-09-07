@@ -5,10 +5,7 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.JpaRepository;
-import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
-import org.springframework.data.repository.query.Param;
-import org.springframework.transaction.annotation.Transactional;
 
 public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, Long> {
 
@@ -26,11 +23,6 @@ public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, 
       "select td from TeamDiscussion td where not exists"
           + " (select s.id from Session s where s.id = td.sessionId)")
   List<TeamDiscussion> findAllOrphaned();
-
-  @Modifying(flushAutomatically = true, clearAutomatically = true)
-  @Transactional
-  @Query("delete from TeamDiscussion td where td.sessionId = :sessionId")
-  int deleteAllBySessionId(@Param("sessionId") Long sessionId);
 
   /**
    * Archived discussions whose archive date lies strictly before the cutoff (#1116).
