@@ -95,6 +95,43 @@ class EventNotificationServiceTest {
     assertThat(parsed.get("caseHandoverRequestId").asLong()).isEqualTo(88L);
   }
 
+  @Test
+  void buildCaseHandoverOfferParams_carriesBothCounsellorNames() throws Exception {
+    // A push offer event is read by the OTHER party: the recipient needs to know who offers,
+    // the offering counsellor who answered. One name would not be enough for either.
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverOfferParams(
+                sessionMock(),
+                "Dr. Muster",
+                "Dr. Beispiel",
+                "PLANNED_ABSENCE",
+                "Planned absence",
+                88L));
+
+    assertThat(parsed.get("fromConsultantName").asText()).isEqualTo("Dr. Muster");
+    assertThat(parsed.get("toConsultantName").asText()).isEqualTo("Dr. Beispiel");
+    assertThat(parsed.get("reasonCode").asText()).isEqualTo("PLANNED_ABSENCE");
+    assertThat(parsed.get("offerId").asLong()).isEqualTo(88L);
+    // The offer row IS the handover request row, so consumers keyed on the old id keep working.
+    assertThat(parsed.get("caseHandoverRequestId").asLong()).isEqualTo(88L);
+  }
+
+  @Test
+  void buildCaseHandoverOfferParams_neverCarriesTheCounsellorWrittenExplanation() throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverOfferParams(
+                sessionMock(),
+                "Dr. Muster",
+                "Dr. Beispiel",
+                "PLANNED_ABSENCE",
+                "Planned absence",
+                88L));
+
+    assertThat(parsed.has("explanation")).isFalse();
+  }
+
   /**
    * The params object is the replacement for the stored English sentence, so it must stay a set of
    * known keys. Nothing here may become a channel for the free text task 1a removed.

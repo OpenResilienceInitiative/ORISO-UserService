@@ -21,6 +21,28 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
 
   Optional<CaseHandoverRequest> findByIdAndSessionId(Long id, Long sessionId);
 
+  /** The recipient's inbox: offers made to me, newest first. */
+  List<CaseHandoverRequest> findByTargetConsultantIdAndStatusOrderByCreatedAtDesc(
+      String targetConsultantId, CaseHandoverRequest.Status status);
+
+  /**
+   * The offering counsellor's outbox. A PUSH row records the offering counsellor as the PREVIOUS
+   * consultant (the requester is the target, because acceptance makes them the owner), so "offers I
+   * made" is a query on previous_consultant_id restricted to PUSH.
+   */
+  List<CaseHandoverRequest> findByDirectionAndPreviousConsultantIdAndStatusOrderByCreatedAtDesc(
+      CaseHandoverRequest.Direction direction,
+      String previousConsultantId,
+      CaseHandoverRequest.Status status);
+
+  /** Open offers on a case — the guard against a second offer while one is still pending. */
+  List<CaseHandoverRequest> findBySessionIdAndDirectionAndStatus(
+      Long sessionId, CaseHandoverRequest.Direction direction, CaseHandoverRequest.Status status);
+
+  /** Sweep input for the expiry scheduler. */
+  List<CaseHandoverRequest> findByStatusAndOfferExpiresAtBefore(
+      CaseHandoverRequest.Status status, LocalDateTime deadline);
+
   List<CaseHandoverRequest> findBySessionId(Long sessionId);
 
   List<CaseHandoverRequest> findByRequesterConsultantId(String requesterConsultantId);

@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponse
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -27,12 +28,15 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepository;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
+import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Clock;
 import java.time.Duration;
@@ -47,6 +51,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.AccessLevel;
@@ -69,7 +74,7 @@ import org.springframework.transaction.support.TransactionSynchronizationManager
 @Slf4j
 public class CaseHandoverService {
 
-  private static final String ADVICE_NEEDED = "COUNSELLOR_ASKED_FOR_ADVICE";
+  private static final String ADVICE_NEEDED = "ADVICE_REQUESTED";
   private static final int DEFAULT_ADVICE_ACCESS_DURATION_MINUTES = 180;
   private static final String POLICY_AUTHORITY = "platform-admin-default-case-handover-policy";
   private static final String OUTCOME_ACTIVE_OWNER = "ACTIVE_OWNER";
@@ -81,6 +86,10 @@ public class CaseHandoverService {
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
   private static final String CO_ACCESS_EXPIRY_TASK = "case-handover-co-access-expiry";
+  private static final String OUTCOME_OFFER_PENDING = "OFFER_PENDING_RECIPIENT";
+  private static final String OUTCOME_RECIPIENT_DECLINED = "RECIPIENT_DECLINED";
+  private static final String OUTCOME_OFFER_WITHDRAWN = "OFFER_WITHDRAWN";
+  private static final String OUTCOME_OFFER_EXPIRED = "OFFER_EXPIRED";
 
   private record ClientHandoverCopy(
       String grantedTitle,
@@ -145,49 +154,36 @@ public class CaseHandoverService {
    * vault doc "Case Handover — System-Benachrichtigungen & Rechtstexte (Entwurf)"; tr/uk are
    * machine-drafted pending native review. {@code {{newAdvisor}}} is substituted at send time.
    */
+  private static final Map<String, String> ABSENCE_NOTIFICATION_TEMPLATE =
+      Map.of(
+          "de",
+              "Deine bisherige Berater:in ist derzeit nicht erreichbar. {{newAdvisor}} betreut dich weiter.",
+          "en",
+              "Your previous counsellor is currently unavailable. {{newAdvisor}} will continue to look after you.",
+          "tr",
+              "Önceki danışmanınıza şu anda ulaşılamıyor. {{newAdvisor}} size destek olmaya devam edecek.",
+          "uk",
+              "Ваш попередній консультант наразі недоступний. {{newAdvisor}} продовжить вас супроводжувати.");
+
   private static final Map<String, Map<String, String>> DEFAULT_CLIENT_NOTIFICATION_TEMPLATES =
       Map.of(
-          "COUNSELLOR_ASKED_FOR_ADVICE",
+          "ADVICE_REQUESTED",
           Map.of(
               "de",
-              "Du hast einem zeitlich begrenzten Einblick zugestimmt. {{newAdvisor}} kann diese Sitzung für {{duration}} mitlesen. Deine bisherige Berater:in bleibt für dich zuständig.",
+              "{{newAdvisor}} kann diese Sitzung für {{duration}} mitlesen. Deine bisherige Berater:in bleibt für dich zuständig.",
               "en",
-              "You agreed to a time-limited review. {{newAdvisor}} can read this session for {{duration}}. Your current counsellor remains responsible for you.",
+              "{{newAdvisor}} can read this session for {{duration}}. Your current counsellor remains responsible for you.",
               "tr",
-              "Süreli incelemeyi onayladınız. {{newAdvisor}} bu oturumu {{duration}} boyunca okuyabilir. Mevcut danışmanınız sizden sorumlu olmaya devam eder.",
+              "{{newAdvisor}} bu oturumu {{duration}} boyunca okuyabilir. Mevcut danışmanınız sizden sorumlu olmaya devam eder.",
               "uk",
-              "Ви погодилися на тимчасовий перегляд консультації. {{newAdvisor}} може читати цю сесію протягом {{duration}}. Ваш поточний консультант залишається відповідальним за вас."),
-          "COUNSELLOR_ON_HOLIDAY",
-          Map.of(
-              "de",
-              "Deine bisherige Berater:in ist zurzeit abwesend. Während dieser Zeit betreut {{newAdvisor}} deinen Fall.",
-              "en",
-              "Your previous counsellor is currently away. During this time, {{newAdvisor}} is looking after your case.",
-              "tr",
-              "Önceki danışmanınız şu anda izinde. Bu süre boyunca vakanızla {{newAdvisor}} ilgilenecek.",
-              "uk",
-              "Ваш попередній консультант наразі відсутній. У цей час вашою справою опікується {{newAdvisor}}."),
+              "{{newAdvisor}} може читати цю сесію протягом {{duration}}. Ваш поточний консультант залишається відповідальним за вас."),
+          "PLANNED_ABSENCE",
+          ABSENCE_NOTIFICATION_TEMPLATE,
           "OTHER_EMERGENCY",
-          Map.of(
-              "de",
-              "Aus einem dringenden Grund hat {{newAdvisor}} deinen Fall übernommen. Du musst nichts weiter tun.",
-              "en",
-              "For an urgent reason, {{newAdvisor}} has taken over your case. You don't need to do anything.",
-              "tr",
-              "Acil bir nedenden dolayı vakanızı {{newAdvisor}} devraldı. Herhangi bir şey yapmanız gerekmiyor.",
-              "uk",
-              "З невідкладної причини вашу справу перейняв(-ла) {{newAdvisor}}. Вам нічого не потрібно робити."),
-          "COUNSELLOR_IS_ILL",
-          Map.of(
-              "de",
-              "Deine bisherige Berater:in ist leider erkrankt. Damit du nicht warten musst, hat {{newAdvisor}} deinen Fall übernommen.",
-              "en",
-              "Your previous counsellor is unfortunately ill. So you don't have to wait, {{newAdvisor}} has taken over your case.",
-              "tr",
-              "Önceki danışmanınız maalesef hastalandı. Beklemek zorunda kalmamanız için vakanızı {{newAdvisor}} devraldı.",
-              "uk",
-              "На жаль, ваш попередній консультант захворів. Щоб вам не довелося чекати, вашу справу перейняв(-ла) {{newAdvisor}}."),
-          "COUNSELLOR_LEFT",
+          ABSENCE_NOTIFICATION_TEMPLATE,
+          "UNPLANNED_ABSENCE",
+          ABSENCE_NOTIFICATION_TEMPLATE,
+          "ASSIGNMENT_ENDED",
           Map.of(
               "de",
               "Deine bisherige Berater:in ist nicht mehr in dieser Beratungsstelle tätig. Deine Beratung führt ab jetzt {{newAdvisor}} weiter.",
@@ -201,9 +197,9 @@ public class CaseHandoverService {
   private static final List<CaseHandoverReason> DEFAULT_REASONS =
       List.of(
           CaseHandoverReason.builder()
-              .code("COUNSELLOR_ASKED_FOR_ADVICE")
+              .code("ADVICE_REQUESTED")
               .clientNotificationTemplates(
-                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_ASKED_FOR_ADVICE"))
+                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("ADVICE_REQUESTED"))
               .label("Advice needed")
               .clientConsentRequired(true)
               .accessAllowed(true)
@@ -213,9 +209,9 @@ public class CaseHandoverService {
               .policyAuthority(POLICY_AUTHORITY)
               .build(),
           CaseHandoverReason.builder()
-              .code("COUNSELLOR_ON_HOLIDAY")
+              .code("PLANNED_ABSENCE")
               .clientNotificationTemplates(
-                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_ON_HOLIDAY"))
+                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("PLANNED_ABSENCE"))
               .label("Leave")
               .clientConsentRequired(false)
               .accessAllowed(true)
@@ -235,9 +231,9 @@ public class CaseHandoverService {
               .policyAuthority(POLICY_AUTHORITY)
               .build(),
           CaseHandoverReason.builder()
-              .code("COUNSELLOR_IS_ILL")
+              .code("UNPLANNED_ABSENCE")
               .clientNotificationTemplates(
-                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_IS_ILL"))
+                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("UNPLANNED_ABSENCE"))
               .label("Absence")
               .clientConsentRequired(false)
               .accessAllowed(true)
@@ -246,9 +242,9 @@ public class CaseHandoverService {
               .policyAuthority(POLICY_AUTHORITY)
               .build(),
           CaseHandoverReason.builder()
-              .code("COUNSELLOR_LEFT")
+              .code("ASSIGNMENT_ENDED")
               .clientNotificationTemplates(
-                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("COUNSELLOR_LEFT"))
+                  DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get("ASSIGNMENT_ENDED"))
               .label("Counsellor does not work here anymore")
               .clientConsentRequired(false)
               .accessAllowed(true)
@@ -272,6 +268,7 @@ public class CaseHandoverService {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull CaseHandoverEmailNotification caseHandoverEmailNotification;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
@@ -280,12 +277,21 @@ public class CaseHandoverService {
   @Value("${case.handover.co-access-claim-duration:PT2M}")
   private Duration coAccessClaimDuration = Duration.ofMinutes(2);
 
+  private final @NonNull ConsultantRepository consultantRepository;
+
   /**
    * When topics are off, a department degenerates to the agency. When they are on, an empty topic
    * set must not widen the search to every case in the agency (#202).
    */
   @Value("${feature.topics.enabled:false}")
   private boolean topicsEnabled;
+
+  /**
+   * How long an unanswered handover offer stays open before it falls back to the offering
+   * counsellor. A case must never be parked indefinitely in a colleague's inbox.
+   */
+  @Value("${case.handover.offer.validity:PT72H}")
+  private Duration offerValidity = Duration.ofHours(72);
 
   public List<CaseHandoverReason> listReasons() {
     return listReasons(TenantContext.getCurrentTenant());
@@ -367,13 +373,16 @@ public class CaseHandoverService {
         caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc().stream()
             .collect(
                 Collectors.toMap(
-                    CaseHandoverReasonPolicy::getCode,
+                    policy -> canonicalReasonCode(policy.getCode()),
                     Function.identity(),
                     (first, ignored) -> first));
     LocalDateTime now = LocalDateTime.now(clock);
     List<CaseHandoverReasonPolicy> policiesToSave =
         requestedReasons.stream()
-            .map(reason -> toPolicy(reason, existingPolicies.get(reason.getCode()), now))
+            .map(
+                reason ->
+                    toPolicy(
+                        reason, existingPolicies.get(canonicalReasonCode(reason.getCode())), now))
             .collect(Collectors.toList());
 
     caseHandoverReasonPolicyRepository.saveAll(policiesToSave);
@@ -549,7 +558,7 @@ public class CaseHandoverService {
 
       request.setStatus(Status.GRANTED);
       request.setAuditOutcome(OUTCOME_ACCESS_GRANTED);
-      request.setAccessType(accessType(request.getReasonCode()));
+      request.setAccessType(effectiveAccessType(request));
       if (request.getAccessType() == AccessType.CO_ACCESS) {
         Integer capturedDuration = request.getMaxAccessDurationMinutes();
         if (capturedDuration == null) {
@@ -581,6 +590,452 @@ public class CaseHandoverService {
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
     notifyConsentDeclined(saved);
     return toClientStatus(saved);
+  }
+
+  /**
+   * PUSH entry point: the counsellors this case may be offered to.
+   *
+   * <p>Scoped to the AGENCY of the case, not to the offering counsellor's department. The
+   * department filter that narrows the PULL candidate search (agency × topic, #202) is wrong here:
+   * in a team agency it hides exactly the colleagues a counsellor wants to hand over to
+   * (FE#1152/#1105, plan E10). Pull asks "whose cases may I look into" — least privilege. Push asks
+   * "who in this counselling centre can take my case" — the case is already mine to give.
+   */
+  @Transactional(readOnly = true)
+  public CaseHandoverColleagueList listColleagues(
+      Long sessionId, String query, int offset, int count) {
+    Consultant owner = retrieveCurrentConsultant();
+    Session session = getSession(sessionId);
+    verifyIsActiveOwner(session, owner);
+
+    int safeOffset = Math.max(0, offset);
+    int safeCount = Math.max(1, Math.min(count, 200));
+    if (session.getAgencyId() == null) {
+      return CaseHandoverColleagueList.builder()
+          .colleagues(List.of())
+          .total(0)
+          .offset(safeOffset)
+          .count(0)
+          .build();
+    }
+
+    List<Consultant> colleagues =
+        consultantAgencyRepository
+            .findByAgencyIdAndDeleteDateIsNullOrderByConsultantFirstNameAsc(session.getAgencyId())
+            .stream()
+            .map(ConsultantAgency::getConsultant)
+            .filter(Objects::nonNull)
+            .filter(candidate -> candidate.getDeleteDate() == null)
+            .filter(candidate -> !candidate.getId().equals(owner.getId()))
+            .filter(distinctById())
+            .filter(candidate -> matchesColleagueQuery(candidate, query))
+            .collect(Collectors.toList());
+
+    List<CaseHandoverColleague> page =
+        colleagues.stream()
+            .skip(safeOffset)
+            .limit(safeCount)
+            .map(this::toColleague)
+            .collect(Collectors.toList());
+
+    return CaseHandoverColleagueList.builder()
+        .colleagues(page)
+        .total(colleagues.size())
+        .offset(safeOffset)
+        .count(page.size())
+        .build();
+  }
+
+  /**
+   * The owner offers their own case to a named colleague. Nothing changes hands yet — the case
+   * stays with the owner until the colleague accepts, which is the whole point of the direction: a
+   * counsellor going on leave should not be able to drop a case on someone who never agreed.
+   */
+  @Transactional
+  public CaseHandoverOffer createOffer(
+      Long sessionId, String targetConsultantId, String reasonCode, String explanation) {
+    Consultant owner = retrieveCurrentConsultant();
+    Session session = getSession(sessionId);
+    verifyIsActiveOwner(session, owner);
+
+    Consultant target = findColleague(targetConsultantId);
+    if (target.getId().equals(owner.getId())) {
+      throw new BadRequestException("A case cannot be handed over to its current counsellor");
+    }
+    verifyEligibleColleague(session, target);
+
+    String normalizedExplanation = normalizeExplanation(explanation);
+    CaseHandoverReason reason = findReason(session, reasonCode);
+    if (!isAccessAllowed(reason)) {
+      throw new BadRequestException("This handover reason does not allow access");
+    }
+
+    if (!openOffersFor(sessionId).isEmpty()) {
+      throw new ConflictException("This case already has an open handover offer");
+    }
+
+    LocalDateTime now = LocalDateTime.now(clock);
+    CaseHandoverRequest offer =
+        CaseHandoverRequest.builder()
+            .session(session)
+            .direction(CaseHandoverRequest.Direction.PUSH)
+            // The target is stored as the REQUESTER as well: accepting makes them the new owner,
+            // and the shared grant path (see acceptOffer) reads requesterConsultant. Keeping the
+            // two in sync here is what lets push and pull run through one code path.
+            .requesterConsultant(target)
+            .targetConsultant(target)
+            .previousConsultant(owner)
+            .reasonCode(reason.getCode())
+            .reasonLabel(reason.getLabel())
+            .explanation(normalizedExplanation)
+            .status(Status.PENDING_RECIPIENT_ACCEPT)
+            .clientConsentRequired(reason.isClientConsentRequired())
+            .policyAuthority(reason.getPolicyAuthority())
+            .auditOutcome(OUTCOME_OFFER_PENDING)
+            .createdAt(now)
+            .offerExpiresAt(now.plus(offerValidity))
+            .accessType(accessType(reason.getCode()))
+            .maxAccessDurationMinutes(maxAccessDurationMinutes(reason))
+            .tenantId(session.getTenantId())
+            .build();
+
+    CaseHandoverRequest saved = caseHandoverRequestRepository.save(offer);
+    notifyOfferCreated(saved);
+    return toOffer(saved);
+  }
+
+  /**
+   * The recipient accepts. From here on this is the ordinary grant: the same policy gate, the same
+   * client-consent state, the same Matrix join and standing-supervisor attach as {@link
+   * #requestAccess}. ADR-022 allows exactly two consent gates, so a push must not invent a third —
+   * the advice seeker is asked when, and only when, the reason policy says so.
+   */
+  @Transactional
+  public CaseHandoverStatus acceptOffer(Long offerId) {
+    Consultant recipient = retrieveCurrentConsultant();
+    CaseHandoverRequest offer = openOfferFor(offerId, recipient);
+    Session session = offer.getSession();
+    LocalDateTime now = LocalDateTime.now(clock);
+
+    if (hasAlreadyGrantedOrTakenOver(session, offer)) {
+      offer.setStatus(Status.DENIED);
+      offer.setAuditOutcome(OUTCOME_ALREADY_ANSWERED);
+      offer.setResolvedAt(now);
+      return toStatus(caseHandoverRequestRepository.save(offer));
+    }
+
+    // The consent requirement is the one frozen into the offer, not today's policy. The colleague
+    // accepted a specific promise ("the client will/will not be asked"); a policy edit in between
+    // must not silently change what they agreed to.
+    if (Boolean.TRUE.equals(offer.getClientConsentRequired())) {
+      offer.setStatus(Status.PENDING_CLIENT_CONSENT);
+      offer.setAuditOutcome(OUTCOME_PENDING_CLIENT_CONSENT);
+      CaseHandoverRequest saved = caseHandoverRequestRepository.save(offer);
+      notifyPendingConsent(saved);
+      notifyOfferAccepted(saved);
+      return toStatus(saved);
+    }
+
+    offer.setStatus(Status.GRANTED);
+    offer.setAuditOutcome(OUTCOME_ACCESS_GRANTED);
+    offer.setResolvedAt(now);
+    ensureRequesterJoinedMatrixRoom(session, recipient, offer.getPreviousConsultant());
+    offer.setAccessType(effectiveAccessType(offer));
+    if (offer.getAccessType() == AccessType.TAKEOVER) {
+      session.setConsultant(recipient);
+      session.setUpdateDate(now);
+      sessionRepository.save(session);
+      attachStandingSupervisorAfterCommit(session.getId(), recipient);
+    } else {
+      offer.setExpiresAt(
+          now.plusMinutes(
+              validateMaxAccessDuration(
+                  offer.getReasonCode(), offer.getMaxAccessDurationMinutes())));
+    }
+    CaseHandoverRequest saved = caseHandoverRequestRepository.save(offer);
+    notifyGranted(saved);
+    notifyOfferAccepted(saved);
+    return toStatus(saved);
+  }
+
+  /** The recipient says no. The case never moved, so there is nothing to roll back. */
+  @Transactional
+  public CaseHandoverOffer declineOffer(Long offerId) {
+    Consultant recipient = retrieveCurrentConsultant();
+    CaseHandoverRequest offer = openOfferFor(offerId, recipient);
+    offer.setStatus(Status.RECIPIENT_DECLINED);
+    offer.setAuditOutcome(OUTCOME_RECIPIENT_DECLINED);
+    offer.setResolvedAt(LocalDateTime.now(clock));
+    CaseHandoverRequest saved = caseHandoverRequestRepository.save(offer);
+    notifyOfferDeclined(saved);
+    return toOffer(saved);
+  }
+
+  /** The offering counsellor takes the offer back before it was answered. */
+  @Transactional
+  public CaseHandoverOffer withdrawOffer(Long offerId) {
+    Consultant owner = retrieveCurrentConsultant();
+    CaseHandoverRequest offer = findOffer(offerId);
+    Consultant offeringConsultant = offer.getPreviousConsultant();
+    if (offeringConsultant == null || !offeringConsultant.getId().equals(owner.getId())) {
+      throw new ForbiddenException("Only the offering counsellor can withdraw this offer");
+    }
+    verifyOfferIsOpen(offer);
+    offer.setStatus(Status.WITHDRAWN);
+    offer.setAuditOutcome(OUTCOME_OFFER_WITHDRAWN);
+    offer.setResolvedAt(LocalDateTime.now(clock));
+    return toOffer(caseHandoverRequestRepository.save(offer));
+  }
+
+  @Transactional(readOnly = true)
+  public List<CaseHandoverOffer> listOffers(boolean incoming) {
+    Consultant consultant = retrieveCurrentConsultant();
+    List<CaseHandoverRequest> offers =
+        incoming
+            ? caseHandoverRequestRepository.findByTargetConsultantIdAndStatusOrderByCreatedAtDesc(
+                consultant.getId(), Status.PENDING_RECIPIENT_ACCEPT)
+            : caseHandoverRequestRepository
+                .findByDirectionAndPreviousConsultantIdAndStatusOrderByCreatedAtDesc(
+                    CaseHandoverRequest.Direction.PUSH,
+                    consultant.getId(),
+                    Status.PENDING_RECIPIENT_ACCEPT);
+    return offers.stream()
+        .filter(offer -> !isExpired(offer, LocalDateTime.now(clock)))
+        .map(this::toOffer)
+        .collect(Collectors.toList());
+  }
+
+  /**
+   * Moves offers nobody answered to EXPIRED and tells the offering counsellor. Without this an
+   * offer would stay "pending" forever and the offering counsellor would keep believing the case
+   * was on its way to someone.
+   */
+  @Transactional
+  public int expireOffers() {
+    LocalDateTime now = LocalDateTime.now(clock);
+    List<CaseHandoverRequest> expired =
+        caseHandoverRequestRepository.findByStatusAndOfferExpiresAtBefore(
+            Status.PENDING_RECIPIENT_ACCEPT, now);
+    expired.forEach(
+        offer -> {
+          offer.setStatus(Status.EXPIRED);
+          offer.setAuditOutcome(OUTCOME_OFFER_EXPIRED);
+          offer.setResolvedAt(now);
+          notifyOfferExpired(caseHandoverRequestRepository.save(offer));
+        });
+    return expired.size();
+  }
+
+  private List<CaseHandoverRequest> openOffersFor(Long sessionId) {
+    LocalDateTime now = LocalDateTime.now(clock);
+    return caseHandoverRequestRepository
+        .findBySessionIdAndDirectionAndStatus(
+            sessionId, CaseHandoverRequest.Direction.PUSH, Status.PENDING_RECIPIENT_ACCEPT)
+        .stream()
+        // An offer past its window is not an obstacle even if the sweep has not run yet;
+        // otherwise a stale row would block the case until the next scheduler tick.
+        .filter(offer -> !isExpired(offer, now))
+        .collect(Collectors.toList());
+  }
+
+  private boolean isExpired(CaseHandoverRequest offer, LocalDateTime now) {
+    return offer.getOfferExpiresAt() != null && offer.getOfferExpiresAt().isBefore(now);
+  }
+
+  private CaseHandoverRequest findOffer(Long offerId) {
+    CaseHandoverRequest offer =
+        caseHandoverRequestRepository
+            .findById(offerId)
+            .orElseThrow(() -> new NotFoundException("Case handover offer not found"));
+    if (offer.getDirection() != CaseHandoverRequest.Direction.PUSH) {
+      throw new NotFoundException("Case handover offer not found");
+    }
+    return offer;
+  }
+
+  private CaseHandoverRequest openOfferFor(Long offerId, Consultant recipient) {
+    CaseHandoverRequest offer = findOffer(offerId);
+    Consultant target = offer.getTargetConsultant();
+    if (target == null || !target.getId().equals(recipient.getId())) {
+      throw new ForbiddenException("This handover offer was not made to the current consultant");
+    }
+    verifyOfferIsOpen(offer);
+    return offer;
+  }
+
+  private void verifyOfferIsOpen(CaseHandoverRequest offer) {
+    if (offer.getStatus() != Status.PENDING_RECIPIENT_ACCEPT) {
+      throw new ConflictException("This handover offer is no longer open");
+    }
+    if (isExpired(offer, LocalDateTime.now(clock))) {
+      // Resolve it here rather than leaving it for the sweep: the caller learns the real reason,
+      // and the row cannot be accepted a second later by a slower request.
+      offer.setStatus(Status.EXPIRED);
+      offer.setAuditOutcome(OUTCOME_OFFER_EXPIRED);
+      offer.setResolvedAt(LocalDateTime.now(clock));
+      caseHandoverRequestRepository.save(offer);
+      throw new ConflictException("This handover offer has expired");
+    }
+  }
+
+  private Consultant findColleague(String consultantId) {
+    if (consultantId == null || consultantId.isBlank()) {
+      throw new BadRequestException("A target consultant is required");
+    }
+    return consultantRepository
+        .findByIdAndDeleteDateIsNull(consultantId)
+        .orElseThrow(() -> new NotFoundException("Consultant not found: " + consultantId));
+  }
+
+  private void verifyIsActiveOwner(Session session, Consultant consultant) {
+    if (!isActiveOwner(session, consultant)) {
+      throw new ForbiddenException("Only the active counsellor of this case can hand it over");
+    }
+  }
+
+  private void verifyEligibleColleague(Session session, Consultant target) {
+    if (session.getAgencyId() == null
+        || !consultantAgencyIds(target).contains(session.getAgencyId())) {
+      throw new ForbiddenException(
+          "The target consultant does not work in the counselling centre of this case");
+    }
+  }
+
+  private java.util.function.Predicate<Consultant> distinctById() {
+    Set<String> seen = new HashSet<>();
+    return consultant -> seen.add(consultant.getId());
+  }
+
+  private boolean matchesColleagueQuery(Consultant consultant, String query) {
+    String normalizedQuery = normalizeSearchText(query);
+    if (normalizedQuery.isBlank()) {
+      return true;
+    }
+    return List.of(
+            nullable(decodeUsername(consultant.getUsername())),
+            nullable(decodeUsername(consultant.getInternalDisplayNameOrFallback())),
+            nullable(consultant.getFirstName()),
+            nullable(consultant.getLastName()))
+        .stream()
+        .map(this::normalizeSearchText)
+        .anyMatch(value -> value.contains(normalizedQuery));
+  }
+
+  private CaseHandoverColleague toColleague(Consultant consultant) {
+    return CaseHandoverColleague.builder()
+        .consultantId(consultant.getId())
+        .username(decodeUsername(consultant.getUsername()))
+        // Colleague pickers are an internal surface, so the internal name wins (#996).
+        .displayName(decodeUsername(consultant.getInternalDisplayNameOrFallback()))
+        .firstName(consultant.getFirstName())
+        .lastName(consultant.getLastName())
+        .absent(consultant.isAbsent())
+        .build();
+  }
+
+  private CaseHandoverOffer toOffer(CaseHandoverRequest offer) {
+    return CaseHandoverOffer.builder()
+        .offerId(offer.getId())
+        .accessType(effectiveAccessType(offer).name())
+        .sessionId(offer.getSession().getId())
+        .status(offer.getStatus().name())
+        .direction(
+            offer.getDirection() == null
+                ? CaseHandoverRequest.Direction.PULL.name()
+                : offer.getDirection().name())
+        .reasonCode(offer.getReasonCode())
+        .reasonLabel(offer.getReasonLabel())
+        .explanation(offer.getExplanation())
+        .clientConsentRequired(Boolean.TRUE.equals(offer.getClientConsentRequired()))
+        .fromConsultantId(
+            offer.getPreviousConsultant() == null ? null : offer.getPreviousConsultant().getId())
+        .fromConsultantName(resolveConsultantName(offer.getPreviousConsultant()))
+        .targetConsultantId(
+            offer.getTargetConsultant() == null ? null : offer.getTargetConsultant().getId())
+        .targetConsultantName(resolveConsultantName(offer.getTargetConsultant()))
+        .createdAt(offer.getCreatedAt())
+        .offerExpiresAt(offer.getOfferExpiresAt())
+        .resolvedAt(offer.getResolvedAt())
+        .build();
+  }
+
+  private void notifyOfferCreated(CaseHandoverRequest offer) {
+    notifyOfferParty(
+        offer,
+        offer.getTargetConsultant(),
+        "case.handover.offered",
+        "A colleague wants to hand a case over to you",
+        String.format(
+            "%s offers you case #%s. Reason: %s",
+            resolveConsultantName(offer.getPreviousConsultant()),
+            offer.getSession().getId(),
+            offer.getReasonLabel()));
+  }
+
+  private void notifyOfferAccepted(CaseHandoverRequest offer) {
+    notifyOfferParty(
+        offer,
+        offer.getPreviousConsultant(),
+        "case.handover.accepted",
+        "Your handover offer was accepted",
+        String.format(
+            "%s accepted case #%s.",
+            resolveConsultantName(offer.getTargetConsultant()), offer.getSession().getId()));
+  }
+
+  private void notifyOfferDeclined(CaseHandoverRequest offer) {
+    notifyOfferParty(
+        offer,
+        offer.getPreviousConsultant(),
+        "case.handover.declined",
+        "Your handover offer was declined",
+        String.format(
+            "%s declined case #%s. The case stays with you.",
+            resolveConsultantName(offer.getTargetConsultant()), offer.getSession().getId()));
+  }
+
+  private void notifyOfferExpired(CaseHandoverRequest offer) {
+    notifyOfferParty(
+        offer,
+        offer.getPreviousConsultant(),
+        "case.handover.expired",
+        "Your handover offer expired",
+        String.format(
+            "%s did not answer your offer for case #%s. The case stays with you.",
+            resolveConsultantName(offer.getTargetConsultant()), offer.getSession().getId()));
+  }
+
+  /**
+   * Offer notifications go to counsellors only. The advice seeker learns nothing about an offer —
+   * they are told when the case actually changes hands, or when their consent is needed, which is
+   * exactly the two moments ADR-022 provides for.
+   */
+  private void notifyOfferParty(
+      CaseHandoverRequest offer,
+      Consultant recipient,
+      String eventType,
+      String title,
+      String text) {
+    if (recipient == null || recipient.getId() == null) {
+      return;
+    }
+    Session session = offer.getSession();
+    eventNotificationService.createEvent(
+        recipient.getId(),
+        eventType,
+        EventNotificationService.CATEGORY_SYSTEM,
+        title,
+        text,
+        eventNotificationService.buildCaseHandoverOfferParams(
+            session,
+            resolveConsultantName(offer.getPreviousConsultant()),
+            resolveConsultantName(offer.getTargetConsultant()),
+            offer.getReasonCode(),
+            offer.getReasonLabel(),
+            offer.getId()),
+        buildConsultantSessionActionPath(session),
+        session.getId(),
+        session.getTenantId());
   }
 
   /**
@@ -825,7 +1280,14 @@ public class CaseHandoverService {
   }
 
   private boolean isOpenOrGranted(CaseHandoverRequest request) {
-    return List.of(Status.PENDING, Status.PENDING_CLIENT_CONSENT, Status.GRANTED)
+    // PENDING_RECIPIENT_ACCEPT belongs here: if a colleague already has an open offer for this
+    // case, a pull request from the same person must return that offer rather than open a second
+    // parallel handover for the same pair.
+    return List.of(
+                Status.PENDING,
+                Status.PENDING_CLIENT_CONSENT,
+                Status.PENDING_RECIPIENT_ACCEPT,
+                Status.GRANTED)
             .contains(request.getStatus())
         && !isExpired(request);
   }
@@ -876,18 +1338,18 @@ public class CaseHandoverService {
 
   private CaseHandoverReason findReason(
       Session session, String reasonCode, boolean includeDisabled) {
-    String normalized = reasonCode == null ? "" : reasonCode.trim().toUpperCase(Locale.ROOT);
+    String normalized = canonicalReasonCode(reasonCode);
     Long tenantId = session == null ? TenantContext.getCurrentTenant() : session.getTenantId();
     String language = session == null ? "de" : resolveSessionLanguage(session);
     return listReasons(tenantId, language, includeDisabled).stream()
-        .filter(reason -> reason.getCode().equals(normalized))
+        .filter(reason -> canonicalReasonCode(reason.getCode()).equals(normalized))
         .findFirst()
         .orElseThrow(() -> new BadRequestException("Unknown handover reason"));
   }
 
   private CaseHandoverReason toReason(CaseHandoverReasonPolicy policy) {
     return CaseHandoverReason.builder()
-        .code(policy.getCode())
+        .code(canonicalReasonCode(policy.getCode()))
         .label(policy.getLabel())
         .clientConsentRequired(Boolean.TRUE.equals(policy.getClientConsentRequired()))
         .accessAllowed(!Boolean.FALSE.equals(policy.getAccessAllowed()))
@@ -896,7 +1358,7 @@ public class CaseHandoverService {
         .policyAuthority(policy.getPolicyAuthority())
         .clientNotificationTemplates(policy.getClientNotificationTemplates())
         .maxAccessDurationMinutes(
-            ADVICE_NEEDED.equals(policy.getCode())
+            ADVICE_NEEDED.equals(canonicalReasonCode(policy.getCode()))
                 ? Optional.ofNullable(policy.getMaxAccessDurationMinutes())
                     .orElse(DEFAULT_ADVICE_ACCESS_DURATION_MINUTES)
                 : null)
@@ -908,7 +1370,7 @@ public class CaseHandoverService {
           policy,
       String language) {
     String code =
-        normalizeReasonCode(policy.getCode() == null ? null : policy.getCode().getValue());
+        canonicalReasonCode(policy.getCode() == null ? null : policy.getCode().getValue());
     Map<String, String> labels = valueOf(policy.getLabels());
     Set<String> approvalRoles =
         policy.getApprovalRoles() == null || policy.getApprovalRoles().getValue() == null
@@ -960,10 +1422,10 @@ public class CaseHandoverService {
   private int displayOrder(String code) {
     return switch (code) {
       case ADVICE_NEEDED -> 10;
-      case "COUNSELLOR_ON_HOLIDAY" -> 20;
+      case "PLANNED_ABSENCE" -> 20;
       case "OTHER_EMERGENCY" -> 30;
-      case "COUNSELLOR_IS_ILL" -> 40;
-      case "COUNSELLOR_LEFT" -> 50;
+      case "UNPLANNED_ABSENCE" -> 40;
+      case "ASSIGNMENT_ENDED" -> 50;
       default -> 100;
     };
   }
@@ -977,7 +1439,7 @@ public class CaseHandoverService {
     }
     CaseHandoverReasonPolicy policy =
         existingPolicy != null ? existingPolicy : new CaseHandoverReasonPolicy();
-    policy.setCode(code);
+    policy.setCode(existingPolicy == null ? code : existingPolicy.getCode());
     policy.setLabel(label);
     policy.setClientConsentRequired(reason.isClientConsentRequired());
     policy.setAccessAllowed(isAccessAllowed(reason));
@@ -1030,8 +1492,21 @@ public class CaseHandoverService {
     return !Boolean.FALSE.equals(reason.getAccessAllowed());
   }
 
+  private static String canonicalReasonCode(String reasonCode) {
+    String code = reasonCode == null ? "" : reasonCode.trim().toUpperCase(Locale.ROOT);
+    return switch (code) {
+      case "COUNSELLOR_ASKED_FOR_ADVICE" -> "ADVICE_REQUESTED";
+      case "COUNSELLOR_ON_HOLIDAY" -> "PLANNED_ABSENCE";
+      case "COUNSELLOR_IS_ILL" -> "UNPLANNED_ABSENCE";
+      case "COUNSELLOR_LEFT" -> "ASSIGNMENT_ENDED";
+      default -> code;
+    };
+  }
+
   private AccessType accessType(String reasonCode) {
-    return ADVICE_NEEDED.equals(reasonCode) ? AccessType.CO_ACCESS : AccessType.TAKEOVER;
+    return ADVICE_NEEDED.equals(canonicalReasonCode(reasonCode))
+        ? AccessType.CO_ACCESS
+        : AccessType.TAKEOVER;
   }
 
   private AccessType effectiveAccessType(CaseHandoverRequest request) {
@@ -1041,7 +1516,7 @@ public class CaseHandoverService {
   }
 
   private Integer maxAccessDurationMinutes(CaseHandoverReason reason) {
-    if (!ADVICE_NEEDED.equals(reason.getCode())) {
+    if (!ADVICE_NEEDED.equals(canonicalReasonCode(reason.getCode()))) {
       return null;
     }
     return reason.getMaxAccessDurationMinutes() != null
@@ -1057,7 +1532,7 @@ public class CaseHandoverService {
   }
 
   private Integer validateMaxAccessDuration(String reasonCode, Integer durationMinutes) {
-    if (!ADVICE_NEEDED.equals(reasonCode)) {
+    if (!ADVICE_NEEDED.equals(canonicalReasonCode(reasonCode))) {
       return null;
     }
     int duration =
@@ -1185,15 +1660,30 @@ public class CaseHandoverService {
   private void notifyGranted(CaseHandoverRequest request) {
     Session session = request.getSession();
     Consultant requester = request.getRequesterConsultant();
+    if (effectiveAccessType(request) == AccessType.TAKEOVER) {
+      caseHandoverEmailNotification.ownershipGranted(
+          request.getId(),
+          session.getMatrixRoomId(),
+          UUID.fromString(requester.getId()),
+          resolveConsultantName(request.getPreviousConsultant()),
+          mailTenant(session));
+    }
     String requesterName = resolveConsultantName(requester);
     ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
     boolean coAccess = effectiveAccessType(request) == AccessType.CO_ACCESS;
-    String clientDescription = coAccess
-        ? DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(ADVICE_NEEDED)
-            .getOrDefault(resolveSessionLanguage(session), DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(ADVICE_NEEDED).get("de"))
-            .replace("{{newAdvisor}}", requesterName)
-            .replace("{{duration}}", formatDuration(request.getMaxAccessDurationMinutes(), resolveSessionLanguage(session)))
-        : renderClientCopy(clientCopy.grantedDescription(), requesterName);
+    String clientDescription =
+        coAccess
+            ? DEFAULT_CLIENT_NOTIFICATION_TEMPLATES
+                .get(ADVICE_NEEDED)
+                .getOrDefault(
+                    resolveSessionLanguage(session),
+                    DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(ADVICE_NEEDED).get("de"))
+                .replace("{{newAdvisor}}", requesterName)
+                .replace(
+                    "{{duration}}",
+                    formatDuration(
+                        request.getMaxAccessDurationMinutes(), resolveSessionLanguage(session)))
+            : renderClientCopy(clientCopy.grantedDescription(), requesterName);
     postGrantedChatSystemMessage(session, requesterName, clientDescription);
     // #1010 task 1a: the explanation is counsellor-written free text that can reference case
     // content. It is no longer copied into the notification, which kept it in plaintext for good;
@@ -1210,7 +1700,11 @@ public class CaseHandoverService {
           session.getUser().getUserId(),
           "case.handover.granted",
           EventNotificationService.CATEGORY_SYSTEM,
-          coAccess ? ("en".equals(resolveSessionLanguage(session)) ? "Time-limited case review granted" : "Zeitlich begrenzter Einblick gewährt") : clientCopy.grantedTitle(),
+          coAccess
+              ? ("en".equals(resolveSessionLanguage(session))
+                  ? "Time-limited case review granted"
+                  : "Zeitlich begrenzter Einblick gewährt")
+              : clientCopy.grantedTitle(),
           clientDescription,
           clientParams,
           buildAskerSessionActionPath(session),
@@ -1391,8 +1885,21 @@ public class CaseHandoverService {
     return session.getLanguageCode().name().toLowerCase(Locale.ROOT);
   }
 
+  private TenantData mailTenant(Session session) {
+    TenantData current = TenantContext.getCurrentTenantData();
+    return new TenantData(
+        session.getTenantId(),
+        current != null && java.util.Objects.equals(current.getTenantId(), session.getTenantId())
+            ? current.getSubdomain()
+            : null);
+  }
+
   private void notifyPendingConsent(CaseHandoverRequest request) {
     Session session = request.getSession();
+    if (effectiveAccessType(request) == AccessType.TAKEOVER) {
+      caseHandoverEmailNotification.takeoverConsentRequested(
+          request.getId(), session.getMatrixRoomId(), mailTenant(session));
+    }
     if (session.getUser() == null || session.getUser().getUserId() == null) {
       return;
     }
@@ -1494,8 +2001,11 @@ public class CaseHandoverService {
           "Failed to create requester Matrix token for case handover");
     }
 
-    boolean wasMember = matrixSynapseService.getRoomMembers(roomId)
-        .map(members -> members.contains(requester.getMatrixUserId())).orElse(true);
+    boolean wasMember =
+        matrixSynapseService
+            .getRoomMembers(roomId)
+            .map(members -> members.contains(requester.getMatrixUserId()))
+            .orElse(true);
     boolean joined = matrixSynapseService.joinRoom(roomId, requesterToken);
     if (!joined) {
       throw new InternalServerErrorException(
@@ -1503,14 +2013,16 @@ public class CaseHandoverService {
     }
 
     if (!wasMember && TransactionSynchronizationManager.isSynchronizationActive()) {
-      TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
-        @Override
-        public void afterCompletion(int status) {
-          if (status == STATUS_ROLLED_BACK) {
-            matrixSynapseService.removeUserFromRoom(roomId, requester.getMatrixUserId(), previousConsultantToken);
-          }
-        }
-      });
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+              if (status == STATUS_ROLLED_BACK) {
+                matrixSynapseService.removeUserFromRoom(
+                    roomId, requester.getMatrixUserId(), previousConsultantToken);
+              }
+            }
+          });
     }
 
     // The previous counsellor deliberately keeps their membership. ADR-002's reveal lifecycle has
@@ -1524,13 +2036,13 @@ public class CaseHandoverService {
       return "A counsellor";
     }
     if (consultant.getDisplayName() != null && !consultant.getDisplayName().isBlank()) {
-      return consultant.getDisplayName();
+      return decodeUsername(consultant.getDisplayName());
     }
     if (consultant.getFullName() != null && !consultant.getFullName().isBlank()) {
       return consultant.getFullName();
     }
     if (consultant.getUsername() != null && !consultant.getUsername().isBlank()) {
-      return consultant.getUsername();
+      return decodeUsername(consultant.getUsername());
     }
     return "A counsellor";
   }
@@ -1551,9 +2063,54 @@ public class CaseHandoverService {
     private Map<String, String> clientNotificationTemplates;
     private Integer maxAccessDurationMinutes;
 
+    @com.fasterxml.jackson.annotation.JsonProperty(
+        access = com.fasterxml.jackson.annotation.JsonProperty.Access.READ_ONLY)
     public String getAccessType() {
-      return ADVICE_NEEDED.equals(code) ? AccessType.CO_ACCESS.name() : AccessType.TAKEOVER.name();
+      return ADVICE_NEEDED.equals(canonicalReasonCode(code))
+          ? AccessType.CO_ACCESS.name()
+          : AccessType.TAKEOVER.name();
     }
+  }
+
+  @Data
+  @Builder
+  public static class CaseHandoverOffer {
+    private String accessType;
+    private Long offerId;
+    private Long sessionId;
+    private String status;
+    private String direction;
+    private String reasonCode;
+    private String reasonLabel;
+    private String explanation;
+    private boolean clientConsentRequired;
+    private String fromConsultantId;
+    private String fromConsultantName;
+    private String targetConsultantId;
+    private String targetConsultantName;
+    private LocalDateTime createdAt;
+    private LocalDateTime offerExpiresAt;
+    private LocalDateTime resolvedAt;
+  }
+
+  @Data
+  @Builder
+  public static class CaseHandoverColleague {
+    private String consultantId;
+    private String username;
+    private String displayName;
+    private String firstName;
+    private String lastName;
+    private boolean absent;
+  }
+
+  @Data
+  @Builder
+  public static class CaseHandoverColleagueList {
+    private List<CaseHandoverColleague> colleagues;
+    private int total;
+    private int offset;
+    private int count;
   }
 
   @Data

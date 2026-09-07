@@ -89,16 +89,23 @@ class CaseHandoverPolicyCacheServiceTest {
 
   @Test
   void refresh_keeps180AndHolidayConsentFalseInLastKnownGoodDuringOutage() {
-    var cache = TenantCaseHandoverPolicyCache.builder().tenantId(42L)
-        .policies("{\"reasons\":{\"COUNSELLOR_ASKED_FOR_ADVICE\":{\"code\":\"COUNSELLOR_ASKED_FOR_ADVICE\",\"maxAccessDurationMinutes\":{\"value\":180}},\"COUNSELLOR_ON_HOLIDAY\":{\"code\":\"COUNSELLOR_ON_HOLIDAY\",\"clientConsentRequired\":{\"value\":false}}}}")
-        .refreshedAt(LocalDateTime.of(2026,8,16,9,0)).build();
+    var cache =
+        TenantCaseHandoverPolicyCache.builder()
+            .tenantId(42L)
+            .policies(
+                "{\"reasons\":{\"COUNSELLOR_ASKED_FOR_ADVICE\":{\"code\":\"COUNSELLOR_ASKED_FOR_ADVICE\",\"maxAccessDurationMinutes\":{\"value\":180}},\"COUNSELLOR_ON_HOLIDAY\":{\"code\":\"COUNSELLOR_ON_HOLIDAY\",\"clientConsentRequired\":{\"value\":false}}}}")
+            .refreshedAt(LocalDateTime.of(2026, 8, 16, 9, 0))
+            .build();
     when(repository.findById(42L)).thenReturn(Optional.of(cache));
-    when(tenantControllerApi.getTenantPermissionPolicies(42L)).thenThrow(new RestClientException("Synthetic outage"));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("Synthetic outage"));
 
     var reasons = service.refresh(42L).getReasons();
 
-    assertThat(reasons.get("COUNSELLOR_ASKED_FOR_ADVICE").getMaxAccessDurationMinutes().getValue()).isEqualTo(180);
-    assertThat(reasons.get("COUNSELLOR_ON_HOLIDAY").getClientConsentRequired().getValue()).isFalse();
+    assertThat(reasons.get("COUNSELLOR_ASKED_FOR_ADVICE").getMaxAccessDurationMinutes().getValue())
+        .isEqualTo(180);
+    assertThat(reasons.get("COUNSELLOR_ON_HOLIDAY").getClientConsentRequired().getValue())
+        .isFalse();
     assertThat(cache.getStaleSince()).isNotNull();
   }
 

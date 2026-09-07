@@ -319,6 +319,21 @@ public class SecurityConfig {
                     "/service/users/case-handover/candidates",
                     "/users/case-handover/batch",
                     "/service/users/case-handover/batch",
+                    /* PUSH direction: offering a case, and the colleague picker that feeds it.
+                    Same authority as the pull endpoints — who may act on a specific case is
+                    decided in CaseHandoverService (active owner / named recipient), not here.
+                    Listed before the admin-only /reason-policies and /logs matchers cannot
+                    shadow them, because none of these paths overlap. */
+                    "/users/case-handover/colleagues",
+                    "/service/users/case-handover/colleagues",
+                    "/users/case-handover/offers",
+                    "/service/users/case-handover/offers",
+                    "/users/case-handover/offers/{offerId:[0-9]+}",
+                    "/service/users/case-handover/offers/{offerId:[0-9]+}",
+                    "/users/case-handover/offers/{offerId:[0-9]+}/accept",
+                    "/service/users/case-handover/offers/{offerId:[0-9]+}/accept",
+                    "/users/case-handover/offers/{offerId:[0-9]+}/decline",
+                    "/service/users/case-handover/offers/{offerId:[0-9]+}/decline",
                     "/users/chat-series/**",
                     "/service/users/chat-series/**",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",

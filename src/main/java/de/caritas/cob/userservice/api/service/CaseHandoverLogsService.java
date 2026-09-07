@@ -75,6 +75,7 @@ public class CaseHandoverLogsService {
                 + "  chr.id AS requestId,\n"
                 + "  chr.session_id AS sessionId,\n"
                 + "  chr.status AS status,\n"
+                + "  chr.direction AS direction,\n"
                 + "  chr.audit_outcome AS auditOutcome,\n"
                 + "  chr.reason_code AS reasonCode,\n"
                 + "  chr.reason_label AS reasonLabel,\n"
@@ -88,11 +89,15 @@ public class CaseHandoverLogsService {
                 + "  COALESCE(NULLIF(req.display_name, ''), CONCAT(req.first_name, ' ', req.last_name)) AS requesterName,\n"
                 + "  chr.previous_consultant_id AS previousConsultantId,\n"
                 + "  prev.username AS previousUsername,\n"
-                + "  COALESCE(NULLIF(prev.display_name, ''), CONCAT(prev.first_name, ' ', prev.last_name)) AS previousName\n"
+                + "  COALESCE(NULLIF(prev.display_name, ''), CONCAT(prev.first_name, ' ', prev.last_name)) AS previousName,\n"
+                + "  chr.target_consultant_id AS targetConsultantId,\n"
+                + "  tgt.username AS targetUsername,\n"
+                + "  COALESCE(NULLIF(tgt.display_name, ''), CONCAT(tgt.first_name, ' ', tgt.last_name)) AS targetName\n"
                 + "FROM case_handover_request chr\n"
                 + "JOIN session s ON s.id = chr.session_id\n"
                 + "JOIN consultant req ON req.consultant_id = chr.requester_consultant_id\n"
                 + "LEFT JOIN consultant prev ON prev.consultant_id = chr.previous_consultant_id\n"
+                + "LEFT JOIN consultant tgt ON tgt.consultant_id = chr.target_consultant_id\n"
                 + "WHERE (:tenantId IS NULL OR s.tenant_id = :tenantId OR (:tenantId = 1 AND s.tenant_id IS NULL))"
                 + agencyFilter
                 + "\nORDER BY chr.created_at DESC\n"
@@ -115,6 +120,9 @@ public class CaseHandoverLogsService {
           .requestId(rs.getLong("requestId"))
           .sessionId(rs.getLong("sessionId"))
           .status(rs.getString("status"))
+          // Historical rows predate the column; the schema default covers them, but a
+          // null here would still mean "written before push existed", i.e. PULL.
+          .direction(rs.getString("direction") == null ? "PULL" : rs.getString("direction"))
           .auditOutcome(rs.getString("auditOutcome"))
           .reasonCode(rs.getString("reasonCode"))
           .reasonLabel(rs.getString("reasonLabel"))
@@ -129,6 +137,9 @@ public class CaseHandoverLogsService {
           .previousConsultantId(rs.getString("previousConsultantId"))
           .previousUsername(rs.getString("previousUsername"))
           .previousName(rs.getString("previousName"))
+          .targetConsultantId(rs.getString("targetConsultantId"))
+          .targetUsername(rs.getString("targetUsername"))
+          .targetName(rs.getString("targetName"))
           .build();
     }
   }
@@ -175,6 +186,10 @@ public class CaseHandoverLogsService {
     private Long requestId;
     private Long sessionId;
     private String status;
+
+    /** PULL (a counsellor asked for the case) or PUSH (the owner offered it). */
+    private String direction;
+
     private String auditOutcome;
     private String reasonCode;
     private String reasonLabel;
@@ -189,6 +204,9 @@ public class CaseHandoverLogsService {
     private String previousConsultantId;
     private String previousUsername;
     private String previousName;
+    private String targetConsultantId;
+    private String targetUsername;
+    private String targetName;
   }
 
   @Data

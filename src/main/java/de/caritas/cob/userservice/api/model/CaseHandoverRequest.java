@@ -9,6 +9,7 @@ import jakarta.persistence.GenerationType;
 import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.Table;
 import java.time.LocalDateTime;
 import java.util.Objects;
@@ -42,15 +43,31 @@ public class CaseHandoverRequest implements TenantAware {
   public enum Status {
     PENDING,
     PENDING_CLIENT_CONSENT,
+    /** PUSH only: the owner has offered the case, the named colleague has not answered yet. */
+    PENDING_RECIPIENT_ACCEPT,
     GRANTED,
     DENIED,
     CLIENT_CONSENT_DECLINED,
+    /** PUSH only: the colleague the case was offered to said no. The owner keeps the case. */
+    RECIPIENT_DECLINED,
+    /** PUSH only: the owner took the offer back before it was answered. */
+    WITHDRAWN,
+    /** PUSH only: nobody answered within the offer window. The owner keeps the case. */
     EXPIRED
   }
 
+  /**
+   * Who started the handover. PULL is the historical behaviour and the column default, so every row
+   * written before the push feature reads correctly without a data migration.
+   */
   public enum AccessType {
     CO_ACCESS,
     TAKEOVER
+  }
+
+  public enum Direction {
+    PULL,
+    PUSH
   }
 
   @Id
@@ -69,6 +86,24 @@ public class CaseHandoverRequest implements TenantAware {
   @ManyToOne
   @JoinColumn(name = "previous_consultant_id")
   private Consultant previousConsultant;
+
+  /**
+   * On a PUSH row this is the same consultant as {@link #requesterConsultant}: accepting makes the
+   * target the new owner, and the grant path reads the requester. The column exists separately
+   * because it is what "offered to" means in the audit log, and because it is null on every PULL
+   * row — which is how the two directions are told apart in a query.
+   */
+  @ManyToOne
+  @JoinColumn(name = "target_consultant_id")
+  private Consultant targetConsultant;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "direction", nullable = false, length = 8)
+  private Direction direction;
+
+  /** PUSH only: when an unanswered offer falls back to the owner. */
+  @Column(name = "offer_expires_at")
+  private LocalDateTime offerExpiresAt;
 
   @Column(name = "reason_code", nullable = false, length = 100)
   private String reasonCode;
@@ -110,6 +145,18 @@ public class CaseHandoverRequest implements TenantAware {
 
   @Column(name = "tenant_id")
   private Long tenantId;
+
+  /**
+   * The column is NOT NULL with a PULL default, and a builder that forgets the direction would hit
+   * that constraint instead of doing the obvious thing. Defaulting here rather than via
+   * {@code @Builder.Default} keeps the no-args constructor (Hibernate, deserialization) honest too.
+   */
+  @PrePersist
+  void defaultDirectionToPull() {
+    if (direction == null) {
+      direction = Direction.PULL;
+    }
+  }
 
   @Override
   public boolean equals(Object o) {

@@ -434,6 +434,35 @@ public class EventNotificationService {
     return serializeParams(params);
   }
 
+  /**
+   * Params for the PUSH offer events ({@code case.handover.offered/accepted/declined/expired}).
+   * Both counsellor names are carried because these events are read by the OTHER party: the
+   * recipient needs to know who is offering, the offering counsellor who answered.
+   *
+   * <p>The counsellor-written explanation is deliberately absent, as in {@link
+   * #buildCaseHandoverParams}: it is free text that can quote case content (#1010 task 1a).
+   */
+  public String buildCaseHandoverOfferParams(
+      Session session,
+      String fromConsultantName,
+      String toConsultantName,
+      String reasonCode,
+      String reasonLabel,
+      Long offerId) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "fromConsultantName", fromConsultantName);
+    putIfPresent(params, "toConsultantName", toConsultantName);
+    putIfPresent(params, "reasonCode", reasonCode);
+    putIfPresent(params, "reasonLabel", reasonLabel);
+    if (offerId != null) {
+      params.put("offerId", offerId);
+      // The offer row IS the handover request row, so anything already keyed on
+      // caseHandoverRequestId keeps working.
+      params.put("caseHandoverRequestId", offerId);
+    }
+    return serializeParams(params);
+  }
+
   private String serializeParams(Map<String, Object> params) {
     if (params == null || params.isEmpty()) {
       return null;
