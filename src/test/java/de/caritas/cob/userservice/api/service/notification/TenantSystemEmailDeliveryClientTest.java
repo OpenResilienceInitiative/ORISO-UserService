@@ -47,6 +47,36 @@ class TenantSystemEmailDeliveryClientTest {
   }
 
   @Test
+  void springSelectsTheStandardHeaderSupplierWhenTrackingSupplierAlsoExists() {
+    var trackingHeaders = mock(SecurityHeaderSupplier.class);
+    new org.springframework.boot.test.context.runner.ApplicationContextRunner()
+        .withPropertyValues("tenant.service.api.url=https://tenant.example.org")
+        .withBean(RestTemplate.class, () -> rest)
+        .withBean(IdentityAuthentication.class, () -> identity)
+        .withBean(IdentityClientConfig.class, () -> config)
+        .withBean("securityHeaderSupplier", SecurityHeaderSupplier.class, () -> headers)
+        .withBean(
+            "trackingSecurityHeaderSupplier", SecurityHeaderSupplier.class, () -> trackingHeaders)
+        .withBean(TenantSystemEmailDeliveryClient.class)
+        .run(
+            context -> {
+              assertThat(context).hasNotFailed();
+              server.expect(anything()).andRespond(withSuccess());
+              assertThat(
+                      context
+                          .getBean(TenantSystemEmailDeliveryClient.class)
+                          .send(
+                              40,
+                              TenantSystemEmailDeliveryClient.Purpose.EMAIL_ADDRESS_CHANGED,
+                              "recipient@example.org",
+                              email))
+                  .isTrue();
+              server.verify();
+              verifyNoInteractions(trackingHeaders, requestUser);
+            });
+  }
+
+  @Test
   void worksWithoutRequestContextAndSendsOnlyConstrainedContent() {
     server
         .expect(requestTo("https://tenant.example.org/tenant/40/internal/system-email-deliveries"))

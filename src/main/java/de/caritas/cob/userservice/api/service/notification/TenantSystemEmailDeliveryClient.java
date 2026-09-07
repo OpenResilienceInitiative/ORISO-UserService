@@ -25,7 +25,7 @@ public class TenantSystemEmailDeliveryClient {
   private final RestTemplate restTemplate;
   private final IdentityAuthentication identityAuthentication;
   private final IdentityClientConfig identityClientConfig;
-  private final SecurityHeaderSupplier headers;
+  private final SecurityHeaderSupplier securityHeaderSupplier;
 
   @Value("${tenant.service.api.url}")
   private String baseUrl;
@@ -48,7 +48,9 @@ public class TenantSystemEmailDeliveryClient {
                   + "/tenant/"
                   + tenantId
                   + "/internal/system-email-deliveries",
-              new HttpEntity<>(request, headers.getKeycloakAndCsrfHttpHeaders(login.accessToken())),
+              new HttpEntity<>(
+                  request,
+                  securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(login.accessToken())),
               Void.class);
       if (response.getStatusCode() == HttpStatus.NO_CONTENT) return false;
       if (response.getStatusCode() != HttpStatus.OK)
