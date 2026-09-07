@@ -18,6 +18,8 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.mail.Authenticator;
@@ -164,10 +166,31 @@ public class PasswordResetService {
     String resolvedLocale = resolveLocale(locale);
     PasswordResetApplication resolvedApplication =
         application == null ? PasswordResetApplication.APP : application;
+    TenantData currentTenant = TenantContext.getCurrentTenantData();
+    // Copy before dispatch: the request thread clears or changes its mutable context afterwards.
+    TenantData requestTenant =
+        currentTenant == null
+            ? null
+            : new TenantData(currentTenant.getTenantId(), currentTenant.getSubdomain());
     try {
       // Dispatch asynchronously so the response time does not reveal whether the account exists.
       passwordResetExecutor.execute(
-          () -> processPasswordResetRequest(username, resolvedLocale, resolvedApplication));
+          () -> {
+            TenantData previousTenant = TenantContext.getCurrentTenantData();
+            try {
+              // Missing scope stays missing; never turn a public reset into a global lookup.
+              TenantContext.clear();
+              if (requestTenant != null) {
+                TenantContext.setCurrentTenantData(requestTenant);
+              }
+              processPasswordResetRequest(username, resolvedLocale, resolvedApplication);
+            } finally {
+              TenantContext.clear();
+              if (previousTenant != null) {
+                TenantContext.setCurrentTenantData(previousTenant);
+              }
+            }
+          });
     } catch (RejectedExecutionException ex) {
       // Queue saturated (flood/overload): drop the dispatch, keep the response identical so
       // neither existence nor the drop is observable. No PII in the log.

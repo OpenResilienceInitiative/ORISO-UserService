@@ -24,13 +24,19 @@ import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettings
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -75,6 +81,84 @@ class PasswordResetServiceTest {
         (recipient, locale, resetUrl, smtpSettings) ->
             sentMails.add(new SentMail(recipient, locale, resetUrl));
     ReflectionTestUtils.setField(passwordResetService, "mailSender", capturingSender);
+  }
+
+  @Test
+  void requestPasswordReset_preservesRequestScopeAcrossWorkerAndClearsAfterFailure()
+      throws Exception {
+    var worker = Executors.newSingleThreadExecutor();
+    var observed = new CopyOnWriteArrayList<String>();
+    var releaseWorker = new CountDownLatch(1);
+    ReflectionTestUtils.setField(passwordResetService, "passwordResetExecutor", worker);
+    when(userService.findUserByUsername(anyString()))
+        .thenAnswer(
+            invocation -> {
+              observed.add(
+                  TenantContext.getCurrentTenant()
+                      + ":"
+                      + (TenantContext.getCurrentTenantData() == null
+                          ? null
+                          : TenantContext.getCurrentTenantData().getSubdomain()));
+              throw new IllegalStateException("synthetic lookup failure");
+            });
+    try {
+      worker.submit(
+          () -> {
+            releaseWorker.await(5, TimeUnit.SECONDS);
+            return null;
+          });
+      TenantContext.setCurrentTenantData(new TenantData(40L, "springfield"));
+      passwordResetService.requestPasswordReset("test-consultant", "de");
+      TenantContext.setCurrentTenant(1L);
+      TenantContext.setCurrentSubdomain("main");
+      releaseWorker.countDown();
+      worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
+      assertThat(TenantContext.getCurrentTenant()).isEqualTo(1L);
+      assertThat(worker.submit(TenantContext::getCurrentTenant).get(5, TimeUnit.SECONDS)).isNull();
+      TenantContext.clear();
+      passwordResetService.requestPasswordReset("test-consultant", "de");
+      worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
+      assertThat(observed).containsExactly("40:springfield", "null:null");
+      assertThat(worker.submit(TenantContext::getCurrentTenant).get(5, TimeUnit.SECONDS)).isNull();
+    } finally {
+      TenantContext.clear();
+      worker.shutdownNow();
+    }
+  }
+
+  @Test
+  void requestPasswordReset_keepsEachRecipientsScopeThroughMailDispatch() throws Exception {
+    var worker = Executors.newSingleThreadExecutor();
+    var deliveries = new CopyOnWriteArrayList<String>();
+    ReflectionTestUtils.setField(passwordResetService, "passwordResetExecutor", worker);
+    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
+    when(userService.findUserByUsername(anyString()))
+        .thenAnswer(
+            invocation -> {
+              User user = validUser();
+              user.setEmail(invocation.getArgument(0) + "@example.com");
+              return Optional.of(user);
+            });
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
+    PasswordResetMailSender sender =
+        (recipient, locale, resetUrl, smtp) ->
+            deliveries.add(recipient + ":" + TenantContext.getCurrentTenant());
+    ReflectionTestUtils.setField(passwordResetService, "mailSender", sender);
+    try {
+      TenantContext.setCurrentTenant(1L);
+      passwordResetService.requestPasswordReset("main-actor", "de");
+      TenantContext.setCurrentTenant(40L);
+      passwordResetService.requestPasswordReset("springfield-actor", "de");
+      worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
+      assertThat(deliveries)
+          .containsExactly("main-actor@example.com:1", "springfield-actor@example.com:40");
+      assertThat(worker.submit(TenantContext::getCurrentTenant).get(5, TimeUnit.SECONDS)).isNull();
+    } finally {
+      TenantContext.clear();
+      worker.shutdownNow();
+    }
   }
 
   private record SentMail(String recipient, String locale, String resetUrl) {}
