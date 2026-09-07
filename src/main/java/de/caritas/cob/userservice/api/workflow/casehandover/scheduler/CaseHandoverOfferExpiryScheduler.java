@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.workflow.casehandover.scheduler;
 
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
@@ -38,10 +39,14 @@ public class CaseHandoverOfferExpiryScheduler {
     if (!taskClaimService.tryClaim(TASK_NAME, claimDuration)) {
       return;
     }
-    tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
-    int expired = caseHandoverService.expireOffers();
-    if (expired > 0) {
-      log.info("Expired {} unanswered case handover offer(s)", expired);
+    try {
+      tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
+      int expired = caseHandoverService.expireOffers();
+      if (expired > 0) {
+        log.info("Expired {} unanswered case handover offer(s)", expired);
+      }
+    } finally {
+      TenantContext.clear();
     }
   }
 }

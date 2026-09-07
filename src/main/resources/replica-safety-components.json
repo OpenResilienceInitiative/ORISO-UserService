@@ -486,6 +486,54 @@
       "decision": "Leases the run through ScheduledTaskClaimService; the purge itself is an idempotent bulk delete of expired rows.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "bounded"
+    },
+    {
+      "id": "case-handover-policy-refresh",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverPolicyCacheService.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": [
+        "refreshKnownTenants"
+      ],
+      "decision": "Each tenant refresh claims a durable one-minute lease through ScheduledTaskClaimService; the shared database retains last-known-good policy on provider failure. Finite lease expiry can permit overlap if a refresh outlives its lease; this is bounded coordination, not proof of multi-replica safety.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "case-handover-co-access-expiry",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverService.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "expireCoAccessSchedule"
+      ],
+      "decision": "Claims a durable global two-minute lease before reading expired grants; expiry rows are pessimistically locked and confirmed Matrix removal precedes expired audit state. Finite lease expiry can permit overlap if work outlives its lease; external Matrix effects are not transactionally atomic, so this does not lift the replica ceiling.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "case-handover-offer-expiry",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/casehandover/scheduler/CaseHandoverOfferExpiryScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "expireOffers"
+      ],
+      "decision": "Claims a durable global ten-minute lease before expiring unanswered offers and recording notifications; tenant context is cleared on success and failure. Finite lease expiry can permit overlap if work outlives its lease, so duplicate effects under lease overrun remain outside the bounded guarantee.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
     }
   ]
 }

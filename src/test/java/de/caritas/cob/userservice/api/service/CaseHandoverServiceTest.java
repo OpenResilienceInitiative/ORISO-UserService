@@ -856,6 +856,21 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void expirySchedulerLosingLeaseDoesNotReadRowsOrChangeTenantContext() {
+    TenantContext.setCurrentTenant(77L);
+    when(scheduledTaskClaimService.tryClaim(eq("case-handover-co-access-expiry"), any()))
+        .thenReturn(false);
+    try {
+      caseHandoverService.expireCoAccessSchedule();
+      verify(caseHandoverRequestRepository, never())
+          .findByStatusAndAccessTypeAndExpiresAtLessThanEqual(any(), any(), any());
+      assertEquals(77L, TenantContext.getCurrentTenant());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
   void expiryScheduler_usesSharedLeaseAndTechnicalTenantContext() {
     when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
             any(), any(), any()))

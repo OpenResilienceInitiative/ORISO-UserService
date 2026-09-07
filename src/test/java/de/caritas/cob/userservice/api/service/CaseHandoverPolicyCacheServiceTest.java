@@ -50,6 +50,23 @@ class CaseHandoverPolicyCacheServiceTest {
   }
 
   @Test
+  void publicScheduledEntryPreservesSnapshotWhenAnotherReplicaOwnsLease() throws Exception {
+    assertThat(
+            CaseHandoverPolicyCacheService.class.getMethod("refreshKnownTenants").getReturnType())
+        .isEqualTo(void.class);
+    var cache =
+        TenantCaseHandoverPolicyCache.builder().tenantId(42L).policies("{\"reasons\":{}}").build();
+    when(repository.findAll()).thenReturn(java.util.List.of(cache));
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(scheduledTaskClaimService.tryClaim(
+            "case-handover-policy-refresh-42", java.time.Duration.ofMinutes(1)))
+        .thenReturn(false);
+    service.refreshKnownTenants();
+    verify(tenantControllerApi, never()).getTenantPermissionPolicies(any());
+    verify(repository, never()).save(any());
+  }
+
+  @Test
   void refresh_persistsOnlyTheRequestedTenantSnapshot() {
     var policies = new CaseHandoverPolicies().reasons(Map.of());
     when(repository.findById(42L)).thenReturn(Optional.empty());

@@ -80,7 +80,7 @@ public class CaseHandoverPolicyCacheService {
   }
 
   @Scheduled(fixedDelayString = "${case.handover.policy-cache-refresh-delay-ms:300000}")
-  void refreshKnownTenants() {
+  public void refreshKnownTenants() {
     repository.findAll().forEach(cache -> refresh(cache.getTenantId()));
   }
 
