@@ -39,6 +39,14 @@ class MatrixOnlyRuntimeConfigurationContractTest {
         .as("Trivy must run before the image is pushed to the registry")
         .isLessThan(publishIndex);
 
+    // The scan is opt-in: `scan_before_push` defaults to 'false' in the composite
+    // action, and this workflow is the only caller that turns it on. Asserting the
+    // action *can* scan is therefore not enough - dropping this single line would
+    // publish unscanned images to GHCR with every test still green.
+    assertThat(mainWorkflow)
+        .as("ci-main.yml must opt in to the pre-publish vulnerability scan")
+        .contains("scan_before_push: true");
+
     assertThat(mainWorkflow)
         .contains("id-token: write")
         .contains("attestations: write")
