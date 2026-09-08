@@ -134,6 +134,18 @@ public class UserService {
         .findFirst();
   }
 
+  /**
+   * Finds active and soft-deleted users for a privileged identity-lifecycle operation.
+   *
+   * <p>The caller must still fail closed unless exactly one full identity tuple matches.
+   */
+  public List<User> findUsersByUsernameIncludingDeleted(String username) {
+    return userRepository.findAllByUsernameInOrderByCreateDateAsc(
+        List.of(
+            usernameTranscoder.encodeUsername(username),
+            usernameTranscoder.decodeUsername(username)));
+  }
+
   public Optional<User> findUserByEmail(String email) {
     return userRepository.findByEmailAndDeleteDateIsNull(email);
   }

@@ -46,6 +46,7 @@ public class DeleteUserAccountService {
   private final @NonNull ActionsRegistry actionsRegistry;
   private final @NonNull WorkflowErrorMailService workflowErrorMailService;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
+  private final @NonNull UserHardDeleteClaimService userHardDeleteClaimService;
 
   /** Deletes all user accounts marked as deleted in database. */
   public void deleteUserAccounts() {
@@ -59,12 +60,23 @@ public class DeleteUserAccountService {
 
   private List<DeletionWorkflowError> deleteAskersAndCollectPossibleErrors() {
     return this.userRepository.findAllByDeleteDateNotNull().stream()
-        .map(deletionLifecycleService::normalizeUserLifecycle)
-        .peek(userRepository::save)
-        .filter(deletionLifecycleService::isReadyForHardDelete)
-        .map(this::performUserDeletion)
+        .map(User::getUserId)
+        .map(userHardDeleteClaimService::claim)
+        .flatMap(java.util.Optional::stream)
+        .map(this::performClaimedUserDeletion)
         .flatMap(Collection::stream)
         .collect(Collectors.toList());
+  }
+
+  private List<DeletionWorkflowError> performClaimedUserDeletion(User user) {
+    try {
+      return performUserDeletion(user);
+    } finally {
+      // If the final database action deleted the row this is a no-op. Otherwise at least one
+      // irreversible step may already have completed, so the retained row is retryable for hard
+      // deletion but can never become reactivation-eligible again.
+      userHardDeleteClaimService.release(user.getUserId());
+    }
   }
 
   List<DeletionWorkflowError> performUserDeletion(User user) {

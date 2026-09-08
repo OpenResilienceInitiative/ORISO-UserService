@@ -58,6 +58,20 @@ public class DeletionLifecycleService {
     transitionToReadOnlySafeguard(consultant, actorId);
   }
 
+  /** Cancels an asker deletion by clearing the complete lifecycle state. */
+  public void cancelUserDeletion(User user) {
+    if (user == null) {
+      return;
+    }
+    user.setDeleteDate(null);
+    user.setDeletionLifecycleState(DeletionLifecycleState.ACTIVE);
+    user.setDeletionReadOnlyUntil(null);
+    user.setDeletionPausedUntil(null);
+    user.setDeletionPauseReason(null);
+    user.setDeletionPausedBy(null);
+    user.setDeletionPauseCreatedAt(null);
+  }
+
   public User normalizeUserLifecycle(User user) {
     if (user == null || user.getDeleteDate() == null) {
       return user;

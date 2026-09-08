@@ -24,6 +24,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.AskerReactivationRequestDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
@@ -44,6 +45,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -58,6 +60,9 @@ class UserAdminControllerAuthorizationIT {
   private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
+  private static final String REACTIVATE_ASKER_PATH =
+      "/service/useradmin/askers/deletion/reactivate";
+  private static final String REACTIVATE_ASKER_ALIAS_PATH = "/useradmin/askers/deletion/reactivate";
 
   private static final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -74,6 +79,130 @@ class UserAdminControllerAuthorizationIT {
   @MockitoBean private AskerUserAdminFacade askerUserAdminFacade;
 
   @MockitoBean private SessionTopicEnrichmentService sessionTopicEnrichmentService;
+
+  @Test
+  void reactivateAsker_Should_ReturnUnauthorized_When_noKeycloakAuthorizationIsPresent()
+      throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isUnauthorized());
+
+    verifyNoMoreInteractions(askerUserAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void reactivateAsker_Should_ReturnForbidden_When_authorityIsNotPrivileged() throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isForbidden());
+
+    verifyNoMoreInteractions(askerUserAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void reactivateAsker_Should_ReturnNoContent_When_userAdminAuthority() throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isNoContent());
+
+    verify(askerUserAdminFacade).reactivateAsker(any());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void reactivateAskerAlias_Should_BindValidRequestAndReturnNoContent() throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_ALIAS_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isNoContent());
+
+    verify(askerUserAdminFacade).reactivateAsker(any());
+  }
+
+  /**
+   * The alias is a second URI onto the same handler, so it needs its own authorization coverage:
+   * the security matchers are URI-based and can drift apart from the canonical path.
+   */
+  @Test
+  void reactivateAskerAlias_Should_ReturnUnauthorized_When_noKeycloakAuthorizationIsPresent()
+      throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_ALIAS_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isUnauthorized());
+
+    verifyNoInteractions(askerUserAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void reactivateAskerAlias_Should_ReturnForbidden_When_authorityIsNotPrivileged()
+      throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_ALIAS_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isForbidden());
+
+    verifyNoInteractions(askerUserAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void reactivateAskerAlias_Should_RejectInvalidRequestBeforeFacadeCall() throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_ALIAS_PATH).contentType(MediaType.APPLICATION_JSON).content("{}"))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(askerUserAdminFacade);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void reactivateAsker_Should_ReturnForbidden_When_userAdminCrossesTenantScope() throws Exception {
+    doThrow(new AccessDeniedException("cross-tenant request"))
+        .when(askerUserAdminFacade)
+        .reactivateAsker(any());
+
+    mvc.perform(
+            post(REACTIVATE_ASKER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isForbidden());
+
+    verify(askerUserAdminFacade).reactivateAsker(any());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TECHNICAL_DEFAULT})
+  void reactivateAsker_Should_ReturnNoContent_When_technicalAuthority() throws Exception {
+    mvc.perform(
+            post(REACTIVATE_ASKER_PATH)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsBytes(reactivationRequest())))
+        .andExpect(status().isNoContent());
+
+    verify(askerUserAdminFacade).reactivateAsker(any());
+  }
+
+  private static AskerReactivationRequestDTO reactivationRequest() {
+    var request = new AskerReactivationRequestDTO();
+    request.setUsername("marge.simpson@dreambau.de");
+    request.setEmail("marge.simpson@dreambau.de");
+    request.setTenantId(40L);
+    request.setPassword("NewPassw0rd!");
+    return request;
+  }
 
   @Test
   void getSessions_Should_ReturnUnauthorizedAndCallNoMethods_When_noKeycloakAuthorizationIsPresent()

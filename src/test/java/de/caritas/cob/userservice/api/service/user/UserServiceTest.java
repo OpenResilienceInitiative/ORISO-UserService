@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.model.UserMobileToken;
 import de.caritas.cob.userservice.api.port.out.UserMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import java.util.List;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
@@ -93,6 +94,20 @@ class UserServiceTest {
 
     assertTrue(result.isPresent());
     assertEquals(USER, result.get());
+  }
+
+  @Test
+  void findUsersByUsernameIncludingDeleted_ShouldQueryEncodedAndDecodedFormsWithoutDeleteFilter() {
+    when(userRepository.findAllByUsernameInOrderByCreateDateAsc(any())).thenReturn(List.of(USER));
+
+    var result = userService.findUsersByUsernameIncludingDeleted("marge.simpson@dreambau.de");
+
+    assertEquals(List.of(USER), result);
+    verify(userRepository)
+        .findAllByUsernameInOrderByCreateDateAsc(
+            List.of(
+                new UsernameTranscoder().encodeUsername("marge.simpson@dreambau.de"),
+                "marge.simpson@dreambau.de"));
   }
 
   @Test

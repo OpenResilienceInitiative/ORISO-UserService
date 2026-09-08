@@ -32,12 +32,15 @@ import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.DeleteAccountStatisticsEvent;
+import de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import java.util.Optional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -197,6 +200,9 @@ public class UserAccountServiceTest {
     consultant.setEmail("newMail");
     verify(this.consultantService, times(1)).saveConsultant(consultant);
     verify(this.userService, times(2)).getUser(any());
+    // getUser cannot return a soft-deleted account, so the writability guard falls back to the
+    // lookup that can.
+    verify(this.userService).findDeletedById(any());
     verifyNoMoreInteractions(this.userService);
     verifyNoInteractions(userHelper);
   }
@@ -257,6 +263,7 @@ public class UserAccountServiceTest {
     consultant.setEmail(dummyEmail);
     verify(consultantService).saveConsultant(consultant);
     verify(userService, times(2)).getUser(any());
+    verify(userService).findDeletedById(any());
     verifyNoMoreInteractions(userService);
   }
 
@@ -333,18 +340,48 @@ public class UserAccountServiceTest {
     verify(userService, never()).saveUser(any());
   }
 
-  @Test
-  public void
-      ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_UserIsInReadOnlySafeguard() {
+  /**
+   * Every one of these goes through findDeletedById, not getUser. getUser is
+   * findByUserIdAndDeleteDateIsNull, so it cannot return a soft-deleted account — stubbing it with
+   * one forces a result production can never produce and the safeguard would pass while never
+   * running.
+   */
+  @ParameterizedTest
+  @EnumSource(
+      value = DeletionLifecycleState.class,
+      names = {
+        "READ_ONLY_SAFEGUARD",
+        "REACTIVATION_IN_PROGRESS",
+        "REACTIVATION_REPAIR_REQUIRED",
+        "HARD_DELETE_IN_PROGRESS",
+        "HARD_DELETE_PARTIAL_FAILURE"
+      })
+  void ensureCurrentAccountIsWritable_Should_ThrowForbiddenException_When_UserIsFrozen(
+      DeletionLifecycleState frozenState) {
     var user = new User();
     user.setDeleteDate(java.time.LocalDateTime.now());
-    user.setDeletionLifecycleState(
-        de.caritas.cob.userservice.api.workflow.delete.model.DeletionLifecycleState
-            .READ_ONLY_SAFEGUARD);
+    user.setDeletionLifecycleState(frozenState);
     when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(userService.getUser(USER_ID)).thenReturn(Optional.of(user));
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+    when(userService.findDeletedById(USER_ID)).thenReturn(Optional.of(user));
 
     assertThrows(ForbiddenException.class, () -> accountProvider.updateUserMobileToken("token"));
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = DeletionLifecycleState.class,
+      names = {"PENDING_DELETION", "HARD_DELETED"})
+  void ensureCurrentAccountIsWritable_Should_NotThrow_When_LifecycleStateIsNotFrozen(
+      DeletionLifecycleState writableState) {
+    var user = new User();
+    user.setDeleteDate(java.time.LocalDateTime.now());
+    user.setDeletionLifecycleState(writableState);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.empty());
+    when(userService.findDeletedById(USER_ID)).thenReturn(Optional.of(user));
+
+    accountProvider.updateUserMobileToken("token");
   }
 
   @Test

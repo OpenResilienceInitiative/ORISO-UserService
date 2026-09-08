@@ -15,6 +15,8 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.CustomHttpHeader;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationCompensationException;
+import de.caritas.cob.userservice.api.exception.identity.IdentityReactivationUpstreamException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
@@ -36,6 +38,7 @@ import org.springframework.http.HttpStatusCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.lang.Nullable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ControllerAdvice;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -75,6 +78,30 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     log.error("Distributed transaction failed to complete", ex);
     return handleExceptionInternal(
         ex, null, ex.getCustomHttpHeaders(), HttpStatus.FAILED_DEPENDENCY, request);
+  }
+
+  @ExceptionHandler({IdentityReactivationUpstreamException.class})
+  public ResponseEntity<Object> handleIdentityReactivationUpstreamFailure(
+      final IdentityReactivationUpstreamException ex, final WebRequest request) {
+    log.error("Keycloak identity reactivation failed", ex);
+    return handleExceptionInternal(
+        ex,
+        reasonBody("IDENTITY_REACTIVATION_UPSTREAM_FAILED"),
+        new HttpHeaders(),
+        HttpStatus.BAD_GATEWAY,
+        request);
+  }
+
+  @ExceptionHandler({IdentityReactivationCompensationException.class})
+  public ResponseEntity<Object> handleIdentityReactivationCompensationFailure(
+      final IdentityReactivationCompensationException ex, final WebRequest request) {
+    log.error("Keycloak identity reactivation compensation failed", ex);
+    return handleExceptionInternal(
+        ex,
+        reasonBody("IDENTITY_REACTIVATION_COMPENSATION_FAILED"),
+        new HttpHeaders(),
+        HttpStatus.FAILED_DEPENDENCY,
+        request);
   }
 
   @ExceptionHandler({CreateEnquiryMessageException.class})
@@ -275,6 +302,14 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
       final ForbiddenException ex, final WebRequest request) {
     ex.executeLogging();
 
+    return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.FORBIDDEN, request);
+  }
+
+  /** Maps service-layer tenant-scope denials to the same explicit 403 contract as role denials. */
+  @ExceptionHandler({AccessDeniedException.class})
+  public ResponseEntity<Object> handleAccessDenied(
+      final AccessDeniedException ex, final WebRequest request) {
+    log.warn("Access denied by service-layer scope validation: {}", ex.getMessage());
     return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.FORBIDDEN, request);
   }
 
