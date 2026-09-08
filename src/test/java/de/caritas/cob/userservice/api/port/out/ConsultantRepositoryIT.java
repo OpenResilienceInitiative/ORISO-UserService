@@ -109,6 +109,36 @@ class ConsultantRepositoryIT {
   }
 
   @Test
+  void findByAgencyIdShouldExcludeConsultantsWhoseAgencyRelationIsSoftDeleted() {
+    var consultantId = originalConsultant.getId();
+    saveConsultantAgency(originalConsultant, 900003L);
+    saveConsultantAgency(originalConsultant, 900004L);
+    var removed =
+        originalConsultant.getConsultantAgencies().stream()
+            .filter(relation -> relation.getAgencyId().equals(900004L))
+            .findFirst()
+            .orElseThrow();
+    removed.setDeleteDate(LocalDateTime.now());
+    consultantAgencyRepository.save(removed);
+    entityManager.flush();
+    entityManager.clear();
+
+    var stillAssigned = underTest.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(900003L);
+    assertTrue(stillAssigned.stream().anyMatch(found -> found.getId().equals(consultantId)));
+
+    var removedAssignment = underTest.findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(900004L);
+    assertFalse(removedAssignment.stream().anyMatch(found -> found.getId().equals(consultantId)));
+
+    var byRemovedAgencyOnly =
+        underTest.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(900004L));
+    assertFalse(byRemovedAgencyOnly.stream().anyMatch(found -> found.getId().equals(consultantId)));
+
+    var byBothAgencies =
+        underTest.findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List.of(900003L, 900004L));
+    assertTrue(byBothAgencies.stream().anyMatch(found -> found.getId().equals(consultantId)));
+  }
+
+  @Test
   void deleteShouldDeleteConsultantAndAppointment() {
     givenACreatedConsultantWithAnAppointment();
 
