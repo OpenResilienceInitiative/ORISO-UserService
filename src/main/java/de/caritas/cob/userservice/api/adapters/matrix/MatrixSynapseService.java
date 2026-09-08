@@ -746,15 +746,15 @@ public class MatrixSynapseService implements MatrixUserClient {
   /**
    * Purges a Matrix room and its message history via the Synapse admin API.
    *
-   * <p>A room Synapse no longer knows counts as a failure here, which is what the account and chat
-   * deletion workflows expect. Callers that must not orphan a still-existing room but may forget a
-   * vanished one use {@link #purgeRoomOrConfirmGone(String)} instead.
+   * <p>A room Synapse does not know (404) counts as purged: the goal of every caller is that the
+   * room no longer exists, and that is already the case (#1118). Callers that need to tell the two
+   * apart use {@link #purgeRoomOrConfirmGone(String)}.
    *
    * @param matrixRoomId the Matrix room ID
-   * @return true if successful, false otherwise
+   * @return true if the room is gone, false otherwise
    */
   public boolean purgeRoom(String matrixRoomId) {
-    return purgeRoomOrConfirmGone(matrixRoomId) == RoomPurgeOutcome.PURGED;
+    return purgeRoomOrConfirmGone(matrixRoomId) != RoomPurgeOutcome.FAILED;
   }
 
   /**
