@@ -37,6 +37,20 @@ public class OrisoEmailRenderer {
 
   private static final Pattern PLACEHOLDER = Pattern.compile("\\{\\{\\s*([\\w.]+)\\s*}}");
 
+  /**
+   * The header's logo cell. The templates carry a single {@code {{logoCell}}} token where the
+   * design system places the logo, and this is the markup that token expands to when a logo URL is
+   * configured. When {@code logoUrl} is blank the token expands to nothing at all: an {@code <img
+   * src="">} renders as a broken-image icon next to the platform name, so the text wordmark has to
+   * carry the header alone. The dialect has no conditional syntax — this constant is the one
+   * conditional the mails need, and it stays in the renderer so the markup remains e-mail-client
+   * table markup reviewed together with the templates.
+   */
+  private static final String LOGO_CELL =
+      "<td width=\"36\" valign=\"middle\" style=\"width:36px;padding-right:12px;\">"
+          + "<img src=\"{{logoUrl}}\" width=\"36\" height=\"36\" alt=\"{{platformName}}\""
+          + " style=\"display:block;width:36px;height:36px;border:0;border-radius:8px;\"></td>";
+
   private final Map<String, String> templateCache = new ConcurrentHashMap<>();
 
   private final JsonNode catalogue;
@@ -82,7 +96,7 @@ public class OrisoEmailRenderer {
    */
   public RenderedEmail render(String templateId, Tone tone, Map<String, String> values) {
     values = withOccasionOnUnsubscribeLink(templateId, values);
-    String html = substitute(read(templateId, tone, "html"), values, true);
+    String html = substitute(withLogoCell(read(templateId, tone, "html"), values), values, true);
     String text = substitute(read(templateId, tone, "txt"), values, false);
     String subject = substitute(subjectOf(templateId, tone), values, false);
     return new RenderedEmail(subject, html, text);
@@ -156,6 +170,16 @@ public class OrisoEmailRenderer {
     } catch (IOException exception) {
       throw new IllegalStateException("could not read emails/catalogue.json", exception);
     }
+  }
+
+  /**
+   * Expands {@code {{logoCell}}} to the logo image cell, or to nothing when no logo URL is
+   * configured. Runs before {@link #substitute}, so the {@code {{logoUrl}}} and {@code
+   * {{platformName}}} inside the expanded markup are filled — and escaped — like any other
+   * placeholder.
+   */
+  private String withLogoCell(String html, Map<String, String> values) {
+    return html.replace("{{logoCell}}", isNotBlank(values.get("logoUrl")) ? LOGO_CELL : "");
   }
 
   /**

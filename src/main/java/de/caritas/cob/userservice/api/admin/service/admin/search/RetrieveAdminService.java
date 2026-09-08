@@ -67,6 +67,20 @@ public class RetrieveAdminService {
     return adminRepository.findAllByInfixAndAgencyIds(infix, adminType, agencyIds, pageRequest);
   }
 
+  /**
+   * Infix search scoped to a single tenant. Used to prevent a tenant-bound admin from enumerating
+   * admins of other tenants through the /useradmin/tenantadmins/search and
+   * /useradmin/agencyadmins/search endpoints (#968). A null caller tenant means no visible admins,
+   * mirroring the empty-scope semantics of {@link #findAllByInfixScopedToAgencies}.
+   */
+  public Page<AdminBase> findAllByInfixScopedToTenant(
+      String infix, Admin.AdminType adminType, Long tenantId, PageRequest pageRequest) {
+    if (tenantId == null) {
+      return Page.empty(pageRequest);
+    }
+    return adminRepository.findAllByInfixAndTenantId(infix, adminType, tenantId, pageRequest);
+  }
+
   public List<Admin> findAllById(Set<String> adminIds) {
     return adminRepository.findAllByIdIn(adminIds);
   }

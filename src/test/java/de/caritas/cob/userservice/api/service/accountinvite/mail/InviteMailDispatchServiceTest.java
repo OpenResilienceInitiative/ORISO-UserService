@@ -150,6 +150,7 @@ class InviteMailDispatchServiceTest {
         .doesNotContain("f8e71c");
   }
 
+  /** #1006: a disabled toggle must be named, not folded into a generic "incomplete" failure. */
   @Test
   void send_Should_throwSmtpSendException_When_SmtpDisabled() {
     when(restTemplate.getForObject(anyString(), any()))
@@ -159,18 +160,225 @@ class InviteMailDispatchServiceTest {
                 "globalSmtpEnabled", Map.of("value", false)));
 
     assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
-        .isInstanceOf(SmtpSendException.class);
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpEnabled is disabled")
+        .isInstanceOfSatisfying(
+            SmtpSendException.class,
+            e ->
+                assertThat(e.getCategory())
+                    .isEqualTo(SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE));
     verifyNoInteractions(inviteMailTransport);
   }
 
+  /** Review 3893223709: an absent toggle must not be reported as "disabled". */
+  @Test
+  void send_Should_reportToggleMissing_When_SmtpEnabledIsAbsent() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.remove("globalSmtpEnabled");
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpEnabled is missing or not a boolean")
+        .hasMessageNotContaining("globalSmtpEnabled is disabled");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** Review 3893223709: a malformed toggle must not be reported as "disabled" either. */
+  @Test
+  void send_Should_reportToggleMalformed_When_SmtpEnabledIsNotABoolean() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.put("globalSmtpEnabled", Map.of("value", "banana"));
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpEnabled is missing or not a boolean")
+        .hasMessageNotContaining("globalSmtpEnabled is disabled");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** Review 3893223709: same nullable-boolean rule for the system-emails feature toggle. */
+  @Test
+  void send_Should_reportToggleMissing_When_SystemEmailsToggleIsAbsent() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.remove("globalFeatureSystemNotificationEmailsEnabled");
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining(
+            "globalFeatureSystemNotificationEmailsEnabled is missing or not a boolean");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /**
+   * Review 3893323639: the secure toggle gets the same strict nullable treatment — an absent value
+   * must not silently pick STARTTLS over implicit TLS.
+   */
+  @Test
+  void send_Should_reportToggleMissing_When_SecureToggleIsAbsent() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.remove("globalSmtpSecure");
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpSecure is missing or not a boolean");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** Review 3893323639: a malformed secure toggle is a config defect, not "false". */
+  @Test
+  void send_Should_reportToggleMalformed_When_SecureToggleIsNotABoolean() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.put("globalSmtpSecure", Map.of("value", "sometimes"));
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpSecure is missing or not a boolean")
+        .isInstanceOfSatisfying(
+            SmtpSendException.class,
+            e ->
+                assertThat(e.getCategory())
+                    .isEqualTo(SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE));
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /**
+   * Review 3893223709: 0, negative, out-of-range and fractional ports must fail here with a
+   * field-specific message, not later in transport.
+   */
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("invalidPorts")
+  void send_Should_rejectInvalidPort_When_PortIsNotAValidTcpPort(Object invalidPort) {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.put("globalSmtpPort", Map.of("value", invalidPort));
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpPort is not a valid TCP port (1-65535)");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  static java.util.stream.Stream<Object> invalidPorts() {
+    return java.util.stream.Stream.of(0, -25, 70000, 587.5d, "0", "-25", "70000");
+  }
+
+  /** Review 3893223709: an absent port keeps its distinct "missing" diagnosis. */
+  @Test
+  void send_Should_reportPortMissing_When_PortIsAbsent() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.remove("globalSmtpPort");
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpPort is missing or not a number");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** #1006: only the offending flag is reported when everything else is configured. */
+  @Test
+  void send_Should_nameTheDisabledFlag_When_SystemNotificationEmailsDisabled() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.put("globalFeatureSystemNotificationEmailsEnabled", Map.of("value", false));
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalFeatureSystemNotificationEmailsEnabled")
+        .hasMessageNotContaining("globalSmtpHost");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** #1006: a missing connection field is named so the operator knows what to configure. */
+  @Test
+  void send_Should_nameTheMissingField_When_SmtpHostIsMissing() {
+    var payload = new java.util.HashMap<>(completeSettingsPayload());
+    payload.remove("globalSmtpHost");
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(payload);
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("globalSmtpHost")
+        .hasMessageNotContaining("globalSmtpFrom");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** #1006: an unreachable settings endpoint is distinguished from bad configuration. */
   @Test
   void send_Should_throwSmtpSendException_When_SettingsEndpointUnreachable() {
     when(restTemplate.getForObject(anyString(), any()))
         .thenThrow(new org.springframework.web.client.ResourceAccessException("down"));
 
     assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
-        .isInstanceOf(SmtpSendException.class);
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("could not be reached")
+        .hasMessageContaining("ResourceAccessException")
+        .hasCauseInstanceOf(org.springframework.web.client.ResourceAccessException.class)
+        .isInstanceOfSatisfying(
+            SmtpSendException.class,
+            e ->
+                assertThat(e.getCategory())
+                    .isEqualTo(SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE));
     verifyNoInteractions(inviteMailTransport);
+  }
+
+  /**
+   * Review 3893231991: an HTTP error means the endpoint WAS reached — the diagnosis must carry the
+   * status code, not claim unreachability.
+   */
+  @Test
+  void send_Should_reportHttpStatus_When_SettingsEndpointRespondsWithError() {
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenThrow(
+            org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.FORBIDDEN, "Forbidden", null, null, null));
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("responded with HTTP 403")
+        .hasMessageNotContaining("could not be reached")
+        .isInstanceOfSatisfying(
+            SmtpSendException.class,
+            e ->
+                assertThat(e.getCategory())
+                    .isEqualTo(SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE));
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** #1006: an empty payload is its own diagnosis, not a generic failure. */
+  @Test
+  void send_Should_sayPayloadEmpty_When_SettingsEndpointReturnsNothing() {
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(Map.of());
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("empty");
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  /** #1006: a missing base URL is a deployment defect and must be named as such. */
+  @Test
+  void send_Should_nameTheMissingProperty_When_ConsultingTypeServiceUrlNotConfigured() {
+    var serviceWithoutUrl =
+        new InviteMailDispatchService(
+            restTemplate,
+            applicationSettingsService,
+            inviteMailTransport,
+            emailBrandingResolver,
+            renderer,
+            "",
+            "u",
+            "p");
+
+    assertThatThrownBy(() -> serviceWithoutUrl.send("to@example.org", "s", "b"))
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("consulting.type.service.api.url");
+    verifyNoInteractions(inviteMailTransport, restTemplate);
   }
 
   @Test
@@ -196,13 +404,26 @@ class InviteMailDispatchServiceTest {
             anyString());
   }
 
+  /**
+   * #1006: the credentials failure must tell the operator both ways out — set the deployment secret
+   * (the supported configuration) or send with a platform-admin token. Never a generic "unavailable
+   * or incomplete".
+   */
   @Test
   void send_Should_throwSmtpSendException_When_NoCredentialsAnywhere() {
     when(restTemplate.getForObject(anyString(), any())).thenReturn(completeSettingsPayload());
     when(applicationSettingsService.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service("", "").send("to@example.org", "s", "b"))
-        .isInstanceOf(SmtpSendException.class);
+        .isInstanceOf(SmtpSendException.class)
+        .hasMessageContaining("SMTP_USER")
+        .hasMessageContaining("SMTP_PASSWORD")
+        .hasMessageContaining("platform-admin")
+        .isInstanceOfSatisfying(
+            SmtpSendException.class,
+            e ->
+                assertThat(e.getCategory())
+                    .isEqualTo(SmtpSendException.Category.SMTP_CREDENTIALS_MISSING));
     verifyNoInteractions(inviteMailTransport);
   }
 
@@ -215,6 +436,12 @@ class InviteMailDispatchServiceTest {
 
     assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
         .isInstanceOf(SmtpSendException.class)
-        .hasMessageContaining("handover failed");
+        .hasMessageContaining("handover failed")
+        // Review 3893231984: transport failures keep the default coarse category.
+        .isInstanceOfSatisfying(
+            SmtpSendException.class,
+            e ->
+                assertThat(e.getCategory())
+                    .isEqualTo(SmtpSendException.Category.SMTP_TRANSPORT_FAILED));
   }
 }

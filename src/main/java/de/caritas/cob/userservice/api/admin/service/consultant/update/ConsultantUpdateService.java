@@ -251,6 +251,17 @@ public class ConsultantUpdateService {
               + assignedSupervisorId
               + " cannot be a standing supervisor (isSupervisor is false)");
     }
+    // A platform admin sees consultants across tenants, so nothing above stops a cross-tenant
+    // assignment. Storing one is worse than rejecting it: attachStandingSupervisorIfAssigned is
+    // best-effort and swallows the failure, so the case would run unsupervised while the admin
+    // board shows a supervisor. Objects.equals covers single-tenant deployments, where both ids
+    // are null.
+    if (!java.util.Objects.equals(consultant.getTenantId(), standingSupervisor.getTenantId())) {
+      throw new BadRequestException(
+          "Consultant "
+              + assignedSupervisorId
+              + " cannot be a standing supervisor (different tenant)");
+    }
     consultant.setAssignedSupervisorId(assignedSupervisorId);
   }
 

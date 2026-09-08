@@ -118,4 +118,27 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
 
   List<AccountInvite> findAllByAcceptedByUserIdAndTwoFactorStatus(
       String acceptedByUserId, TwoFactorGateStatus twoFactorStatus);
+
+  /**
+   * Newest onboarding invite of the tenant that forwarded the DPA from the pre-account wizard — the
+   * recipient anchor for its DPA_SIGNED_NOTICE (ORISO-UserService#1005).
+   */
+  Optional<AccountInvite>
+      findFirstByTenantIdAndTargetRoleAndDpaForwardedAtIsNotNullOrderByDpaForwardedAtDesc(
+          Long tenantId, AccountInviteTargetRole targetRole);
+
+  /**
+   * Writes the tenant's DPA signature timestamp back to its invites so the Admin invite progress
+   * board can prove the final "Vertrag unterschrieben" phase (ORISO-Admin#896, epic #725).
+   * Idempotent by construction: only rows whose {@code dpa_signed_at} is still null are touched, so
+   * repeated signature notices can never regress or overwrite an existing timestamp.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.dpaSignedAt = :signedAt WHERE i.tenantId = :tenantId"
+          + " AND i.targetRole = :targetRole AND i.dpaSignedAt IS NULL")
+  int markDpaSigned(
+      @Param("tenantId") Long tenantId,
+      @Param("targetRole") AccountInviteTargetRole targetRole,
+      @Param("signedAt") LocalDateTime signedAt);
 }

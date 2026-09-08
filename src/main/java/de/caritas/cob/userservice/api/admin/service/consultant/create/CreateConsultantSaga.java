@@ -53,6 +53,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
 
 /** Creates consultants in the identity provider, Matrix and the application database. */
 @Service
@@ -484,27 +485,73 @@ public class CreateConsultantSaga {
     return userDto;
   }
 
+  /**
+   * Enforces the tenant's licensed user limit, when one is configured.
+   *
+   * <p>{@code TenantDTO.licensing} is optional in the tenant admin contract: every tenant created
+   * through the invite flow has {@code licensing_allowed_users = NULL} — only the seed tenant
+   * carries a number. A missing cap therefore means <em>no limit</em> and must not refuse creation;
+   * unboxing it straight into the comparison used to kill consultant creation for every new tenant
+   * with a bare 500, and the previous {@code assert nonNull(...)} guard never executed in
+   * production because the JVM strips assertions unless it is started with {@code -ea}.
+   *
+   * <p>Only states in which the limit cannot be established at all refuse creation: an unresolvable
+   * tenant id is a plain 400, and an unreadable tenant is reported as a named {@code
+   * TENANT_LICENSING_NOT_CONFIGURED} 400 that the admin UI can render — silently treating a
+   * TenantService outage as "unlimited" would let creations slip past a limit that is merely
+   * unreadable at that moment.
+   */
   private void assertLicensesNotExceeded(CreateConsultantDTO createConsultantDTO) {
-    if (multiTenancyEnabled) {
-      TenantDTO tenantById = tenantAdminService.getTenantById(createConsultantDTO.getTenantId());
-      // Licenses are counted per tenant, so always scope the active-consultant count to the
-      // target tenant. Relying on the ambient tenant filter for the current context counts
-      // consultants across all tenants, which falsely triggers NUMBER_OF_LICENSES_EXCEEDED when a
-      // tenant admin creates a consultant.
-      long numberOfActiveConsultants =
-          consultantService.getNumberOfActiveConsultants(createConsultantDTO.getTenantId());
+    if (!multiTenancyEnabled) {
+      return;
+    }
 
-      // No configured limit means no limit. Every tenant created through the invite flow has
-      // `licensing_allowed_users = NULL` — only the seed tenant carries a number — so unboxing it
-      // straight into the comparison killed consultant creation for every new tenant with a bare
-      // 500. The previous `assert nonNull(...)` guard could not catch that: Java disables
-      // assertions at runtime unless `-ea` is passed, so it never executed in production.
-      var licensing = tenantById.getLicensing();
-      Integer allowedNumberOfUsers = isNull(licensing) ? null : licensing.getAllowedNumberOfUsers();
-      if (nonNull(allowedNumberOfUsers) && numberOfActiveConsultants >= allowedNumberOfUsers) {
-        throw new CustomValidationHttpStatusException(
-            HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED);
-      }
+    var tenantId = createConsultantDTO.getTenantId();
+    if (isNull(tenantId)) {
+      // ensureTenantIdResolved only throws for a superadmin (global) context, so a request whose
+      // tenant is in neither the body, the access token nor the tenant context reaches here with
+      // nothing resolved. Everything below is tenant-scoped: the lookup would be a doomed remote
+      // call with a null id, and its failure would then be misreported as a licensing problem.
+      throw new BadRequestException(
+          "TenantId could not be resolved for the consultant to be created");
+    }
+
+    TenantDTO tenant;
+    try {
+      tenant = tenantAdminService.getTenantById(tenantId);
+    } catch (RestClientException exception) {
+      log.warn(
+          "TenantService could not be reached for tenant {}; refusing consultant creation because"
+              + " its licensed user limit cannot be established.",
+          tenantId,
+          exception);
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED);
+    }
+    if (isNull(tenant)) {
+      log.warn(
+          "TenantService returned no tenant {}; refusing consultant creation because its licensed"
+              + " user limit cannot be established.",
+          tenantId);
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED);
+    }
+
+    // No configured limit means no limit — the invite-flow default, see the javadoc above.
+    var licensing = tenant.getLicensing();
+    Integer allowedNumberOfUsers = isNull(licensing) ? null : licensing.getAllowedNumberOfUsers();
+    if (isNull(allowedNumberOfUsers)) {
+      return;
+    }
+
+    // Licenses are counted per tenant, so always scope the active-consultant count to the
+    // target tenant. Relying on the ambient tenant filter for the current context counts
+    // consultants across all tenants, which falsely triggers NUMBER_OF_LICENSES_EXCEEDED when a
+    // tenant admin creates a consultant.
+    long numberOfActiveConsultants = consultantService.getNumberOfActiveConsultants(tenantId);
+    if (numberOfActiveConsultants >= allowedNumberOfUsers) {
+      throw new CustomValidationHttpStatusException(
+          HttpStatusExceptionReason.NUMBER_OF_LICENSES_EXCEEDED);
     }
   }
 

@@ -98,6 +98,51 @@ public class TenantAdminOnboardingController {
   }
 
   /**
+   * Wizard step 1 "I am not authorised to sign" (ORISO-Admin#722): creates a DPA sign link for the
+   * invite's reserved tenant and — when a recipient address is given — delivers it by mail. The
+   * invite token in the path is the credential, exactly like the other onboarding endpoints.
+   */
+  @PostMapping({
+    "/users/account-invites/{token}/onboarding/dpa-forward",
+    "/service/users/account-invites/{token}/onboarding/dpa-forward"
+  })
+  public ResponseEntity<DpaForwardResponseDTO> forwardDpa(
+      @PathVariable String token,
+      @jakarta.validation.Valid @RequestBody(required = false) DpaForwardRequestDTO request) {
+    TenantAdminOnboardingService.DpaForwardResult result =
+        onboardingService.forwardDpa(token, request == null ? null : request.recipientEmail);
+    return ResponseEntity.ok(DpaForwardResponseDTO.from(result));
+  }
+
+  public static class DpaForwardRequestDTO {
+    /** Optional: address of the authorised signer; without it only the link is returned. */
+    @jakarta.validation.constraints.Email public String recipientEmail;
+  }
+
+  public static class DpaForwardResponseDTO {
+    /** Public standalone signing page URL carrying the raw single-use sign token. */
+    public String signUrl;
+
+    /** Link expiry as ISO local date-time string (14-day validity window). */
+    public String expiresAt;
+
+    /**
+     * Whether the DPA_FORWARD mail actually went out. Stated positively on purpose: a client that
+     * does not know this field yet reads it as absent/false and then shows the copyable link, which
+     * is the safe outcome. The inverse ("mailFailed") would let an omission read as success.
+     */
+    public boolean mailSent;
+
+    static DpaForwardResponseDTO from(TenantAdminOnboardingService.DpaForwardResult result) {
+      DpaForwardResponseDTO dto = new DpaForwardResponseDTO();
+      dto.signUrl = result.signUrl();
+      dto.expiresAt = result.expiresAt();
+      dto.mailSent = result.mailSent();
+      return dto;
+    }
+  }
+
+  /**
    * Role probe deciding which onboarding flow answers (unknown tokens 404 here already). It reads
    * the role alone and takes no row lock — the selected flow loads the same invite under its own
    * PESSIMISTIC_WRITE lock immediately afterwards, and loading the entity here as well would

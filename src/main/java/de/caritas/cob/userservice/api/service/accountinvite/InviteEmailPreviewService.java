@@ -8,6 +8,8 @@ import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
+import de.caritas.cob.userservice.api.service.notification.AdminPanelUrl;
+import de.caritas.cob.userservice.api.service.notification.DpaSignedNoticeService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -53,6 +55,12 @@ public class InviteEmailPreviewService {
   private final @NonNull InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   private final @NonNull InviteMailDispatchService inviteMailDispatchService;
 
+  /**
+   * The same Admin panel URL the delivered notice carries. Injected as the shared component rather
+   * than re-derived here, so a preview can never advertise a different destination than delivery.
+   */
+  private final @NonNull AdminPanelUrl adminPanelUrl;
+
   @Transactional(readOnly = true)
   public InviteEmailPreview preview(PreviewCommand command) {
     PreviewCommand safe =
@@ -68,11 +76,19 @@ public class InviteEmailPreviewService {
         !isBlank(safe.language())
             ? safe.language()
             : (template == null ? null : template.getLanguage());
+    // The last-resort sample has to be the one the DISPATCHER falls back to, per kind. With no
+    // active template, DpaSignedNoticeService sends its own signed-notice defaults; falling back to
+    // the generic invite sample here showed the operator invitation prose with a literal
+    // {{inviteLink}} — a preview of a mail that is never sent.
+    boolean signedNotice = kind == InviteEmailTemplateKind.DPA_SIGNED_NOTICE;
+    String fallbackSubject =
+        signedNotice ? DpaSignedNoticeService.defaultSubject(language) : SAMPLE_SUBJECT;
+    String fallbackBody = signedNotice ? DpaSignedNoticeService.defaultBody(language) : SAMPLE_BODY;
     String subject =
         firstNonBlank(
-            safe.subject(), template == null ? null : template.getSubject(), SAMPLE_SUBJECT);
+            safe.subject(), template == null ? null : template.getSubject(), fallbackSubject);
     String body =
-        firstNonBlank(safe.body(), template == null ? null : template.getBody(), SAMPLE_BODY);
+        firstNonBlank(safe.body(), template == null ? null : template.getBody(), fallbackBody);
 
     AccountInvite sampleInvite =
         AccountInvite.builder()
@@ -84,12 +100,29 @@ public class InviteEmailPreviewService {
             .build();
     String acceptUrl = inviteAcceptUrlBuilder.buildAcceptUrl(targetRoleFor(kind), SAMPLE_TOKEN);
 
-    String renderedSubject = AccountInviteService.render(subject, sampleInvite, acceptUrl);
-    String renderedBody = AccountInviteService.renderBody(body, sampleInvite, acceptUrl);
+    // DPA_SIGNED_NOTICE speaks a different placeholder dialect than the invite mails and carries
+    // no accept link at all: rendered through the invite renderer an operator would see raw
+    // {{tenantName}} / {{signerName}} left standing and a counsellor accept URL that this mail
+    // never contains. Sample values keep the preview truthful about what is actually sent.
+    //
+    // The invite path keeps pre-dev's renderBody, which lifts the {{inviteLink}} token line out of
+    // the body because the layout renders that action as a button. The notice has no such token —
+    // its link is {{adminUrl}} inline in the prose — so it needs neither the stripping nor a
+    // primary action.
+    String renderedSubject =
+        kind == InviteEmailTemplateKind.DPA_SIGNED_NOTICE
+            ? renderSignedNoticeSample(subject)
+            : AccountInviteService.render(subject, sampleInvite, acceptUrl);
+    String renderedBody =
+        kind == InviteEmailTemplateKind.DPA_SIGNED_NOTICE
+            ? renderSignedNoticeSample(body)
+            : AccountInviteService.renderBody(body, sampleInvite, acceptUrl);
 
+    // the signed notice links to the Admin panel, not to an invite accept route
+    String primaryAction = kind == InviteEmailTemplateKind.DPA_SIGNED_NOTICE ? null : acceptUrl;
     BrandedEmail mail =
         inviteMailDispatchService.renderBrandedMail(
-            renderedSubject, renderedBody, acceptUrl, safe.tenantId(), language);
+            renderedSubject, renderedBody, primaryAction, safe.tenantId(), language);
 
     return new InviteEmailPreview(
         template == null ? null : template.getId(),
@@ -99,7 +132,30 @@ public class InviteEmailPreviewService {
         mail.subject(),
         mail.html(),
         mail.plainText(),
-        acceptUrl);
+        // primaryAction is already null for DPA_SIGNED_NOTICE: the notice carries no accept
+        // route, so the preview must not advertise one either.
+        primaryAction);
+  }
+
+  /** Sample values for the DPA_SIGNED_NOTICE dialect (see DpaSignedNoticeService placeholders). */
+  String renderSignedNoticeSample(String value) {
+    if (value == null) {
+      return "";
+    }
+    var samples =
+        java.util.Map.of(
+            "tenantName", "Träger Nord e.V.",
+            "dpaVersion", "01.07.2026 12:00 Uhr",
+            "signedAt", "14.08.2026 09:15 Uhr",
+            "signerName", SAMPLE_FIRST_NAME + " " + SAMPLE_LAST_NAME,
+            "signerPosition", "Geschäftsführung",
+            "signerPositionSuffix", " (Geschäftsführung)",
+            "adminUrl", adminPanelUrl.value());
+    var rendered = value;
+    for (var entry : samples.entrySet()) {
+      rendered = rendered.replace("{{" + entry.getKey() + "}}", entry.getValue());
+    }
+    return rendered;
   }
 
   private InviteEmailTemplate findTemplate(Long templateId) {

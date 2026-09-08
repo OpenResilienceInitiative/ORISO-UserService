@@ -29,6 +29,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
@@ -385,6 +386,26 @@ public class SessionSupervisorFacade {
    * @param sessionId the just-accepted session
    * @param acceptingConsultant the counsellor who accepted it (carries the standing assignment)
    */
+  /**
+   * Runs {@link #attachStandingSupervisorIfAssigned} inside a transaction of its own. For
+   * after-commit callers only.
+   *
+   * <p>During an {@code afterCommit} callback the just-committed transaction's resources are still
+   * bound to the thread. A repository write issued from there joins that transaction, which can no
+   * longer commit, so the {@code SessionSupervisor} row is silently lost — after {@code
+   * addSupervisor} has already provisioned Matrix access. {@code addSupervisor}'s own {@code
+   * &#64;Transactional} cannot save us either, because {@link #attachStandingSupervisorIfAssigned}
+   * self-invokes it and so never passes through the proxy.
+   *
+   * <p>REQUIRES_NEW on this externally proxied entry point gives the write a live transaction. The
+   * facade still swallows supervision failures, so this never undoes the caller's handover.
+   */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void attachStandingSupervisorInNewTransaction(
+      Long sessionId, Consultant acceptingConsultant) {
+    attachStandingSupervisorIfAssigned(sessionId, acceptingConsultant);
+  }
+
   public void attachStandingSupervisorIfAssigned(Long sessionId, Consultant acceptingConsultant) {
     String standingSupervisorId = acceptingConsultant.getAssignedSupervisorId();
     if (standingSupervisorId == null || standingSupervisorId.isBlank()) {

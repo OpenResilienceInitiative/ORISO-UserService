@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog
+                      http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-3.6.xsd">
+  <changeSet id="0089_account_invite_dpa_signed_at" author="oriso">
+    <sqlFile
+      path="db/changelog/changeset/0089_account_invite_dpa_signed_at/account-invite-dpa-signed-at.sql"
+      relativeToChangelogFile="false"
+      splitStatements="true"
+      stripComments="true"/>
+    <rollback>
+      <sqlFile
+        path="db/changelog/changeset/0089_account_invite_dpa_signed_at/account-invite-dpa-signed-at-rollback.sql"
+        relativeToChangelogFile="false"
+        splitStatements="true"
+        stripComments="true"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -5,6 +5,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
+import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -37,6 +38,7 @@ class AssignSessionFacadeTest {
   @Mock UnauthorizedMembersProvider unauthorizedMembersProvider;
   @Mock StatisticsService statisticsService;
   @Mock HttpServletRequest httpServletRequest;
+  @Mock SessionSupervisorFacade sessionSupervisorFacade;
   @Mock Session session;
   @Mock User user;
   @Mock Consultant consultantToAssign;
@@ -99,5 +101,17 @@ class AssignSessionFacadeTest {
 
     verify(statisticsService)
         .fireEvent(org.mockito.ArgumentMatchers.any(AssignSessionStatisticsEvent.class));
+  }
+
+  /**
+   * ADR-008 "Supervision (auto-assigned)": until now only the enquiry-accept path attached the
+   * standing supervisor, so a case that was reassigned to another counsellor silently lost
+   * oversight. The supervisor that attaches is the NEW owner's, not the previous one's.
+   */
+  @Test
+  void assignSession_attachesTheNewConsultantsStandingSupervisor() {
+    assignSessionFacade.assignSession(session, consultantToAssign, authenticatedConsultant);
+
+    verify(sessionSupervisorFacade).attachStandingSupervisorIfAssigned(42L, consultantToAssign);
   }
 }

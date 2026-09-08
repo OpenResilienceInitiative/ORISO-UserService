@@ -74,6 +74,13 @@ public class SessionMapper {
         .language(LanguageCode.fromValue(session.getLanguageCode().name()))
         .registrationType(session.getRegistrationType().name())
         .createDate(toIsoTime(session.getCreateDate()))
+        /* ADR-022 decision 2, read path. The pointer itself travels so a client that already
+        holds the currently published legal-text version can tell a stale consent from a
+        current one; consentRequired answers the part the server can decide on its own —
+        Gate 2 applies to this room and nothing has been recorded yet. */
+        .consentedLegalVersionId(session.getConsentedLegalVersionId())
+        .consentRequired(
+            session.isConsentGateApplicable() && isNull(session.getConsentedLegalVersionId()))
         .topic(new SessionTopicDTO().id(session.getMainTopicId()));
   }
 

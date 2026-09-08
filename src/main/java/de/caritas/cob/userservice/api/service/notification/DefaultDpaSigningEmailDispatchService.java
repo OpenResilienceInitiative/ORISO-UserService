@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import java.time.LocalDateTime;
@@ -9,6 +11,7 @@ import java.util.Map;
 import lombok.NonNull;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
@@ -19,16 +22,22 @@ public class DefaultDpaSigningEmailDispatchService implements DpaSigningEmailDis
   private final RestTemplate restTemplate;
   private final SecurityHeaderSupplier securityHeaderSupplier;
   private final TenantHeaderSupplier tenantHeaderSupplier;
+  private final IdentityAuthentication identityAuthentication;
+  private final IdentityClientConfig identityClientConfig;
   private final String consultingTypeServiceApiUrl;
 
   public DefaultDpaSigningEmailDispatchService(
       @NonNull RestTemplate restTemplate,
       @NonNull SecurityHeaderSupplier securityHeaderSupplier,
       @NonNull TenantHeaderSupplier tenantHeaderSupplier,
+      @NonNull IdentityAuthentication identityAuthentication,
+      @NonNull IdentityClientConfig identityClientConfig,
       @Value("${consulting.type.service.api.url:}") String consultingTypeServiceApiUrl) {
     this.restTemplate = restTemplate;
     this.securityHeaderSupplier = securityHeaderSupplier;
     this.tenantHeaderSupplier = tenantHeaderSupplier;
+    this.identityAuthentication = identityAuthentication;
+    this.identityClientConfig = identityClientConfig;
     this.consultingTypeServiceApiUrl = consultingTypeServiceApiUrl;
   }
 
@@ -38,7 +47,7 @@ public class DefaultDpaSigningEmailDispatchService implements DpaSigningEmailDis
     if (isBlank(consultingTypeServiceApiUrl)) {
       throw new IllegalStateException("DPA email dispatch endpoint is not configured");
     }
-    var headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders();
+    var headers = resolveAuthorizedHeaders();
     tenantHeaderSupplier.addTenantHeader(headers);
     Map<String, Object> payload =
         Map.of(
@@ -51,6 +60,23 @@ public class DefaultDpaSigningEmailDispatchService implements DpaSigningEmailDis
         HttpMethod.POST,
         new HttpEntity<>(payload, headers),
         Void.class);
+  }
+
+  /**
+   * The dispatch endpoint requires an authorised caller. Authenticated flows forward the current
+   * user's token as before; the PUBLIC onboarding forward (ORISO-Admin#722) has no session, so it
+   * authenticates as the Keycloak technical user — the same pattern the onboarding's
+   * server-to-server tenant creation uses ({@code TenantCreationClient}).
+   */
+  private HttpHeaders resolveAuthorizedHeaders() {
+    var headers = securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders();
+    if (headers.getFirst(HttpHeaders.AUTHORIZATION) == null) {
+      var techUser = identityClientConfig.getTechnicalUser();
+      var identityLogin =
+          identityAuthentication.login(techUser.getUsername(), techUser.getPassword());
+      headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders(identityLogin.accessToken());
+    }
+    return headers;
   }
 
   private static String normalizeBaseUrl(String value) {

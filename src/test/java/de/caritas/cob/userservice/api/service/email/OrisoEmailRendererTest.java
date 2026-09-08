@@ -13,6 +13,8 @@ import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
 /**
@@ -184,6 +186,77 @@ class OrisoEmailRendererTest {
       return ids;
     } catch (IOException e) {
       throw new IllegalStateException("could not read emails/catalogue.json for the test", e);
+    }
+  }
+
+  @Test
+  void rendersTheLogoImageWhenALogoUrlIsConfigured() {
+    Map<String, String> values = brand();
+    values.put("loginUrl", "https://example.org/login");
+    values.put("expiryMinutes", "15");
+
+    var email = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values);
+
+    assertThat(email.html())
+        .contains("<img src=\"https://cdn.example.org/logo.png\"")
+        .doesNotContain("{{logoCell}}");
+  }
+
+  @Test
+  void omitsTheLogoImageEntirelyWhenNoLogoUrlIsConfigured() {
+    // email.brand.logo-url defaults to empty and is not set on any environment. An
+    // <img src=""> renders as a broken-image icon next to the platform name, so a
+    // blank logo URL must remove the image cell altogether and leave the text
+    // wordmark to carry the header on its own.
+    for (String id : catalogueTemplateIds()) {
+      for (OrisoEmailRenderer.Tone tone : OrisoEmailRenderer.Tone.values()) {
+        Map<String, String> values = brand();
+        values.put("logoUrl", "");
+
+        var email = renderer.render(id, tone, values);
+
+        assertThat(email.html())
+            .as("html of %s/%s with a blank logo URL", id, tone)
+            .doesNotContain("<img")
+            .doesNotContain("{{logoCell}}")
+            .contains("Online-Beratung");
+      }
+    }
+  }
+
+  @Test
+  void omitsTheLogoImageWhenTheValuesCarryNoLogoUrlAtAll() {
+    Map<String, String> values = brand();
+    values.remove("logoUrl");
+    values.put("loginUrl", "https://example.org/login");
+    values.put("expiryMinutes", "15");
+
+    var email = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values);
+
+    assertThat(email.html()).doesNotContain("<img").doesNotContain("{{logoCell}}");
+  }
+
+  @Test
+  void roundedBorderedTablesOptOutOfTheCollapsedBorderModel() {
+    // The shared stylesheet sets table{border-collapse:collapse}, and CSS gives
+    // border-radius no effect on a collapsed-border table: Roundcube (and every
+    // engine following the spec) rounds the background but draws the 1px border
+    // square. Each table combining a radius with a border must therefore carry
+    // border-collapse:separate inline.
+    Pattern table = Pattern.compile("<table[^>]*>");
+    for (String id : catalogueTemplateIds()) {
+      for (OrisoEmailRenderer.Tone tone : OrisoEmailRenderer.Tone.values()) {
+        var email = renderer.render(id, tone, brand());
+        Matcher tables = table.matcher(email.html());
+        while (tables.find()) {
+          String tag = tables.group();
+          if (tag.contains("border-radius") && tag.contains("border:1px")) {
+            assertThat(tag)
+                .as("rounded bordered table in %s/%s", id, tone)
+                .contains("border-collapse:separate");
+          }
+        }
+      }
     }
   }
 }

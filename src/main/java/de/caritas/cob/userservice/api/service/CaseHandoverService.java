@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
@@ -48,6 +49,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @RequiredArgsConstructor
@@ -238,6 +241,14 @@ public class CaseHandoverService {
               .build());
 
   private final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
+
+  /**
+   * ADR-008 "Supervision (auto-assigned)": a takeover hands the case to a new owner, so the new
+   * owner's standing supervisor must attach. Invoked after commit — see {@link
+   * #attachStandingSupervisorAfterCommit}.
+   */
+  private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
+
   private final @NonNull CaseHandoverReasonPolicyRepository caseHandoverReasonPolicyRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
@@ -418,6 +429,7 @@ public class CaseHandoverService {
       session.setConsultant(requester);
       session.setUpdateDate(now);
       sessionRepository.save(session);
+      attachStandingSupervisorAfterCommit(session.getId(), requester);
       notifyGranted(saved);
     } else {
       notifyPendingConsent(saved);
@@ -460,6 +472,7 @@ public class CaseHandoverService {
       session.setConsultant(request.getRequesterConsultant());
       session.setUpdateDate(now);
       sessionRepository.save(session);
+      attachStandingSupervisorAfterCommit(session.getId(), request.getRequesterConsultant());
       CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
       notifyGranted(saved);
       return toClientStatus(saved);
@@ -470,6 +483,56 @@ public class CaseHandoverService {
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
     notifyConsentDeclined(saved);
     return toClientStatus(saved);
+  }
+
+  /**
+   * ADR-008 "Supervision (auto-assigned)": attach the new owner's standing supervisor once the
+   * takeover has actually committed.
+   *
+   * <p>Deliberately NOT a direct call. {@code addSupervisor} is itself {@code @Transactional}, so
+   * called from inside this service's transaction it would join it — and any exception it raises
+   * (client opted out, that supervisor is already on the case, no Matrix user id) marks the shared
+   * transaction rollback-only. The facade swallowing the exception would not save us: the handover
+   * would still fail at commit with an UnexpectedRollbackException. Running after commit keeps the
+   * facade's contract intact — a supervision problem leaves the case unsupervised, it never undoes
+   * the handover.
+   *
+   * <p>Outside a transaction (unit tests, future non-transactional callers) it runs inline, which
+   * carries the same guarantee because the facade never throws.
+   *
+   * <p>The PREVIOUS counsellor's supervisor is deliberately left attached. ADR-008 leaves this
+   * open, and stripping oversight from a live case is not something a handover should do silently;
+   * removing a supervisor stays an explicit act.
+   */
+  private void attachStandingSupervisorAfterCommit(Long sessionId, Consultant newOwner) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      sessionSupervisorFacade.attachStandingSupervisorIfAssigned(sessionId, newOwner);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            try {
+              // Must be the REQUIRES_NEW entry point: at afterCommit the committed transaction's
+              // resources are still bound, so a write through the plain method would join a
+              // transaction that can no longer commit and the SessionSupervisor row would be lost.
+              sessionSupervisorFacade.attachStandingSupervisorInNewTransaction(sessionId, newOwner);
+            } catch (RuntimeException supervisionFailure) {
+              // The catch has to sit OUTSIDE the proxied boundary. The facade swallows its own
+              // exceptions, but a swallowed persistence failure has already marked the new
+              // transaction rollback-only, so the commit the proxy attempts afterwards throws
+              // UnexpectedRollbackException — after this method returned. Escaping here would
+              // surface as a 500 on a handover that has already committed, which is exactly the
+              // guarantee this indirection exists to protect.
+              log.warn(
+                  "Standing supervisor attach failed after the handover of session {} committed;"
+                      + " the case stays unsupervised",
+                  sessionId,
+                  supervisionFailure);
+            }
+          }
+        });
   }
 
   private Consultant retrieveCurrentConsultant() {

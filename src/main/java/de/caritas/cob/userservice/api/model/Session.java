@@ -212,6 +212,24 @@ public class Session implements TenantAware {
   @Column(name = "is_supervision_opted_out", columnDefinition = "bit default false")
   private Boolean supervisionOptedOut = false;
 
+  /**
+   * ADR-022 decision 2 — the Gate 2 consent pointer: the id of the legal-text version (owned by
+   * ORISO-AgencyService, ADR-021 decision 3) this room is currently cleared for. {@code null} means
+   * the gate has not been passed.
+   *
+   * <p><b>This is a pointer, not a log. Do not turn it into one.</b> It is <i>overwritten</i> on
+   * re-consent. There must be no append-only history, no timestamp/actor columns beside it and no
+   * per-user consent event table anywhere. ADR-022 rejected a consent event log explicitly, because
+   * it would create a behavioural record about anonymous help-seekers that does not exist today —
+   * for evidentiary value the publication history in ORISO-AgencyService already provides. The
+   * field exists for <b>control flow</b> only: whether the composer may open. It is never evidence.
+   *
+   * <p>The referenced target is a public document version, so this adds no new category of personal
+   * data. Deliberately no foreign key — the version lives in another service.
+   */
+  @Column(name = "consented_legal_version_id")
+  private Long consentedLegalVersionId;
+
   @OneToMany(
       targetEntity = SessionTopic.class,
       mappedBy = "session",
@@ -235,6 +253,30 @@ public class Session implements TenantAware {
   @Override
   public int hashCode() {
     return Objects.hash(id);
+  }
+
+  /**
+   * Whether <b>this pointer</b> can carry Gate 2 consent for this room — an allowlist, so a new
+   * modality has to be classified here deliberately instead of silently inheriting the gate.
+   *
+   * <p>True exactly where the session's own {@code user} <i>is</i> the help-seeker: 1:1 counselling
+   * ({@code AGENCY_COUNSELLING}), live chat ({@code LIVE_CHAT}), and legacy rooms that predate
+   * ADR-006 and carry no modality at all.
+   *
+   * <p><b>Group chats are deliberately excluded, including {@code SELF_HELP}, even though ADR-022
+   * scopes self-help groups into Gate 2.</b> {@code CreateChatFacade#createMatrixGroupChat} gives
+   * those sessions a tenant <i>system</i> user, because {@code user_id} is NOT NULL; the real
+   * participants join through the chat path. One pointer on that shared session therefore cannot
+   * express per-participant consent — the first participant to agree would clear the gate for
+   * everybody — and its owner is not a person who could agree in the first place. Consent for
+   * self-help groups needs a per-participant carrier, which is separate work; this construct must
+   * not be stretched to fake it.
+   */
+  @JsonIgnore
+  public boolean isConsentGateApplicable() {
+    return conversationType == null
+        || conversationType == ConversationType.AGENCY_COUNSELLING
+        || conversationType == ConversationType.LIVE_CHAT;
   }
 
   @JsonIgnore

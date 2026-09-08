@@ -584,6 +584,34 @@ paths:
           description: GONE - token unknown, already used, or expired
         '500':
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
+  /tenant/public/dpa/forward:
+    summary: Create a DPA sign link from the public tenant onboarding context
+    post:
+      tags:
+        - tenant-controller
+      summary: 'Creates a single-use DPA sign link for a reserved tenant [Authorization: no-auth, tenant-ID reservation token]'
+      operationId: createPublicDpaForwardInvite
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PublicDpaForwardRequestDTO'
+      responses:
+        '200':
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaSignInviteDTO'
+        '400':
+          description: BAD REQUEST - invalid/incomplete request or body object
+        '409':
+          description: CONFLICT - no data processing agreement is published to sign yet
+        '410':
+          description: GONE - unknown reservation, reservation token mismatch, or the reservation was released
+        '500':
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
   /tenantadmin/{id}/dpa/signatures:
     summary: Confirmed DPA signatures of a tenant (audit list)
     get:
@@ -913,6 +941,18 @@ components:
           type: string
         expiresAt:
           type: string
+    PublicDpaForwardRequestDTO:
+      type: object
+      required:
+        - reservedTenantId
+        - tenantIdReservationToken
+      properties:
+        reservedTenantId:
+          type: integer
+          format: int64
+        tenantIdReservationToken:
+          type: string
+          maxLength: 36
     DpaSignPreviewDTO:
       type: object
       required:

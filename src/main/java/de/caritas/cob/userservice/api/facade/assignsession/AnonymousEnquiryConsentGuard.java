@@ -45,6 +45,15 @@ public class AnonymousEnquiryConsentGuard {
       existing validators own that case. */
       return;
     }
+    if (session.getConsentedLegalVersionId() != null) {
+      /* ADR-022 decision 2 moved the Gate 2 state onto the session. A room that is
+      cleared for a legal-text version has passed the gate — and it is the only
+      signal that exists there, because CreateUserFacade deliberately leaves the
+      account-level timestamp null for anonymous accounts. Checked first so the
+      session-scoped state wins; the account-level timestamp below stays as the
+      fallback for rooms created before this column existed. */
+      return;
+    }
     if (session.getUser().getDataPrivacyConfirmation() != null) {
       return;
     }

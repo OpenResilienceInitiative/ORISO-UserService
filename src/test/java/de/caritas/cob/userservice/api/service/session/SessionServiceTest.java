@@ -76,6 +76,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testHelper.TestConstants;
+import java.lang.reflect.Method;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -93,6 +94,7 @@ import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
@@ -1216,6 +1218,19 @@ class SessionServiceTest {
   }
 
   @Test
+  void getVisibleAnonymousLiveChatEnquiriesByIds_Should_RunReadOnlyTransactional()
+      throws Exception {
+    Method method =
+        SessionService.class.getMethod(
+            "getVisibleAnonymousLiveChatEnquiriesByIds", Consultant.class, Set.class);
+
+    Transactional transactional = method.getAnnotation(Transactional.class);
+
+    assertNotNull(transactional);
+    assertTrue(transactional.readOnly());
+  }
+
+  @Test
   void
       getDirectlyAssignedSessionsByIdsCrossTenant_Should_ReturnSession_When_ConsultantIsAssignedAdvisor() {
     Consultant consultant = mock(Consultant.class);
@@ -1229,6 +1244,19 @@ class SessionServiceTest {
         sessionService.getDirectlyAssignedSessionsByIdsCrossTenant(consultant, Set.of(103510L));
 
     assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void getDirectlyAssignedSessionsByIdsCrossTenant_Should_RunReadOnlyTransactional()
+      throws Exception {
+    Method method =
+        SessionService.class.getMethod(
+            "getDirectlyAssignedSessionsByIdsCrossTenant", Consultant.class, Set.class);
+
+    Transactional transactional = method.getAnnotation(Transactional.class);
+
+    assertNotNull(transactional);
+    assertTrue(transactional.readOnly());
   }
 
   @Test
