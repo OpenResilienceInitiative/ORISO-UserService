@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepositor
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.OffsetPageable;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
@@ -64,7 +65,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
-import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Page;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -455,6 +456,9 @@ public class CaseHandoverService {
    * what the requester may see: it is the least-privilege boundary (#202), it is unit-tested, and
    * leaving it in place means a mistake in the query can only over-fetch, never over-share.
    *
+   * <p>A blank query pages in the database with a real count. Only the free-text path uses a scan
+   * window, and it says so when the window fills.
+   *
    * <p>The free-text filter cannot move into SQL at all. It matches on decoded usernames and on the
    * internal display name with fallback (#996) — values that do not exist in the columns the
    * database would have to search, because usernames are stored encoded. Moving it there means
@@ -487,20 +491,49 @@ public class CaseHandoverService {
             ? List.of(SessionStatus.IN_ARCHIVE)
             : List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE);
 
+    // Browsing without a search term is ordinary pagination and must not be capped: capping it
+    // reports a truncated total and returns empty pages past the cap while candidates still exist.
+    // Only the free-text path needs a scan window, because its filter cannot run in SQL.
+    if (normalizeSearchText(query).isBlank()) {
+      Page<Long> idPage =
+          sessionRepository.findCaseHandoverCandidateIds(
+              agencyIds,
+              requester,
+              statuses,
+              allTopics,
+              topicIds,
+              new OffsetPageable(safeOffset, safeCount));
+      List<ConsultantSessionResponseDTO> page =
+          sessionRepository.findCaseHandoverCandidatesWithTopics(idPage.getContent()).stream()
+              .filter(session -> isInRequesterDepartment(session, requester))
+              .map(this::toCandidateDto)
+              .collect(Collectors.toList());
+      return new ConsultantSessionListResponseDTO()
+          .sessions(page)
+          .offset(safeOffset)
+          .count(page.size())
+          // The count query counts what the SQL scope selects. The Java predicate re-checks the
+          // same scope rather than narrowing it further, so the two agree; if it ever drops a row,
+          // the page is short rather than the total being wrong.
+          .total((int) idPage.getTotalElements());
+    }
+
     int scanLimit = Math.max(1, candidateSearchScanLimit);
-    List<Long> windowIds =
+    Page<Long> window =
         sessionRepository.findCaseHandoverCandidateIds(
-            agencyIds, requester, statuses, allTopics, topicIds, PageRequest.of(0, scanLimit));
+            agencyIds, requester, statuses, allTopics, topicIds, new OffsetPageable(0, scanLimit));
+    List<Long> windowIds = window.getContent();
     if (windowIds.isEmpty()) {
       return emptyCandidateResponse(safeOffset);
     }
-    if (windowIds.size() == scanLimit) {
+    if (window.getTotalElements() > windowIds.size()) {
       log.warn(
-          "Case Handover candidate search for consultant {} filled its {}-row scan window; older"
-              + " candidates were not searched. Narrow the query or raise"
+          "Case Handover candidate search for consultant {} matched {} sessions in scope but only"
+              + " the newest {} were searched. Narrow the query or raise"
               + " case.handover.candidate-search-scan-limit",
           requester.getId(),
-          scanLimit);
+          window.getTotalElements(),
+          windowIds.size());
     }
     List<Session> candidates = sessionRepository.findCaseHandoverCandidatesWithTopics(windowIds);
 
@@ -1631,7 +1664,10 @@ public class CaseHandoverService {
   @Scheduled(
       fixedDelayString = "${case.handover.co-access-sweep-delay-ms:60000}",
       initialDelayString = "${case.handover.co-access-sweep-initial-delay-ms:60000}")
-  @Transactional
+  // Deliberately NOT @Transactional. The store methods use default REQUIRED propagation, so a
+  // transaction opened here would be the one they join - and the connection and row locks would
+  // stay held across every Matrix call, which is the whole thing expireCoAccess was restructured
+  // to avoid. The lease claim keeps its own transaction (ScheduledTaskClaimWriter is REQUIRES_NEW).
   public void expireCoAccessSchedule() {
     if (!scheduledTaskClaimService.tryClaim(CO_ACCESS_EXPIRY_TASK, coAccessClaimDuration)) {
       return;
@@ -1660,23 +1696,18 @@ public class CaseHandoverService {
    */
   public int expireCoAccess() {
     LocalDateTime now = LocalDateTime.now(clock);
-    Set<Long> attempted = new HashSet<>();
+    int batchSize = Math.max(1, coAccessSweepBatchSize);
     int revoked = 0;
+    LocalDateTime cursorExpiresAt = null;
+    Long cursorId = null;
 
     for (int batchNumber = 0; batchNumber < Math.max(1, coAccessSweepMaxBatches); batchNumber++) {
       List<CaseHandoverCoAccessExpiryStore.ExpiringCoAccess> batch =
-          coAccessExpiryStore.findExpiredBatch(now, coAccessSweepBatchSize);
+          coAccessExpiryStore.findExpiredBatch(now, cursorExpiresAt, cursorId, batchSize);
       if (batch.isEmpty()) {
         break;
       }
-      // A row whose Matrix removal could not be confirmed stays GRANTED and therefore comes back in
-      // the next page. Without this the sweep would re-read the same rows until the batch cap.
-      List<CaseHandoverCoAccessExpiryStore.ExpiringCoAccess> fresh =
-          batch.stream().filter(item -> attempted.add(item.requestId())).toList();
-      if (fresh.isEmpty()) {
-        break;
-      }
-      for (var expiring : fresh) {
+      for (var expiring : batch) {
         if (!removeCoAccessRequesterFromMatrixRoom(expiring)) {
           log.warn(
               "Could not remove Case Handover requester for request {}; retrying on the next expiry sweep",
@@ -1687,7 +1718,14 @@ public class CaseHandoverService {
           revoked++;
         }
       }
-      if (batch.size() < Math.max(1, coAccessSweepBatchSize)) {
+      // Advance past everything read, succeeded or not. A row whose Matrix removal could not be
+      // confirmed stays GRANTED; stepping over it here is what stops it re-appearing at the head of
+      // the next page and starving the expired grants behind it. It is retried from the start on
+      // the next scheduled run.
+      var last = batch.get(batch.size() - 1);
+      cursorExpiresAt = last.expiresAt();
+      cursorId = last.requestId();
+      if (batch.size() < batchSize) {
         break;
       }
     }

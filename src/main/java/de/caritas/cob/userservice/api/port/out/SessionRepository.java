@@ -123,19 +123,31 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * case. {@code topicIds} must stay non-empty even then, because an empty IN list is not portable.
    *
    * <p>Ids rather than entities, so the fetch below can join {@code sessionTopics} without
-   * Hibernate paginating a fetch join in memory.
+   * Hibernate paginating a fetch join in memory. A {@link Page} rather than a list, because a
+   * browse without a search term needs a real total: capping it would make the endpoint report a
+   * truncated count and return empty pages past the cap while candidates still exist.
    */
   @Query(
-      "select distinct session.id from Session session"
-          + " left join session.sessionTopics sessionTopic"
-          + " where session.agencyId in :agencyIds"
-          + " and session.consultant <> :requester"
-          + " and session.status in :statuses"
-          + " and (:allTopics = true"
-          + "   or session.mainTopicId in :topicIds"
-          + "   or sessionTopic.topicId in :topicIds)"
-          + " order by session.updateDate desc")
-  List<Long> findCaseHandoverCandidateIds(
+      value =
+          "select distinct session.id from Session session"
+              + " left join session.sessionTopics sessionTopic"
+              + " where session.agencyId in :agencyIds"
+              + " and session.consultant <> :requester"
+              + " and session.status in :statuses"
+              + " and (:allTopics = true"
+              + "   or session.mainTopicId in :topicIds"
+              + "   or sessionTopic.topicId in :topicIds)"
+              + " order by session.updateDate desc",
+      countQuery =
+          "select count(distinct session.id) from Session session"
+              + " left join session.sessionTopics sessionTopic"
+              + " where session.agencyId in :agencyIds"
+              + " and session.consultant <> :requester"
+              + " and session.status in :statuses"
+              + " and (:allTopics = true"
+              + "   or session.mainTopicId in :topicIds"
+              + "   or sessionTopic.topicId in :topicIds)")
+  Page<Long> findCaseHandoverCandidateIds(
       @Param("agencyIds") List<Long> agencyIds,
       @Param("requester") Consultant requester,
       @Param("statuses") List<SessionStatus> statuses,

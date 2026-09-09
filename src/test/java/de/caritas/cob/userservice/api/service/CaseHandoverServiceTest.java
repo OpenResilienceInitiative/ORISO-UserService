@@ -14,7 +14,6 @@ import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
-import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -757,6 +756,7 @@ class CaseHandoverServiceTest {
   private CaseHandoverCoAccessExpiryStore.ExpiringCoAccess expiring(CaseHandoverRequest request) {
     return new CaseHandoverCoAccessExpiryStore.ExpiringCoAccess(
         request.getId(),
+        request.getExpiresAt(),
         session.getId(),
         session.getMatrixRoomId(),
         requester.getId(),
@@ -781,7 +781,7 @@ class CaseHandoverServiceTest {
     when(matrixSynapseService.removeUserFromRoom(
             "!room:matrix", "@requester:matrix", "previous-token"))
         .thenReturn(true);
-    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), anyInt()))
+    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), any(), any(), anyInt()))
         .thenReturn(List.of(expiring(request)))
         .thenReturn(List.of());
     when(coAccessExpiryStore.markExpired(request.getId(), SWEEP_NOW, "ACCESS_EXPIRED"))
@@ -801,7 +801,7 @@ class CaseHandoverServiceTest {
     requester.setMatrixUserId("@requester:matrix");
     previous.setMatrixUserId("@previous:matrix");
     session.setConsultant(requester);
-    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), anyInt()))
+    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), any(), any(), anyInt()))
         .thenReturn(List.of(expiring(request)))
         .thenReturn(List.of());
     when(coAccessExpiryStore.markExpired(request.getId(), SWEEP_NOW, "ACCESS_EXPIRED"))
@@ -824,7 +824,7 @@ class CaseHandoverServiceTest {
         .thenReturn(Optional.of(List.of("@requester:matrix")));
     when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
         .thenReturn("previous-token");
-    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), anyInt()))
+    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), any(), any(), anyInt()))
         .thenReturn(List.of(expiring(request)));
 
     assertEquals(0, caseHandoverService.expireCoAccess());
@@ -840,7 +840,7 @@ class CaseHandoverServiceTest {
     requester.setMatrixUserId("@requester:matrix");
     when(matrixSynapseService.getRoomMembers("!room:matrix"))
         .thenThrow(new IllegalStateException("Matrix unavailable"));
-    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), anyInt()))
+    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), any(), any(), anyInt()))
         .thenReturn(List.of(expiring(failingRequest)));
 
     assertEquals(0, caseHandoverService.expireCoAccess());
@@ -849,21 +849,64 @@ class CaseHandoverServiceTest {
   }
 
   @Test
-  void expireCoAccess_stopsInsteadOfLoopingWhenAFullBatchKeepsFailing() {
-    // A row whose Matrix removal cannot be confirmed stays GRANTED, so a naive loop would re-read
-    // the same full page until the batch cap. The sweep must notice it has already tried them.
-    CaseHandoverRequest request = grantedAdviceRequest();
+  void expireCoAccess_reachesLaterGrantsWhenTheOldestBatchCannotBeReconciled() {
+    // The failure this guards: a row whose Matrix removal cannot be confirmed stays GRANTED. With
+    // page-zero paging it comes back at the head of every following read and starves the grants
+    // behind it. The cursor must step past it and still reconcile the later one.
+    CaseHandoverRequest failing = grantedAdviceRequest();
+    failing.setId(100L);
+    failing.setExpiresAt(SWEEP_NOW.minusMinutes(30));
     session.setMatrixRoomId("!room:matrix");
     requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    ReflectionTestUtils.setField(caseHandoverService, "coAccessSweepBatchSize", 1);
+
+    var laterExpiring =
+        new CaseHandoverCoAccessExpiryStore.ExpiringCoAccess(
+            101L,
+            SWEEP_NOW.minusMinutes(10),
+            session.getId(),
+            "!later:matrix",
+            requester.getId(),
+            "@requester:matrix",
+            null,
+            null,
+            "@previous:matrix");
+
     when(matrixSynapseService.getRoomMembers("!room:matrix"))
         .thenThrow(new IllegalStateException("Matrix unavailable"));
-    ReflectionTestUtils.setField(caseHandoverService, "coAccessSweepBatchSize", 1);
-    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), anyInt()))
-        .thenReturn(List.of(expiring(request)));
+    when(matrixSynapseService.getRoomMembers("!later:matrix"))
+        .thenReturn(Optional.of(List.of("@requester:matrix")));
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.removeUserFromRoom(
+            "!later:matrix", "@requester:matrix", "previous-token"))
+        .thenReturn(true);
+    when(coAccessExpiryStore.markExpired(101L, SWEEP_NOW, "ACCESS_EXPIRED")).thenReturn(true);
 
-    assertEquals(0, caseHandoverService.expireCoAccess());
+    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), isNull(), isNull(), anyInt()))
+        .thenReturn(List.of(expiring(failing)));
+    when(coAccessExpiryStore.findExpiredBatch(
+            eq(SWEEP_NOW), eq(SWEEP_NOW.minusMinutes(30)), eq(100L), anyInt()))
+        .thenReturn(List.of(laterExpiring));
+    when(coAccessExpiryStore.findExpiredBatch(
+            eq(SWEEP_NOW), eq(SWEEP_NOW.minusMinutes(10)), eq(101L), anyInt()))
+        .thenReturn(List.of());
 
-    verify(coAccessExpiryStore, times(2)).findExpiredBatch(eq(SWEEP_NOW), anyInt());
+    assertEquals(1, caseHandoverService.expireCoAccess());
+
+    verify(coAccessExpiryStore, never()).markExpired(eq(100L), any(), anyString());
+    verify(coAccessExpiryStore).markExpired(101L, SWEEP_NOW, "ACCESS_EXPIRED");
+  }
+
+  @Test
+  void expirySchedulerEntrypointIsNotTransactional() throws Exception {
+    // A transaction opened here would be the one the store methods join, and its connection and
+    // row locks would stay held across every Matrix call.
+    var method = CaseHandoverService.class.getMethod("expireCoAccessSchedule");
+
+    assertNull(
+        method.getAnnotation(org.springframework.transaction.annotation.Transactional.class));
   }
 
   @Test
@@ -882,7 +925,7 @@ class CaseHandoverServiceTest {
         .thenReturn(false);
     try {
       caseHandoverService.expireCoAccessSchedule();
-      verify(coAccessExpiryStore, never()).findExpiredBatch(any(), anyInt());
+      verify(coAccessExpiryStore, never()).findExpiredBatch(any(), any(), any(), anyInt());
       verify(tenantContextProvider, never()).setTechnicalContextIfMultiTenancyIsEnabled();
       assertEquals(77L, TenantContext.getCurrentTenant());
     } finally {
@@ -895,7 +938,7 @@ class CaseHandoverServiceTest {
     // Setting TECHNICAL_TENANT_ID unconditionally gave a single-tenant deployment a tenant context
     // it has nowhere else; the provider is the no-op-when-disabled entry point the sibling offer
     // scheduler already uses.
-    when(coAccessExpiryStore.findExpiredBatch(any(), anyInt())).thenReturn(List.of());
+    when(coAccessExpiryStore.findExpiredBatch(any(), any(), any(), anyInt())).thenReturn(List.of());
 
     caseHandoverService.expireCoAccessSchedule();
 
@@ -1357,7 +1400,7 @@ class CaseHandoverServiceTest {
     List<Long> ids = java.util.Arrays.stream(candidates).map(Session::getId).toList();
     when(sessionRepository.findCaseHandoverCandidateIds(
             any(), eq(requester), any(), anyBoolean(), any(), any()))
-        .thenReturn(ids);
+        .thenReturn(new org.springframework.data.domain.PageImpl<>(ids));
     when(sessionRepository.findCaseHandoverCandidatesWithTopics(ids))
         .thenReturn(List.of(candidates));
   }

@@ -61,11 +61,20 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
           + " where request.status = :status"
           + " and request.accessType = :accessType"
           + " and request.expiresAt <= :expiresAt"
-          + " order by request.expiresAt asc")
+          // Keyset cursor on (expiresAt, id). Page-zero paging cannot work here: a row whose
+          // Matrix removal fails stays GRANTED, so it comes back at the head of the next page and
+          // starves every later expired grant. The cursor steps past it instead, and the next
+          // scheduled run retries it from the start.
+          + " and (:afterExpiresAt is null"
+          + "   or request.expiresAt > :afterExpiresAt"
+          + "   or (request.expiresAt = :afterExpiresAt and request.id > :afterId))"
+          + " order by request.expiresAt asc, request.id asc")
   List<CaseHandoverRequest> findExpiredCoAccessBatch(
       @Param("status") CaseHandoverRequest.Status status,
       @Param("accessType") CaseHandoverRequest.AccessType accessType,
       @Param("expiresAt") LocalDateTime expiresAt,
+      @Param("afterExpiresAt") LocalDateTime afterExpiresAt,
+      @Param("afterId") Long afterId,
       Pageable pageable);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)

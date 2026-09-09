@@ -41,6 +41,7 @@ public class CaseHandoverCoAccessExpiryStore {
    */
   public record ExpiringCoAccess(
       Long requestId,
+      LocalDateTime expiresAt,
       Long sessionId,
       String matrixRoomId,
       String requesterConsultantId,
@@ -49,12 +50,25 @@ public class CaseHandoverCoAccessExpiryStore {
       String ownerMatrixUserId,
       String previousConsultantMatrixUserId) {}
 
-  /** A bounded, oldest-first page of grants whose window has closed. */
+  /**
+   * A bounded, oldest-first page of grants whose window has closed, strictly after the given
+   * cursor.
+   *
+   * <p>The cursor is what keeps a failing row from starving the sweep: an unconfirmed Matrix
+   * removal leaves the row GRANTED, so page-zero paging would hand it back forever and never reach
+   * the grants behind it. Pass {@code null}/{@code null} to start.
+   */
   @Transactional(readOnly = true)
-  public List<ExpiringCoAccess> findExpiredBatch(LocalDateTime now, int limit) {
+  public List<ExpiringCoAccess> findExpiredBatch(
+      LocalDateTime now, LocalDateTime afterExpiresAt, Long afterId, int limit) {
     return caseHandoverRequestRepository
         .findExpiredCoAccessBatch(
-            Status.GRANTED, AccessType.CO_ACCESS, now, PageRequest.of(0, Math.max(1, limit)))
+            Status.GRANTED,
+            AccessType.CO_ACCESS,
+            now,
+            afterExpiresAt,
+            afterId,
+            PageRequest.of(0, Math.max(1, limit)))
         .stream()
         .map(CaseHandoverCoAccessExpiryStore::toExpiring)
         .toList();
@@ -91,6 +105,7 @@ public class CaseHandoverCoAccessExpiryStore {
     Consultant previous = request.getPreviousConsultant();
     return new ExpiringCoAccess(
         request.getId(),
+        request.getExpiresAt(),
         session == null ? null : session.getId(),
         session == null ? null : session.getMatrixRoomId(),
         requester == null ? null : requester.getId(),
