@@ -137,6 +137,26 @@ class ModuleBoundaryContractTest(unittest.TestCase):
                 f"IdentityClient must not expose {forbidden}; use IdentityRoleLookup",
             )
 
+    def test_broad_identity_client_does_not_carry_role_assignment_commands(self):
+        """Role assignment is one batched call on a focused port.
+
+        The broad client offered `updateUserRole` and two `updateRole` overloads,
+        so provisioning issued one Keycloak round trip per configured role and the
+        request count grew with the role list.
+        """
+        identity_client = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        )
+        source = identity_client.read_text()
+
+        for forbidden in ("updateUserRole", "updateRole"):
+            self.assertNotIn(
+                forbidden,
+                source,
+                f"IdentityClient must not expose {forbidden}; "
+                "use IdentityRoleUpdater#assignRoles",
+            )
+
     def test_session_module_depends_on_ports_not_chat_adapters(self):
         session_module = (
             ROOT

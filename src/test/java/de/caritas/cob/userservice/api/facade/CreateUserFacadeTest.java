@@ -52,6 +52,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -84,6 +85,7 @@ public class CreateUserFacadeTest {
 
   @InjectMocks private CreateUserFacade createUserFacade;
   @Mock private IdentityClient identityClient;
+  @Mock private IdentityRoleUpdater identityRoleUpdater;
   @Mock private IdentityAccountRemover identityAccountRemover;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;
   @Mock private IdentityDummyEmailUpdater identityDummyEmailUpdater;
@@ -258,7 +260,8 @@ public class CreateUserFacadeTest {
     createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_KREUZBUND);
     TenantContext.clear();
     verify(identityClient, times(1)).createUser(any(UserDTO.class));
-    verify(identityClient, times(1)).updateRole(any(), any(UserRole.class));
+    verify(identityRoleUpdater, times(1))
+        .assignRoles(eq(USER_ID), eq(List.of(UserRole.USER.getValue())));
     verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
     verify(createNewSessionFacade, times(1))
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
@@ -279,7 +282,8 @@ public class CreateUserFacadeTest {
 
     createUserFacade.updateIdentityAndCreateAccount(USER_ID, USER_DTO_SUCHT, UserRole.USER);
 
-    verify(identityClient, times(1)).updateRole(any(), any(UserRole.class));
+    verify(identityRoleUpdater, times(1))
+        .assignRoles(eq(USER_ID), eq(List.of(UserRole.USER.getValue())));
     verify(identityPasswordUpdater, times(1)).updatePassword(anyString(), anyString());
   }
 
@@ -304,7 +308,9 @@ public class CreateUserFacadeTest {
   public void
       updateIdentityAndCreateAccount_Should_AbortBeforeDatabaseWrite_When_RoleUpdateFails() {
     RuntimeException identityFailure = new RuntimeException("role update failed");
-    doThrow(identityFailure).when(identityClient).updateRole(anyString(), any(UserRole.class));
+    doThrow(identityFailure)
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), eq(List.of(UserRole.USER.getValue())));
 
     RuntimeException propagated =
         assertThrows(
@@ -323,7 +329,9 @@ public class CreateUserFacadeTest {
     PlainCredentialsHolder.set("plain-user", "plain-password");
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
     RuntimeException identityFailure = new RuntimeException("role update failed");
-    doThrow(identityFailure).when(identityClient).updateRole(anyString(), any(UserRole.class));
+    doThrow(identityFailure)
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), eq(List.of(UserRole.USER.getValue())));
 
     RuntimeException propagated =
         assertThrows(
@@ -681,8 +689,8 @@ public class CreateUserFacadeTest {
   void
       updateIdentityAndCreateAccount_Should_ThrowInternalServerError_When_KeycloakFailsForAnonymousUser() {
     doThrow(new RuntimeException("kc down"))
-        .when(identityClient)
-        .updateRole(anyString(), any(UserRole.class));
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), eq(List.of(UserRole.ANONYMOUS.getValue())));
 
     assertThrows(
         InternalServerErrorException.class,
@@ -718,7 +726,9 @@ public class CreateUserFacadeTest {
   void updateIdentityAndCreateAccount_Should_CallUpdateDummyEmail_When_EmailIsBlank() {
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
-    doNothing().when(identityClient).updateRole(anyString(), any(UserRole.class));
+    doNothing()
+        .when(identityRoleUpdater)
+        .assignRoles(anyString(), eq(List.of(UserRole.USER.getValue())));
     doNothing()
         .when(identityPasswordUpdater)
         .updatePassword(anyString(), org.mockito.ArgumentMatchers.nullable(String.class));

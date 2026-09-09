@@ -5,5 +5,8 @@ import java.util.Collection;
 /** Focused outbound contract for idempotent identity role assignment. */
 public interface IdentityRoleUpdater {
 
+  /** Assigns every named role. Unlike {@link #ensureRoles}, it does not read first. */
+  void assignRoles(String userId, Collection<String> roleNames);
+
   void ensureRoles(String userId, Collection<String> roleNames);
 }
