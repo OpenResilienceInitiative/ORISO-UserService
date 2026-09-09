@@ -5,6 +5,7 @@ import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -49,11 +50,27 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
 
   List<CaseHandoverRequest> findByPreviousConsultantId(String previousConsultantId);
 
+  /**
+   * Bounded sweep input, oldest window first. Deliberately unlocked and deliberately paged: the
+   * sweep reconciles Matrix between reading a row and writing its outcome, so a lock taken here
+   * would be held across external round trips for the whole backlog. The row lock is taken instead
+   * by {@link #findByIdForUpdate(Long)} in the short write transaction that follows.
+   */
+  @Query(
+      "select request from CaseHandoverRequest request"
+          + " where request.status = :status"
+          + " and request.accessType = :accessType"
+          + " and request.expiresAt <= :expiresAt"
+          + " order by request.expiresAt asc")
+  List<CaseHandoverRequest> findExpiredCoAccessBatch(
+      @Param("status") CaseHandoverRequest.Status status,
+      @Param("accessType") CaseHandoverRequest.AccessType accessType,
+      @Param("expiresAt") LocalDateTime expiresAt,
+      Pageable pageable);
+
   @Lock(LockModeType.PESSIMISTIC_WRITE)
-  List<CaseHandoverRequest> findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
-      CaseHandoverRequest.Status status,
-      CaseHandoverRequest.AccessType accessType,
-      LocalDateTime expiresAt);
+  @Query("select request from CaseHandoverRequest request where request.id = :id")
+  Optional<CaseHandoverRequest> findByIdForUpdate(@Param("id") Long id);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<CaseHandoverRequest> findBySessionIdAndStatusAndAccessType(

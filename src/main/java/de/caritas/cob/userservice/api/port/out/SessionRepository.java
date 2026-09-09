@@ -111,6 +111,50 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
       List<Long> agencyIds, Consultant consultant, List<SessionStatus> statuses);
 
   /**
+   * Bounded, newest-first window of candidate ids, narrowed in the database.
+   *
+   * <p>The topic predicate here is a <b>performance</b> narrowing, not the authority on scope.
+   * {@code CaseHandoverService.isInRequesterDepartment} still decides what the requester may see,
+   * and keeps doing so in Java where it stays unit-testable. That ordering is deliberate: a mistake
+   * in this JPQL can only return too many rows, which the Java predicate then drops — it cannot
+   * widen access. Least-privilege must not depend on a query string no unit test can execute.
+   *
+   * <p>{@code allTopics} carries the "topics feature is off, so a department is just the agency"
+   * case. {@code topicIds} must stay non-empty even then, because an empty IN list is not portable.
+   *
+   * <p>Ids rather than entities, so the fetch below can join {@code sessionTopics} without
+   * Hibernate paginating a fetch join in memory.
+   */
+  @Query(
+      "select distinct session.id from Session session"
+          + " left join session.sessionTopics sessionTopic"
+          + " where session.agencyId in :agencyIds"
+          + " and session.consultant <> :requester"
+          + " and session.status in :statuses"
+          + " and (:allTopics = true"
+          + "   or session.mainTopicId in :topicIds"
+          + "   or sessionTopic.topicId in :topicIds)"
+          + " order by session.updateDate desc")
+  List<Long> findCaseHandoverCandidateIds(
+      @Param("agencyIds") List<Long> agencyIds,
+      @Param("requester") Consultant requester,
+      @Param("statuses") List<SessionStatus> statuses,
+      @Param("allTopics") boolean allTopics,
+      @Param("topicIds") Set<Long> topicIds,
+      Pageable pageable);
+
+  /**
+   * Loads the windowed candidates with their topics in one query. Without the fetch join the
+   * department predicate reads the LAZY {@code sessionTopics} collection once per candidate.
+   */
+  @Query(
+      "select distinct session from Session session"
+          + " left join fetch session.sessionTopics"
+          + " where session.id in :ids"
+          + " order by session.updateDate desc")
+  List<Session> findCaseHandoverCandidatesWithTopics(@Param("ids") List<Long> ids);
+
+  /**
    * Find team {@link Session} list by agency ids and status where consultant is not the given
    * consultant ordered by creation date descending.
    *

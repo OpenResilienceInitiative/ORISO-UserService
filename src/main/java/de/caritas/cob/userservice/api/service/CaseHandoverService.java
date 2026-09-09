@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Clock;
@@ -63,6 +64,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -272,10 +274,31 @@ public class CaseHandoverService {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
+  private final @NonNull TenantContextProvider tenantContextProvider;
+  private final @NonNull CaseHandoverCoAccessExpiryStore coAccessExpiryStore;
   private final @NonNull Clock clock;
 
   @Value("${case.handover.co-access-claim-duration:PT2M}")
   private Duration coAccessClaimDuration = Duration.ofMinutes(2);
+
+  /**
+   * Rows reconciled per sweep transaction. Small on purpose: each row costs Matrix round trips, and
+   * the point of the batch is that no lock and no connection is held across them.
+   */
+  @Value("${case.handover.co-access-sweep-batch-size:50}")
+  private int coAccessSweepBatchSize = 50;
+
+  /** Hard stop for one sweep, so a large backlog cannot monopolise the scheduler thread. */
+  @Value("${case.handover.co-access-sweep-max-batches:20}")
+  private int coAccessSweepMaxBatches = 20;
+
+  /**
+   * Newest-first window scanned when a free-text candidate query is present. The text match cannot
+   * run in SQL (see {@link #searchCandidates}), so this is the bound that replaces the unbounded
+   * read it used to do.
+   */
+  @Value("${case.handover.candidate-search-scan-limit:2000}")
+  private int candidateSearchScanLimit = 2000;
 
   private final @NonNull ConsultantRepository consultantRepository;
 
@@ -420,6 +443,24 @@ public class CaseHandoverService {
   }
 
   @Transactional(readOnly = true)
+  /**
+   * Department-scoped candidate search.
+   *
+   * <p>Two things changed here, and the order matters. The agency/topic narrowing now also runs in
+   * the database and the window is bounded, so this no longer reads every selected-status session
+   * across the requester's agencies; and the candidates are loaded with their topics in one query,
+   * so the department predicate no longer triggers a lazy read per candidate.
+   *
+   * <p>{@link #isInRequesterDepartment} deliberately stays. It, not the JPQL, is the authority on
+   * what the requester may see: it is the least-privilege boundary (#202), it is unit-tested, and
+   * leaving it in place means a mistake in the query can only over-fetch, never over-share.
+   *
+   * <p>The free-text filter cannot move into SQL at all. It matches on decoded usernames and on the
+   * internal display name with fallback (#996) — values that do not exist in the columns the
+   * database would have to search, because usernames are stored encoded. Moving it there means
+   * changing how usernames are stored, which is a different change than this one. The scan window
+   * is what bounds it instead, and a truncated window is reported rather than silently trimmed.
+   */
   public ConsultantSessionListResponseDTO searchCandidates(
       String query, int offset, int count, boolean archived) {
     Consultant requester = retrieveCurrentConsultant();
@@ -431,13 +472,37 @@ public class CaseHandoverService {
       return emptyCandidateResponse(safeOffset);
     }
 
+    Set<Long> requesterTopicIds = consultantTopicIds(requester);
+    if (topicsEnabled && requesterTopicIds.isEmpty()) {
+      // Topics on, none assigned: the requester has no department, and falling back to the whole
+      // agency would be wider than least-privilege (#202).
+      return emptyCandidateResponse(safeOffset);
+    }
+    boolean allTopics = !topicsEnabled;
+    // An empty IN list is not portable, and the predicate is short-circuited by allTopics anyway.
+    Set<Long> topicIds = requesterTopicIds.isEmpty() ? Set.of(-1L) : requesterTopicIds;
+
     List<SessionStatus> statuses =
         archived
             ? List.of(SessionStatus.IN_ARCHIVE)
             : List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE);
-    List<Session> candidates =
-        sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            agencyIds, requester, statuses);
+
+    int scanLimit = Math.max(1, candidateSearchScanLimit);
+    List<Long> windowIds =
+        sessionRepository.findCaseHandoverCandidateIds(
+            agencyIds, requester, statuses, allTopics, topicIds, PageRequest.of(0, scanLimit));
+    if (windowIds.isEmpty()) {
+      return emptyCandidateResponse(safeOffset);
+    }
+    if (windowIds.size() == scanLimit) {
+      log.warn(
+          "Case Handover candidate search for consultant {} filled its {}-row scan window; older"
+              + " candidates were not searched. Narrow the query or raise"
+              + " case.handover.candidate-search-scan-limit",
+          requester.getId(),
+          scanLimit);
+    }
+    List<Session> candidates = sessionRepository.findCaseHandoverCandidatesWithTopics(windowIds);
 
     List<Session> matchingCandidates =
         candidates.stream()
@@ -655,7 +720,15 @@ public class CaseHandoverService {
   public CaseHandoverOffer createOffer(
       Long sessionId, String targetConsultantId, String reasonCode, String explanation) {
     Consultant owner = retrieveCurrentConsultant();
-    Session session = getSession(sessionId);
+    // Locked for the life of this transaction: the "one open offer per case" rule below is a
+    // read-then-write, and two concurrent offers on the same case would otherwise both pass it and
+    // land two colleagues an offer for the same case. There is no unique index to lean on - an
+    // "open PUSH offer" is a status predicate, not a column value - so the session row is the
+    // serialization point, and it scopes contention to the one case being offered.
+    Session session =
+        sessionRepository
+            .findByIdForUpdate(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found"));
     verifyIsActiveOwner(session, owner);
 
     Consultant target = findColleague(targetConsultantId);
@@ -1563,7 +1636,10 @@ public class CaseHandoverService {
     if (!scheduledTaskClaimService.tryClaim(CO_ACCESS_EXPIRY_TASK, coAccessClaimDuration)) {
       return;
     }
-    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    // Same entry point as CaseHandoverOfferExpiryScheduler. Setting the technical tenant
+    // unconditionally gave a single-tenant deployment a tenant context it never has elsewhere;
+    // the provider is a no-op when multitenancy.enabled is false.
+    tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
     try {
       expireCoAccess();
     } finally {
@@ -1571,29 +1647,51 @@ public class CaseHandoverService {
     }
   }
 
-  /** Exact persisted expiry sweep; API reads also close the curtain at {@code expiresAt}. */
-  @Transactional
+  /**
+   * Exact persisted expiry sweep; API reads also close the curtain at {@code expiresAt}.
+   *
+   * <p>Deliberately NOT {@code @Transactional}. Each row needs Matrix round trips ({@code
+   * getRoomMembers}, an operator login, {@code removeUserFromRoom}) before its audit state may
+   * change, and holding a database transaction across those meant one hanging Synapse pinned a
+   * pooled connection and the row locks for the entire backlog. The work is now: read a bounded
+   * batch in a short transaction, reconcile Matrix with no transaction open, then persist each
+   * outcome in its own short locked transaction. The ordering guarantee is unchanged - confirmed
+   * removal still precedes EXPIRED.
+   */
   public int expireCoAccess() {
     LocalDateTime now = LocalDateTime.now(clock);
-    List<CaseHandoverRequest> expired =
-        caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
-            Status.GRANTED, AccessType.CO_ACCESS, now);
-    List<CaseHandoverRequest> revoked = new ArrayList<>();
-    expired.forEach(
-        request -> {
-          if (!removeCoAccessRequesterFromMatrixRoom(request)) {
-            log.warn(
-                "Could not remove Case Handover requester for request {}; retrying on the next expiry sweep",
-                request.getId());
-            return;
-          }
-          request.setStatus(Status.EXPIRED);
-          request.setAuditOutcome(OUTCOME_ACCESS_EXPIRED);
-          request.setResolvedAt(now);
-          revoked.add(request);
-        });
-    caseHandoverRequestRepository.saveAll(revoked);
-    return revoked.size();
+    Set<Long> attempted = new HashSet<>();
+    int revoked = 0;
+
+    for (int batchNumber = 0; batchNumber < Math.max(1, coAccessSweepMaxBatches); batchNumber++) {
+      List<CaseHandoverCoAccessExpiryStore.ExpiringCoAccess> batch =
+          coAccessExpiryStore.findExpiredBatch(now, coAccessSweepBatchSize);
+      if (batch.isEmpty()) {
+        break;
+      }
+      // A row whose Matrix removal could not be confirmed stays GRANTED and therefore comes back in
+      // the next page. Without this the sweep would re-read the same rows until the batch cap.
+      List<CaseHandoverCoAccessExpiryStore.ExpiringCoAccess> fresh =
+          batch.stream().filter(item -> attempted.add(item.requestId())).toList();
+      if (fresh.isEmpty()) {
+        break;
+      }
+      for (var expiring : fresh) {
+        if (!removeCoAccessRequesterFromMatrixRoom(expiring)) {
+          log.warn(
+              "Could not remove Case Handover requester for request {}; retrying on the next expiry sweep",
+              expiring.requestId());
+          continue;
+        }
+        if (coAccessExpiryStore.markExpired(expiring.requestId(), now, OUTCOME_ACCESS_EXPIRED)) {
+          revoked++;
+        }
+      }
+      if (batch.size() < Math.max(1, coAccessSweepBatchSize)) {
+        break;
+      }
+    }
+    return revoked;
   }
 
   private CaseHandoverStatus denyRequest(
@@ -1661,7 +1759,7 @@ public class CaseHandoverService {
   private void notifyGranted(CaseHandoverRequest request) {
     Session session = request.getSession();
     Consultant requester = request.getRequesterConsultant();
-    if (effectiveAccessType(request) == AccessType.TAKEOVER) {
+    if (effectiveAccessType(request) == AccessType.TAKEOVER && hasMailTenant(session, "granted")) {
       caseHandoverEmailNotification.ownershipGranted(
           request.getId(),
           session.getMatrixRoomId(),
@@ -1672,19 +1770,28 @@ public class CaseHandoverService {
     String requesterName = resolveConsultantName(requester);
     ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
     boolean coAccess = effectiveAccessType(request) == AccessType.CO_ACCESS;
+    // A tenant that configures its own co-access wording must actually get it. The template is
+    // loaded into the reason and stored by toPolicy, and resolveClientNotificationDescription
+    // exists to prefer it - but this branch read the built-in defaults directly, so the configured
+    // copy was resolved and then discarded. Fall back to the built-in default when the tenant has
+    // none, or when the reason code has no default template at all (legacy codes).
+    String tenantDescription =
+        coAccess ? resolveClientNotificationDescription(request, requesterName) : null;
     String clientDescription =
-        coAccess
-            ? DEFAULT_CLIENT_NOTIFICATION_TEMPLATES
-                .get(ADVICE_NEEDED)
-                .getOrDefault(
-                    resolveSessionLanguage(session),
-                    DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(ADVICE_NEEDED).get("de"))
-                .replace("{{newAdvisor}}", requesterName)
-                .replace(
-                    "{{duration}}",
-                    formatDuration(
-                        request.getMaxAccessDurationMinutes(), resolveSessionLanguage(session)))
-            : renderClientCopy(clientCopy.grantedDescription(), requesterName);
+        tenantDescription != null
+            ? tenantDescription
+            : coAccess
+                ? DEFAULT_CLIENT_NOTIFICATION_TEMPLATES
+                    .get(ADVICE_NEEDED)
+                    .getOrDefault(
+                        resolveSessionLanguage(session),
+                        DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(ADVICE_NEEDED).get("de"))
+                    .replace("{{newAdvisor}}", requesterName)
+                    .replace(
+                        "{{duration}}",
+                        formatDuration(
+                            request.getMaxAccessDurationMinutes(), resolveSessionLanguage(session)))
+                : renderClientCopy(clientCopy.grantedDescription(), requesterName);
     postGrantedChatSystemMessage(session, requesterName, clientDescription);
     // #1010 task 1a: the explanation is counsellor-written free text that can reference case
     // content. It is no longer copied into the notification, which kept it in plaintext for good;
@@ -1835,36 +1942,36 @@ public class CaseHandoverService {
     return " годин";
   }
 
-  private boolean removeCoAccessRequesterFromMatrixRoom(CaseHandoverRequest request) {
+  /**
+   * Runs with no transaction open, so it takes plain values rather than an entity - see {@link
+   * CaseHandoverCoAccessExpiryStore.ExpiringCoAccess}.
+   */
+  private boolean removeCoAccessRequesterFromMatrixRoom(
+      CaseHandoverCoAccessExpiryStore.ExpiringCoAccess expiring) {
     try {
-      Session accessSession = request.getSession();
-      Consultant requester = request.getRequesterConsultant();
-      if (accessSession == null || isBlank(accessSession.getMatrixRoomId())) {
-        return true;
-      }
-      if (requester == null || isBlank(requester.getMatrixUserId())) {
+      if (isBlank(expiring.matrixRoomId()) || isBlank(expiring.requesterMatrixUserId())) {
         return true;
       }
       // The old temporary grant can expire after this advisor acquired independent ownership.
       // Expire its audit row, but retain the membership required by the current owner role.
-      if (isActiveOwner(accessSession, requester)) {
+      if (expiring.ownerConsultantId() != null
+          && expiring.ownerConsultantId().equals(expiring.requesterConsultantId())) {
         return true;
       }
-      String roomId = accessSession.getMatrixRoomId();
-      String requesterId = requester.getMatrixUserId();
+      String roomId = expiring.matrixRoomId();
+      String requesterId = expiring.requesterMatrixUserId();
       var membersBefore = matrixSynapseService.getRoomMembers(roomId);
       if (membersBefore.isPresent() && !membersBefore.get().contains(requesterId)) {
         return true;
       }
-      Consultant operator =
-          request.getPreviousConsultant() != null
-              ? request.getPreviousConsultant()
-              : accessSession.getConsultant();
-      if (operator == null || isBlank(operator.getMatrixUserId())) {
+      String operatorMatrixUserId =
+          expiring.previousConsultantMatrixUserId() != null
+              ? expiring.previousConsultantMatrixUserId()
+              : expiring.ownerMatrixUserId();
+      if (isBlank(operatorMatrixUserId)) {
         return false;
       }
-      String operatorToken =
-          matrixSynapseService.loginAsUserAccessToken(operator.getMatrixUserId());
+      String operatorToken = matrixSynapseService.loginAsUserAccessToken(operatorMatrixUserId);
       if (isBlank(operatorToken)) {
         return false;
       }
@@ -1878,7 +1985,7 @@ public class CaseHandoverService {
     } catch (RuntimeException exception) {
       log.warn(
           "Could not reconcile Matrix access for Case Handover request {}",
-          request.getId(),
+          expiring.requestId(),
           exception);
       return false;
     }
@@ -1889,6 +1996,24 @@ public class CaseHandoverService {
       return "de";
     }
     return session.getLanguageCode().name().toLowerCase(Locale.ROOT);
+  }
+
+  /**
+   * {@code Session.tenantId} is nullable, and a single-tenant deployment leaves it unset.
+   * CaseHandoverEmailNotification requires a tenant id for its committed snapshot, so passing null
+   * threw from inside the transactional grant - after the Matrix join, where rollback can no longer
+   * make the handover succeed. A handover must not fail because it could not address an e-mail; the
+   * mail is skipped and recorded instead.
+   */
+  private boolean hasMailTenant(Session session, String outcome) {
+    if (session != null && session.getTenantId() != null) {
+      return true;
+    }
+    log.warn(
+        "Case Handover {} mail skipped for session {}: the session has no tenant id",
+        outcome,
+        session == null ? null : session.getId());
+    return false;
   }
 
   private TenantData mailTenant(Session session) {
@@ -1902,7 +2027,7 @@ public class CaseHandoverService {
 
   private void notifyPendingConsent(CaseHandoverRequest request) {
     Session session = request.getSession();
-    if (effectiveAccessType(request) == AccessType.TAKEOVER) {
+    if (effectiveAccessType(request) == AccessType.TAKEOVER && hasMailTenant(session, "consent")) {
       caseHandoverEmailNotification.takeoverConsentRequested(
           request.getId(), session.getMatrixRoomId(), mailTenant(session));
     }

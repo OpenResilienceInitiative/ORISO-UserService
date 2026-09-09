@@ -6,12 +6,15 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -92,6 +95,9 @@ class CaseHandoverServiceTest {
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
   @Mock private SessionSupervisorFacade sessionSupervisorFacade;
   @Mock private ScheduledTaskClaimService scheduledTaskClaimService;
+  @Mock private CaseHandoverCoAccessExpiryStore coAccessExpiryStore;
+
+  @Mock private de.caritas.cob.userservice.api.tenant.TenantContextProvider tenantContextProvider;
   @Spy private Clock clock = Clock.fixed(Instant.parse("2026-08-16T10:00:00Z"), ZoneOffset.UTC);
 
   private Consultant requester;
@@ -747,6 +753,21 @@ class CaseHandoverServiceTest {
     assertFalse(status.isCanViewContent());
   }
 
+  /** The sweep now reconciles Matrix on plain values and asks the store to persist the outcome. */
+  private CaseHandoverCoAccessExpiryStore.ExpiringCoAccess expiring(CaseHandoverRequest request) {
+    return new CaseHandoverCoAccessExpiryStore.ExpiringCoAccess(
+        request.getId(),
+        session.getId(),
+        session.getMatrixRoomId(),
+        requester.getId(),
+        requester.getMatrixUserId(),
+        session.getConsultant() == null ? null : session.getConsultant().getId(),
+        session.getConsultant() == null ? null : session.getConsultant().getMatrixUserId(),
+        previous.getMatrixUserId());
+  }
+
+  private static final LocalDateTime SWEEP_NOW = LocalDateTime.of(2026, 8, 16, 10, 0);
+
   @Test
   void expireCoAccess_persistsAuditStateUsingInjectedClock() {
     CaseHandoverRequest request = grantedAdviceRequest();
@@ -760,19 +781,17 @@ class CaseHandoverServiceTest {
     when(matrixSynapseService.removeUserFromRoom(
             "!room:matrix", "@requester:matrix", "previous-token"))
         .thenReturn(true);
-    when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
-            CaseHandoverRequest.Status.GRANTED,
-            CaseHandoverRequest.AccessType.CO_ACCESS,
-            LocalDateTime.of(2026, 8, 16, 10, 0)))
-        .thenReturn(List.of(request));
+    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), anyInt()))
+        .thenReturn(List.of(expiring(request)))
+        .thenReturn(List.of());
+    when(coAccessExpiryStore.markExpired(request.getId(), SWEEP_NOW, "ACCESS_EXPIRED"))
+        .thenReturn(true);
 
     assertEquals(1, caseHandoverService.expireCoAccess());
 
-    assertEquals(CaseHandoverRequest.Status.EXPIRED, request.getStatus());
-    assertEquals("ACCESS_EXPIRED", request.getAuditOutcome());
     verify(matrixSynapseService)
         .removeUserFromRoom("!room:matrix", "@requester:matrix", "previous-token");
-    verify(caseHandoverRequestRepository).saveAll(List.of(request));
+    verify(coAccessExpiryStore).markExpired(request.getId(), SWEEP_NOW, "ACCESS_EXPIRED");
   }
 
   @Test
@@ -782,26 +801,17 @@ class CaseHandoverServiceTest {
     requester.setMatrixUserId("@requester:matrix");
     previous.setMatrixUserId("@previous:matrix");
     session.setConsultant(requester);
-    when(matrixSynapseService.getRoomMembers("!room:matrix"))
-        .thenReturn(Optional.of(List.of("@requester:matrix")));
-    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
-        .thenReturn("previous-token");
-    when(matrixSynapseService.removeUserFromRoom(
-            "!room:matrix", "@requester:matrix", "previous-token"))
+    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), anyInt()))
+        .thenReturn(List.of(expiring(request)))
+        .thenReturn(List.of());
+    when(coAccessExpiryStore.markExpired(request.getId(), SWEEP_NOW, "ACCESS_EXPIRED"))
         .thenReturn(true);
-    when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
-            CaseHandoverRequest.Status.GRANTED,
-            CaseHandoverRequest.AccessType.CO_ACCESS,
-            LocalDateTime.of(2026, 8, 16, 10, 0)))
-        .thenReturn(List.of(request));
 
     assertEquals(1, caseHandoverService.expireCoAccess());
 
-    assertEquals(CaseHandoverRequest.Status.EXPIRED, request.getStatus());
-    assertEquals("ACCESS_EXPIRED", request.getAuditOutcome());
     assertEquals(requester, session.getConsultant());
     verify(matrixSynapseService, never()).removeUserFromRoom(anyString(), anyString(), anyString());
-    verify(caseHandoverRequestRepository).saveAll(List.of(request));
+    verify(coAccessExpiryStore).markExpired(request.getId(), SWEEP_NOW, "ACCESS_EXPIRED");
   }
 
   @Test
@@ -814,16 +824,12 @@ class CaseHandoverServiceTest {
         .thenReturn(Optional.of(List.of("@requester:matrix")));
     when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
         .thenReturn("previous-token");
-    when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
-            CaseHandoverRequest.Status.GRANTED,
-            CaseHandoverRequest.AccessType.CO_ACCESS,
-            LocalDateTime.of(2026, 8, 16, 10, 0)))
-        .thenReturn(List.of(request));
+    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), anyInt()))
+        .thenReturn(List.of(expiring(request)));
 
     assertEquals(0, caseHandoverService.expireCoAccess());
 
-    assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
-    verify(caseHandoverRequestRepository).saveAll(List.of());
+    verify(coAccessExpiryStore, never()).markExpired(any(), any(), anyString());
   }
 
   @Test
@@ -834,16 +840,30 @@ class CaseHandoverServiceTest {
     requester.setMatrixUserId("@requester:matrix");
     when(matrixSynapseService.getRoomMembers("!room:matrix"))
         .thenThrow(new IllegalStateException("Matrix unavailable"));
-    when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
-            CaseHandoverRequest.Status.GRANTED,
-            CaseHandoverRequest.AccessType.CO_ACCESS,
-            LocalDateTime.of(2026, 8, 16, 10, 0)))
-        .thenReturn(List.of(failingRequest));
+    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), anyInt()))
+        .thenReturn(List.of(expiring(failingRequest)));
 
     assertEquals(0, caseHandoverService.expireCoAccess());
 
-    assertEquals(CaseHandoverRequest.Status.GRANTED, failingRequest.getStatus());
-    verify(caseHandoverRequestRepository).saveAll(List.of());
+    verify(coAccessExpiryStore, never()).markExpired(any(), any(), anyString());
+  }
+
+  @Test
+  void expireCoAccess_stopsInsteadOfLoopingWhenAFullBatchKeepsFailing() {
+    // A row whose Matrix removal cannot be confirmed stays GRANTED, so a naive loop would re-read
+    // the same full page until the batch cap. The sweep must notice it has already tried them.
+    CaseHandoverRequest request = grantedAdviceRequest();
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenThrow(new IllegalStateException("Matrix unavailable"));
+    ReflectionTestUtils.setField(caseHandoverService, "coAccessSweepBatchSize", 1);
+    when(coAccessExpiryStore.findExpiredBatch(eq(SWEEP_NOW), anyInt()))
+        .thenReturn(List.of(expiring(request)));
+
+    assertEquals(0, caseHandoverService.expireCoAccess());
+
+    verify(coAccessExpiryStore, times(2)).findExpiredBatch(eq(SWEEP_NOW), anyInt());
   }
 
   @Test
@@ -862,8 +882,8 @@ class CaseHandoverServiceTest {
         .thenReturn(false);
     try {
       caseHandoverService.expireCoAccessSchedule();
-      verify(caseHandoverRequestRepository, never())
-          .findByStatusAndAccessTypeAndExpiresAtLessThanEqual(any(), any(), any());
+      verify(coAccessExpiryStore, never()).findExpiredBatch(any(), anyInt());
+      verify(tenantContextProvider, never()).setTechnicalContextIfMultiTenancyIsEnabled();
       assertEquals(77L, TenantContext.getCurrentTenant());
     } finally {
       TenantContext.clear();
@@ -871,18 +891,16 @@ class CaseHandoverServiceTest {
   }
 
   @Test
-  void expiryScheduler_usesSharedLeaseAndTechnicalTenantContext() {
-    when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
-            any(), any(), any()))
-        .thenAnswer(
-            invocation -> {
-              assertEquals(TenantContext.TECHNICAL_TENANT_ID, TenantContext.getCurrentTenant());
-              return List.of();
-            });
+  void expiryScheduler_usesSharedLeaseAndTheTenantContextProvider() {
+    // Setting TECHNICAL_TENANT_ID unconditionally gave a single-tenant deployment a tenant context
+    // it has nowhere else; the provider is the no-op-when-disabled entry point the sibling offer
+    // scheduler already uses.
+    when(coAccessExpiryStore.findExpiredBatch(any(), anyInt())).thenReturn(List.of());
 
     caseHandoverService.expireCoAccessSchedule();
 
     verify(scheduledTaskClaimService).tryClaim(eq("case-handover-co-access-expiry"), any());
+    verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     assertNull(TenantContext.getCurrentTenant());
   }
 
@@ -929,9 +947,7 @@ class CaseHandoverServiceTest {
 
   @Test
   void searchCandidates_returnsMetadataOnlySameAgencyMatches() {
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
-        .thenReturn(List.of(session));
+    givenCandidates(session);
 
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
 
@@ -951,9 +967,7 @@ class CaseHandoverServiceTest {
     // display name stays a valid search term as well.
     previous.setDisplayName("Anna B.");
     previous.setInternalDisplayName("Standort Nord Team 7");
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
-        .thenReturn(List.of(session));
+    givenCandidates(session);
 
     var internalNameResponse = caseHandoverService.searchCandidates("standort nord", 0, 15, false);
     var publicNameResponse = caseHandoverService.searchCandidates("anna b", 0, 15, false);
@@ -971,9 +985,7 @@ class CaseHandoverServiceTest {
     asker.setUsername(usernameTranscoder.encodeUsername("codexasker1782348153159"));
     previous.setUsername(usernameTranscoder.encodeUsername("codexcounselor20260625023940"));
     previous.setDisplayName(usernameTranscoder.encodeUsername("Codex Counselor"));
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
-        .thenReturn(List.of(session));
+    givenCandidates(session);
 
     var askerResponse = caseHandoverService.searchCandidates("codexasker", 0, 15, false);
     var consultantResponse = caseHandoverService.searchCandidates("codexcounselor", 0, 15, false);
@@ -1061,11 +1073,36 @@ class CaseHandoverServiceTest {
     assertEquals("COUNSELLOR_ASKED_FOR_ADVICE", request.getReasonCode());
     assertEquals("Historical unchanged label", request.getReasonLabel());
     assertEquals("Historical unchanged authority", request.getPolicyAuthority());
-    verify(caseHandoverPolicyCacheService).getEffective(7L);
+    // Read twice now: once to resolve the effective reason, once to resolve the tenant-configured
+    // client wording, which this grant path previously ignored.
+    verify(caseHandoverPolicyCacheService, atLeastOnce()).getEffective(7L);
     verify(sessionRepository, never()).save(session);
     verify(caseHandoverEmailNotification, never())
         .ownershipGranted(any(), any(), any(), any(), any());
     verify(caseHandoverEmailNotification, never()).takeoverConsentRequested(any(), any(), any());
+  }
+
+  @Test
+  void grantingCoAccessUsesTheTenantConfiguredClientWordingNotTheBuiltInDefault() {
+    // The tenant template was loaded into the reason and stored, and
+    // resolveClientNotificationDescription existed to prefer it - but the grant path read the
+    // built-in defaults directly, so a Traeger that configured its own co-access wording never saw
+    // it. The fixture template is the one tenantPolicies() carries.
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(tenantPolicies("Rat benötigt", 180));
+
+    caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
+    verify(eventNotificationService, atLeastOnce())
+        .createEvent(any(), any(), any(), any(), text.capture(), any(), any(), any(), any());
+    assertTrue(
+        text.getAllValues().stream()
+            .anyMatch(value -> value != null && value.contains("zeitlich begrenzt mitlesen")),
+        "the tenant-configured client wording must reach the notification");
   }
 
   @Test
@@ -1311,9 +1348,17 @@ class CaseHandoverServiceTest {
     return candidate;
   }
 
+  /**
+   * The database now narrows by agency and topic and the service loads that window by id. The
+   * department predicate still runs in the service, so these tests deliberately hand back rows the
+   * query might have over-fetched and assert the service drops them.
+   */
   private void givenCandidates(Session... candidates) {
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
+    List<Long> ids = java.util.Arrays.stream(candidates).map(Session::getId).toList();
+    when(sessionRepository.findCaseHandoverCandidateIds(
+            any(), eq(requester), any(), anyBoolean(), any(), any()))
+        .thenReturn(ids);
+    when(sessionRepository.findCaseHandoverCandidatesWithTopics(ids))
         .thenReturn(List.of(candidates));
   }
 
@@ -1442,13 +1487,10 @@ class CaseHandoverServiceTest {
     secondAgency.setConsultant(requester);
     requester.setConsultantAgencies(Set.of(firstAgency, secondAgency));
     givenRequesterTopics(5L, 6L);
-    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
-            any(), eq(requester), eq(List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE))))
-        .thenReturn(
-            List.of(
-                candidateSession(213L, 10L, 5L, false),
-                candidateSession(214L, 20L, 6L, true),
-                candidateSession(215L, 20L, 99L, false)));
+    givenCandidates(
+        candidateSession(213L, 10L, 5L, false),
+        candidateSession(214L, 20L, 6L, true),
+        candidateSession(215L, 20L, 99L, false));
 
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
 
