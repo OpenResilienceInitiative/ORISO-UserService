@@ -47,6 +47,8 @@ public class ConsultantSessionEnricher {
 
   private void enrichConsultantSession(ConsultantSessionResponseDTO consultantSessionResponseDTO) {
     var session = consultantSessionResponseDTO.getSession();
+    // messagesRead is deprecated in the API spec: always true, read state is derived
+    // client-side from the Matrix room (ORISO-Frontend#1147). Kept for compatibility.
     session.setMessagesRead(true);
     enrichSessionWithTopic(consultantSessionResponseDTO);
   }
