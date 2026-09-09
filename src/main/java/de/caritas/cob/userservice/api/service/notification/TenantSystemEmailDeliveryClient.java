@@ -7,13 +7,16 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import java.util.UUID;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.client.RestTemplate;
 
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class TenantSystemEmailDeliveryClient {
   public enum Purpose {
@@ -57,7 +60,15 @@ public class TenantSystemEmailDeliveryClient {
         throw new IllegalStateException("Unexpected delivery status");
       return true;
     } catch (RuntimeException exception) {
-      // No cause: downstream bodies/SMTP replies must never enter async logs.
+      // The sanitized exception stays cause-free: downstream bodies and SMTP replies must never
+      // enter async logs. But discarding the cause entirely made a TenantService outage, an expired
+      // technical user and a serialization bug indistinguishable in production. Record the shape of
+      // the failure - type and HTTP status, never a response body - before throwing.
+      log.error(
+          "Tenant system email delivery to tenant {} for {} failed: {}",
+          tenantId,
+          purpose,
+          failureSummary(exception));
       throw new IllegalStateException("Tenant system email delivery unconfirmed");
     } finally {
       if (login != null && login.refreshToken() != null && !login.refreshToken().isBlank()) {
@@ -68,6 +79,14 @@ public class TenantSystemEmailDeliveryClient {
         }
       }
     }
+  }
+
+  /** Type and status only. A downstream body may quote the recipient address. */
+  static String failureSummary(RuntimeException exception) {
+    return exception.getClass().getSimpleName()
+        + (exception instanceof RestClientResponseException response
+            ? " HTTP " + response.getStatusCode().value()
+            : "");
   }
 
   record Delivery(

@@ -150,4 +150,37 @@ class TenantSystemEmailDeliveryClientTest {
     verifyNoInteractions(identity);
     server.verify();
   }
+
+  @Test
+  void aFailedDeliveryRecordsTheFailureShapeWithoutTheDownstreamBody() {
+    // Discarding the cause entirely made a TenantService outage, an expired technical user and a
+    // serialization bug indistinguishable in production. The type and status must survive; the
+    // response body, which can quote the recipient address, must not.
+    server
+        .expect(requestTo("https://tenant.example.org/tenant/7/internal/system-email-deliveries"))
+        .andRespond(
+            withServerError()
+                .contentType(MediaType.TEXT_PLAIN)
+                .body("synthetic-body-quoting advice.seeker@example.org"));
+
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(
+            TenantSystemEmailDeliveryClient.class)) {
+      assertThatThrownBy(
+              () ->
+                  client.send(
+                      7L,
+                      TenantSystemEmailDeliveryClient.Purpose.SUPERVISOR_ADDED,
+                      "advice.seeker@example.org",
+                      email))
+          .isInstanceOf(IllegalStateException.class)
+          .hasNoCause();
+
+      assertThat(logs.messages(ch.qos.logback.classic.Level.ERROR)).hasSize(1);
+      var message = logs.messages(ch.qos.logback.classic.Level.ERROR).get(0);
+      assertThat(message).contains("HTTP 500").contains("SUPERVISOR_ADDED");
+      assertThat(message).doesNotContain("synthetic-body-quoting");
+      assertThat(logs.events()).allSatisfy(event -> assertThat(event.getThrowableProxy()).isNull());
+    }
+  }
 }
