@@ -34,9 +34,39 @@ public class OrisoEmailDispatcher {
       sendOrThrow(smtp, recipient, email);
       return true;
     } catch (SmtpSendException exception) {
-      log.error("ORISO email dispatch failed", exception);
+      // Never log the exception itself. The cause chain here is the Jakarta Mail failure, and SMTP
+      // rejection replies routinely embed the recipient address ("550 5.1.1 <a@b.example> user
+      // unknown"). NotificationEmailService already refuses to retain these details for exactly
+      // that reason; logging the throwable here would put advice-seeker addresses on disk anyway.
+      // The type chain keeps auth failures, TLS failures and timeouts distinguishable.
+      log.error(
+          "ORISO email dispatch failed via SMTP host {}: {}", host(smtp), causeChain(exception));
       return false;
     }
+  }
+
+  /** Exception simple names only: no messages, no SMTP reply text, no addresses. */
+  static String causeChain(Throwable throwable) {
+    StringBuilder chain = new StringBuilder();
+    Throwable current = throwable;
+    int depth = 0;
+    while (current != null && depth < 5) {
+      if (depth > 0) {
+        chain.append(" <- ");
+      }
+      chain.append(current.getClass().getSimpleName());
+      if (current.getCause() == current) {
+        break;
+      }
+      current = current.getCause();
+      depth++;
+    }
+    return chain.toString();
+  }
+
+  /** The configured SMTP host is operator configuration, not personal data. */
+  private static String host(SupervisorAddedEmailSettings smtp) {
+    return smtp == null || smtp.getHost() == null ? "<unset>" : smtp.getHost();
   }
 
   /** Synchronous receipt boundary: returns only after SMTP accepts both MIME alternatives. */
