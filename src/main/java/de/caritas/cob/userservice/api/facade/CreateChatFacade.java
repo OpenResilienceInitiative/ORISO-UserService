@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateChatResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
@@ -25,6 +26,7 @@ import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipServ
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -87,6 +89,27 @@ public class CreateChatFacade {
     List<String> participantIds =
         chatDTO.getConsultantIds() == null ? List.of() : chatDTO.getConsultantIds();
     Long agencyId = resolveAgencyId(chatDTO, consultant);
+    List<Consultant> participants =
+        participantIds.stream()
+            .distinct()
+            .filter(id -> !Objects.equals(id, consultant.getId()))
+            .map(
+                id -> {
+                  if (id == null || id.isBlank()) {
+                    throw new BadRequestException("Invalid selected consultant");
+                  }
+                  Consultant participant =
+                      consultantRepository
+                          .findByIdAndDeleteDateIsNull(id)
+                          .orElseThrow(
+                              () -> new BadRequestException("Selected consultant is not active"));
+                  if (consultant.getTenantId() == null
+                      || !Objects.equals(consultant.getTenantId(), participant.getTenantId())) {
+                    throw new BadRequestException("Selected consultant belongs to another tenant");
+                  }
+                  return participant;
+                })
+            .toList();
 
     // Create a session for the group (needed for backend logic)
     Session session = new Session();
@@ -178,34 +201,19 @@ public class CreateChatFacade {
 
       int joinedParticipants = 1;
       // Invite and auto-join all selected consultants
-      for (String participantId : participantIds) {
-        try {
-          Consultant participant = consultantRepository.findById(participantId).orElse(null);
-          if (participant == null) {
-            log.warn("Consultant {} not found, skipping", participantId);
-            continue;
-          }
-
-          if (!consultantMembership.joinConsultantIntoRoom(
-              participant, matrixRoomId, consultantToken)) {
-            log.warn("Consultant {} did not join group chat {}", participantId, matrixRoomId);
-            continue;
-          }
-
-          // Save participant in group_chat_participant table (for querying who's in the group)
-          GroupChatParticipant gcp = new GroupChatParticipant();
-          gcp.setChatId(sessionId); // Link to session ID
-          gcp.setSeriesId(chatId);
-          gcp.setRole(GroupChatParticipant.ParticipantRole.CO_MODERATOR);
-          gcp.setConsultantId(participantId);
-          groupChatParticipantRepository.save(gcp);
-          joinedParticipants++;
-
-        } catch (Exception e) {
-          log.error(
-              "Failed to invite consultant {} to group chat: {}", participantId, e.getMessage());
-          // Continue with other participants
+      for (Consultant participant : participants) {
+        if (!consultantMembership.joinConsultantIntoRoom(
+            participant, matrixRoomId, consultantToken)) {
+          throw new InternalServerErrorException(
+              "Selected consultant could not join the group chat");
         }
+        GroupChatParticipant gcp = new GroupChatParticipant();
+        gcp.setChatId(sessionId);
+        gcp.setSeriesId(chatId);
+        gcp.setRole(GroupChatParticipant.ParticipantRole.CO_MODERATOR);
+        gcp.setConsultantId(participant.getId());
+        groupChatParticipantRepository.save(gcp);
+        joinedParticipants++;
       }
 
       log.info(

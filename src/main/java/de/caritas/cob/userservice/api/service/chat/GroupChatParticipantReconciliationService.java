@@ -4,15 +4,15 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
-import java.util.LinkedHashSet;
 import java.util.LinkedHashMap;
-import de.caritas.cob.userservice.api.model.Consultant;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
@@ -92,7 +92,6 @@ public class GroupChatParticipantReconciliationService {
         throw new InternalServerErrorException(
             "Consultant " + consultantId + " could not join the Matrix room");
       }
-
     }
 
     for (var consultantId : desiredIds) {
@@ -124,6 +123,5 @@ public class GroupChatParticipantReconciliationService {
         participantRepository.delete(existing);
       }
     }
-
   }
 }

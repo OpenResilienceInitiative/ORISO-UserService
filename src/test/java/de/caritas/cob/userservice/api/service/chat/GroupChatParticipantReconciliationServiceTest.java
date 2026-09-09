@@ -191,14 +191,17 @@ class GroupChatParticipantReconciliationServiceTest {
     var valid = consultant("valid", "@valid:matrix");
     when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
     var removedConsultant = consultant("removed", "@removed:matrix");
-    Mockito.lenient().when(consultantRepository.findByIdAndDeleteDateIsNull("removed"))
+    Mockito.lenient()
+        .when(consultantRepository.findByIdAndDeleteDateIsNull("removed"))
         .thenReturn(Optional.of(removedConsultant));
     when(consultantRepository.findByIdAndDeleteDateIsNull("valid")).thenReturn(Optional.of(valid));
-    Mockito.lenient().when(membershipService.addMemberToRoom(series, "@valid:matrix")).thenReturn(true);
+    Mockito.lenient()
+        .when(membershipService.addMemberToRoom(series, "@valid:matrix"))
+        .thenReturn(true);
     when(consultantRepository.findByIdAndDeleteDateIsNull("deleted")).thenReturn(Optional.empty());
 
-    assertThrows(BadRequestException.class,
-        () -> service.reconcile(series, List.of("valid", "deleted")));
+    assertThrows(
+        BadRequestException.class, () -> service.reconcile(series, List.of("valid", "deleted")));
 
     verifyNoInteractions(membershipService, consultantMembership);
     verify(participantRepository, never()).delete(Mockito.any());
@@ -225,13 +228,14 @@ class GroupChatParticipantReconciliationServiceTest {
     var newcomer = consultant("newcomer", "@newcomer:matrix");
     when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner, removed));
     var removedConsultant = consultant("removed", "@removed:matrix");
-    Mockito.lenient().when(consultantRepository.findByIdAndDeleteDateIsNull("removed"))
+    Mockito.lenient()
+        .when(consultantRepository.findByIdAndDeleteDateIsNull("removed"))
         .thenReturn(Optional.of(removedConsultant));
     when(consultantRepository.findByIdAndDeleteDateIsNull("newcomer"))
         .thenReturn(Optional.of(newcomer));
 
-    assertThrows(InternalServerErrorException.class,
-        () -> service.reconcile(series, List.of("newcomer")));
+    assertThrows(
+        InternalServerErrorException.class, () -> service.reconcile(series, List.of("newcomer")));
 
     verify(membershipService, never()).removeLeavingMemberFromRoom(Mockito.any(), Mockito.any());
     verify(participantRepository, never()).delete(Mockito.any());
