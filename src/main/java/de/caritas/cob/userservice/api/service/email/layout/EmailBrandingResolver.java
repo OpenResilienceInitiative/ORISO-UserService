@@ -9,8 +9,11 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTe
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
 import java.net.URI;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -48,17 +51,54 @@ public class EmailBrandingResolver {
   private final String platformLogoUrl;
   private final String applicationBaseUrl;
 
+  /** Sentinel key for the platform lookup, which has no tenant id of its own. */
+  private static final Long PLATFORM_CACHE_KEY = Long.MIN_VALUE;
+
+  /** Bound on distinct keys held, so a pathological tenant id space cannot grow this unbounded. */
+  private static final int MAX_CACHE_ENTRIES = 1000;
+
+  private final long cacheTtlNanos;
+  private final Map<Long, CachedTenant> tenantCache = new ConcurrentHashMap<>();
+
+  private record CachedTenant(RestrictedTenantDTO tenant, long storedAtNanos) {}
+
+  /**
+   * @param cacheTtlSeconds collapses the per-recipient lookups of one batch into a single remote
+   *     call. Must stay short: source 2606d840 removed the 24-hour tenant cache precisely because a
+   *     logo change stayed invisible in mail until it expired. A few seconds keeps a branding save
+   *     effectively immediate while a digest run of N consultants costs one call instead of N. Set
+   *     to 0 to disable caching entirely.
+   */
+  @Autowired
   public EmailBrandingResolver(
       @NonNull TenantService tenantService,
       @NonNull TenantTemplateSupplier tenantTemplateSupplier,
       @Value("${email.branding.name:ORISO}") String platformName,
       @Value("${email.branding.logo-url:}") String platformLogoUrl,
-      @Value("${app.base.url:}") String applicationBaseUrl) {
+      @Value("${app.base.url:}") String applicationBaseUrl,
+      @Value("${email.branding.cache-ttl-seconds:10}") long cacheTtlSeconds) {
     this.tenantService = tenantService;
     this.tenantTemplateSupplier = tenantTemplateSupplier;
     this.platformName = platformName;
     this.platformLogoUrl = platformLogoUrl;
     this.applicationBaseUrl = normalizeBaseUrl(applicationBaseUrl);
+    this.cacheTtlNanos = Math.max(0L, cacheTtlSeconds) * 1_000_000_000L;
+  }
+
+  /** Caching disabled: every resolve performs its own lookup. */
+  public EmailBrandingResolver(
+      @NonNull TenantService tenantService,
+      @NonNull TenantTemplateSupplier tenantTemplateSupplier,
+      String platformName,
+      String platformLogoUrl,
+      String applicationBaseUrl) {
+    this(
+        tenantService,
+        tenantTemplateSupplier,
+        platformName,
+        platformLogoUrl,
+        applicationBaseUrl,
+        0L);
   }
 
   /**
@@ -183,6 +223,30 @@ public class EmailBrandingResolver {
   }
 
   private RestrictedTenantDTO loadTenantQuietly(Long tenantId) {
+    if (cacheTtlNanos <= 0L) {
+      return loadTenantUncached(tenantId);
+    }
+    Long key =
+        (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId))
+            ? PLATFORM_CACHE_KEY
+            : tenantId;
+    long now = System.nanoTime();
+    CachedTenant cached = tenantCache.get(key);
+    // Subtraction, not comparison of absolutes: nanoTime has no fixed epoch and may be negative.
+    if (cached != null && now - cached.storedAtNanos() < cacheTtlNanos) {
+      return cached.tenant();
+    }
+    RestrictedTenantDTO fresh = loadTenantUncached(tenantId);
+    if (tenantCache.size() >= MAX_CACHE_ENTRIES) {
+      tenantCache.clear();
+    }
+    // A null result is cached too: tenant-admin invites resolve to "no tenant yet", and that 404
+    // is the normal case, not an error worth repeating once per recipient.
+    tenantCache.put(key, new CachedTenant(fresh, now));
+    return fresh;
+  }
+
+  private RestrictedTenantDTO loadTenantUncached(Long tenantId) {
     if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
       return loadPlatformTenantQuietly();
     }
