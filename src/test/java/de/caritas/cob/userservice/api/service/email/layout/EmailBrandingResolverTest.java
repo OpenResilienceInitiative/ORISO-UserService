@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
@@ -322,5 +324,50 @@ class EmailBrandingResolverTest {
 
     assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
     assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+  }
+
+  @Test
+  void collapsesOneBatchOfRecipientsIntoASingleTenantLookup() {
+    givenNoTemplateAttributes();
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", new Theming()));
+    var cached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.oriso.org", 10L);
+
+    for (int recipient = 0; recipient < 25; recipient++) {
+      assertThat(cached.resolve(7L).brandName()).isEqualTo("Nord");
+    }
+
+    // A digest run of N consultants must not cost N remote calls against a shared service.
+    verify(tenantService, times(1)).getRestrictedTenantDataFresh(7L);
+  }
+
+  @Test
+  void ttlZeroKeepsEveryResolveFresh() {
+    givenNoTemplateAttributes();
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", new Theming()));
+    var uncached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.oriso.org", 0L);
+
+    uncached.resolve(7L);
+    uncached.resolve(7L);
+    uncached.resolve(7L);
+
+    verify(tenantService, times(3)).getRestrictedTenantDataFresh(7L);
+  }
+
+  @Test
+  void doesNotServeOneTenantsBrandingToAnother() {
+    givenNoTemplateAttributes();
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", new Theming()));
+    when(tenantService.getRestrictedTenantDataFresh(8L)).thenReturn(tenant("Sued", new Theming()));
+    var cached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.oriso.org", 10L);
+
+    assertThat(cached.resolve(7L).brandName()).isEqualTo("Nord");
+    assertThat(cached.resolve(8L).brandName()).isEqualTo("Sued");
+    assertThat(cached.resolve(7L).brandName()).isEqualTo("Nord");
   }
 }

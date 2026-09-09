@@ -477,14 +477,34 @@
       "status": "bounded"
     },
     {
+      "id": "email-branding-tenant-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/layout/EmailBrandingResolver.java",
+      "kind": "local-state",
+      "owner": "identity-profile",
+      "risk": "performance",
+      "components": [
+        "tenantCache"
+      ],
+      "decision": "Retain locally with a short TTL (email.branding.cache-ttl-seconds, default 10s). Unlike the template cache this holds mutable tenant branding, so replicas can disagree - but only inside the TTL window, and a miss re-reads through TenantService.getRestrictedTenantDataFresh, so no replica can serve branding older than the TTL. The cache exists to stop one lookup per recipient in a digest batch; source 2606d840 removed the previous 24h cache precisely because a logo change stayed invisible until it expired, and the TTL is chosen to keep that fix intact. Bounded at 1000 keys, and setting the TTL to 0 disables it entirely.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "event-notification-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/notificationretention/scheduler/EventNotificationRetentionScheduler.java",
       "kind": "scheduler",
       "owner": "notifications",
       "risk": "duplicate-side-effect",
-      "components": ["purgeExpiredNotifications"],
+      "components": [
+        "purgeExpiredNotifications"
+      ],
       "decision": "Leases the run through ScheduledTaskClaimService; the purge itself is an idempotent bulk delete of expired rows.",
-      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
       "status": "bounded"
     },
     {

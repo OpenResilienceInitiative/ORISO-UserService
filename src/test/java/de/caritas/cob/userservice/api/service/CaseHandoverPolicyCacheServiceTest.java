@@ -186,4 +186,65 @@ class CaseHandoverPolicyCacheServiceTest {
     verify(tenantControllerApi, never()).getTenantPermissionPolicies(any());
     verify(repository, never()).save(any());
   }
+
+  @Test
+  void refresh_rethrowsTheUpstreamFailureWhenTheSnapshotItselfIsUnreadable() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder()
+            .tenantId(42L)
+            .policies("{ this is not valid json")
+            .refreshedAt(LocalDateTime.of(2026, 8, 16, 9, 0))
+            .build();
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("TenantService unavailable"));
+
+    // The real cause must survive. Raising "Cached Case Handover policy is invalid" from inside
+    // the fallback would hide the outage and defeat the last-known-good contract.
+    assertThatThrownBy(() -> service.refresh(42L))
+        .isInstanceOf(RestClientException.class)
+        .hasMessageContaining("unavailable");
+  }
+
+  @Test
+  void getEffective_refreshesInsteadOfFailingWhenTheStoredSnapshotIsUnreadable() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder().tenantId(42L).policies("<<corrupt>>").build();
+    var policies = new CaseHandoverPolicies().reasons(Map.of());
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(
+            new TenantPermissionPolicies()
+                .tenantId(42L)
+                .policies(Map.of())
+                .caseHandoverPolicies(policies));
+
+    assertThat(service.getEffective(42L)).isSameAs(policies);
+  }
+
+  @Test
+  void refreshKnownTenants_continuesAfterATenantThatFails() {
+    var failing =
+        TenantCaseHandoverPolicyCache.builder().tenantId(41L).policies("{\"reasons\":{}}").build();
+    var healthy =
+        TenantCaseHandoverPolicyCache.builder().tenantId(42L).policies("{\"reasons\":{}}").build();
+    when(repository.findAll()).thenReturn(java.util.List.of(failing, healthy));
+    // No persisted snapshot for 41: refresh has nothing to fall back on and propagates.
+    when(repository.findById(41L)).thenReturn(Optional.empty());
+    when(tenantControllerApi.getTenantPermissionPolicies(41L))
+        .thenThrow(new RestClientException("TenantService unavailable"));
+    when(repository.findById(42L)).thenReturn(Optional.of(healthy));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(
+            new TenantPermissionPolicies()
+                .tenantId(42L)
+                .policies(Map.of())
+                .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of())));
+
+    service.refreshKnownTenants();
+
+    // The second tenant must still be refreshed; an aborted sweep would leave it silently aging.
+    verify(tenantControllerApi).getTenantPermissionPolicies(42L);
+    verify(repository).save(healthy);
+  }
 }
