@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.Organizing;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.notification.AppointmentLifecycleNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -53,6 +54,7 @@ class AppointmentControllerTest {
   @Mock private ConsultantService consultantService;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private StatisticsService statisticsService;
+  @Mock private AppointmentLifecycleNotificationService appointmentLifecycleNotificationService;
 
   @InjectMocks private AppointmentController controller;
 

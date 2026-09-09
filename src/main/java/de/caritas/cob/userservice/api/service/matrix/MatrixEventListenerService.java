@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.matrixrtc.CallLifecycleProjectionService;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
@@ -49,6 +50,8 @@ public class MatrixEventListenerService {
   private OutboundHttpMetrics outboundHttpMetrics;
   private LiveChatDiagnosticMetrics diagnosticMetrics;
   private ObservationRegistry observationRegistry = ObservationRegistry.NOOP;
+  private Optional<CallLifecycleProjectionService> callLifecycleProjectionService =
+      Optional.empty();
 
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
@@ -84,6 +87,12 @@ public class MatrixEventListenerService {
   @Autowired(required = false)
   void setDiagnosticMetrics(LiveChatDiagnosticMetrics diagnosticMetrics) {
     this.diagnosticMetrics = diagnosticMetrics;
+  }
+
+  @Autowired(required = false)
+  void setCallLifecycleProjectionService(
+      CallLifecycleProjectionService callLifecycleProjectionService) {
+    this.callLifecycleProjectionService = Optional.ofNullable(callLifecycleProjectionService);
   }
 
   // Backoff bounds (milliseconds) for both the token bootstrap and the sync error path.
@@ -398,7 +407,8 @@ public class MatrixEventListenerService {
 
       // Resolve session context even if room wasn't explicitly registered by UI.
       Optional<Long> sessionIdOpt = resolveSessionIdForRoom(roomId);
-      if (sessionIdOpt.isEmpty()) {
+      boolean sessionRoom = sessionIdOpt.isPresent();
+      if (!sessionRoom && callLifecycleProjectionService.isEmpty()) {
         continue;
       }
 
@@ -411,10 +421,33 @@ public class MatrixEventListenerService {
           List<Map<String, Object>> events = (List<Map<String, Object>>) timeline.get("events");
 
           for (Map<String, Object> event : events) {
-            processMatrixEvent(roomId, event);
+            processMatrixEventIfRelevant(roomId, event, sessionRoom);
           }
         }
       }
+
+      // MatrixRTC publishes membership as room state. These events do not necessarily appear in
+      // the limited timeline returned by /sync, so process the state block as well.
+      if (roomData.containsKey("state")) {
+        Map<String, Object> state = (Map<String, Object>) roomData.get("state");
+        if (state.containsKey("events")) {
+          List<Map<String, Object>> events = (List<Map<String, Object>>) state.get("events");
+          for (Map<String, Object> event : events) {
+            processMatrixEventIfRelevant(roomId, event, sessionRoom);
+          }
+        }
+      }
+    }
+  }
+
+  private void processMatrixEventIfRelevant(
+      String roomId, Map<String, Object> event, boolean sessionRoom) {
+    String eventType = (String) event.get("type");
+    if (sessionRoom
+        || callLifecycleProjectionService
+            .map(projector -> projector.supports(eventType))
+            .orElse(false)) {
+      processMatrixEvent(roomId, event);
     }
   }
 
@@ -449,15 +482,24 @@ public class MatrixEventListenerService {
           break;
 
         case "m.call.invite":
-          outcome = handleCallInvite(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
+          outcome = handleCallLifecycle(roomId, event, () -> handleCallInvite(roomId, event));
           break;
 
         case "m.call.answer":
-          outcome = handleCallAnswer(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
+          outcome = handleCallLifecycle(roomId, event, () -> handleCallAnswer(roomId, event));
           break;
 
         case "m.call.hangup":
-          outcome = handleCallHangup(roomId, event) ? Outcome.SUCCESS : Outcome.SKIPPED;
+          outcome = handleCallLifecycle(roomId, event, () -> handleCallHangup(roomId, event));
+          break;
+
+        case "m.call.member":
+        case "org.matrix.msc3401.call.member":
+        case "org.oriso.call.invited":
+        case "org.oriso.call.started":
+        case "org.oriso.call.ended":
+        case "org.oriso.call.missed":
+          outcome = handleCallLifecycle(roomId, event, () -> false);
           break;
 
         default:
@@ -469,6 +511,16 @@ public class MatrixEventListenerService {
       throw failure;
     }
     recordMatrixEvent(eventType, outcome);
+  }
+
+  private Outcome handleCallLifecycle(
+      String roomId, Map<String, Object> event, java.util.function.BooleanSupplier fallback) {
+    if (callLifecycleProjectionService.isPresent()) {
+      return callLifecycleProjectionService.get().project(roomId, event)
+          ? Outcome.SUCCESS
+          : Outcome.SKIPPED;
+    }
+    return fallback.getAsBoolean() ? Outcome.SUCCESS : Outcome.SKIPPED;
   }
 
   /**

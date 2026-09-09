@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.model.EnquiryData;
 import de.caritas.cob.userservice.api.port.in.Organizing;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.notification.AppointmentLifecycleNotificationService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -67,6 +68,8 @@ public class AppointmentController implements AppointmentsApi {
 
   private final StatisticsService statisticsService;
 
+  private final AppointmentLifecycleNotificationService appointmentLifecycleNotificationService;
+
   @Override
   public ResponseEntity<Appointment> getAppointment(UUID id) {
     var appointmentMap =
@@ -108,6 +111,8 @@ public class AppointmentController implements AppointmentsApi {
     var savedMap = organizer.upsertAppointment(updatedAppointmentMap);
     var savedAppointment = mapper.appointmentOf(savedMap, true);
 
+    appointmentLifecycleNotificationService.scheduled(savedMap);
+
     mapper
         .eventOf(id, appointment.getStatus(), currentUser.getUserId())
         .ifPresent(statisticsService::fireEvent);
@@ -117,9 +122,15 @@ public class AppointmentController implements AppointmentsApi {
 
   @Override
   public ResponseEntity<Void> deleteAppointment(UUID id) {
+    var appointmentMap =
+        organizer
+            .findAppointment(id.toString())
+            .orElseThrow(() -> new NotFoundException(APPOINTMENT_NOT_FOUND, id.toString()));
     if (!organizer.deleteAppointment(id.toString())) {
       throw new NotFoundException(APPOINTMENT_NOT_FOUND, id.toString());
     }
+
+    appointmentLifecycleNotificationService.cancelled(appointmentMap);
 
     return ResponseEntity.noContent().build();
   }
@@ -147,6 +158,8 @@ public class AppointmentController implements AppointmentsApi {
     var appointmentMap = mapper.mapOf(appointment, consultantId);
     var savedMap = organizer.upsertAppointment(appointmentMap);
     var savedAppointment = mapper.appointmentOf(savedMap, true);
+
+    appointmentLifecycleNotificationService.requested(savedMap);
 
     return new ResponseEntity<>(savedAppointment, HttpStatus.CREATED);
   }
