@@ -11,6 +11,8 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
 import java.util.LinkedHashSet;
+import java.util.LinkedHashMap;
+import de.caritas.cob.userservice.api.model.Consultant;
 import java.util.List;
 import java.util.Objects;
 import java.util.function.Function;
@@ -53,6 +55,63 @@ public class GroupChatParticipantReconciliationService {
                     Function.identity(),
                     (left, right) -> left));
 
+    var sessionId =
+        participants.stream()
+            .map(GroupChatParticipant::getChatId)
+            .findFirst()
+            .orElseThrow(
+                () ->
+                    new ConflictException(
+                        "Chat Series has no owner participation and cannot be updated"));
+
+    // Validate the whole selection before changing any external room membership.
+    var selectedConsultants = new LinkedHashMap<String, Consultant>();
+    for (var consultantId : desiredIds) {
+      var consultant =
+          consultantRepository
+              .findByIdAndDeleteDateIsNull(consultantId)
+              .orElseThrow(
+                  () -> new BadRequestException("Consultant " + consultantId + " does not exist"));
+      if (!Objects.equals(series.getChatOwner().getTenantId(), consultant.getTenantId())) {
+        throw new BadRequestException("Consultant does not belong to the chat owner's tenant");
+      }
+      selectedConsultants.put(consultantId, consultant);
+    }
+
+    // Existing database rows do not prove Matrix membership: retry the join too.
+    // Complete joins before removing anyone, so a failed replacement keeps existing access.
+    for (var consultant : selectedConsultants.values()) {
+      var consultantId = consultant.getId();
+      var matrixUserId = consultant.getMatrixUserId();
+      if (matrixUserId == null || matrixUserId.isBlank()) {
+        matrixUserId = consultantMembership.ensureMatrixAccount(consultant);
+      }
+      if (matrixUserId == null
+          || matrixUserId.isBlank()
+          || !membershipService.addMemberToRoom(series, matrixUserId)) {
+        throw new InternalServerErrorException(
+            "Consultant " + consultantId + " could not join the Matrix room");
+      }
+
+    }
+
+    for (var consultantId : desiredIds) {
+      var existing = participantsByConsultantId.get(consultantId);
+      if (existing != null) {
+        if (existing.getRole() == ParticipantRole.PARTICIPANT) {
+          existing.setRole(ParticipantRole.CO_MODERATOR);
+          participantRepository.save(existing);
+        }
+        continue;
+      }
+      participantRepository.save(
+          GroupChatParticipant.builder()
+              .chatId(sessionId)
+              .seriesId(series.getId())
+              .consultantId(consultantId)
+              .role(ParticipantRole.CO_MODERATOR)
+              .build());
+    }
     for (var existing : participants) {
       if (existing.getRole() == ParticipantRole.CO_MODERATOR
           && !desiredIds.contains(existing.getConsultantId())) {
@@ -66,51 +125,5 @@ public class GroupChatParticipantReconciliationService {
       }
     }
 
-    var sessionId =
-        participants.stream()
-            .map(GroupChatParticipant::getChatId)
-            .findFirst()
-            .orElseThrow(
-                () ->
-                    new ConflictException(
-                        "Chat Series has no owner participation and cannot be updated"));
-
-    for (var consultantId : desiredIds) {
-      var existing = participantsByConsultantId.get(consultantId);
-      if (existing != null) {
-        if (existing.getRole() == ParticipantRole.PARTICIPANT) {
-          existing.setRole(ParticipantRole.CO_MODERATOR);
-          participantRepository.save(existing);
-        }
-        continue;
-      }
-
-      var consultant =
-          consultantRepository
-              .findByIdAndDeleteDateIsNull(consultantId)
-              .orElseThrow(
-                  () -> new BadRequestException("Consultant " + consultantId + " does not exist"));
-      if (!Objects.equals(series.getChatOwner().getTenantId(), consultant.getTenantId())) {
-        throw new BadRequestException("Consultant does not belong to the chat owner's tenant");
-      }
-      var matrixUserId = consultant.getMatrixUserId();
-      if (matrixUserId == null || matrixUserId.isBlank()) {
-        matrixUserId = consultantMembership.ensureMatrixAccount(consultant);
-      }
-      if (matrixUserId == null
-          || matrixUserId.isBlank()
-          || !membershipService.addMemberToRoom(series, matrixUserId)) {
-        throw new InternalServerErrorException(
-            "Consultant " + consultantId + " could not join the Matrix room");
-      }
-
-      participantRepository.save(
-          GroupChatParticipant.builder()
-              .chatId(sessionId)
-              .seriesId(series.getId())
-              .consultantId(consultantId)
-              .role(ParticipantRole.CO_MODERATOR)
-              .build());
-    }
   }
 }
