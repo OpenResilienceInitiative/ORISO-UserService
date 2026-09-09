@@ -1,4 +1,4 @@
-package de.caritas.cob.userservice.api.service;
+package tenantstamping;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
