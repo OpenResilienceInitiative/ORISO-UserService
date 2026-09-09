@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -59,6 +60,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   @Mock private ConsultantRepository consultantRepository;
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private UserRepository userRepository;
+  @Mock private AgencySilentMembershipService consultantMembership;
 
   @SuppressWarnings("unused")
   @Spy
@@ -70,6 +72,9 @@ class CreateChatSimplifiedGroupChatFacadeTest {
 
   @BeforeEach
   void setup() {
+    when(consultantMembership.ensureMatrixAccount(any()))
+        .thenAnswer(invocation -> ((Consultant) invocation.getArgument(0)).getMatrixUserId());
+    when(consultantMembership.joinConsultantIntoRoom(any(), any(), any())).thenReturn(true);
     consultant = mock(Consultant.class);
     when(consultant.getId()).thenReturn("creator-consultant-id");
     when(consultant.getMatrixUserId()).thenReturn("@creator:matrix.org");
@@ -267,7 +272,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void createSimplifiedGroupChat_Should_ThrowISE_And_Rollback_When_ConsultantHasNoMatrixUserId() {
+  void
+      createSimplifiedGroupChat_Should_ThrowISE_And_Rollback_When_ConsultantMatrixProvisioningFails() {
     when(consultant.getMatrixUserId()).thenReturn(null);
     ChatDTO chatDto = chatDtoWithConsultantIds(List.of("participant-1"));
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
@@ -281,8 +287,9 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   }
 
   @Test
-  void createSimplifiedGroupChat_Should_ThrowISE_And_Rollback_When_ConsultantMatrixUserIdIsBlank()
-      throws Exception {
+  void
+      createSimplifiedGroupChat_Should_ThrowISE_And_Rollback_When_ConsultantMatrixProvisioningReturnsBlank()
+          throws Exception {
     when(consultant.getMatrixUserId()).thenReturn("  ");
     ChatDTO chatDto = chatDtoWithConsultantIds(List.of("participant-1"));
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
@@ -351,9 +358,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   }
 
   @Test
-  void
-      createSimplifiedGroupChat_Should_SkipJoinAndStillSaveParticipant_When_ParticipantTokenIsNull()
-          throws Exception {
+  void createSimplifiedGroupChat_Should_NotRecordParticipant_When_MembershipFails()
+      throws Exception {
     ChatDTO chatDto = chatDtoWithConsultantIds(List.of("participant-1"));
     when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
         .thenReturn(matrixRoomResponse("!room:matrix.org"));
@@ -362,16 +368,18 @@ class CreateChatSimplifiedGroupChatFacadeTest {
         .thenReturn("creator-token");
     Consultant participant = mock(Consultant.class);
     when(participant.getMatrixUserId()).thenReturn("@participant:matrix.org");
-    when(matrixSynapseService.loginAsUserAccessToken("@participant:matrix.org")).thenReturn(null);
+    when(consultantMembership.joinConsultantIntoRoom(
+            org.mockito.ArgumentMatchers.eq(participant), any(), any()))
+        .thenReturn(false);
     when(consultantRepository.findById("participant-1")).thenReturn(Optional.of(participant));
     doReturn(mock(Chat.class)).when(chatConverter).convertToEntity(any(), any(), any());
 
     createChatFacade.createChatV1(chatDto, consultant);
 
-    verify(matrixSynapseService).inviteUserToRoom(any(), any(), any());
-    verify(matrixSynapseService, never()).joinRoom(any(), any());
-    // creator + participant both saved to participant table
-    verify(groupChatParticipantRepository, times(2)).save(any());
+    verify(consultantMembership)
+        .joinConsultantIntoRoom(org.mockito.ArgumentMatchers.eq(participant), any(), any());
+    // Only confirmed members are persisted.
+    verify(groupChatParticipantRepository, times(1)).save(any());
   }
 
   @Test
@@ -391,7 +399,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(consultantRepository.findById("participant-2")).thenReturn(Optional.of(p2));
 
     // p1 invite fails, p2 invite succeeds
-    when(matrixSynapseService.loginAsUserAccessToken("@p1:matrix.org"))
+    when(consultantMembership.joinConsultantIntoRoom(
+            org.mockito.ArgumentMatchers.eq(p1), any(), any()))
         .thenThrow(new RuntimeException("Matrix error for p1"));
     when(matrixSynapseService.loginAsUserAccessToken("@p2:matrix.org")).thenReturn("p2-token");
 
