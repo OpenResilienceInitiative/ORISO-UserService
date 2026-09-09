@@ -57,6 +57,15 @@ public class EmailBrandingResolver {
   /** Bound on distinct keys held, so a pathological tenant id space cannot grow this unbounded. */
   private static final int MAX_CACHE_ENTRIES = 1000;
 
+  /**
+   * The supported maximum for {@code email.branding.cache-ttl-seconds}. This is the configuration
+   * contract, not an arithmetic guard: the cache exists to collapse one batch, and source 2606d840
+   * removed the previous 24-hour cache because a logo change stayed invisible until it expired.
+   * Anything beyond a few minutes walks back that fix, so a larger configured value is clamped and
+   * reported rather than honoured. It also keeps the nanosecond conversion far below overflow.
+   */
+  private static final long MAX_CACHE_TTL_SECONDS = 300L;
+
   private final long cacheTtlNanos;
   private final Map<Long, CachedTenant> tenantCache = new ConcurrentHashMap<>();
 
@@ -67,7 +76,10 @@ public class EmailBrandingResolver {
    *     call. Must stay short: source 2606d840 removed the 24-hour tenant cache precisely because a
    *     logo change stayed invisible in mail until it expired. A few seconds keeps a branding save
    *     effectively immediate while a digest run of N consultants costs one call instead of N. Set
-   *     to 0 to disable caching entirely.
+   *     to 0 to disable caching entirely. Values above {@link #MAX_CACHE_TTL_SECONDS} are clamped
+   *     to it, so a mis-typed TTL (milliseconds pasted into a seconds field, say) can neither
+   *     overflow the nanosecond conversion into a negative value - which silently disabled the
+   *     cache - nor pin stale branding for hours.
    */
   @Autowired
   public EmailBrandingResolver(
@@ -82,7 +94,20 @@ public class EmailBrandingResolver {
     this.platformName = platformName;
     this.platformLogoUrl = platformLogoUrl;
     this.applicationBaseUrl = normalizeBaseUrl(applicationBaseUrl);
-    this.cacheTtlNanos = Math.max(0L, cacheTtlSeconds) * 1_000_000_000L;
+    this.cacheTtlNanos = boundedTtlSeconds(cacheTtlSeconds) * 1_000_000_000L;
+  }
+
+  /** Clamp before scaling, so the conversion below can never overflow into a negative TTL. */
+  private static long boundedTtlSeconds(long configuredSeconds) {
+    if (configuredSeconds > MAX_CACHE_TTL_SECONDS) {
+      log.warn(
+          "email.branding.cache-ttl-seconds={} exceeds the supported maximum of {}s and was clamped."
+              + " A longer branding cache delays tenant logo and colour changes in outgoing mail.",
+          configuredSeconds,
+          MAX_CACHE_TTL_SECONDS);
+      return MAX_CACHE_TTL_SECONDS;
+    }
+    return Math.max(0L, configuredSeconds);
   }
 
   /** Caching disabled: every resolve performs its own lookup. */
