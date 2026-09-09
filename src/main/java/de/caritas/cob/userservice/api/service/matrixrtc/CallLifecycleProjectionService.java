@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.notification.CallLifecycleEmailNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
@@ -65,6 +66,7 @@ public class CallLifecycleProjectionService {
   private final @NonNull UserRepository userRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull CallLifecycleEmailNotificationService emailNotificationService;
   private final @NonNull ObjectMapper objectMapper;
 
   public boolean supports(String eventType) {
@@ -253,6 +255,9 @@ public class CallLifecycleProjectionService {
     lifecycleRepository.save(lifecycle);
     Collection<String> recipients =
         onlyActor ? (actor == null ? List.of() : List.of(actor)) : context.recipientIds();
+    if ("call.invited".equals(eventType) && actor != null) {
+      recipients = recipients.stream().filter(recipient -> !actor.equals(recipient)).toList();
+    }
     createNotification(lifecycle, eventType, context, eventTime, actor, recipients, false);
   }
 
@@ -276,18 +281,25 @@ public class CallLifecycleProjectionService {
         .filter(recipient -> recipient != null && !recipient.isBlank())
         .distinct()
         .forEach(
-            recipient ->
-                eventNotificationService.createEventOnce(
-                    deduplicationKey,
-                    recipient,
-                    eventType,
-                    EventNotificationService.CATEGORY_SYSTEM,
-                    titleFor(eventType, lifecycle.getCallType()),
-                    textFor(eventType, lifecycle.getCallType()),
-                    params,
-                    null,
-                    context.sessionId(),
-                    context.tenantId()));
+            recipient -> {
+              boolean created =
+                  eventNotificationService.createEventOnce(
+                      deduplicationKey,
+                      recipient,
+                      eventType,
+                      EventNotificationService.CATEGORY_SYSTEM,
+                      titleFor(eventType, lifecycle.getCallType()),
+                      textFor(eventType, lifecycle.getCallType()),
+                      params,
+                      null,
+                      context.sessionId(),
+                      context.tenantId());
+              if (created && "call.invited".equals(eventType)) {
+                emailNotificationService.sendInvitation(recipient, context.tenantId());
+              } else if (created && "call.missed".equals(eventType)) {
+                emailNotificationService.sendMissed(recipient, context.tenantId());
+              }
+            });
   }
 
   private String serializeParams(

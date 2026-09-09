@@ -9,6 +9,7 @@ import com.neovisionaries.i18n.LanguageCode;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Iterator;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -101,6 +102,40 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void modelsAllSevenLocalesAndKeepsUnreviewedTranslationsOutOfTheSendSet() {
+    assertThat(
+            Arrays.stream(OrisoEmailRenderer.Tone.values()).map(OrisoEmailRenderer.Tone::directory))
+        .containsExactlyInAnyOrder("de-sie", "de-du", "en", "fr", "ru", "ti", "tr");
+    assertThat(releasedTones())
+        .containsExactlyInAnyOrder(
+            OrisoEmailRenderer.Tone.DE_FORMAL,
+            OrisoEmailRenderer.Tone.DE_INFORMAL,
+            OrisoEmailRenderer.Tone.EN);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.fr, true))
+        .isEqualTo(OrisoEmailRenderer.Tone.FR);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.ru, true))
+        .isEqualTo(OrisoEmailRenderer.Tone.RU);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.ti, true))
+        .isEqualTo(OrisoEmailRenderer.Tone.TI);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.tr, true))
+        .isEqualTo(OrisoEmailRenderer.Tone.TR);
+  }
+
+  @Test
+  void rendersTheThreeReleasedCallLifecycleOccasions() {
+    for (String templateId : List.of("anruf-einladung", "anruf-erinnerung", "anruf-verpasst")) {
+      for (OrisoEmailRenderer.Tone tone : releasedTones()) {
+        Map<String, String> values = brand();
+        values.put("callUrl", "https://example.org/sessions");
+        var email = renderer.render(templateId, tone, values);
+        assertThat(email.subject()).isNotBlank();
+        assertThat(email.html()).contains("https://example.org/sessions");
+        assertThat(email.text()).doesNotContain("{{callUrl}}");
+      }
+    }
+  }
+
+  @Test
   void knowsWhichOccasionsCarryNoUnsubscribeLink() {
     // ADR-019: a security or legal mail has no switch behind the link, so it
     // must not offer one.
@@ -161,7 +196,7 @@ class OrisoEmailRendererTest {
     assertThat(templateIds).as("catalogue.json mails").isNotEmpty();
 
     for (String id : templateIds) {
-      for (OrisoEmailRenderer.Tone tone : OrisoEmailRenderer.Tone.values()) {
+      for (OrisoEmailRenderer.Tone tone : releasedTones()) {
         var email = renderer.render(id, tone, brand());
         assertThat(email.subject()).as("subject of %s/%s", id, tone).isNotBlank();
         assertThat(email.html()).as("html of %s/%s", id, tone).contains("<!DOCTYPE html>");
@@ -209,7 +244,7 @@ class OrisoEmailRendererTest {
     // blank logo URL must remove the image cell altogether and leave the text
     // wordmark to carry the header on its own.
     for (String id : catalogueTemplateIds()) {
-      for (OrisoEmailRenderer.Tone tone : OrisoEmailRenderer.Tone.values()) {
+      for (OrisoEmailRenderer.Tone tone : releasedTones()) {
         Map<String, String> values = brand();
         values.put("logoUrl", "");
 
@@ -245,7 +280,7 @@ class OrisoEmailRendererTest {
     // border-collapse:separate inline.
     Pattern table = Pattern.compile("<table[^>]*>");
     for (String id : catalogueTemplateIds()) {
-      for (OrisoEmailRenderer.Tone tone : OrisoEmailRenderer.Tone.values()) {
+      for (OrisoEmailRenderer.Tone tone : releasedTones()) {
         var email = renderer.render(id, tone, brand());
         Matcher tables = table.matcher(email.html());
         while (tables.find()) {
@@ -258,5 +293,11 @@ class OrisoEmailRendererTest {
         }
       }
     }
+  }
+
+  private List<OrisoEmailRenderer.Tone> releasedTones() {
+    return Arrays.stream(OrisoEmailRenderer.Tone.values())
+        .filter(renderer::isReleasedForSending)
+        .toList();
   }
 }

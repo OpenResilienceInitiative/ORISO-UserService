@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.notification.CallLifecycleEmailNotificationService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -55,6 +56,7 @@ class CallLifecycleProjectionServiceTest {
   @Mock private UserRepository userRepository;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private EventNotificationService eventNotificationService;
+  @Mock private CallLifecycleEmailNotificationService emailNotificationService;
 
   private CallLifecycleProjectionService service;
 
@@ -71,6 +73,7 @@ class CallLifecycleProjectionServiceTest {
             userRepository,
             consultantRepository,
             eventNotificationService,
+            emailNotificationService,
             new ObjectMapper());
     Session session = session();
     lenient().when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(session));
@@ -79,6 +82,13 @@ class CallLifecycleProjectionServiceTest {
 
   @Test
   void inviteEmitsDeduplicatedNotificationWithStableCallContract() throws Exception {
+    Consultant caller = mock(Consultant.class);
+    when(caller.getId()).thenReturn("consultant-1");
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull("@consultant:matrix.example"))
+        .thenReturn(Optional.of(caller));
+    when(eventNotificationService.createEventOnce(
+            any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(true);
     var event =
         Map.<String, Object>of(
             "type",
@@ -110,6 +120,8 @@ class CallLifecycleProjectionServiceTest {
     assertThat(json.get("callType").asText()).isEqualTo("video");
     assertThat(json.get("isVideo").asBoolean()).isTrue();
     assertThat(json.get("roomRef").asText()).isEqualTo(ROOM_ID);
+    verify(emailNotificationService).sendInvitation("user-1", 9L);
+    verify(emailNotificationService, never()).sendInvitation("consultant-1", 9L);
   }
 
   @Test
@@ -188,6 +200,9 @@ class CallLifecycleProjectionServiceTest {
     when(attendanceRepository.findByCallLifecycleAndLeftAtIsNull(lifecycle))
         .thenReturn(List.of(attendee));
     when(attendanceRepository.findByCallLifecycle(lifecycle)).thenReturn(List.of(attendee));
+    when(eventNotificationService.createEventOnce(
+            any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(true);
 
     assertThat(
             service.project(
@@ -217,6 +232,7 @@ class CallLifecycleProjectionServiceTest {
             any(),
             any(),
             any());
+    verify(emailNotificationService).sendMissed("consultant-1", 9L);
   }
 
   @Test

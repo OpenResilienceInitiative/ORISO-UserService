@@ -24,6 +24,7 @@ public class AppointmentLifecycleNotificationService {
   private static final Duration BRIEFING_WINDOW = Duration.ofMinutes(15);
 
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull CallLifecycleEmailNotificationService emailNotificationService;
   private final @NonNull AppointmentRepository appointmentRepository;
   private final @NonNull ObjectMapper objectMapper;
   private final @NonNull Clock clock;
@@ -80,17 +81,21 @@ public class AppointmentLifecycleNotificationService {
     }
     String occurrence =
         "appointment.scheduled".equals(eventType) ? ":" + value(appointment.get("datetime")) : "";
-    eventNotificationService.createEventOnce(
-        "appointment:" + eventType + ":" + appointmentId + occurrence,
-        consultantId,
-        eventType,
-        EventNotificationService.CATEGORY_SYSTEM,
-        title,
-        text,
-        serialize(appointment),
-        "/appointments",
-        null,
-        null);
+    boolean created =
+        eventNotificationService.createEventOnce(
+            "appointment:" + eventType + ":" + appointmentId + occurrence,
+            consultantId,
+            eventType,
+            EventNotificationService.CATEGORY_SYSTEM,
+            title,
+            text,
+            serialize(appointment),
+            "/appointments",
+            null,
+            null);
+    if (created && "appointment.briefing".equals(eventType)) {
+      emailNotificationService.sendReminder(consultantId, null);
+    }
   }
 
   private Map<String, Object> mapOf(Appointment appointment) {

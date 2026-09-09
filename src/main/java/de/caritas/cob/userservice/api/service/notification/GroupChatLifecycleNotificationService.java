@@ -22,6 +22,7 @@ public class GroupChatLifecycleNotificationService {
   public static final String EVENT_GROUP_CHAT_CANCELLED = "group_chat.cancelled";
 
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull CallLifecycleEmailNotificationService emailNotificationService;
   private final @NonNull ObjectMapper objectMapper;
 
   public void createOpenedNotifications(
@@ -114,17 +115,21 @@ public class GroupChatLifecycleNotificationService {
       String deduplicationKey,
       String recipientUserId) {
     try {
-      eventNotificationService.createEventOnce(
-          deduplicationKey,
-          recipientUserId,
-          event.eventType,
-          EventNotificationService.CATEGORY_SYSTEM,
-          event.title,
-          event.text,
-          params,
-          null,
-          seriesId,
-          null);
+      boolean created =
+          eventNotificationService.createEventOnce(
+              deduplicationKey,
+              recipientUserId,
+              event.eventType,
+              EventNotificationService.CATEGORY_SYSTEM,
+              event.title,
+              event.text,
+              params,
+              null,
+              seriesId,
+              null);
+      if (created && event == LifecycleEvent.REMINDER) {
+        emailNotificationService.sendReminder(recipientUserId, null);
+      }
     } catch (RuntimeException ex) {
       // Each call crosses the EventNotificationService transaction boundary independently, so one
       // failed recipient cannot roll back notifications already written for other recipients.

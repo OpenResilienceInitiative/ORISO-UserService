@@ -26,6 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class AppointmentLifecycleNotificationServiceTest {
 
   @Mock private EventNotificationService eventNotificationService;
+  @Mock private CallLifecycleEmailNotificationService emailNotificationService;
   @Mock private AppointmentRepository appointmentRepository;
 
   private AppointmentLifecycleNotificationService service;
@@ -35,6 +36,7 @@ class AppointmentLifecycleNotificationServiceTest {
     service =
         new AppointmentLifecycleNotificationService(
             eventNotificationService,
+            emailNotificationService,
             appointmentRepository,
             new ObjectMapper(),
             Clock.fixed(Instant.parse("2026-09-10T09:00:00Z"), ZoneOffset.UTC));
@@ -69,6 +71,9 @@ class AppointmentLifecycleNotificationServiceTest {
     when(appointmentRepository.findByDatetimeBetween(
             Instant.parse("2026-09-10T09:00:00Z"), Instant.parse("2026-09-10T09:15:00Z")))
         .thenReturn(List.of(created, started));
+    when(eventNotificationService.createEventOnce(
+            any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(true);
 
     service.emitUpcomingBriefings();
 
@@ -96,6 +101,7 @@ class AppointmentLifecycleNotificationServiceTest {
             any(),
             any(),
             any());
+    verify(emailNotificationService).sendReminder("consultant-1", null);
   }
 
   private Appointment appointment(Appointment.AppointmentStatus status, String consultantId) {

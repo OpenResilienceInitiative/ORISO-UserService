@@ -809,7 +809,7 @@ public class EventNotificationService {
 
   /** Persists an event at most once for a producer-owned key and recipient. */
   @Transactional
-  public void createEventOnce(
+  public boolean createEventOnce(
       String deduplicationKey,
       String recipientUserId,
       String eventType,
@@ -826,7 +826,7 @@ public class EventNotificationService {
         || deduplicationKey.isBlank()
         || eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
             recipientUserId, deduplicationKey)) {
-      return;
+      return false;
     }
 
     try {
@@ -842,10 +842,12 @@ public class EventNotificationService {
               sourceSessionId,
               tenantId,
               deduplicationKey));
+      return true;
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
           "Notification {} already persisted for recipient {}", deduplicationKey, recipientUserId);
+      return false;
     }
   }
 

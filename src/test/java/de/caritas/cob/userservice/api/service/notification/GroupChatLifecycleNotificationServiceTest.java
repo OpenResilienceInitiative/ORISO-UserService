@@ -9,6 +9,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
@@ -29,13 +30,21 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class GroupChatLifecycleNotificationServiceTest {
 
   @Mock private EventNotificationService eventNotificationService;
+  @Mock private CallLifecycleEmailNotificationService emailNotificationService;
 
   private final ObjectMapper objectMapper = new ObjectMapper();
   private GroupChatLifecycleNotificationService service;
 
   @BeforeEach
   void setUp() {
-    service = new GroupChatLifecycleNotificationService(eventNotificationService, objectMapper);
+    service =
+        new GroupChatLifecycleNotificationService(
+            eventNotificationService, emailNotificationService, objectMapper);
+    lenient()
+        .when(
+            eventNotificationService.createEventOnce(
+                any(), any(), any(), any(), any(), any(), any(), any(), any(), any()))
+        .thenReturn(true);
   }
 
   @Test
@@ -109,6 +118,7 @@ class GroupChatLifecycleNotificationServiceTest {
             isNull(),
             eq(7L),
             isNull());
+    verify(emailNotificationService).sendReminder("user-a", null);
     verify(eventNotificationService)
         .createEventOnce(
             eq("group-chat:group_chat.cancelled:7:0"),
@@ -137,7 +147,7 @@ class GroupChatLifecycleNotificationServiceTest {
   @Test
   void fanoutContinuesWhenOnePersistenceCallFails() {
     doThrow(new RuntimeException("DB error"))
-        .doNothing()
+        .doReturn(true)
         .when(eventNotificationService)
         .createEventOnce(any(), any(), any(), any(), any(), any(), any(), any(), any(), any());
 

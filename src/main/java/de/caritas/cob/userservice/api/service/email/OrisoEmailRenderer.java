@@ -69,7 +69,11 @@ public class OrisoEmailRenderer {
   public enum Tone {
     DE_FORMAL("de-sie"),
     DE_INFORMAL("de-du"),
-    EN("en");
+    EN("en"),
+    FR("fr"),
+    RU("ru"),
+    TI("ti"),
+    TR("tr");
 
     private final String directory;
 
@@ -84,6 +88,24 @@ public class OrisoEmailRenderer {
     public static Tone of(LanguageCode languageCode) {
       return languageCode != null && "en".equalsIgnoreCase(languageCode.name()) ? EN : DE_FORMAL;
     }
+
+    public static Tone of(LanguageCode languageCode, boolean formalGerman) {
+      String language = languageCode == null ? "de" : languageCode.name().toLowerCase();
+      return switch (language) {
+        case "en" -> EN;
+        case "fr" -> FR;
+        case "ru" -> RU;
+        case "ti" -> TI;
+        case "tr" -> TR;
+        default -> formalGerman ? DE_FORMAL : DE_INFORMAL;
+      };
+    }
+  }
+
+  /** Uses the generated catalogue as the send gate for human-reviewed locale variants. */
+  public boolean isReleasedForSending(Tone tone) {
+    return "released"
+        .equals(catalogue.path("locales").path(tone.directory()).path("release").asText());
   }
 
   /**
