@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHan
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -29,7 +30,13 @@ public class CaseHandoverPolicyCacheService {
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   public CaseHandoverPolicies getEffective(Long tenantId) {
-    return repository.findById(tenantId).map(this::deserialize).orElseGet(() -> refresh(tenantId));
+    // An unreadable snapshot is not a usable snapshot. Falling through to refresh is what the
+    // last-known-good contract promises; propagating the deserialize failure here would instead
+    // surface as "Cached Case Handover policy is invalid" and hide the real state from the caller.
+    return repository
+        .findById(tenantId)
+        .flatMap(this::deserializeQuietly)
+        .orElseGet(() -> refresh(tenantId));
   }
 
   /**
@@ -73,13 +80,51 @@ public class CaseHandoverPolicyCacheService {
           "Tenant {} Case Handover policy refresh failed; enforcing last-known-good snapshot: {}",
           tenantId,
           TenantCaseHandoverPolicyReadClient.failureSummary(exception));
-      return deserialize(cache);
+      // The snapshot itself may be unreadable. Rethrowing the ORIGINAL upstream failure keeps the
+      // real cause visible; a deserialize error raised from inside this catch block would escape
+      // refresh entirely and defeat the fallback this block exists to provide.
+      return deserializeQuietly(cache)
+          .orElseThrow(
+              () -> {
+                log.error(
+                    "Tenant {} Case Handover policy snapshot is unreadable; no enforceable policy",
+                    tenantId);
+                return exception;
+              });
     }
   }
 
   @Scheduled(fixedDelayString = "${case.handover.policy-cache-refresh-delay-ms:300000}")
   public void refreshKnownTenants() {
-    repository.findAll().forEach(cache -> refresh(cache.getTenantId()));
+    // Per-tenant isolation: one tenant's failure must not abort the sweep and leave every tenant
+    // after it silently enforcing an aging snapshot.
+    repository
+        .findAll()
+        .forEach(
+            cache -> {
+              Long tenantId = cache.getTenantId();
+              try {
+                refresh(tenantId);
+              } catch (RuntimeException exception) {
+                log.warn(
+                    "Tenant {} Case Handover policy refresh skipped in scheduled sweep: {}",
+                    tenantId,
+                    TenantCaseHandoverPolicyReadClient.failureSummary(exception));
+              }
+            });
+  }
+
+  /** Empty when the stored snapshot cannot be read back, never an exception. */
+  private Optional<CaseHandoverPolicies> deserializeQuietly(TenantCaseHandoverPolicyCache cache) {
+    try {
+      return Optional.of(deserialize(cache));
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Tenant {} cached Case Handover policy could not be read ({})",
+          cache.getTenantId(),
+          exception.getClass().getSimpleName());
+      return Optional.empty();
+    }
   }
 
   private String serialize(CaseHandoverPolicies policies) {
