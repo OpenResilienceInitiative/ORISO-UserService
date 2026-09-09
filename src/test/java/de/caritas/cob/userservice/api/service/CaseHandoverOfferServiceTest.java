@@ -65,6 +65,10 @@ class CaseHandoverOfferServiceTest {
 
   @InjectMocks private CaseHandoverService caseHandoverService;
 
+  @Mock private CaseHandoverCoAccessExpiryStore coAccessExpiryStore;
+
+  @Mock private de.caritas.cob.userservice.api.tenant.TenantContextProvider tenantContextProvider;
+
   @Mock private CaseHandoverRequestRepository caseHandoverRequestRepository;
   @Mock private CaseHandoverReasonPolicyRepository caseHandoverReasonPolicyRepository;
   @Mock private SessionRepository sessionRepository;
@@ -119,6 +123,8 @@ class CaseHandoverOfferServiceTest {
 
     when(userAccountService.retrieveValidatedConsultant()).thenReturn(owner);
     when(sessionRepository.findById(123L)).thenReturn(Optional.of(session));
+    // createOffer locks the session row: the "one open offer per case" rule is a read-then-write.
+    when(sessionRepository.findByIdForUpdate(123L)).thenReturn(Optional.of(session));
     when(consultantRepository.findByIdAndDeleteDateIsNull("00000000-0000-0000-0000-000000000002"))
         .thenReturn(Optional.of(colleague));
     when(consultantRepository.findByIdAndDeleteDateIsNull("stranger"))

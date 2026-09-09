@@ -532,7 +532,7 @@
       "components": [
         "expireCoAccessSchedule"
       ],
-      "decision": "Claims a durable global two-minute lease before reading expired grants; expiry rows are pessimistically locked and confirmed Matrix removal precedes expired audit state. Finite lease expiry can permit overlap if work outlives its lease; external Matrix effects are not transactionally atomic, so this does not lift the replica ceiling.",
+      "decision": "Claims a durable global two-minute lease, then sweeps in bounded batches (case.handover.co-access-sweep-batch-size, capped by case.handover.co-access-sweep-max-batches). Matrix reconciliation runs with NO database transaction open; each outcome is persisted in its own short transaction under a row lock taken at write time, re-checking the grant is still GRANTED. Confirmed Matrix removal still precedes expired audit state. Finite lease expiry can permit overlap if work outlives its lease; external Matrix effects are not transactionally atomic, so this does not lift the replica ceiling.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

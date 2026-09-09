@@ -370,4 +370,25 @@ class EmailBrandingResolverTest {
     assertThat(cached.resolve(8L).brandName()).isEqualTo("Sued");
     assertThat(cached.resolve(7L).brandName()).isEqualTo("Nord");
   }
+
+  @Test
+  void anOverlargeTtlIsClampedInsteadOfOverflowingIntoNoCacheAtAll() {
+    // 9_223_372_037 seconds x 1e9 overflows a long and lands negative, which read as "TTL <= 0" and
+    // silently disabled the cache despite a positive configured value.
+    givenNoTemplateAttributes();
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", new Theming()));
+    var resolver =
+        new EmailBrandingResolver(
+            tenantService,
+            tenantTemplateSupplier,
+            "ORISO",
+            "",
+            "https://app.oriso.org",
+            9_223_372_037L);
+
+    resolver.resolve(7L);
+    resolver.resolve(7L);
+
+    verify(tenantService, times(1)).getRestrictedTenantDataFresh(7L);
+  }
 }
