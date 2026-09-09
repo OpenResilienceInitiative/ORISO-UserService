@@ -92,6 +92,23 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     when(consultantRepository.findById(any())).thenReturn(Optional.empty());
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(value = ConversationType.class,
+      names = {"SELF_HELP", "INTERNAL_GROUP"})
+  void groupSessionCarriesItsOwnerTenantBeforeTheFirstSave(ConversationType type) throws Exception {
+    ChatDTO dto = chatDtoWithConsultantIds(List.of());
+    Chat chat = new Chat();
+    chat.setConversationType(type);
+    doReturn(chat).when(chatConverter).convertToEntity(any(), any(), any());
+    when(matrixSynapseService.createRoomAsMatrixUser(any(), any(), any()))
+        .thenReturn(matrixRoomResponse("!tenant-regression:matrix.org"));
+    when(matrixSynapseService.loginAsUserAccessToken(any())).thenReturn("test-token");
+    createChatFacade.createChatV2(dto, consultant);
+    var captured = ArgumentCaptor.forClass(Session.class);
+    verify(sessionService, times(2)).saveSession(captured.capture());
+    assertThat(captured.getAllValues().getFirst().getTenantId()).isEqualTo(1L);
+  }
+
   private ChatDTO chatDtoWithConsultantIds(List<String> consultantIds) {
     ChatDTO dto = mock(ChatDTO.class);
     when(dto.getConsultantIds()).thenReturn(consultantIds);

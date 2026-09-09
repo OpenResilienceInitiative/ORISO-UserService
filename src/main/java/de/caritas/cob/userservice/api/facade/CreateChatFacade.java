@@ -89,6 +89,7 @@ public class CreateChatFacade {
     // Create a session for the group (needed for backend logic)
     Session session = new Session();
     session.setConsultant(consultant);
+    session.setTenantId(consultant.getTenantId());
 
     // Use a tenant-scoped system user for group chats (user_id is NOT NULL in database).
     var systemUser = resolveOrCreateGroupChatSystemUser(consultant);
