@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -31,6 +32,7 @@ class GroupChatParticipantReconciliationServiceTest {
   @Mock private GroupChatParticipantRepository participantRepository;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private GroupChatMembershipService membershipService;
+  @Mock private AgencySilentMembershipService consultantMembership;
 
   private GroupChatParticipantReconciliationService service;
   private Chat series;
@@ -40,7 +42,7 @@ class GroupChatParticipantReconciliationServiceTest {
   void setUp() {
     service =
         new GroupChatParticipantReconciliationService(
-            participantRepository, consultantRepository, membershipService);
+            participantRepository, consultantRepository, membershipService, consultantMembership);
     var ownerConsultant = consultant("owner", "@owner:matrix");
     series = Mockito.mock(Chat.class);
     Mockito.lenient().when(series.getId()).thenReturn(42L);
@@ -52,7 +54,8 @@ class GroupChatParticipantReconciliationServiceTest {
   void reconcile_ShouldPreserveParticipants_WhenIdsAreOmitted() {
     service.reconcile(series, null);
 
-    verifyNoInteractions(participantRepository, consultantRepository, membershipService);
+    verifyNoInteractions(
+        participantRepository, consultantRepository, membershipService, consultantMembership);
   }
 
   @Test
@@ -74,6 +77,38 @@ class GroupChatParticipantReconciliationServiceTest {
     org.junit.jupiter.api.Assertions.assertEquals("co-moderator", participant.getConsultantId());
     org.junit.jupiter.api.Assertions.assertEquals(
         ParticipantRole.CO_MODERATOR, participant.getRole());
+  }
+
+  @Test
+  void reconcile_ShouldProvisionNewCoModeratorBeforeInvitingToExistingGroup() {
+    var newcomer = consultant("newcomer", null);
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("newcomer"))
+        .thenReturn(Optional.of(newcomer));
+    when(consultantMembership.ensureMatrixAccount(newcomer))
+        .thenReturn("@newcomer=40example.org:matrix");
+    when(membershipService.addMemberToRoom(series, "@newcomer=40example.org:matrix"))
+        .thenReturn(true);
+
+    service.reconcile(series, List.of("newcomer"));
+
+    verify(consultantMembership).ensureMatrixAccount(newcomer);
+    verify(membershipService).addMemberToRoom(series, "@newcomer=40example.org:matrix");
+    verify(participantRepository).save(Mockito.any(GroupChatParticipant.class));
+  }
+
+  @Test
+  void reconcile_ShouldNotInviteOrPersistWhenAccountProvisioningFails() {
+    var newcomer = consultant("newcomer", null);
+    when(participantRepository.findBySeriesIdForUpdate(42L)).thenReturn(List.of(owner));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("newcomer"))
+        .thenReturn(Optional.of(newcomer));
+
+    assertThrows(
+        InternalServerErrorException.class, () -> service.reconcile(series, List.of("newcomer")));
+
+    verifyNoInteractions(membershipService);
+    verify(participantRepository, never()).save(Mockito.any());
   }
 
   @Test

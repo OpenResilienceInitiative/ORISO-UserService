@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.session.AgencySilentMembershipService;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -26,6 +27,7 @@ public class GroupChatParticipantReconciliationService {
   private final GroupChatParticipantRepository participantRepository;
   private final ConsultantRepository consultantRepository;
   private final GroupChatMembershipService membershipService;
+  private final AgencySilentMembershipService consultantMembership;
 
   /**
    * Reconciles co-moderators only when the client explicitly supplies {@code consultantIds}. A null
@@ -91,7 +93,13 @@ public class GroupChatParticipantReconciliationService {
       if (!Objects.equals(series.getChatOwner().getTenantId(), consultant.getTenantId())) {
         throw new BadRequestException("Consultant does not belong to the chat owner's tenant");
       }
-      if (!membershipService.addMemberToRoom(series, consultant.getMatrixUserId())) {
+      var matrixUserId = consultant.getMatrixUserId();
+      if (matrixUserId == null || matrixUserId.isBlank()) {
+        matrixUserId = consultantMembership.ensureMatrixAccount(consultant);
+      }
+      if (matrixUserId == null
+          || matrixUserId.isBlank()
+          || !membershipService.addMemberToRoom(series, matrixUserId)) {
         throw new InternalServerErrorException(
             "Consultant " + consultantId + " could not join the Matrix room");
       }
