@@ -482,7 +482,11 @@ public class CaseHandoverService {
       // agency would be wider than least-privilege (#202).
       return emptyCandidateResponse(safeOffset);
     }
-    boolean allTopics = !topicsEnabled;
+    // Must mirror isInRequesterDepartment, which narrows by topic whenever the requester HAS
+    // topics, independent of topicsEnabled. Deriving this from topicsEnabled alone made the SQL
+    // scope wider than the Java one on a topics-off deployment where the consultant still carries
+    // topic rows: the count query then reports the whole agency while every page is filtered down.
+    boolean allTopics = requesterTopicIds.isEmpty();
     // An empty IN list is not portable, and the predicate is short-circuited by allTopics anyway.
     Set<Long> topicIds = requesterTopicIds.isEmpty() ? Set.of(-1L) : requesterTopicIds;
 
@@ -512,9 +516,10 @@ public class CaseHandoverService {
           .sessions(page)
           .offset(safeOffset)
           .count(page.size())
-          // The count query counts what the SQL scope selects. The Java predicate re-checks the
-          // same scope rather than narrowing it further, so the two agree; if it ever drops a row,
-          // the page is short rather than the total being wrong.
+          // Sound only because allTopics above is derived from the same condition
+          // isInRequesterDepartment uses, so the SQL scope and the Java predicate select the same
+          // set. The Java filter stays as enforcement, not narrowing; if it ever drops a row the
+          // page is short rather than the total being wrong.
           .total((int) idPage.getTotalElements());
     }
 

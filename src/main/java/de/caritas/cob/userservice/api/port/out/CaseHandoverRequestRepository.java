@@ -69,6 +69,10 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
           + "   or request.expiresAt > :afterExpiresAt"
           + "   or (request.expiresAt = :afterExpiresAt and request.id > :afterId))"
           + " order by request.expiresAt asc, request.id asc")
+  // Index: changeset 0092 provides idx_case_handover_co_access_expiry on
+  // (status, access_type, expires_at). InnoDB appends the primary key to every secondary index, so
+  // its entries are physically (status, access_type, expires_at, id) - which is exactly this
+  // predicate and this ordering. No further index is needed for the sweep.
   List<CaseHandoverRequest> findExpiredCoAccessBatch(
       @Param("status") CaseHandoverRequest.Status status,
       @Param("accessType") CaseHandoverRequest.AccessType accessType,

@@ -907,6 +907,11 @@ class CaseHandoverServiceTest {
 
     assertNull(
         method.getAnnotation(org.springframework.transaction.annotation.Transactional.class));
+    // A class-level @Transactional would wrap the sweep exactly as the method-level one did, and a
+    // method-only assertion would still pass.
+    assertNull(
+        CaseHandoverService.class.getAnnotation(
+            org.springframework.transaction.annotation.Transactional.class));
   }
 
   @Test
@@ -945,6 +950,70 @@ class CaseHandoverServiceTest {
     verify(scheduledTaskClaimService).tryClaim(eq("case-handover-co-access-expiry"), any());
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     assertNull(TenantContext.getCurrentTenant());
+  }
+
+  @Test
+  void searchCandidates_pagesBlankQueriesInTheDatabaseAndReportsTheRealTotal() {
+    // Every other searchCandidates test passes a query, so they all take the scan-window path.
+    // This is the branch that exists to stop a browse reporting a truncated total.
+    givenRequesterTopics(5L);
+    var candidate = candidateSession(301L, 10L, 5L, false);
+    when(sessionRepository.findCaseHandoverCandidateIds(
+            any(), eq(requester), any(), anyBoolean(), any(), any()))
+        .thenReturn(
+            // Total comfortably past offset+size: PageImpl recomputes the total when the window
+            // would run off the end, which would mask what this asserts.
+            new org.springframework.data.domain.PageImpl<>(
+                List.of(301L), org.springframework.data.domain.PageRequest.of(2, 15), 100L));
+    when(sessionRepository.findCaseHandoverCandidatesWithTopics(List.of(301L)))
+        .thenReturn(List.of(candidate));
+
+    var response = caseHandoverService.searchCandidates("", 30, 15, false);
+
+    assertEquals(100, response.getTotal());
+    assertEquals(30, response.getOffset());
+    assertEquals(1, response.getCount());
+    assertEquals(301L, response.getSessions().get(0).getSession().getId());
+  }
+
+  @Test
+  void searchCandidates_asksTheDatabaseForTheCallersExactOffsetNotAPageIndex() {
+    givenRequesterTopics(5L);
+    when(sessionRepository.findCaseHandoverCandidateIds(
+            any(), eq(requester), any(), anyBoolean(), any(), any()))
+        .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+
+    caseHandoverService.searchCandidates("", 7, 15, false);
+
+    // PageRequest could only express offsets that are multiples of the page size, which would move
+    // the window silently for an offset the controller accepts.
+    ArgumentCaptor<org.springframework.data.domain.Pageable> pageable =
+        ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+    verify(sessionRepository)
+        .findCaseHandoverCandidateIds(
+            any(), eq(requester), any(), anyBoolean(), any(), pageable.capture());
+    assertEquals(7L, pageable.getValue().getOffset());
+    assertEquals(15, pageable.getValue().getPageSize());
+  }
+
+  @Test
+  void searchCandidates_narrowsBySqlTopicsWheneverTheRequesterHasThemEvenWithTopicsOff() {
+    // isInRequesterDepartment requires a topic overlap whenever the requester has topics, whatever
+    // topicsEnabled says. If the SQL scope were wider, the blank-query total would count rows the
+    // page then filters away.
+    ReflectionTestUtils.setField(caseHandoverService, "topicsEnabled", false);
+    givenRequesterTopics(5L);
+    when(sessionRepository.findCaseHandoverCandidateIds(
+            any(), eq(requester), any(), anyBoolean(), any(), any()))
+        .thenReturn(new org.springframework.data.domain.PageImpl<>(List.of()));
+
+    caseHandoverService.searchCandidates("", 0, 15, false);
+
+    ArgumentCaptor<Boolean> allTopics = ArgumentCaptor.forClass(Boolean.class);
+    verify(sessionRepository)
+        .findCaseHandoverCandidateIds(
+            any(), eq(requester), any(), allTopics.capture(), any(), any());
+    assertFalse(allTopics.getValue());
   }
 
   @Test

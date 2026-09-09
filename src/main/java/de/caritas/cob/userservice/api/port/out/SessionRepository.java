@@ -129,7 +129,11 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    */
   @Query(
       value =
-          "select distinct session.id from Session session"
+          // GROUP BY, not SELECT DISTINCT: the left join can multiply a session per topic row, and
+          // "select distinct session.id ... order by session.updateDate" is rejected when the
+          // server runs with ONLY_FULL_GROUP_BY, because the sort column is not in the projection.
+          // Grouping by id and ordering by max(updateDate) is the same result and portable.
+          "select session.id from Session session"
               + " left join session.sessionTopics sessionTopic"
               + " where session.agencyId in :agencyIds"
               + " and session.consultant <> :requester"
@@ -137,7 +141,8 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
               + " and (:allTopics = true"
               + "   or session.mainTopicId in :topicIds"
               + "   or sessionTopic.topicId in :topicIds)"
-              + " order by session.updateDate desc",
+              + " group by session.id"
+              + " order by max(session.updateDate) desc",
       countQuery =
           "select count(distinct session.id) from Session session"
               + " left join session.sessionTopics sessionTopic"
