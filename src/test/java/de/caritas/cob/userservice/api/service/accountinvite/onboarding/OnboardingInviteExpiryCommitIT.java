@@ -14,7 +14,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -50,6 +52,20 @@ class OnboardingInviteExpiryCommitIT {
   @Autowired private AccountInviteRepository accountInviteRepository;
 
   @Autowired private PlatformTransactionManager transactionManager;
+
+  private final List<Long> seededInviteIds = new ArrayList<>();
+
+  /**
+   * Everything here runs against the REAL database and outside a rolled-back test transaction (both
+   * required for the committed-state assertions), so nothing cleans the seed rows up on its own:
+   * without this the invite table would grow with every run and any test that counts or lists
+   * invites could start failing (#1008 review).
+   */
+  @AfterEach
+  void deleteSeededInvites() {
+    seededInviteIds.forEach(accountInviteRepository::deleteById);
+    seededInviteIds.clear();
+  }
 
   @Test
   void tenantAdminResolve_expiredInvite_commitsTheExpiredTransitionDespiteTheLinkDeathAnswer() {
@@ -120,25 +136,28 @@ class OnboardingInviteExpiryCommitIT {
   }
 
   private Long seedExpiredInvite(String rawToken, AccountInviteTargetRole targetRole) {
-    return accountInviteRepository
-        .save(
-            AccountInvite.builder()
-                .targetRole(targetRole)
-                .tenantId(79L)
-                .tenantIdReservationToken("3f2c6d1e-8b1a-4b8e-9f47-1234567890ab")
-                .recipientEmail("lisa.simpson@oriso.org")
-                .firstName("Lisa")
-                .lastName("Simpson")
-                .agencyId(275L)
-                .departmentId(2L)
-                .tokenHash(AccountInviteService.hash(rawToken))
-                .expiresAt(LocalDateTime.now().minusDays(1))
-                .status(AccountInviteStatus.EMAIL_SENT)
-                .emailVerificationStatus(EmailVerificationStatus.PENDING)
-                .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
-                .createDate(LocalDateTime.now().minusDays(8))
-                .build())
-        .getId();
+    Long inviteId =
+        accountInviteRepository
+            .save(
+                AccountInvite.builder()
+                    .targetRole(targetRole)
+                    .tenantId(79L)
+                    .tenantIdReservationToken("3f2c6d1e-8b1a-4b8e-9f47-1234567890ab")
+                    .recipientEmail("lisa.simpson@oriso.org")
+                    .firstName("Lisa")
+                    .lastName("Simpson")
+                    .agencyId(275L)
+                    .departmentId(2L)
+                    .tokenHash(AccountInviteService.hash(rawToken))
+                    .expiresAt(LocalDateTime.now().minusDays(1))
+                    .status(AccountInviteStatus.EMAIL_SENT)
+                    .emailVerificationStatus(EmailVerificationStatus.PENDING)
+                    .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+                    .createDate(LocalDateTime.now().minusDays(8))
+                    .build())
+            .getId();
+    seededInviteIds.add(inviteId);
+    return inviteId;
   }
 
   /** Valid input — the registration must be refused for the expiry, not for its payload. */

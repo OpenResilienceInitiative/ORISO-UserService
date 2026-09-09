@@ -112,6 +112,17 @@ class CounsellorOnboardingServiceTest {
     when(accountInviteService.findInviteByToken(RAW_TOKEN)).thenReturn(invite);
   }
 
+  /**
+   * Every write of this service re-reads the invite row under its lock instead of merging the
+   * snapshot it carried across the preceding remote call (#1008 review). The stub therefore hands
+   * out a DISTINCT instance — the row as the database currently holds it — so the assertions below
+   * state which of the two the service actually wrote.
+   */
+  private AccountInvite lockedRowIs(AccountInvite row) {
+    when(accountInviteRepository.findByIdForUpdate(row.getId())).thenReturn(Optional.of(row));
+    return row;
+  }
+
   private void agencyCoverageResolves() {
     lenient()
         .when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
@@ -260,6 +271,12 @@ class CounsellorOnboardingServiceTest {
     when(identitySecondFactor.getOtpCredential("enc.lena.b"))
         .thenReturn(
             new IdentityOtpCredential(false, "TOTPSECRET", "QRBASE64", IdentityOtpType.APP));
+    // The row as it looks AFTER the Keycloak round trip — another writer changed an unrelated
+    // field meanwhile; the secret must land here, not in the snapshot `accepted`.
+    AccountInvite lockedRow = lockedRowIs(invite());
+    lockedRow.setStatus(AccountInviteStatus.ACCEPTED);
+    lockedRow.setProvisionedUserId(CONSULTANT_ID);
+    lockedRow.setFirstName("Concurrently renamed");
 
     var result = service.registerCounsellor(RAW_TOKEN, command());
 
@@ -267,8 +284,10 @@ class CounsellorOnboardingServiceTest {
     assertEquals("TOTPSECRET", result.totpSecret());
     assertEquals("QRBASE64", result.totpQrCodeBase64());
     assertTrue(result.twoFactorRequired());
-    assertEquals("TOTPSECRET", accepted.getTotpPendingSecret());
-    verify(accountInviteRepository).save(accepted);
+    assertEquals("TOTPSECRET", lockedRow.getTotpPendingSecret());
+    assertEquals("Concurrently renamed", lockedRow.getFirstName());
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(accepted);
 
     ArgumentCaptor<ProvisionCounsellorCommand> captor =
         ArgumentCaptor.forClass(ProvisionCounsellorCommand.class);
@@ -389,12 +408,17 @@ class CounsellorOnboardingServiceTest {
                 new IdentityProfile(CONSULTANT_ID, "enc.lena.b", "Lena", "Beraterin", "mail")));
     when(identitySecondFactor.setUpOtpCredential("enc.lena.b", "123456", "TOTPSECRET"))
         .thenReturn(true);
+    AccountInvite lockedRow = lockedRowIs(invite());
+    lockedRow.setStatus(AccountInviteStatus.ACCEPTED);
+    lockedRow.setAcceptedByUserId(CONSULTANT_ID);
+    lockedRow.setTotpPendingSecret("TOTPSECRET");
 
     service.activateTwoFactor(RAW_TOKEN, "123456");
 
     verify(accountInviteService).markTwoFactorActive(CONSULTANT_ID);
-    assertNull(resumable.getTotpPendingSecret());
-    verify(accountInviteRepository).save(resumable);
+    assertNull(lockedRow.getTotpPendingSecret());
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(resumable);
   }
 
   @Test
@@ -467,12 +491,16 @@ class CounsellorOnboardingServiceTest {
     profileResolves();
     when(identitySecondFactor.getOtpCredential("enc.lena.b"))
         .thenReturn(new IdentityOtpCredential(false, "REPAIREDSECRET", "QR", IdentityOtpType.APP));
+    AccountInvite lockedRow = lockedRowIs(resumableWithoutStoredSecret());
 
     var state = service.resolveOnboardingInvite(RAW_TOKEN);
 
     assertTrue(state.pendingTwoFactorResume());
+    // Persisted into the re-read row; the resume response is answered from the in-memory copy.
+    assertEquals("REPAIREDSECRET", lockedRow.getTotpPendingSecret());
     assertEquals("REPAIREDSECRET", resumable.getTotpPendingSecret());
-    verify(accountInviteRepository).save(resumable);
+    verify(accountInviteRepository).save(lockedRow);
+    verify(accountInviteRepository, never()).save(resumable);
   }
 
   @Test
@@ -498,11 +526,12 @@ class CounsellorOnboardingServiceTest {
         .thenReturn(new IdentityOtpCredential(false, "REPAIREDSECRET", "QR", IdentityOtpType.APP));
     when(identitySecondFactor.setUpOtpCredential("enc.lena.b", "123456", "REPAIREDSECRET"))
         .thenReturn(true);
+    AccountInvite lockedRow = lockedRowIs(resumableWithoutStoredSecret());
 
     service.activateTwoFactor(RAW_TOKEN, "123456");
 
     verify(accountInviteService).markTwoFactorActive(CONSULTANT_ID);
-    assertNull(resumable.getTotpPendingSecret());
+    assertNull(lockedRow.getTotpPendingSecret());
   }
 
   @Test
