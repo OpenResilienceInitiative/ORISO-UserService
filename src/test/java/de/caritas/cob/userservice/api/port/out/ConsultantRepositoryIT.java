@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.model.Language;
+import jakarta.persistence.EntityManager;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.PositiveOrZero;
 import java.time.LocalDateTime;
@@ -54,6 +55,8 @@ class ConsultantRepositoryIT {
 
   @Autowired private ConsultantRepository underTest;
 
+  @Autowired private EntityManager entityManager;
+
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
   @Autowired private AppointmentRepository appointmentRepository;
@@ -73,6 +76,36 @@ class ConsultantRepositoryIT {
     matchingIds = new ArrayList<>();
     nonMatchingIds.forEach(id -> underTest.deleteById(id));
     nonMatchingIds = new ArrayList<>();
+  }
+
+  @Test
+  void loginProfileShouldExcludeSoftDeletedAgencyRelationsWithoutDeletingHistory() {
+    var consultantId = originalConsultant.getId();
+    var expectedIds =
+        originalConsultant.getConsultantAgencies().stream()
+            .map(ConsultantAgency::getAgencyId)
+            .collect(Collectors.toCollection(HashSet::new));
+    saveConsultantAgency(originalConsultant, 900001L);
+    saveConsultantAgency(originalConsultant, 900002L);
+    var removed =
+        originalConsultant.getConsultantAgencies().stream()
+            .filter(relation -> relation.getAgencyId().equals(900002L))
+            .findFirst()
+            .orElseThrow();
+    removed.setDeleteDate(LocalDateTime.now());
+    consultantAgencyRepository.save(removed);
+    entityManager.flush();
+    var removedId = removed.getId();
+    entityManager.clear();
+
+    var reloaded = underTest.findByIdAndDeleteDateIsNull(consultantId).orElseThrow();
+    expectedIds.add(900001L);
+    assertEquals(
+        expectedIds,
+        reloaded.getConsultantAgencies().stream()
+            .map(ConsultantAgency::getAgencyId)
+            .collect(Collectors.toSet()));
+    assertNotNull(consultantAgencyRepository.findById(removedId).orElseThrow().getDeleteDate());
   }
 
   @Test

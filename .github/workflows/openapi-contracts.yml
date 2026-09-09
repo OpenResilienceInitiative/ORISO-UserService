@@ -53,7 +53,7 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
-        ref: ${{ github.event_name == 'pull_request' && '164d130d0857a723e3ca44a3074dee3a7c042a4a' || 'pre-dev' }}
+        ref: ${{ github.event_name == 'pull_request' && '3cd6bdad0f672bb4aaa248dedadfe1d2b5fc08f6' || 'pre-dev' }}
         path: .providers/tenant
         persist-credentials: false
 

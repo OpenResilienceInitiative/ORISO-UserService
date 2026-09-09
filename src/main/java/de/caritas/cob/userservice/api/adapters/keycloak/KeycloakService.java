@@ -200,6 +200,11 @@ public class KeycloakService
     return keycloakAuthClient.logoutUser(refreshToken);
   }
 
+  @Override
+  public boolean logout(final String refreshToken, final String accessToken) {
+    return keycloakAuthClient.logoutUser(refreshToken, accessToken);
+  }
+
   /**
    * Updates the email address of user with given id in keycloak.
    *

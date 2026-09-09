@@ -73,6 +73,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
@@ -213,6 +214,17 @@ class UserControllerE2EIT {
   @Qualifier("mailsControllerApi")
   private MailsControllerApi mailsControllerApi;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.email.OrisoEmailDispatcher emailDispatcher;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.email.GlobalSmtpSettingsResolver
+      smtpSettingsResolver;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver
+      emailBrandingResolver;
+
   @MockitoBean private ApplicationSettingsService applicationSettingsService;
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
@@ -237,6 +249,9 @@ class UserControllerE2EIT {
 
   @AfterEach
   void reset() {
+    // Testing disables HttpTenantFilter: clear registration context before fixture cleanup can
+    // fail.
+    TenantContext.clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
       userRepository.save(user);
@@ -280,6 +295,7 @@ class UserControllerE2EIT {
 
   @BeforeEach
   public void setUp() throws MatrixCreateUserException {
+    TenantContext.clear();
     MatrixCreateUserResponseDTO matrixCreateUserResponse = new MatrixCreateUserResponseDTO();
     matrixCreateUserResponse.setUserId("@test-user:matrix.oriso.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
@@ -1597,8 +1613,14 @@ class UserControllerE2EIT {
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.USER_DEFAULT})
   @Transactional(propagation = Propagation.NOT_SUPPORTED)
   void sendReassignmentNotificationShouldSendEmailAndRespondWithOk() throws Exception {
-    var apiClientMock = mock(de.caritas.cob.userservice.mailservice.generated.ApiClient.class);
-    when(mailsControllerApi.getApiClient()).thenReturn(apiClientMock);
+    when(smtpSettingsResolver.resolve())
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.accountinvite.mail.InviteSmtpSettings(
+                "smtp.example.org", 587, false, "fixture", "fixture", "sender@example.org"));
+    when(emailBrandingResolver.resolve(any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.email.layout.EmailBranding(
+                "Fixture counselling", null, "#245678", null, null));
     when(applicationSettingsService.getApplicationSettings())
         .thenReturn(new ApplicationSettingsDTO().releaseToggles(Maps.newHashMap()));
     var session = givenAExistingSession();
@@ -1618,7 +1640,19 @@ class UserControllerE2EIT {
                   .accept(MediaType.APPLICATION_JSON))
           .andExpect(status().isOk());
 
-      Mockito.verify(mailsControllerApi, Mockito.timeout(8000).times(1)).sendMails(any());
+      var rendered =
+          org.mockito.ArgumentCaptor.forClass(
+              de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.RenderedEmail.class);
+      Mockito.verify(emailDispatcher, Mockito.timeout(8000).times(1))
+          .sendOrThrow(any(), eq("reassignment-recipient@example.org"), rendered.capture());
+      org.assertj.core.api.Assertions.assertThat(rendered.getValue().subject())
+          .isEqualTo("Änderung Ihrer Beratung");
+      org.assertj.core.api.Assertions.assertThat(rendered.getValue().html())
+          .contains("Fixture counselling", "Wechsel der Fachkraft")
+          .doesNotContain("{{");
+      org.assertj.core.api.Assertions.assertThat(rendered.getValue().text())
+          .contains("Wechsel der Fachkraft", "Bitte melden Sie sich an");
+      Mockito.verify(mailsControllerApi, Mockito.never()).sendMails(any());
     } finally {
       sessionRepository.deleteById(session.getId());
       userRepository.deleteById(session.getUser().getUserId());
@@ -1627,6 +1661,9 @@ class UserControllerE2EIT {
 
   private Session givenAExistingSession() {
     var user = new EasyRandom().nextObject(User.class);
+    user.setEmail("reassignment-recipient@example.org");
+    user.setUsername("reassignment-recipient");
+    user.setLanguageCode(com.neovisionaries.i18n.LanguageCode.de);
     user.setSessions(null);
     user.setUserAgencies(null);
     user.setUserMobileTokens(null);

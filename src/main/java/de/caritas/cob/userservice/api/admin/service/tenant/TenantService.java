@@ -52,13 +52,16 @@ public class TenantService {
         .getRestrictedTenantDataByTenantId(tenantId);
   }
 
-  /** Explicit platform-branding lookup; generic tenant operations still reject technical id 0. */
-  @Cacheable(cacheNames = CacheManagerConfig.TENANT_CACHE, key = "'platform-branding'")
-  public RestrictedTenantDTO getPlatformTenantData() {
+  /**
+   * Current platform mail branding, with technical scope explicit so ambient tenant overrides
+   * cannot leak. Branding must reflect saved logo additions and removals without waiting for cache
+   * expiry.
+   */
+  public RestrictedTenantDTO getPlatformTenantData(String mainTenantSubdomain) {
     log.info("Calling tenant service to get platform branding data");
     return tenantServiceApiControllerFactory
         .createControllerApi()
-        .getRestrictedTenantDataByTenantId(TenantContext.TECHNICAL_TENANT_ID);
+        .getRestrictedTenantDataBySubdomain(mainTenantSubdomain, TenantContext.TECHNICAL_TENANT_ID);
   }
 
   public List<RestrictedTenantDTO> getRestrictedTenantData(Set<Long> tenantIds) {

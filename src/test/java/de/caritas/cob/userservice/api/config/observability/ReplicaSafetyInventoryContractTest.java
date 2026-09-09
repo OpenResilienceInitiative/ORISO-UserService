@@ -15,6 +15,7 @@ class ReplicaSafetyInventoryContractTest {
   private static final Set<String> REQUIRED_COMPONENTS =
       Set.of(
           "email-template-cache",
+          "email-branding-tenant-cache",
           "matrix-access-token-cache",
           "matrix-browser-login-locks",
           "matrix-sync-token-cache",
@@ -44,7 +45,10 @@ class ReplicaSafetyInventoryContractTest {
           "registered-only-deletion-scheduler",
           "handshake-expiry-scheduler",
           "support-room-expiry-scheduler",
-          "event-notification-retention-scheduler");
+          "event-notification-retention-scheduler",
+          "case-handover-policy-refresh",
+          "case-handover-co-access-expiry",
+          "case-handover-offer-expiry");
 
   @Test
   void shouldInventoryEveryKnownReplicaLocalComponentWithAnActionableSignal() throws Exception {

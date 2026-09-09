@@ -52,6 +52,10 @@ public class CaseHandoverReasonPolicy {
   @Column(name = "client_notification_templates", columnDefinition = "json")
   private Map<String, String> clientNotificationTemplates;
 
+  /** Required only for Advice Needed co-access; takeover reasons deliberately keep this null. */
+  @Column(name = "max_access_duration_minutes")
+  private Integer maxAccessDurationMinutes;
+
   @Column(name = "updated_at", nullable = false)
   private LocalDateTime updatedAt;
 }

@@ -3,6 +3,11 @@ info:
   title: will be replaced
   description: This information will be replaced by the SpringFox config information
   version: 0.0.1
+# Case handover (/users/case-handover/**, /users/sessions/{id}/case-handover/**) is specified in
+# api/userservice-case-handover.yaml, not here. This spec is generated with useTags=false, so every
+# /users path lands in UsersApi — which UserController implements — and the generated default
+# methods would collide with CaseHandoverController's own mappings at context startup. That file
+# explains the trade-off; CaseHandoverControllerContractTest keeps it in sync with the controller.
 paths:
   /users/{username}:
     get:

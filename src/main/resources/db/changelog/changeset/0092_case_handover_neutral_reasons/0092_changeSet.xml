@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- First publication of 0092. Neutral names are service aliases, not data rewrites.
+       Converge the earlier co-access schema without replaying its historical backfill. -->
+  <changeSet id="0092-case-handover-neutral-reasons" author="frank">
+    <preConditions onFail="HALT"><tableExists tableName="case_handover_request"/></preConditions>
+    <sqlFile path="db/changelog/changeset/0092_case_handover_neutral_reasons/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    <!-- Additive compatibility columns may contain existing/live history. Keep them on rollback. -->
+    <rollback><empty/></rollback>
+  </changeSet>
+</databaseChangeLog>

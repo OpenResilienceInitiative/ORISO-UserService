@@ -63,6 +63,19 @@ class ReplicaSafetyMetricsTest {
                 .gauge()
                 .value())
         .isEqualTo(1);
+    for (String task :
+        java.util.List.of(
+            "CaseHandoverPolicyCacheService.refreshKnownTenants()",
+            "CaseHandoverService.expireCoAccessSchedule()",
+            "CaseHandoverOfferExpiryScheduler.expireOffers()")) {
+      assertThat(
+              registry
+                  .get("userservice.scheduler.registered")
+                  .tags("task", task, "owner", "sessions-matrix", "status", "bounded")
+                  .gauge()
+                  .value())
+          .isEqualTo(1);
+    }
     assertThat(registry.getMeters())
         .allSatisfy(
             meter ->

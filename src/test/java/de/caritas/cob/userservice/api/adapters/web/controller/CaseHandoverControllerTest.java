@@ -16,6 +16,9 @@ import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogEntry;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
+import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverColleague;
+import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverColleagueList;
+import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverOffer;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverReason;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
 import jakarta.validation.Valid;
@@ -350,5 +353,96 @@ class CaseHandoverControllerTest {
 
     assertTrue(method.getParameters()[0].isAnnotationPresent(Min.class));
     assertTrue(method.getParameters()[1].isAnnotationPresent(Min.class));
+  }
+
+  @Test
+  void listColleagues_happyPath_returnsTheColleaguePicker() {
+    // Business reason: "hand this case over" needs the list of people it can go to.
+    var list =
+        CaseHandoverColleagueList.builder()
+            .colleagues(
+                List.of(
+                    CaseHandoverColleague.builder().consultantId("c1").displayName("C").build()))
+            .total(1)
+            .offset(0)
+            .count(1)
+            .build();
+    when(caseHandoverService.listColleagues(7L, "an", 0, 25)).thenReturn(list);
+
+    var response = controller.listColleagues(7L, "an", 0, 25);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(list, response.getBody());
+  }
+
+  @Test
+  void createOffer_happyPath_returnsCreatedWithThePendingOffer() {
+    // Business reason: the offer is a promise, not a transfer — the response must say so.
+    var offer =
+        CaseHandoverOffer.builder()
+            .offerId(5L)
+            .sessionId(7L)
+            .status("PENDING_RECIPIENT_ACCEPT")
+            .direction("PUSH")
+            .build();
+    var request = new CaseHandoverController.CaseHandoverOfferRequestDTO();
+    request.setSessionId(7L);
+    request.setTargetConsultantId("c1");
+    request.setReasonCode("PLANNED_ABSENCE");
+    request.setExplanation("Two weeks leave.");
+    when(caseHandoverService.createOffer(7L, "c1", "PLANNED_ABSENCE", "Two weeks leave."))
+        .thenReturn(offer);
+
+    var response = controller.createOffer(request);
+
+    assertEquals(HttpStatus.CREATED, response.getStatusCode());
+    assertEquals(offer, response.getBody());
+  }
+
+  @Test
+  void listOffers_defaultsToTheIncomingBox() {
+    // Business reason: the badge in the session list counts what was offered TO me.
+    when(caseHandoverService.listOffers(true)).thenReturn(List.of());
+
+    controller.listOffers("incoming");
+    controller.listOffers("outgoing");
+
+    verify(caseHandoverService).listOffers(true);
+    verify(caseHandoverService).listOffers(false);
+  }
+
+  @Test
+  void acceptOffer_happyPath_returnsTheResultingHandoverStatus() {
+    // Business reason: accepting may grant immediately or wait for the client — the caller has
+    // to be able to tell which happened.
+    var status = CaseHandoverStatus.builder().sessionId(7L).status("GRANTED").build();
+    when(caseHandoverService.acceptOffer(5L)).thenReturn(status);
+
+    var response = controller.acceptOffer(5L);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(status, response.getBody());
+  }
+
+  @Test
+  void declineOffer_happyPath_returnsTheClosedOffer() {
+    var offer = CaseHandoverOffer.builder().offerId(5L).status("RECIPIENT_DECLINED").build();
+    when(caseHandoverService.declineOffer(5L)).thenReturn(offer);
+
+    var response = controller.declineOffer(5L);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(offer, response.getBody());
+  }
+
+  @Test
+  void withdrawOffer_happyPath_returnsNoContent() {
+    when(caseHandoverService.withdrawOffer(5L))
+        .thenReturn(CaseHandoverOffer.builder().offerId(5L).status("WITHDRAWN").build());
+
+    var response = controller.withdrawOffer(5L);
+
+    assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
+    verify(caseHandoverService).withdrawOffer(5L);
   }
 }

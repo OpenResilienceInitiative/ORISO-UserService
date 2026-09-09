@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordResetTargetLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -18,6 +19,8 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.mail.Authenticator;
@@ -68,6 +71,14 @@ public class PasswordResetService {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
+  private final @NonNull IdentityPasswordResetTargetLookup resetTargetLookup;
+
+  @Value("${multitenancy.enabled:false}")
+  private boolean multitenancyEnabled;
+
+  @Value("${feature.multitenancy.with.single.domain.enabled:false}")
+  private boolean singleDomainEnabled;
+
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull OneTimeTokenStore oneTimeTokenStore;
   private final @NonNull ApplicationSettingsService applicationSettingsService;
@@ -164,10 +175,31 @@ public class PasswordResetService {
     String resolvedLocale = resolveLocale(locale);
     PasswordResetApplication resolvedApplication =
         application == null ? PasswordResetApplication.APP : application;
+    TenantData currentTenant = TenantContext.getCurrentTenantData();
+    // Copy before dispatch: the request thread clears or changes its mutable context afterwards.
+    TenantData requestTenant =
+        currentTenant == null
+            ? null
+            : new TenantData(currentTenant.getTenantId(), currentTenant.getSubdomain());
     try {
       // Dispatch asynchronously so the response time does not reveal whether the account exists.
       passwordResetExecutor.execute(
-          () -> processPasswordResetRequest(username, resolvedLocale, resolvedApplication));
+          () -> {
+            TenantData previousTenant = TenantContext.getCurrentTenantData();
+            try {
+              // Missing scope stays missing; never turn a public reset into a global lookup.
+              TenantContext.clear();
+              if (requestTenant != null) {
+                TenantContext.setCurrentTenantData(requestTenant);
+              }
+              processPasswordResetRequest(username, resolvedLocale, resolvedApplication);
+            } finally {
+              TenantContext.clear();
+              if (previousTenant != null) {
+                TenantContext.setCurrentTenantData(previousTenant);
+              }
+            }
+          });
     } catch (RejectedExecutionException ex) {
       // Queue saturated (flood/overload): drop the dispatch, keep the response identical so
       // neither existence nor the drop is observable. No PII in the log.
@@ -279,7 +311,45 @@ public class PasswordResetService {
           adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(username, username);
       return adminOptional.map(admin -> new AccountResetTarget(admin.getId(), admin.getEmail()));
     }
+    if (multitenancyEnabled && singleDomainEnabled) {
+      return resolveSharedAppAccount(username);
+    }
     return resolveAccount(username);
+  }
+
+  private Optional<AccountResetTarget> resolveSharedAppAccount(String username) {
+    var identityOptional = resetTargetLookup.findPasswordResetTarget(username);
+    if (identityOptional.isEmpty()) {
+      return Optional.empty();
+    }
+    var identity = identityOptional.get();
+    if (identity.tenantId() <= 0 || isBlank(identity.id()) || isBlank(identity.email())) {
+      return Optional.empty();
+    }
+    // Scope exact ID access and subsequent branding to the authoritative identity's tenant.
+    // Do not retain the shared host's main-tenant subdomain. The worker restores scope in finally.
+    TenantContext.setCurrentTenantData(new TenantData(identity.tenantId(), null));
+    var user = userService.getUser(identity.id());
+    var consultant = consultantService.getConsultant(identity.id());
+    if (user.isPresent() == consultant.isPresent()) {
+      return Optional.empty();
+    }
+    if (user.isPresent()) {
+      User account = user.get();
+      if (!identity.id().equals(account.getUserId())
+          || !Long.valueOf(identity.tenantId()).equals(account.getTenantId())
+          || !identity.email().equalsIgnoreCase(account.getEmail())) {
+        return Optional.empty();
+      }
+      return Optional.of(new AccountResetTarget(account.getUserId(), account.getEmail()));
+    }
+    Consultant account = consultant.orElseThrow();
+    if (!identity.id().equals(account.getId())
+        || !Long.valueOf(identity.tenantId()).equals(account.getTenantId())
+        || !identity.email().equalsIgnoreCase(account.getEmail())) {
+      return Optional.empty();
+    }
+    return Optional.of(new AccountResetTarget(account.getId(), account.getEmail()));
   }
 
   /**

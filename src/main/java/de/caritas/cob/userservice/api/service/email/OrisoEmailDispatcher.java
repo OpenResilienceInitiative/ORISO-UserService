@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.email;
 
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.service.notification.SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings;
 import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
@@ -30,30 +31,63 @@ public class OrisoEmailDispatcher {
   public boolean send(
       SupervisorAddedEmailSettings smtp, String recipient, OrisoEmailRenderer.RenderedEmail email) {
     try {
+      sendOrThrow(smtp, recipient, email);
+      return true;
+    } catch (SmtpSendException exception) {
+      // Never log the exception itself. The cause chain here is the Jakarta Mail failure, and SMTP
+      // rejection replies routinely embed the recipient address ("550 5.1.1 <a@b.example> user
+      // unknown"). NotificationEmailService already refuses to retain these details for exactly
+      // that reason; logging the throwable here would put advice-seeker addresses on disk anyway.
+      // The type chain keeps auth failures, TLS failures and timeouts distinguishable.
+      log.error(
+          "ORISO email dispatch failed via SMTP host {}: {}", host(smtp), causeChain(exception));
+      return false;
+    }
+  }
+
+  /** Exception simple names only: no messages, no SMTP reply text, no addresses. */
+  static String causeChain(Throwable throwable) {
+    StringBuilder chain = new StringBuilder();
+    Throwable current = throwable;
+    int depth = 0;
+    while (current != null && depth < 5) {
+      if (depth > 0) {
+        chain.append(" <- ");
+      }
+      chain.append(current.getClass().getSimpleName());
+      if (current.getCause() == current) {
+        break;
+      }
+      current = current.getCause();
+      depth++;
+    }
+    return chain.toString();
+  }
+
+  /** The configured SMTP host is operator configuration, not personal data. */
+  private static String host(SupervisorAddedEmailSettings smtp) {
+    return smtp == null || smtp.getHost() == null ? "<unset>" : smtp.getHost();
+  }
+
+  /** Synchronous receipt boundary: returns only after SMTP accepts both MIME alternatives. */
+  public void sendOrThrow(
+      SupervisorAddedEmailSettings smtp, String recipient, OrisoEmailRenderer.RenderedEmail email) {
+    try {
       MimeMessage message = new MimeMessage(sessionFor(smtp));
       message.setFrom(new InternetAddress(smtp.getFrom()));
-      message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
-      // UTF-8 rather than the platform default: these subjects carry umlauts.
+      message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient, true));
       message.setSubject(email.subject(), "UTF-8");
       message.setContent(OrisoEmailMime.alternative(email));
       Transport.send(message);
-      return true;
     } catch (Exception exception) {
-      // A mail that cannot be sent must not fail the operation that triggered
-      // it — a registration that rolls back because the welcome mail bounced
-      // would be a far worse outcome than a missing mail.
-      log.error(
-          "Failed to send '{}' to a recipient of tenant SMTP host {}",
-          email.subject(),
-          smtp.getHost(),
-          exception);
-      return false;
+      throw new SmtpSendException("ORISO notification email could not be sent", exception);
     }
   }
 
   private Session sessionFor(SupervisorAddedEmailSettings smtp) {
     Properties props = new Properties();
     props.put("mail.smtp.auth", "true");
+    props.put("mail.smtp.ssl.checkserveridentity", "true");
     props.put("mail.smtp.host", smtp.getHost());
     props.put("mail.smtp.port", String.valueOf(smtp.getPort()));
     // Bounded, matching JakartaInviteMailTransport: an unresponsive SMTP host must not hang the

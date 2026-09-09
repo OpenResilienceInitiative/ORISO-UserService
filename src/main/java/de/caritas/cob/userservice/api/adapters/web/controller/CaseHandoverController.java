@@ -5,6 +5,8 @@ import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogEntry;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
+import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverColleagueList;
+import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverOffer;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverReason;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
 import io.swagger.annotations.Api;
@@ -20,6 +22,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -121,6 +124,58 @@ public class CaseHandoverController {
     return ResponseEntity.status(HttpStatus.CREATED).body(results);
   }
 
+  @GetMapping({"/users/case-handover/colleagues", "/service/users/case-handover/colleagues"})
+  public ResponseEntity<CaseHandoverColleagueList> listColleagues(
+      @RequestParam(name = "sessionId") @NotNull Long sessionId,
+      @RequestParam(name = "query", defaultValue = "") String query,
+      @RequestParam(name = "offset", defaultValue = "0") @Min(0) int offset,
+      @RequestParam(name = "count", defaultValue = "25") @Min(1) @Max(200) int count) {
+    return ResponseEntity.ok(caseHandoverService.listColleagues(sessionId, query, offset, count));
+  }
+
+  @PostMapping({"/users/case-handover/offers", "/service/users/case-handover/offers"})
+  public ResponseEntity<CaseHandoverOffer> createOffer(
+      @Valid @RequestBody CaseHandoverOfferRequestDTO request) {
+    CaseHandoverOffer offer =
+        caseHandoverService.createOffer(
+            request.getSessionId(),
+            request.getTargetConsultantId(),
+            request.getReasonCode(),
+            request.getExplanation());
+    return ResponseEntity.status(HttpStatus.CREATED).body(offer);
+  }
+
+  @GetMapping({"/users/case-handover/offers", "/service/users/case-handover/offers"})
+  public ResponseEntity<List<CaseHandoverOffer>> listOffers(
+      @RequestParam(name = "box", defaultValue = "incoming") String box) {
+    return ResponseEntity.ok(caseHandoverService.listOffers(!"outgoing".equalsIgnoreCase(box)));
+  }
+
+  @PostMapping({
+    "/users/case-handover/offers/{offerId}/accept",
+    "/service/users/case-handover/offers/{offerId}/accept"
+  })
+  public ResponseEntity<CaseHandoverStatus> acceptOffer(@PathVariable Long offerId) {
+    return ResponseEntity.ok(caseHandoverService.acceptOffer(offerId));
+  }
+
+  @PostMapping({
+    "/users/case-handover/offers/{offerId}/decline",
+    "/service/users/case-handover/offers/{offerId}/decline"
+  })
+  public ResponseEntity<CaseHandoverOffer> declineOffer(@PathVariable Long offerId) {
+    return ResponseEntity.ok(caseHandoverService.declineOffer(offerId));
+  }
+
+  @DeleteMapping({
+    "/users/case-handover/offers/{offerId}",
+    "/service/users/case-handover/offers/{offerId}"
+  })
+  public ResponseEntity<Void> withdrawOffer(@PathVariable Long offerId) {
+    caseHandoverService.withdrawOffer(offerId);
+    return ResponseEntity.noContent().build();
+  }
+
   @GetMapping({"/users/case-handover/logs", "/service/users/case-handover/logs"})
   public ResponseEntity<CaseHandoverLogsResponseDTO> listLogs(
       @RequestParam(name = "page", defaultValue = "1") @Min(1) int page,
@@ -161,6 +216,45 @@ public class CaseHandoverController {
 
     public void setSessionIds(List<Long> sessionIds) {
       this.sessionIds = sessionIds;
+    }
+  }
+
+  public static class CaseHandoverOfferRequestDTO {
+    @NotNull private Long sessionId;
+    @NotBlank private String targetConsultantId;
+    @NotBlank private String reasonCode;
+    @NotBlank private String explanation;
+
+    public Long getSessionId() {
+      return sessionId;
+    }
+
+    public void setSessionId(Long sessionId) {
+      this.sessionId = sessionId;
+    }
+
+    public String getTargetConsultantId() {
+      return targetConsultantId;
+    }
+
+    public void setTargetConsultantId(String targetConsultantId) {
+      this.targetConsultantId = targetConsultantId;
+    }
+
+    public String getReasonCode() {
+      return reasonCode;
+    }
+
+    public void setReasonCode(String reasonCode) {
+      this.reasonCode = reasonCode;
+    }
+
+    public String getExplanation() {
+      return explanation;
+    }
+
+    public void setExplanation(String explanation) {
+      this.explanation = explanation;
     }
   }
 

@@ -1,0 +1,598 @@
+openapi: 3.0.1
+info:
+  title: ORISO UserService — Case Handover
+  description: >-
+    The complete case-handover contract: PULL (a counsellor asks for access to a colleague's case)
+    and PUSH (a counsellor offers their own case to a named colleague).
+
+    WHY THIS IS A SEPARATE FILE AND NOT PART OF api/userservice.yaml.
+    userservice.yaml is generated with the spring generator and useTags=false, so EVERY path under
+    /users lands in one interface, UsersApi, which UserController implements. Adding the handover
+    paths there would give UserController inherited default methods mapped to
+    /users/case-handover/... while CaseHandoverController maps the same paths — an ambiguous
+    handler mapping that fails at context startup, not at compile time. Until the handover
+    endpoints are moved into UserController (or userservice.yaml is switched to useTags), this
+    file is the contract of record and CaseHandoverControllerContractTest asserts that
+    CaseHandoverController actually serves every operation listed here, so the two cannot drift.
+
+    Every path below is served TWICE by the service: as written, and with a /service prefix
+    (/service/users/...). The /service variant is the one the frontend calls. The generator cannot
+    express that, so it is documented here and asserted by the contract test.
+  version: 1.0.0
+tags:
+  - name: case-handover
+    description: Case handover — pull, push, reason policies and audit log
+paths:
+  /users/case-handover/reasons:
+    get:
+      tags: [case-handover]
+      summary: 'List the enabled handover reasons [Authorization: consultant]'
+      operationId: listCaseHandoverReasons
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CaseHandoverReason'
+
+  /users/case-handover/reason-policies:
+    get:
+      tags: [case-handover]
+      summary: 'List all reason policies, enabled or not [Authorization: admin]'
+      operationId: listCaseHandoverReasonPolicies
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CaseHandoverReason'
+    put:
+      tags: [case-handover]
+      summary: 'Replace the reason policies [Authorization: admin]'
+      operationId: updateCaseHandoverReasonPolicies
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: '#/components/schemas/CaseHandoverReason'
+      responses:
+        200:
+          description: OK — the stored policies after the update
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CaseHandoverReason'
+        400:
+          description: BAD REQUEST — empty list, or a reason without code or label
+
+  /users/case-handover/candidates:
+    get:
+      tags: [case-handover]
+      summary: 'Search cases of colleagues in my department (PULL entry point) [Authorization: consultant]'
+      operationId: searchCaseHandoverCandidates
+      parameters:
+        - name: query
+          in: query
+          schema: { type: string, default: '' }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0, minimum: 0 }
+        - name: count
+          in: query
+          schema: { type: integer, default: 15, minimum: 1, maximum: 200 }
+        - name: archived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        200:
+          description: OK — the same shape as the consultant session list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ConsultantSessionListResponseDTO'
+        403:
+          description: FORBIDDEN — not a consultant
+
+  /users/sessions/{sessionId}/case-handover:
+    get:
+      tags: [case-handover]
+      summary: 'My handover status for one case [Authorization: consultant]'
+      operationId: getCaseHandoverStatus
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseHandoverStatus'
+        403:
+          description: FORBIDDEN — the case is not in my department
+        404:
+          description: NOT FOUND — no such session
+    post:
+      tags: [case-handover]
+      summary: 'Request access to a colleague''s case (PULL) [Authorization: consultant]'
+      operationId: requestCaseHandoverAccess
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseHandoverAccessRequest'
+      responses:
+        201:
+          description: CREATED — GRANTED, PENDING_CLIENT_CONSENT or DENIED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseHandoverStatus'
+        400:
+          description: BAD REQUEST — unknown reason code or empty explanation
+        403:
+          description: FORBIDDEN — the case is not in my department
+
+  /users/sessions/{sessionId}/case-handover/{requestId}/client-consent:
+    post:
+      tags: [case-handover]
+      summary: 'The advice seeker decides on a pending handover [Authorization: user]'
+      operationId: decideCaseHandoverClientConsent
+      description: >-
+        Note for the frontend: the body is {"approved": true|false}. The plan sketched
+        {"decision": "ACCEPT"|"DECLINE"}; the implemented shape is the boolean one.
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ClientConsentDecision'
+      responses:
+        200:
+          description: OK — the client-visible subset of the status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseHandoverStatus'
+        403:
+          description: FORBIDDEN — not the advice seeker of this session
+        404:
+          description: NOT FOUND — no such request on this session
+
+  /users/case-handover/batch:
+    post:
+      tags: [case-handover]
+      summary: 'Request access to several cases at once (PULL) [Authorization: consultant]'
+      operationId: requestCaseHandoverBatchAccess
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseHandoverBatchRequest'
+      responses:
+        201:
+          description: CREATED — one result per session, failures reported per entry
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CaseHandoverBatchResult'
+
+  /users/case-handover/logs:
+    get:
+      tags: [case-handover]
+      summary: 'Handover audit log [Authorization: admin]'
+      operationId: listCaseHandoverLogs
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1, minimum: 1 }
+        - name: perPage
+          in: query
+          schema: { type: integer, default: 20, minimum: 1, maximum: 200 }
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseHandoverLogsResponse'
+
+  /users/case-handover/colleagues:
+    get:
+      tags: [case-handover]
+      summary: 'Colleagues I can offer this case to (PUSH entry point) [Authorization: consultant]'
+      operationId: listCaseHandoverColleagues
+      description: >-
+        Counsellors of the case's agency, minus me. Team sessions are included (plan E10, FE#1152):
+        the department filter that scopes the PULL candidate search must not hide colleagues here.
+      parameters:
+        - name: sessionId
+          in: query
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: query
+          in: query
+          schema: { type: string, default: '' }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0, minimum: 0 }
+        - name: count
+          in: query
+          schema: { type: integer, default: 25, minimum: 1, maximum: 200 }
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseHandoverColleagueList'
+        403:
+          description: FORBIDDEN — I am not the active counsellor of this case
+        404:
+          description: NOT FOUND — no such session
+
+  /users/case-handover/offers:
+    get:
+      tags: [case-handover]
+      summary: 'My open handover offers [Authorization: consultant]'
+      operationId: listCaseHandoverOffers
+      parameters:
+        - name: box
+          in: query
+          description: incoming = offered to me, outgoing = offered by me
+          schema:
+            type: string
+            enum: [incoming, outgoing]
+            default: incoming
+      responses:
+        200:
+          description: OK — newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/CaseHandoverOffer'
+    post:
+      tags: [case-handover]
+      summary: 'Offer my case to a colleague (PUSH) [Authorization: consultant]'
+      operationId: createCaseHandoverOffer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CaseHandoverOfferRequest'
+      responses:
+        201:
+          description: CREATED — status PENDING_RECIPIENT_ACCEPT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseHandoverOffer'
+        400:
+          description: BAD REQUEST — unknown reason code, empty explanation, or offering to myself
+        403:
+          description: FORBIDDEN — I am not the active counsellor, or the target is not eligible
+        404:
+          description: NOT FOUND — no such session or consultant
+        409:
+          description: CONFLICT — this case already has an open offer
+
+  /users/case-handover/offers/{offerId}/accept:
+    post:
+      tags: [case-handover]
+      summary: 'Accept an offered case [Authorization: consultant]'
+      operationId: acceptCaseHandoverOffer
+      description: >-
+        Runs the same grant path as a PULL request: reason policy gate, then either GRANTED
+        (Matrix join, session owner change, standing supervisor attach, in-chat system message)
+        or PENDING_CLIENT_CONSENT. ADR-022: no third consent gate — the advice seeker is asked
+        exactly when the reason policy says so, identically to PULL.
+      parameters:
+        - name: offerId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        200:
+          description: OK — GRANTED or PENDING_CLIENT_CONSENT
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseHandoverStatus'
+        403:
+          description: FORBIDDEN — the offer was not made to me
+        404:
+          description: NOT FOUND — no such offer
+        409:
+          description: CONFLICT — the offer is no longer open (declined, withdrawn, expired, answered)
+
+  /users/case-handover/offers/{offerId}/decline:
+    post:
+      tags: [case-handover]
+      summary: 'Decline an offered case [Authorization: consultant]'
+      operationId: declineCaseHandoverOffer
+      parameters:
+        - name: offerId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        200:
+          description: OK — status RECIPIENT_DECLINED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CaseHandoverOffer'
+        403:
+          description: FORBIDDEN — the offer was not made to me
+        404:
+          description: NOT FOUND — no such offer
+        409:
+          description: CONFLICT — the offer is no longer open
+
+  /users/case-handover/offers/{offerId}:
+    delete:
+      tags: [case-handover]
+      summary: 'Withdraw an offer I made [Authorization: consultant]'
+      operationId: withdrawCaseHandoverOffer
+      parameters:
+        - name: offerId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        204:
+          description: NO CONTENT — status WITHDRAWN
+        403:
+          description: FORBIDDEN — not my offer
+        404:
+          description: NOT FOUND — no such offer
+        409:
+          description: CONFLICT — the offer is no longer open
+
+components:
+  schemas:
+    CaseHandoverStatusValue:
+      type: string
+      description: >-
+        NOT_REQUESTED is a synthetic value returned when no request row exists.
+        PENDING_RECIPIENT_ACCEPT, RECIPIENT_DECLINED, WITHDRAWN and EXPIRED only occur on PUSH rows.
+      enum:
+        - NOT_REQUESTED
+        - PENDING
+        - PENDING_CLIENT_CONSENT
+        - PENDING_RECIPIENT_ACCEPT
+        - GRANTED
+        - DENIED
+        - CLIENT_CONSENT_DECLINED
+        - RECIPIENT_DECLINED
+        - WITHDRAWN
+        - EXPIRED
+
+    CaseHandoverDirection:
+      type: string
+      enum: [PULL, PUSH]
+
+    CaseHandoverReason:
+      type: object
+      required: [code, label, clientConsentRequired, enabled]
+      properties:
+        accessType: { type: string, enum: [TAKEOVER, CO_ACCESS], readOnly: true }
+        code:
+          type: string
+          description: 'ADVICE_REQUESTED | PLANNED_ABSENCE | UNPLANNED_ABSENCE | OTHER_EMERGENCY | ASSIGNMENT_ENDED. Never health-related (GDPR Art. 9).'
+        label: { type: string }
+        clientConsentRequired: { type: boolean }
+        accessAllowed: { type: boolean }
+        enabled: { type: boolean }
+        maxAccessDurationMinutes: { type: integer, minimum: 15, multipleOf: 15 }
+        approvalRoles:
+          type: array
+          uniqueItems: true
+          items: { type: string }
+        displayOrder: { type: integer }
+        policyAuthority: { type: string }
+        clientNotificationTemplates:
+          type: object
+          description: Client-facing copy per ISO-639-1 language, {{newAdvisor}} substituted at send time.
+          additionalProperties: { type: string }
+
+    CaseHandoverStatus:
+      type: object
+      required: [sessionId, status, canViewContent, clientConsentRequired]
+      properties:
+        accessType: { type: string, enum: [TAKEOVER, CO_ACCESS], readOnly: true }
+        requestId: { type: integer, format: int64 }
+        sessionId: { type: integer, format: int64 }
+        status:
+          $ref: '#/components/schemas/CaseHandoverStatusValue'
+        canViewContent: { type: boolean }
+        reasonCode: { type: string }
+        reasonLabel: { type: string }
+        clientConsentRequired: { type: boolean }
+        policyAuthority: { type: string }
+        auditOutcome: { type: string }
+        createdAt: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        resolvedAt: { type: string, format: date-time }
+
+    CaseHandoverAccessRequest:
+      type: object
+      required: [reasonCode, explanation]
+      properties:
+        reasonCode: { type: string }
+        explanation:
+          type: string
+          description: Counsellor-written, staff-only. Never copied into a notification to the advice seeker.
+
+    CaseHandoverBatchRequest:
+      allOf:
+        - $ref: '#/components/schemas/CaseHandoverAccessRequest'
+        - type: object
+          required: [sessionIds]
+          properties:
+            sessionIds:
+              type: array
+              items: { type: integer, format: int64 }
+
+    CaseHandoverBatchResult:
+      type: object
+      required: [sessionId, success]
+      properties:
+        sessionId: { type: integer, format: int64 }
+        success: { type: boolean }
+        status:
+          $ref: '#/components/schemas/CaseHandoverStatus'
+        error: { type: string }
+
+    ClientConsentDecision:
+      type: object
+      required: [approved]
+      properties:
+        approved: { type: boolean }
+
+    CaseHandoverOfferRequest:
+      type: object
+      required: [sessionId, targetConsultantId, reasonCode, explanation]
+      properties:
+        sessionId: { type: integer, format: int64 }
+        targetConsultantId: { type: string }
+        reasonCode: { type: string }
+        explanation: { type: string }
+
+    CaseHandoverOffer:
+      type: object
+      required: [offerId, sessionId, status, direction]
+      properties:
+        accessType: { type: string, enum: [TAKEOVER, CO_ACCESS], readOnly: true }
+        offerId:
+          type: integer
+          format: int64
+          description: The id of the case_handover_request row — the same value CaseHandoverStatus reports as requestId.
+        sessionId: { type: integer, format: int64 }
+        status:
+          $ref: '#/components/schemas/CaseHandoverStatusValue'
+        direction:
+          $ref: '#/components/schemas/CaseHandoverDirection'
+        reasonCode: { type: string }
+        reasonLabel: { type: string }
+        explanation: { type: string }
+        clientConsentRequired: { type: boolean }
+        fromConsultantId: { type: string }
+        fromConsultantName: { type: string }
+        targetConsultantId: { type: string }
+        targetConsultantName: { type: string }
+        createdAt: { type: string, format: date-time }
+        offerExpiresAt:
+          type: string
+          format: date-time
+          description: 72 hours after creation. The expiry scheduler moves the offer to EXPIRED afterwards.
+        resolvedAt: { type: string, format: date-time }
+
+    CaseHandoverColleague:
+      type: object
+      required: [consultantId]
+      properties:
+        consultantId: { type: string }
+        username: { type: string }
+        displayName:
+          type: string
+          description: Internal display name with fallback — this is an internal surface (#996).
+        firstName: { type: string }
+        lastName: { type: string }
+        absent: { type: boolean }
+
+    CaseHandoverColleagueList:
+      type: object
+      required: [colleagues, total, offset, count]
+      properties:
+        colleagues:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseHandoverColleague'
+        total: { type: integer }
+        offset: { type: integer }
+        count: { type: integer }
+
+    CaseHandoverLogEntry:
+      type: object
+      properties:
+        requestId: { type: integer, format: int64 }
+        sessionId: { type: integer, format: int64 }
+        status:
+          $ref: '#/components/schemas/CaseHandoverStatusValue'
+        direction:
+          $ref: '#/components/schemas/CaseHandoverDirection'
+        auditOutcome: { type: string }
+        reasonCode: { type: string }
+        reasonLabel: { type: string }
+        explanation: { type: string }
+        clientConsentRequired: { type: boolean }
+        policyAuthority: { type: string }
+        createdAt: { type: string, format: date-time }
+        resolvedAt: { type: string, format: date-time }
+        requesterConsultantId: { type: string }
+        requesterUsername: { type: string }
+        requesterName: { type: string }
+        previousConsultantId: { type: string }
+        previousUsername: { type: string }
+        previousName: { type: string }
+        targetConsultantId: { type: string }
+        targetUsername: { type: string }
+        targetName: { type: string }
+
+    CaseHandoverLogsResponse:
+      type: object
+      required: [data, total, page, perPage]
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/CaseHandoverLogEntry'
+        total: { type: integer, format: int64 }
+        page: { type: integer }
+        perPage: { type: integer }
+
+    ConsultantSessionListResponseDTO:
+      type: object
+      description: Defined in api/userservice.yaml; referenced here so the candidate search is documented.
+      properties:
+        sessions:
+          type: array
+          items: { type: object }
+        offset: { type: integer }
+        count: { type: integer }
+        total: { type: integer }

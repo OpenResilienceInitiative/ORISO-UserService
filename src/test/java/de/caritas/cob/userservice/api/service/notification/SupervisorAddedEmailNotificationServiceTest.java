@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
@@ -36,28 +37,134 @@ import org.springframework.test.util.ReflectionTestUtils;
 class SupervisorAddedEmailNotificationServiceTest {
 
   @Mock private SystemNotificationEmailSettingsService emailSettingsService;
+  @Mock private TenantSystemEmailDeliveryClient deliveryClient;
   @Mock private UserService userService;
+  @Spy private UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
   // Real instances rather than mocks: these tests exercise the whole send path,
   // and the point of the port is that the path now produces a mail from the
   // design system. A mock here would assert that a method was called; this
   // asserts that a mail comes out.
   @Spy private OrisoEmailRenderer emailRenderer = new OrisoEmailRenderer();
-  @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand();
+
+  private final de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver
+      brandingResolver =
+          org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver.class);
+  @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand(brandingResolver);
 
   @InjectMocks private SupervisorAddedEmailNotificationService service;
 
+  @Test
+  void emailChangeShowsDecodedLoginInBothMimeParts() {
+    assertEmailChangeLogin(
+        usernameTranscoder.encodeUsername("bart.simpson@example.test"),
+        "bart.simpson@example.test");
+  }
+
+  @Test
+  void emailChangePreservesPlainLoginInBothMimeParts() {
+    assertEmailChangeLogin("Bart Simpson", "Bart Simpson");
+  }
+
+  private void assertEmailChangeLogin(String input, String expected) {
+    service.notifyEmailAddressChanged(input, "recipient@example.test", 40L, null, null);
+    var email = org.mockito.ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(deliveryClient)
+        .send(
+            eq(40L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.EMAIL_ADDRESS_CHANGED),
+            eq("recipient@example.test"),
+            email.capture());
+    assertThat(email.getValue().html()).contains(expected).doesNotContain("enc.");
+    assertThat(email.getValue().text()).contains(expected).doesNotContain("enc.");
+  }
+
+  @Test
+  void emailChangeDoesNotRequireTenantPasswordInUserService() {
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(Optional.empty());
+    service.notifyEmailAddressChanged("test-user", "recipient@example.org", 40L, null, "token");
+    verify(emailRenderer).render(eq("email-geaendert"), any(), any());
+  }
+
+  @Test
+  void emailChangeWorksWithoutARequestScopedSmtpLookup() {
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenThrow(new IllegalStateException("No request context on async thread"));
+    assertThatCode(
+            () ->
+                service.notifyEmailAddressChanged(
+                    "test-user", "recipient@example.org", 40L, null, "token"))
+        .doesNotThrowAnyException();
+    verify(emailRenderer).render(eq("email-geaendert"), any(), any());
+  }
+
+  @Test
+  void supervisorEventsRejectUnknownAndNonpositiveTenantBeforeRendering() {
+    for (Long tenantId : java.util.Arrays.asList(null, 0L, -1L)) {
+      var tenant = new TenantData(tenantId, "test");
+      var user = mock(User.class);
+      var consultant = mock(Consultant.class);
+      assertThatCode(
+              () -> service.notifySupervisorAdded(user, consultant, "Name", 1L, tenant, null))
+          .doesNotThrowAnyException();
+      assertThatCode(
+              () -> service.notifySupervisorRemoved(user, consultant, "Name", 1L, tenant, null))
+          .doesNotThrowAnyException();
+    }
+    org.mockito.Mockito.verifyNoInteractions(deliveryClient, tenantTemplateSupplier, userService);
+    verify(emailRenderer, never()).render(any(), any(), any());
+  }
+
   @BeforeEach
   void injectValues() {
+    when(brandingResolver.resolve(any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.email.layout.EmailBranding(
+                "Online-Beratung", null, "#a5000a", null, null));
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
     ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org");
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.oriso.org");
   }
 
+  @Test
+  void usesExplicitTenantBrandingAfterTheUrlResolverClearsThreadContext() throws Exception {
+    var resolver =
+        org.mockito.Mockito.mock(
+            de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver.class);
+    when(resolver.resolve(any()))
+        .thenReturn(de.caritas.cob.userservice.api.service.email.layout.EmailBranding.neutral());
+    when(resolver.resolve(7L))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.email.layout.EmailBranding(
+                "Tenant Seven",
+                "https://app.oriso.org/service/tenant/public/branding/7/logo",
+                "#1c4f8f",
+                null,
+                null));
+    ReflectionTestUtils.setField(emailBrand, "brandingResolver", resolver);
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(
+            Optional.of(
+                new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
+                    "smtp.example.org", 587, false, "test", "test", "sender@example.org", null)));
+    service.notifyEmailAddressChanged(
+        "username", "recipient@example.org", 7L, new TenantData(7L, "seven"), null);
+    var rendered = org.mockito.ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(deliveryClient)
+        .send(
+            eq(7L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.EMAIL_ADDRESS_CHANGED),
+            eq("recipient@example.org"),
+            rendered.capture());
+    assertThat(rendered.getValue().html()).contains("Tenant Seven", "/branding/7/logo");
+  }
+
   // ── notifySupervisorAdded early-return paths ──────────────────────────────
 
   @Test
-  void notifySupervisorAdded_Should_ReturnEarly_When_SmtpSettingsNotAvailable() {
+  void notifySupervisorAdded_Should_DelegateWithoutLocalSmtpSettings() {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.empty());
 
@@ -69,7 +176,8 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     service.notifySupervisorAdded(user, supervisor, "Sup Name", 42L, null, "token");
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(1L), eq("token"));
+    verify(deliveryClient, org.mockito.Mockito.times(2))
+        .send(eq(1L), eq(TenantSystemEmailDeliveryClient.Purpose.SUPERVISOR_ADDED), any(), any());
   }
 
   @Test
@@ -93,10 +201,16 @@ class SupervisorAddedEmailNotificationServiceTest {
     // user.tenantId == null
     Consultant supervisor = new Consultant();
     supervisor.setTenantId(5L);
+    supervisor.setEmail("supervisor@example.org");
 
     service.notifySupervisorAdded(user, supervisor, "Name", 1L, null, null);
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(5L), any());
+    verify(deliveryClient)
+        .send(
+            eq(5L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.SUPERVISOR_ADDED),
+            eq("supervisor@example.org"),
+            any());
   }
 
   @Test
@@ -106,12 +220,18 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     User user = new User();
     user.setTenantId(99L);
+    user.setEmail("asker@example.org");
     TenantData tenantData = new TenantData();
     tenantData.setTenantId(7L);
 
     service.notifySupervisorAdded(user, null, "Name", 1L, tenantData, null);
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(7L), any());
+    verify(deliveryClient)
+        .send(
+            eq(7L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.SUPERVISOR_ADDED),
+            eq("asker@example.org"),
+            any());
   }
 
   @Test
@@ -138,17 +258,23 @@ class SupervisorAddedEmailNotificationServiceTest {
   // ── notifySupervisorRemoved early-return paths ────────────────────────────
 
   @Test
-  void notifySupervisorRemoved_Should_ReturnEarly_When_SmtpSettingsNotAvailable() {
+  void notifySupervisorRemoved_Should_DelegateWithoutLocalSmtpSettings() {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.empty());
 
     User user = new User();
     user.setTenantId(3L);
+    user.setEmail("asker@example.org");
     Consultant supervisor = new Consultant();
 
     service.notifySupervisorRemoved(user, supervisor, "Sup", 20L, null, "tok");
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(3L), eq("tok"));
+    verify(deliveryClient)
+        .send(
+            eq(3L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.SUPERVISOR_REMOVED),
+            eq("asker@example.org"),
+            any());
   }
 
   @Test
@@ -182,13 +308,18 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void notifyEmailAddressChanged_Should_ReturnEarly_When_SmtpSettingsNotAvailable() {
+  void notifyEmailAddressChanged_Should_DelegateWithoutLocalSmtpSettings() {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(eq(2L), any()))
         .thenReturn(Optional.empty());
 
     service.notifyEmailAddressChanged("user1", "new@example.com", 2L, null, "tok");
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(2L), eq("tok"));
+    verify(deliveryClient)
+        .send(
+            eq(2L),
+            eq(TenantSystemEmailDeliveryClient.Purpose.EMAIL_ADDRESS_CHANGED),
+            eq("new@example.com"),
+            any());
   }
 
   @Test
@@ -278,6 +409,7 @@ class SupervisorAddedEmailNotificationServiceTest {
         .thenReturn(Optional.of(settings));
     Consultant supervisor = new Consultant();
     supervisor.setTenantId(5L);
+    supervisor.setEmail("supervisor@example.org");
 
     assertThatCode(() -> service.notifySupervisorAdded(null, supervisor, "Sup", 1L, null, null))
         .doesNotThrowAnyException();

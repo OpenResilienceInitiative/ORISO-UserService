@@ -5,8 +5,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.TenantControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
@@ -44,6 +46,15 @@ class TenantServiceTest {
     tenantService =
         new TenantService(
             new StubTenantServiceApiControllerFactory(tenantControllerApi), testCacheManager());
+  }
+
+  @Test
+  void platformBrandingUsesMainSubdomainAndExplicitTechnicalOverride() {
+    var expected = new RestrictedTenantDTO().id(40L).subdomain("platform").name("Platform");
+    tenantControllerApi.subdomainResult = expected;
+    assertThat(tenantService.getPlatformTenantData("platform")).isSameAs(expected);
+    assertThat(tenantControllerApi.lastSubdomainOverride).isZero();
+    assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
   }
 
   // Tenant resolution must reach the external tenant service on a cache miss.
@@ -237,6 +248,38 @@ class TenantServiceTest {
       assertThat(tenantControllerApi.tenantIdCalls.get()).isEqualTo(2);
     }
 
+    @Test
+    void platformBrandingReflectsLogoAdditionAndRemovalWithTechnicalScope() {
+      TenantContext.setCurrentTenant(40L);
+      try {
+        tenantControllerApi.subdomainResult =
+            new RestrictedTenantDTO().id(1L).name("Platform").theming(new Theming());
+        assertThat(cachedTenantService.getPlatformTenantData("platform").getTheming().getLogo())
+            .isNull();
+        assertThat(tenantControllerApi.lastSubdomainOverride).isZero();
+
+        tenantControllerApi.subdomainResult =
+            new RestrictedTenantDTO()
+                .id(1L)
+                .name("Platform")
+                .theming(new Theming().logo("data:image/png;base64,iVBORw0KGgo="));
+        assertThat(cachedTenantService.getPlatformTenantData("platform").getTheming().getLogo())
+            .isEqualTo("data:image/png;base64,iVBORw0KGgo=");
+        assertThat(tenantControllerApi.lastSubdomainOverride).isZero();
+
+        tenantControllerApi.subdomainResult =
+            new RestrictedTenantDTO().id(1L).name("Platform").theming(new Theming());
+        assertThat(cachedTenantService.getPlatformTenantData("platform").getTheming().getLogo())
+            .isNull();
+        assertThat(tenantControllerApi.lastSubdomainOverride).isZero();
+        assertThat(tenantControllerApi.subdomainCalls.get()).isEqualTo(3);
+        assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
+        assertThat(TenantContext.getCurrentTenant()).isEqualTo(40L);
+      } finally {
+        TenantContext.clear();
+      }
+    }
+
     // Each subdomain is a distinct cache entry for multitenancy routing.
     @Test
     void getRestrictedTenantData_differentSubdomains_callsApiForEach() {
@@ -309,6 +352,7 @@ class TenantServiceTest {
 
   static final class StubTenantControllerApi extends TenantControllerApi {
 
+    Long lastSubdomainOverride;
     RestrictedTenantDTO subdomainResult;
     RestrictedTenantDTO tenantIdResult;
     List<RestrictedTenantDTO> tenantIdsResult;
@@ -337,6 +381,7 @@ class TenantServiceTest {
 
     @Override
     public RestrictedTenantDTO getRestrictedTenantDataBySubdomain(String subdomain, Long tenantId) {
+      lastSubdomainOverride = tenantId;
       subdomainCalls.incrementAndGet();
       awaitLatch();
       if (subdomainException != null) {

@@ -170,10 +170,15 @@ public class InactiveAccountNotificationService {
             .template(TEMPLATE_FREE_TEXT)
             .email(recipient.getEmail())
             .templateData(
-                List.of(
-                    new TemplateDataDTO().key("subject").value(subject),
-                    new TemplateDataDTO().key("text").value(body),
-                    new TemplateDataDTO().key("url").value(appBaseUrl)));
+                new java.util.ArrayList<>(
+                    List.of(
+                        new TemplateDataDTO().key("subject").value(subject),
+                        new TemplateDataDTO().key("text").value(body),
+                        new TemplateDataDTO().key("url").value(appBaseUrl))));
+    if (accountTenantId != null) {
+      mail.addTemplateDataItem(
+          new TemplateDataDTO().key("tenantId").value(accountTenantId.toString()));
+    }
     boolean accepted = mailService.sendEmailNotification(new MailsDTO().mails(List.of(mail)));
     if (accepted) {
       log.info(

@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordResetTargetLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService.PasswordResetMailSender;
@@ -24,16 +25,25 @@ import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettings
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -48,6 +58,7 @@ class PasswordResetServiceTest {
   @Mock private ConsultantService consultantService;
   @Mock private AdminRepository adminRepository;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;
+  @Mock private IdentityPasswordResetTargetLookup resetTargetLookup;
   @Mock private RestTemplate restTemplate;
   @Mock private OneTimeTokenStore oneTimeTokenStore;
   @Mock private ApplicationSettingsService applicationSettingsService;
@@ -75,6 +86,84 @@ class PasswordResetServiceTest {
         (recipient, locale, resetUrl, smtpSettings) ->
             sentMails.add(new SentMail(recipient, locale, resetUrl));
     ReflectionTestUtils.setField(passwordResetService, "mailSender", capturingSender);
+  }
+
+  @Test
+  void requestPasswordReset_preservesRequestScopeAcrossWorkerAndClearsAfterFailure()
+      throws Exception {
+    var worker = Executors.newSingleThreadExecutor();
+    var observed = new CopyOnWriteArrayList<String>();
+    var releaseWorker = new CountDownLatch(1);
+    ReflectionTestUtils.setField(passwordResetService, "passwordResetExecutor", worker);
+    when(userService.findUserByUsername(anyString()))
+        .thenAnswer(
+            invocation -> {
+              observed.add(
+                  TenantContext.getCurrentTenant()
+                      + ":"
+                      + (TenantContext.getCurrentTenantData() == null
+                          ? null
+                          : TenantContext.getCurrentTenantData().getSubdomain()));
+              throw new IllegalStateException("synthetic lookup failure");
+            });
+    try {
+      worker.submit(
+          () -> {
+            releaseWorker.await(5, TimeUnit.SECONDS);
+            return null;
+          });
+      TenantContext.setCurrentTenantData(new TenantData(40L, "springfield"));
+      passwordResetService.requestPasswordReset("test-consultant", "de");
+      TenantContext.setCurrentTenant(1L);
+      TenantContext.setCurrentSubdomain("main");
+      releaseWorker.countDown();
+      worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
+      assertThat(TenantContext.getCurrentTenant()).isEqualTo(1L);
+      assertThat(worker.submit(TenantContext::getCurrentTenant).get(5, TimeUnit.SECONDS)).isNull();
+      TenantContext.clear();
+      passwordResetService.requestPasswordReset("test-consultant", "de");
+      worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
+      assertThat(observed).containsExactly("40:springfield", "null:null");
+      assertThat(worker.submit(TenantContext::getCurrentTenant).get(5, TimeUnit.SECONDS)).isNull();
+    } finally {
+      TenantContext.clear();
+      worker.shutdownNow();
+    }
+  }
+
+  @Test
+  void requestPasswordReset_keepsEachRecipientsScopeThroughMailDispatch() throws Exception {
+    var worker = Executors.newSingleThreadExecutor();
+    var deliveries = new CopyOnWriteArrayList<String>();
+    ReflectionTestUtils.setField(passwordResetService, "passwordResetExecutor", worker);
+    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
+    when(userService.findUserByUsername(anyString()))
+        .thenAnswer(
+            invocation -> {
+              User user = validUser();
+              user.setEmail(invocation.getArgument(0) + "@example.com");
+              return Optional.of(user);
+            });
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
+    PasswordResetMailSender sender =
+        (recipient, locale, resetUrl, smtp) ->
+            deliveries.add(recipient + ":" + TenantContext.getCurrentTenant());
+    ReflectionTestUtils.setField(passwordResetService, "mailSender", sender);
+    try {
+      TenantContext.setCurrentTenant(1L);
+      passwordResetService.requestPasswordReset("main-actor", "de");
+      TenantContext.setCurrentTenant(40L);
+      passwordResetService.requestPasswordReset("springfield-actor", "de");
+      worker.submit(() -> {}).get(5, TimeUnit.SECONDS);
+      assertThat(deliveries)
+          .containsExactly("main-actor@example.com:1", "springfield-actor@example.com:40");
+      assertThat(worker.submit(TenantContext::getCurrentTenant).get(5, TimeUnit.SECONDS)).isNull();
+    } finally {
+      TenantContext.clear();
+      worker.shutdownNow();
+    }
   }
 
   private record SentMail(String recipient, String locale, String resetUrl) {}
@@ -400,6 +489,164 @@ class PasswordResetServiceTest {
 
     assertThat(sentMails).hasSize(1);
     verify(applicationSettingsService, never()).getGlobalSmtpCredentials();
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void sharedPublicResetResolvesLisaTenantBeforeLocalLookupAndMail(boolean helpSeeker)
+      throws Exception {
+    ReflectionTestUtils.setField(passwordResetService, "multitenancyEnabled", true);
+    ReflectionTestUtils.setField(passwordResetService, "singleDomainEnabled", true);
+    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
+    ReflectionTestUtils.setField(passwordResetService, "configuredSmtpUsername", "env-user");
+    ReflectionTestUtils.setField(passwordResetService, "configuredSmtpPassword", "env-pass");
+    when(resetTargetLookup.findPasswordResetTarget("lisa@example.com"))
+        .thenReturn(
+            Optional.of(
+                new IdentityPasswordResetTargetLookup.Target("lisa-id", 40L, "lisa@example.com")));
+    Consultant lisa = new Consultant();
+    lisa.setId("lisa-id");
+    lisa.setTenantId(40L);
+    lisa.setEmail("lisa@example.com");
+    if (helpSeeker) {
+      User user = validUser();
+      user.setUserId("lisa-id");
+      user.setTenantId(40L);
+      user.setEmail("lisa@example.com");
+      when(userService.getUser("lisa-id"))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TenantContext.getCurrentTenant()).isEqualTo(40L);
+                return Optional.of(user);
+              });
+    } else {
+      when(consultantService.getConsultant("lisa-id"))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TenantContext.getCurrentTenant()).isEqualTo(40L);
+                assertThat(TenantContext.getCurrentTenantData().getSubdomain()).isNull();
+                return Optional.of(lisa);
+              });
+    }
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(publicSmtpSettingsWithoutCredentials());
+    ReflectionTestUtils.setField(
+        passwordResetService,
+        "mailSender",
+        (PasswordResetMailSender)
+            (recipient, locale, url, smtp) -> {
+              assertThat(TenantContext.getCurrentTenant()).isEqualTo(40L);
+              sentMails.add(new SentMail(recipient, locale, url));
+            });
+    var sharedWorker = Executors.newSingleThreadExecutor();
+    ReflectionTestUtils.setField(passwordResetService, "passwordResetExecutor", sharedWorker);
+    TenantContext.setCurrentTenantData(new TenantData(1L, "main"));
+    try {
+      passwordResetService.requestPasswordReset("lisa@example.com", "de");
+      sharedWorker
+          .submit(() -> assertThat(TenantContext.getCurrentTenantData()).isNull())
+          .get(5, TimeUnit.SECONDS);
+      assertThat(sentMails).hasSize(1);
+      assertThat(TenantContext.getCurrentTenant()).isEqualTo(1L);
+      assertThat(TenantContext.getCurrentTenantData().getSubdomain()).isEqualTo("main");
+      verify(userService, never()).findUserByUsername(anyString());
+    } finally {
+      TenantContext.clear();
+      sharedWorker.shutdownNow();
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"missing", "wrong-id", "wrong-tenant", "wrong-email", "dual-role"})
+  void sharedResetRejectsMissingDeletedOrMismatchedLocalAccount(String scenario) {
+    enableSharedReset();
+    when(resetTargetLookup.findPasswordResetTarget("lisa"))
+        .thenReturn(
+            Optional.of(
+                new IdentityPasswordResetTargetLookup.Target("id", 40L, "lisa@example.com")));
+    if (!scenario.equals("missing")) {
+      Consultant account = new Consultant();
+      account.setId(scenario.equals("wrong-id") ? "other" : "id");
+      account.setTenantId(scenario.equals("wrong-tenant") ? 1L : 40L);
+      account.setEmail(scenario.equals("wrong-email") ? "other@example.com" : "lisa@example.com");
+      when(consultantService.getConsultant("id")).thenReturn(Optional.of(account));
+      if (scenario.equals("dual-role")) {
+        when(userService.getUser("id")).thenReturn(Optional.of(validUser()));
+      }
+    }
+    TenantContext.setCurrentTenantData(new TenantData(1L, "main"));
+    try {
+      passwordResetService.requestPasswordReset("lisa", "de");
+      assertThat(sentMails).isEmpty();
+      org.mockito.Mockito.verifyNoInteractions(oneTimeTokenStore);
+      assertThat(TenantContext.getCurrentTenant()).isEqualTo(1L);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @ParameterizedTest
+  @CsvSource({"false,false", "false,true", "true,false"})
+  void legacyFlagsNeverUseGlobalIdentityResolution(boolean multitenancy, boolean singleDomain) {
+    ReflectionTestUtils.setField(passwordResetService, "multitenancyEnabled", multitenancy);
+    ReflectionTestUtils.setField(passwordResetService, "singleDomainEnabled", singleDomain);
+    passwordResetService.requestPasswordReset("unknown", "de");
+    verify(userService).findUserByUsername("unknown");
+    org.mockito.Mockito.verifyNoInteractions(resetTargetLookup);
+  }
+
+  @Test
+  void adminNeverUsesSharedAppIdentityResolution() {
+    enableSharedReset();
+    passwordResetService.requestPasswordReset("admin", "de", PasswordResetApplication.ADMIN);
+    verify(adminRepository).findFirstByUsernameIgnoreCaseOrEmailIgnoreCase("admin", "admin");
+    org.mockito.Mockito.verifyNoInteractions(resetTargetLookup);
+  }
+
+  @Test
+  void sharedTargetScopeIsClearedAfterRealWorkerFailureAndNextNullRequest() throws Exception {
+    enableSharedReset();
+    var worker = Executors.newSingleThreadExecutor();
+    ReflectionTestUtils.setField(passwordResetService, "passwordResetExecutor", worker);
+    when(resetTargetLookup.findPasswordResetTarget("first"))
+        .thenReturn(
+            Optional.of(
+                new IdentityPasswordResetTargetLookup.Target("id", 40L, "lisa@example.com")));
+    when(userService.getUser("id"))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TenantContext.getCurrentTenant()).isEqualTo(40L);
+              throw new IllegalStateException("synthetic lookup failure");
+            });
+    when(resetTargetLookup.findPasswordResetTarget("next"))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TenantContext.getCurrentTenantData()).isNull();
+              return Optional.empty();
+            });
+    try {
+      TenantContext.setCurrentTenantData(new TenantData(1L, "main"));
+      passwordResetService.requestPasswordReset("first", "de");
+      worker
+          .submit(() -> assertThat(TenantContext.getCurrentTenantData()).isNull())
+          .get(5, TimeUnit.SECONDS);
+      assertThat(TenantContext.getCurrentTenant()).isEqualTo(1L);
+      TenantContext.clear();
+      passwordResetService.requestPasswordReset("next", "de");
+      worker
+          .submit(() -> assertThat(TenantContext.getCurrentTenantData()).isNull())
+          .get(5, TimeUnit.SECONDS);
+      verify(resetTargetLookup).findPasswordResetTarget("next");
+      org.mockito.Mockito.verifyNoInteractions(oneTimeTokenStore);
+    } finally {
+      TenantContext.clear();
+      worker.shutdownNow();
+    }
+  }
+
+  private void enableSharedReset() {
+    ReflectionTestUtils.setField(passwordResetService, "multitenancyEnabled", true);
+    ReflectionTestUtils.setField(passwordResetService, "singleDomainEnabled", true);
   }
 
   private Map<String, Object> publicSmtpSettingsWithoutCredentials() {

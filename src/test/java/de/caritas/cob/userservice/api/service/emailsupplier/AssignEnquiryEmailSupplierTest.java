@@ -11,6 +11,8 @@ import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
+import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
@@ -20,6 +22,8 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -31,6 +35,8 @@ public class AssignEnquiryEmailSupplierTest {
   @Mock private Consultant receiverConsultant;
 
   @Mock private ConsultantService consultantService;
+
+  @Mock private ReleaseToggleService releaseToggleService;
 
   private LogbackCaptor logCaptor;
 
@@ -47,6 +53,7 @@ public class AssignEnquiryEmailSupplierTest {
             applicationBaseUrl,
             consultantService,
             null,
+            releaseToggleService,
             false);
     logCaptor = LogbackCaptor.forClass(AssignEnquiryEmailSupplier.class);
   }
@@ -54,6 +61,40 @@ public class AssignEnquiryEmailSupplierTest {
   @AfterEach
   public void tearDown() {
     logCaptor.detach();
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "true,true,false,0", "true,false,true,0", "true,true,true,1",
+    "true,true,missing,1", "true,true,none,1", "true,true,null,1",
+    "false,false,false,1"
+  })
+  void respectsAssignmentOptOutAndMasterOnlyInModernMode(
+      boolean modern, boolean master, String row, int expected) {
+    var receiver = new Consultant();
+    receiver.setEmail("recipient@example.org");
+    receiver.setFirstName("Example");
+    receiver.setLastName("Recipient");
+    receiver.setLanguageCode(LanguageCode.de);
+    receiver.setNotificationsEnabled(master);
+    receiver.setNotificationsSettings(
+        row.equals("none")
+            ? null
+            : row.equals("missing") ? "{}" : "{\"assignmentNotificationEnabled\":" + row + "}");
+    assignEnquiryEmailSupplier.setReceiverConsultant(receiver);
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(modern);
+    var sender = new Consultant();
+    sender.setFirstName("Example");
+    sender.setLastName("Sender");
+    org.mockito.Mockito.lenient()
+        .when(consultantService.getConsultant(any()))
+        .thenReturn(Optional.of(sender));
+
+    assertThat(assignEnquiryEmailSupplier.generateEmails(), hasSize(expected));
+    if (expected == 0) {
+      org.mockito.Mockito.verifyNoInteractions(consultantService);
+    }
   }
 
   @Test

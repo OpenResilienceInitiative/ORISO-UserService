@@ -95,6 +95,66 @@ class EventNotificationServiceTest {
     assertThat(parsed.get("caseHandoverRequestId").asLong()).isEqualTo(88L);
   }
 
+  @Test
+  void buildCaseHandoverOfferParams_carriesBothCounsellorNames() throws Exception {
+    // A push offer event is read by the OTHER party: the recipient needs to know who offers,
+    // the offering counsellor who answered. One name would not be enough for either.
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverOfferParams(
+                sessionMock(),
+                "Dr. Muster",
+                "Dr. Beispiel",
+                "PLANNED_ABSENCE",
+                "Planned absence",
+                88L));
+
+    assertThat(parsed.get("fromConsultantName").asText()).isEqualTo("Dr. Muster");
+    assertThat(parsed.get("toConsultantName").asText()).isEqualTo("Dr. Beispiel");
+    assertThat(parsed.get("reasonCode").asText()).isEqualTo("PLANNED_ABSENCE");
+    assertThat(parsed.get("offerId").asLong()).isEqualTo(88L);
+    // The offer row IS the handover request row, so consumers keyed on the old id keep working.
+    assertThat(parsed.get("caseHandoverRequestId").asLong()).isEqualTo(88L);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType.class)
+  @org.junit.jupiter.params.provider.NullSource
+  void offerParamsCarryOnlyExplicitFrozenAccessType(
+      de.caritas.cob.userservice.api.model.CaseHandoverRequest.AccessType accessType)
+      throws Exception {
+    var params =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverOfferParams(
+                sessionMock(),
+                "Sender",
+                "Recipient",
+                "LEGACY_UNRELATED_REASON",
+                "Frozen label",
+                88L,
+                accessType));
+    if (accessType == null) assertThat(params.has("accessType")).isFalse();
+    else assertThat(params.get("accessType").asText()).isEqualTo(accessType.name());
+    assertThat(params.get("reasonCode").asText()).isEqualTo("LEGACY_UNRELATED_REASON");
+    assertThat(params.get("reasonLabel").asText()).isEqualTo("Frozen label");
+  }
+
+  @Test
+  void buildCaseHandoverOfferParams_neverCarriesTheCounsellorWrittenExplanation() throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverOfferParams(
+                sessionMock(),
+                "Dr. Muster",
+                "Dr. Beispiel",
+                "PLANNED_ABSENCE",
+                "Planned absence",
+                88L));
+
+    assertThat(parsed.has("explanation")).isFalse();
+  }
+
   /**
    * The params object is the replacement for the stored English sentence, so it must stay a set of
    * known keys. Nothing here may become a channel for the free text task 1a removed.
@@ -652,7 +712,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createMessageNotificationFromRoom_suppressesNotificationWhenRecipientIsActiveInRoom() {
+  void createMessageNotificationFromRoom_persistsReadNotificationWhenRecipientIsActiveInRoom() {
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
@@ -664,7 +724,9 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "!room-1:matrix.example", "sender", "hello");
 
-    verify(eventNotificationRepository, never()).save(any());
+    var saved = org.mockito.ArgumentCaptor.forClass(EventNotification.class);
+    verify(eventNotificationRepository).save(saved.capture());
+    assertThat(saved.getValue().getReadDate()).isNotNull();
   }
 
   @Test
@@ -688,7 +750,8 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createMessageNotificationFromRoom_suppressesConcurrentHeartbeatAtExpiry() {
+  void
+      createMessageNotificationFromRoom_persistsReadNotificationWhenConcurrentHeartbeatWinsAtExpiry() {
     AtomicLong nowNanos = new AtomicLong();
     AtomicBoolean refreshOnExpiryCheck = new AtomicBoolean();
     AtomicBoolean refreshing = new AtomicBoolean();
@@ -717,7 +780,9 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "!room-1:matrix.example", "sender", "heartbeat won expiry race");
 
-    verify(eventNotificationRepository, never()).save(any());
+    var saved = org.mockito.ArgumentCaptor.forClass(EventNotification.class);
+    verify(eventNotificationRepository).save(saved.capture());
+    assertThat(saved.getValue().getReadDate()).isNotNull();
   }
 
   @Test
@@ -739,7 +804,9 @@ class EventNotificationServiceTest {
     eventNotificationService.createMessageNotificationFromRoom(
         "!room-1:matrix.example", "sender", "still actively viewed");
 
-    verify(eventNotificationRepository, never()).save(any());
+    var saved = org.mockito.ArgumentCaptor.forClass(EventNotification.class);
+    verify(eventNotificationRepository).save(saved.capture());
+    assertThat(saved.getValue().getReadDate()).isNotNull();
   }
 
   @Test
@@ -799,7 +866,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createThreadReplyNotificationFromRoom_suppressesWhenUserActiveInSameThread() {
+  void createThreadReplyNotificationFromRoom_persistsReadNotificationWhenUserActiveInSameThread() {
     eventNotificationService.updateActiveView(
         "asker-1", "!room-1:matrix.example", "thread-root-1", true);
 
@@ -813,7 +880,9 @@ class EventNotificationServiceTest {
     eventNotificationService.createThreadReplyNotificationFromRoom(
         "!room-1:matrix.example", "sender", "reply", "thread-root-1");
 
-    verify(eventNotificationRepository, never()).save(any());
+    var saved = org.mockito.ArgumentCaptor.forClass(EventNotification.class);
+    verify(eventNotificationRepository).save(saved.capture());
+    assertThat(saved.getValue().getReadDate()).isNotNull();
   }
 
   @Test

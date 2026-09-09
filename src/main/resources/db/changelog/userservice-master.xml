@@ -168,6 +168,10 @@
   <include
     file="db/changelog/changeset/0090_session_consented_legal_version/0090_changeSet.xml" />
 
+  <!-- Existing history and policy are retained; neutral names are source aliases. -->
+  <include file="db/changelog/changeset/0092_case_handover_neutral_reasons/0092_changeSet.xml" />
+  <include file="db/changelog/changeset/0093_case_handover_push/0093_changeSet.xml" />
+
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
   <include

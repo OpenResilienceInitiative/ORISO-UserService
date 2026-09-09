@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
@@ -40,19 +42,80 @@ class EmailBrandingResolverTest {
     return tenant;
   }
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"https://app.oriso.org/%zz", "https://[broken", "https:///missing-host"})
+  void malformedConfiguredBaseOmitsLogoWithoutAbortingMail(String base) {
+    Theming stored = new Theming();
+    stored.setLogo("data:image/png;base64,iVBORw0KGgo=");
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", stored));
+    var branding =
+        new EmailBrandingResolver(
+                tenantService,
+                tenantTemplateSupplier,
+                "ORISO",
+                "https://app.oriso.org/logo.png",
+                base)
+            .resolve(7L);
+    assertThat(branding.logoUrl()).isNull();
+    assertThat(branding.brandName()).isEqualTo("Nord");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "https://app.oriso.org,https://app.oriso.org:443/logo.png",
+    "https://app.oriso.org:443,https://app.oriso.org/logo.png",
+    "http://app.oriso.org,http://app.oriso.org:80/logo.png",
+    "http://app.oriso.org:80,http://app.oriso.org/logo.png"
+  })
+  void acceptsSameOriginWhenDefaultPortIsExplicit(String base, String logo) {
+    var branding =
+        new EmailBrandingResolver(tenantService, tenantTemplateSupplier, "ORISO", logo, base)
+            .resolve(null);
+    assertThat(branding.logoUrl()).isEqualTo(logo);
+  }
+
+  @Test
+  void stillRejectsDifferentPortAndScheme() {
+    for (String logo :
+        java.util.List.of("https://app.oriso.org:444/logo.png", "http://app.oriso.org/logo.png")) {
+      assertThat(resolver(logo).resolve(null).logoUrl()).isNull();
+    }
+  }
+
+  @Test
+  void resolvesUpdatedAndRemovedBrandingWithoutWaitingForTenantCacheExpiry() {
+    var staleTenant = tenant("Old name", new Theming());
+    var updatedTheming = new Theming();
+    updatedTheming.setLogo("data:image/png;base64,iVBORw0KGgo=");
+    var updatedTenant = tenant("Springfield", updatedTheming);
+    var restoredTenant = tenant("Springfield", new Theming());
+    lenient().when(tenantService.getRestrictedTenantData(7L)).thenReturn(staleTenant);
+    lenient()
+        .when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenReturn(updatedTenant, restoredTenant);
+
+    var resolver = resolver("");
+    var afterUpdate = resolver.resolve(7L);
+    assertThat(afterUpdate.brandName()).isEqualTo("Springfield");
+    assertThat(afterUpdate.logoUrl())
+        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/7/logo");
+    assertThat(resolver.resolve(7L).logoUrl()).isNull();
+  }
+
   // --- logo -----------------------------------------------------------------------------
 
   @Test
   void resolve_Should_preferTheTenantLogo() {
     givenNoTemplateAttributes();
     Theming theming = new Theming();
-    theming.setLogo("https://cdn.example.org/tenant.png");
-    theming.setAssociationLogo("https://cdn.example.org/association.png");
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", theming));
+    theming.setLogo("https://app.oriso.org/tenant.png");
+    theming.setAssociationLogo("https://app.oriso.org/association.png");
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", theming));
 
-    EmailBranding branding = resolver("https://cdn.example.org/platform.png").resolve(7L);
+    EmailBranding branding = resolver("https://app.oriso.org/platform.png").resolve(7L);
 
-    assertThat(branding.logoUrl()).isEqualTo("https://cdn.example.org/tenant.png");
+    assertThat(branding.logoUrl()).isEqualTo("https://app.oriso.org/tenant.png");
     assertThat(branding.brandName()).isEqualTo("Nord");
   }
 
@@ -60,14 +123,15 @@ class EmailBrandingResolverTest {
   void resolve_Should_fallBackToTheAssociationLogoThenThePlatformLogo() {
     givenNoTemplateAttributes();
     Theming associationOnly = new Theming();
-    associationOnly.setAssociationLogo("https://cdn.example.org/association.png");
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", associationOnly));
+    associationOnly.setAssociationLogo("https://app.oriso.org/association.png");
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenReturn(tenant("Nord", associationOnly));
 
-    assertThat(resolver("https://cdn.example.org/platform.png").resolve(7L).logoUrl())
-        .isEqualTo("https://cdn.example.org/association.png");
+    assertThat(resolver("https://app.oriso.org/platform.png").resolve(7L).logoUrl())
+        .isEqualTo("https://app.oriso.org/association.png");
 
-    assertThat(resolver("https://cdn.example.org/platform.png").resolve(null).logoUrl())
-        .isEqualTo("https://cdn.example.org/platform.png");
+    assertThat(resolver("https://app.oriso.org/platform.png").resolve(null).logoUrl())
+        .isEqualTo("https://app.oriso.org/platform.png");
   }
 
   @Test
@@ -76,13 +140,13 @@ class EmailBrandingResolverTest {
     base64Logo.setLogo("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ");
     base64Logo.setAssociationLogo("data:image/png;base64,iVBORw0KGgo=");
     RestrictedTenantDTO resolvedTenant = tenant("Nord", base64Logo);
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolvedTenant);
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(resolvedTenant);
     when(tenantTemplateSupplier.getTenantBaseUrl(resolvedTenant)).thenReturn("https://nord.org");
 
     EmailBranding branding = resolver("").resolve(7L);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://nord.org/service/tenant/public/branding/logo");
+        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/7/logo");
     assertThat(branding.hasLogo()).isTrue();
   }
 
@@ -91,12 +155,41 @@ class EmailBrandingResolverTest {
     givenNoTemplateAttributes();
     Theming platformTheming = new Theming();
     platformTheming.setLogo("data:image/png;base64,iVBORw0KGgo=");
-    when(tenantService.getPlatformTenantData()).thenReturn(tenant("ORISO", platformTheming));
+    var platformTenant = tenant("ORISO", platformTheming);
+    platformTenant.setId(40L);
+    when(tenantTemplateSupplier.getPlatformTenantData()).thenReturn(platformTenant);
 
     EmailBranding branding = resolver("").resolve(null);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/logo");
+        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/40/logo");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.NullSource
+  @org.junit.jupiter.params.provider.ValueSource(longs = 0L)
+  void platformMailReflectsLogoAdditionAndRemoval(Long contextTenantId) {
+    var updated =
+        new RestrictedTenantDTO()
+            .id(1L)
+            .name("Platform")
+            .theming(new Theming().logo("data:image/png;base64,iVBORw0KGgo="));
+    var removed = new RestrictedTenantDTO().id(1L).name("Platform").theming(new Theming());
+    when(tenantTemplateSupplier.getPlatformTenantData()).thenReturn(updated, removed);
+
+    var resolver = resolver("");
+    assertThat(resolver.resolve(contextTenantId).logoUrl())
+        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/1/logo");
+    assertThat(resolver.resolve(contextTenantId).logoUrl()).isNull();
+  }
+
+  @Test
+  void refusesThirdPartyLogoUrlsInsteadOfLeakingMailReads() {
+    Theming theming = new Theming();
+    theming.setLogo("https://tracking.example.org/pixel.png");
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", theming));
+    assertThat(resolver("https://tracking.example.org/platform.png").resolve(7L).logoUrl())
+        .isNull();
   }
 
   // --- colour ---------------------------------------------------------------------------
@@ -110,7 +203,7 @@ class EmailBrandingResolverTest {
     givenNoTemplateAttributes();
     Theming primary = new Theming();
     primary.setPrimaryColor("#123456");
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", primary));
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", primary));
 
     assertThat(resolver("").resolve(7L).accentColor()).isEqualTo("#123456");
   }
@@ -125,7 +218,7 @@ class EmailBrandingResolverTest {
     givenNoTemplateAttributes();
     Theming secondaryOnly = new Theming();
     secondaryOnly.setSecondaryColor("#654321");
-    when(tenantService.getRestrictedTenantData(8L)).thenReturn(tenant("Sued", secondaryOnly));
+    when(tenantService.getRestrictedTenantDataFresh(8L)).thenReturn(tenant("Sued", secondaryOnly));
 
     assertThat(resolver("").resolve(8L).accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
   }
@@ -147,7 +240,7 @@ class EmailBrandingResolverTest {
     givenNoTemplateAttributes();
     Theming broken = new Theming();
     broken.setPrimaryColor("not-a-color");
-    when(tenantService.getRestrictedTenantData(9L)).thenReturn(tenant("Ost", broken));
+    when(tenantService.getRestrictedTenantDataFresh(9L)).thenReturn(tenant("Ost", broken));
 
     assertThat(resolver("").resolve(9L).accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
   }
@@ -158,7 +251,7 @@ class EmailBrandingResolverTest {
   @Test
   void resolve_Should_degradeToPlatformBranding_When_TenantLookupFails() {
     givenNoTemplateAttributes();
-    when(tenantService.getRestrictedTenantData(anyLong()))
+    when(tenantService.getRestrictedTenantDataFresh(anyLong()))
         .thenThrow(
             HttpClientErrorException.create(
                 org.springframework.http.HttpStatus.NOT_FOUND, "nf", null, null, null));
@@ -175,7 +268,7 @@ class EmailBrandingResolverTest {
 
     resolver("").resolve(null);
 
-    org.mockito.Mockito.verify(tenantService).getPlatformTenantData();
+    org.mockito.Mockito.verify(tenantTemplateSupplier).getPlatformTenantData();
   }
 
   // --- footer ---------------------------------------------------------------------------
@@ -183,7 +276,7 @@ class EmailBrandingResolverTest {
   @Test
   void resolve_Should_buildTheImprintAndPrivacyUrlsFromTheResolvedTenantsOwnBaseUrl() {
     RestrictedTenantDTO resolvedTenant = tenant("Nord", null);
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolvedTenant);
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(resolvedTenant);
     when(tenantTemplateSupplier.getTenantBaseUrl(resolvedTenant)).thenReturn("https://nord.org");
 
     EmailBranding branding = resolver("").resolve(7L);
@@ -202,7 +295,7 @@ class EmailBrandingResolverTest {
   @Test
   void resolve_Should_useTheRequestedTenantsFooter_Even_WhenTheAmbientContextIsTechnical() {
     RestrictedTenantDTO tenant42 = tenant("Tenant42", null);
-    when(tenantService.getRestrictedTenantData(42L)).thenReturn(tenant42);
+    when(tenantService.getRestrictedTenantDataFresh(42L)).thenReturn(tenant42);
     when(tenantTemplateSupplier.getTenantBaseUrl(tenant42)).thenReturn("https://tenant42.org");
 
     EmailBranding branding = resolver("").resolve(42L);
@@ -215,7 +308,7 @@ class EmailBrandingResolverTest {
   @Test
   void resolve_Should_fallBackToTheApplicationBaseUrl_When_TheTenantHasNoOwnBaseUrl() {
     givenNoTemplateAttributes();
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", null));
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", null));
 
     EmailBranding branding = resolver("").resolve(7L);
 
@@ -231,5 +324,50 @@ class EmailBrandingResolverTest {
 
     assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
     assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+  }
+
+  @Test
+  void collapsesOneBatchOfRecipientsIntoASingleTenantLookup() {
+    givenNoTemplateAttributes();
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", new Theming()));
+    var cached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.oriso.org", 10L);
+
+    for (int recipient = 0; recipient < 25; recipient++) {
+      assertThat(cached.resolve(7L).brandName()).isEqualTo("Nord");
+    }
+
+    // A digest run of N consultants must not cost N remote calls against a shared service.
+    verify(tenantService, times(1)).getRestrictedTenantDataFresh(7L);
+  }
+
+  @Test
+  void ttlZeroKeepsEveryResolveFresh() {
+    givenNoTemplateAttributes();
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", new Theming()));
+    var uncached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.oriso.org", 0L);
+
+    uncached.resolve(7L);
+    uncached.resolve(7L);
+    uncached.resolve(7L);
+
+    verify(tenantService, times(3)).getRestrictedTenantDataFresh(7L);
+  }
+
+  @Test
+  void doesNotServeOneTenantsBrandingToAnother() {
+    givenNoTemplateAttributes();
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", new Theming()));
+    when(tenantService.getRestrictedTenantDataFresh(8L)).thenReturn(tenant("Sued", new Theming()));
+    var cached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.oriso.org", 10L);
+
+    assertThat(cached.resolve(7L).brandName()).isEqualTo("Nord");
+    assertThat(cached.resolve(8L).brandName()).isEqualTo("Sued");
+    assertThat(cached.resolve(7L).brandName()).isEqualTo("Nord");
   }
 }
