@@ -51,6 +51,7 @@ import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -452,7 +453,7 @@ class ChatServiceTest {
   }
 
   @Test
-  void updateChat_Should_ThrowConflictException_WhenChatIsActive() {
+  void updateChat_Should_ThrowConflictException_WhenActiveScheduleChanges() {
     when(chatRepository.findByIdWithPermissionRelations(CHAT_ID))
         .thenReturn(Optional.of(ACTIVE_CHAT));
 
@@ -462,6 +463,54 @@ class ChatServiceTest {
     } catch (ConflictException conflictException) {
       assertTrue(true, "Excepted ConflictException thrown");
     }
+  }
+
+  @Test
+  void updateChat_Should_UpdateContentAndModality_WhenActiveScheduleIsUnchanged() {
+    LocalDateTime currentOccurrence = LocalDateTime.of(CHAT_START_DATE, CHAT_START_TIME);
+    LocalDateTime seriesAnchor = currentOccurrence.minusWeeks(2);
+    Chat activeChat =
+        Chat.builder()
+            .id(CHAT_ID)
+            .topic(CHAT_TOPIC)
+            .initialStartDate(seriesAnchor)
+            .startDate(currentOccurrence)
+            .duration(CHAT_DURATION)
+            .repetitive(true)
+            .repeatCount(4)
+            .currentOccurrenceIndex(2)
+            .chatInterval(ChatInterval.WEEKLY)
+            .chatModality(ChatModality.TEXT)
+            .timezone("Europe/Berlin")
+            .active(true)
+            .chatOwner(CONSULTANT)
+            .build();
+    when(chatRepository.findByIdWithPermissionRelations(CHAT_ID))
+        .thenReturn(Optional.of(activeChat));
+    ChatDTO update =
+        ChatDTO.builder()
+            .topic(CHAT_TOPIC)
+            .startDate(CHAT_START_DATE)
+            .startTime(CHAT_START_TIME)
+            .duration(CHAT_DURATION)
+            .repetitive(true)
+            .repeatCount(4)
+            .chatInterval(ChatInterval.WEEKLY)
+            .modality(ChatModality.VIDEO)
+            .timezone("Europe/Berlin")
+            .hintMessage("Updated greeting")
+            .consultantIds(List.of("co-moderator"))
+            .build();
+
+    chatService.updateChat(CHAT_ID, update, AUTHENTICATED_USER_CONSULTANT);
+
+    assertEquals(ChatModality.VIDEO, activeChat.getChatModality());
+    assertEquals("Updated greeting", activeChat.getHintMessage());
+    assertEquals(seriesAnchor, activeChat.getInitialStartDate());
+    assertEquals(currentOccurrence, activeChat.getStartDate());
+    assertEquals(2, activeChat.getCurrentOccurrenceIndex());
+    verify(chatRepository).save(activeChat);
+    verify(participantReconciliationService).reconcile(activeChat, List.of("co-moderator"));
   }
 
   @Test

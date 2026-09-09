@@ -38,6 +38,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -470,17 +471,16 @@ public class ChatService {
     if (!authenticatedUser.getUserId().equals(chat.getChatOwner().getId())) {
       throw new ForbiddenException("Only the chat owner is allowed to change chat settings");
     }
-    if (isTrue(chat.isActive())) {
-      throw new ConflictException(
-          String.format(
-              "Chat with id %s is active. Therefore changing the chat settings is not supported.",
-              chatId));
-    }
-
     LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
-    // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
-    // one when the client sends it (validated like the create path), and preserve the existing
-    // zone when the DTO omits it rather than silently resetting to UTC.
+    int repeatCount =
+        chatDTO.getRepeatCount() != null
+            ? chatDTO.getRepeatCount()
+            : (isTrue(chatDTO.getRepetitive()) ? 12 : 1);
+    ChatInterval chatInterval =
+        repeatCount > 1
+            ? (chatDTO.getChatInterval() != null ? chatDTO.getChatInterval() : ChatInterval.WEEKLY)
+            : null;
+    String timezone = chat.getTimezone();
     if (chatDTO.getTimezone() != null && !chatDTO.getTimezone().isBlank()) {
       try {
         ZoneId.of(chatDTO.getTimezone());
@@ -488,33 +488,47 @@ public class ChatService {
         throw new BadRequestException(
             "Invalid timezone: " + chatDTO.getTimezone(), invalidTimezone);
       }
-      chat.setTimezone(chatDTO.getTimezone());
+      timezone = chatDTO.getTimezone();
     }
+    boolean scheduleChanged =
+        !Objects.equals(chat.getStartDate(), startDate)
+            || chat.getDuration() != chatDTO.getDuration()
+            || chat.getRepeatCount() != repeatCount
+            || chat.isRepetitive() != (repeatCount > 1)
+            || chat.getChatInterval() != chatInterval
+            || !Objects.equals(chat.getTimezone(), timezone);
+    if (isTrue(chat.isActive()) && scheduleChanged) {
+      throw new ConflictException(
+          String.format(
+              "Chat with id %s is active. Therefore changing its schedule is not supported.",
+              chatId));
+    }
+
     chat.setTopic(chatDTO.getTopic());
-    chat.setDuration(chatDTO.getDuration());
-    // Defaulting must match the create path (ChatConverter.convertToEntity) so editing a
-    // repetitive series without re-sending repeatCount does not silently drop it to a single
-    // occurrence: default 12 for repetitive, derive repetitive + interval from repeatCount > 1.
-    int repeatCount =
-        chatDTO.getRepeatCount() != null
-            ? chatDTO.getRepeatCount()
-            : (isTrue(chatDTO.getRepetitive()) ? 12 : 1);
-    chat.setRepeatCount(repeatCount);
-    chat.setRepetitive(repeatCount > 1);
-    chat.setChatInterval(
-        repeatCount > 1
-            ? (chatDTO.getChatInterval() != null ? chatDTO.getChatInterval() : ChatInterval.WEEKLY)
-            : null);
     chat.setChatModality(chatDTO.getModality() != null ? chatDTO.getModality() : ChatModality.TEXT);
-    chat.setStartDate(startDate);
-    chat.setInitialStartDate(startDate);
-    // The schedule anchor moved, so virtual occurrences must restart from index 0 —
-    // otherwise nextStart() would skip the first occurrences of the edited series.
-    chat.setCurrentOccurrenceIndex(0);
     chat.setHintMessage(chatDTO.getHintMessage());
     chat.setSourceLanguage(chatDTO.getSourceLanguage());
     chat.setHintMessageTranslations(chatDTO.getHintMessageTranslations());
     chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
+
+    if (!isTrue(chat.isActive())) {
+      // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
+      // one when the client sends it (validated like the create path), and preserve the existing
+      // zone when the DTO omits it rather than silently resetting to UTC.
+      chat.setTimezone(timezone);
+      chat.setDuration(chatDTO.getDuration());
+      // Defaulting must match the create path (ChatConverter.convertToEntity) so editing a
+      // repetitive series without re-sending repeatCount does not silently drop it to a single
+      // occurrence: default 12 for repetitive, derive repetitive + interval from repeatCount > 1.
+      chat.setRepeatCount(repeatCount);
+      chat.setRepetitive(repeatCount > 1);
+      chat.setChatInterval(chatInterval);
+      chat.setStartDate(startDate);
+      chat.setInitialStartDate(startDate);
+      // The schedule anchor moved, so virtual occurrences must restart from index 0 —
+      // otherwise nextStart() would skip the first occurrences of the edited series.
+      chat.setCurrentOccurrenceIndex(0);
+    }
 
     this.saveChat(chat);
     participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
