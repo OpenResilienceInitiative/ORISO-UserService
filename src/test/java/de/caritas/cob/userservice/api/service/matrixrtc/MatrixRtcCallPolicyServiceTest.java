@@ -136,15 +136,22 @@ class MatrixRtcCallPolicyServiceTest {
   }
 
   @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.EnumSource(value = ConversationType.class,
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = ConversationType.class,
       names = {"SELF_HELP", "INTERNAL_GROUP"})
   void groupSessionsUseGroupFlagsEvenWhenTheSessionLookupWins(ConversationType type) {
     var groupSession = session(type);
     when(sessionRepository.findByMatrixRoomId(ROOM_ID)).thenReturn(Optional.of(groupSession));
-    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID)).thenReturn(tenant(enabledSettings()
-        .featureAudioCallsGroupChatsEnabled(true).featureVideoCallsGroupChatsEnabled(false)
-        .featureAudioCallsOneOnOneChatsEnabled(false).featureVideoCallsOneOnOneChatsEnabled(true)));
-    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(new CallMediaPolicy(true, false));
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
+        .thenReturn(
+            tenant(
+                enabledSettings()
+                    .featureAudioCallsGroupChatsEnabled(true)
+                    .featureVideoCallsGroupChatsEnabled(false)
+                    .featureAudioCallsOneOnOneChatsEnabled(false)
+                    .featureVideoCallsOneOnOneChatsEnabled(true)));
+    assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID))
+        .isEqualTo(new CallMediaPolicy(true, false));
   }
 
   @Test

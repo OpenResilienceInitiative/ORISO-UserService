@@ -8,10 +8,12 @@ import org.hibernate.type.Type;
 /** Stamps newly persisted records without reassigning existing tenant ownership. */
 public class TenantHibernateInterceptor implements Interceptor {
   @Override
-  public boolean onPersist(Object entity, Object id, Object[] state,
-      String[] propertyNames, Type[] types) {
-    if (!(entity instanceof TenantAware owned) || owned.getTenantId() != null
-        || !TenantContext.contextIsSet() || TenantContext.isTechnicalOrSuperAdminContext()) {
+  public boolean onPersist(
+      Object entity, Object id, Object[] state, String[] propertyNames, Type[] types) {
+    if (!(entity instanceof TenantAware owned)
+        || owned.getTenantId() != null
+        || !TenantContext.contextIsSet()
+        || TenantContext.isTechnicalOrSuperAdminContext()) {
       return false;
     }
     for (int index = 0; index < propertyNames.length; index++) {

@@ -93,7 +93,8 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   }
 
   @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.EnumSource(value = ConversationType.class,
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = ConversationType.class,
       names = {"SELF_HELP", "INTERNAL_GROUP"})
   void groupSessionCarriesItsOwnerTenantBeforeTheFirstSave(ConversationType type) throws Exception {
     ChatDTO dto = chatDtoWithConsultantIds(List.of());
