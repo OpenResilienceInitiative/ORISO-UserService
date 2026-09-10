@@ -349,19 +349,20 @@ components:
         agencyId:
           type: integer
           format: int64
-          nullable: true
+          example: 17
           description: >-
             The counselling centre bound to this enquiry, so the entry room can resolve its
             data-protection declaration (agency x topic) once the case has been accepted and show
             the advice seeker the wording that actually governs them, rather than the platform
-            fallback. Null while no agency is bound. Additive - older clients ignore it.
+            fallback; null while no agency is bound. Additive - older clients can ignore it.
         mainTopicId:
           type: integer
           format: int64
-          nullable: true
+          example: 3
           description: >-
-            The enquiry's main topic. Second half of the department coordinate the legal text is
-            resolved by; see agencyId. Null when the enquiry carries no topic.
+            The enquiry's main topic - second half of the department coordinate the legal text is
+            resolved by; see agencyId. Null when the enquiry carries no topic. Additive - older
+            clients can ignore it.
         status:
           type: string
           enum:
