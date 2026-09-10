@@ -125,9 +125,8 @@ class AccountInviteControllerTest {
   }
 
   @Test
-  void createInvite_withTemplateId_sendsInviteAndReturnsCreated() {
-    // Business reason: template-triggered invitation must send immediately and return accept URL
-    // metadata.
+  void createInvite_withTemplateId_createsAndSendsAtomicallyAndReturnsCreated() {
+    // Business reason: a direct-send request must not leave an invisible draft if SMTP rejects it.
     var request = new AccountInviteController.CreateAccountInviteRequestDTO();
     request.targetRole = AccountInviteTargetRole.COUNSELLOR.name();
     request.recipientEmail = "invitee@example.org";
@@ -137,16 +136,13 @@ class AccountInviteControllerTest {
     var invite = sampleInvite();
     var delivery = InviteEmailDelivery.builder().status(InviteEmailDeliveryStatus.SENT).build();
     var sendResult = new InviteSendResult(invite, delivery, "raw-token", "accept-url");
-    when(accountInviteService.createInvite(any())).thenReturn(invite);
-    when(accountInviteService.sendInvite(any())).thenReturn(sendResult);
+    when(accountInviteService.createAndSendInvite(any(), eq(12L))).thenReturn(sendResult);
 
     var response = controller.createInvite(request);
 
     assertEquals(HttpStatus.CREATED, response.getStatusCode());
     assertEquals("raw-token", response.getBody().rawToken);
-    var sendCaptor = ArgumentCaptor.forClass(AccountInviteService.SendInviteCommand.class);
-    verify(accountInviteService).sendInvite(sendCaptor.capture());
-    assertEquals(12L, sendCaptor.getValue().templateId());
+    verify(accountInviteService).createAndSendInvite(any(), eq(12L));
   }
 
   @Test
