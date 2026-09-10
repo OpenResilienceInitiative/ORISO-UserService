@@ -23,6 +23,10 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdR
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import java.time.LocalDateTime;
 import java.util.Optional;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -118,6 +122,45 @@ class AccountInviteDirectSendAtomicIT {
               assertThat(invite.getRecipientEmail()).isEqualTo(RECIPIENT);
               assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
             });
+  }
+
+  @Test
+  void directSend_ShouldCommitRecipientClaimBeforeSmtp_AndRejectRapidSecondClick()
+      throws Exception {
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
+        .thenReturn("https://example.org/invite/token");
+    CountDownLatch firstMailStarted = new CountDownLatch(1);
+    CountDownLatch releaseFirstMail = new CountDownLatch(1);
+    AtomicInteger mailCalls = new AtomicInteger();
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+        .thenAnswer(
+            invocation -> {
+              if (mailCalls.incrementAndGet() == 1) {
+                firstMailStarted.countDown();
+                if (!releaseFirstMail.await(5, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("test timed out waiting to release first mail");
+                }
+              }
+              return new de.caritas.cob.userservice.api.service.accountinvite.mail
+                  .InviteMailSendReceipt(
+                  RECIPIENT, java.time.Instant.parse("2026-09-10T10:00:00Z"));
+            });
+
+    CompletableFuture<Void> firstRequest =
+        CompletableFuture.runAsync(
+            () -> service.createAndSendInvite(tenantAdminInvite(), templateId));
+    assertThat(firstMailStarted.await(5, TimeUnit.SECONDS)).isTrue();
+
+    try {
+      assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminInvite(), templateId))
+          .isInstanceOf(
+              de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
+    } finally {
+      releaseFirstMail.countDown();
+      firstRequest.get(5, TimeUnit.SECONDS);
+    }
+
+    assertThat(accountInviteRepository.findAll()).hasSize(1);
   }
 
   private CreateAccountInviteCommand tenantAdminInvite() {
