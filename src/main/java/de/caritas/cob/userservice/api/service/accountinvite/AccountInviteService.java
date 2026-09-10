@@ -38,11 +38,15 @@ import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.HttpClientErrorException;
 
 @Slf4j
@@ -78,6 +82,7 @@ public class AccountInviteService {
   private final @NonNull InviteMailDispatchService inviteMailDispatchService;
   private final @NonNull InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
   private final @NonNull IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  private final @NonNull PlatformTransactionManager transactionManager;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand command) {
@@ -130,6 +135,7 @@ public class AccountInviteService {
               .tenantIdReservationToken(
                   tenantReservation != null ? tenantReservation.token() : null)
               .recipientEmail(command.recipientEmail().trim())
+              .activeRecipientKey(normalizeEmail(command.recipientEmail()))
               .firstName(trimToNull(command.firstName()))
               .lastName(trimToNull(command.lastName()))
               .agencyId(reservedAgencyId != null ? reservedAgencyId : command.agencyId())
@@ -144,7 +150,9 @@ public class AccountInviteService {
               .createDate(now)
               .updateDate(now)
               .build();
-      return accountInviteRepository.save(invite);
+      AccountInvite saved = accountInviteRepository.save(invite);
+      accountInviteRepository.flush();
+      return saved;
     } catch (RuntimeException exception) {
       // Compensation: a failed creation must not leave orphaned reservations behind.
       if (reservedAgencyId != null) {
@@ -153,31 +161,123 @@ public class AccountInviteService {
       if (tenantReservation != null) {
         tenantIdAllocationClient.release(tenantReservation.tenantId());
       }
+      if (exception instanceof DataIntegrityViolationException) {
+        throw new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
+      }
       throw exception;
     }
   }
 
   /**
-   * Creates and directly sends an invite as one database operation.
-   *
-   * <p>A direct-send request is not allowed to leave a {@code DRAFT} invite behind when the SMTP
-   * handover fails: such a draft holds both the recipient address and, for tenant admins, the
-   * tenant-ID reservation, while the admin only saw a failed send. The caller can therefore retry
-   * the same request after a transport failure without first finding and cleaning up hidden state.
-   *
-   * <p>A failed delivery has no committed invite row to attach an independent delivery audit row
-   * to. The transport failure remains logged and is returned to the caller; persisting a dangling
-   * delivery row would violate the delivery foreign-key contract.
+   * Commits the address claim and usable token before SMTP, then compensates pre-dispatch errors.
    */
-  @Transactional
   public InviteSendResult createAndSendInvite(CreateAccountInviteCommand command, Long templateId) {
-    AccountInvite invite = createInvite(command);
+    DirectInviteDispatch dispatch;
+    AccountInvite[] claimedInvite = new AccountInvite[1];
     try {
-      InviteEmailTemplate template = findTemplate(templateId);
-      return sendInvite(invite, template, null);
-    } catch (RuntimeException exception) {
+      dispatch =
+          requiresNewTransaction()
+              .execute(
+                  transaction -> {
+                    AccountInvite invite = createInvite(command);
+                    claimedInvite[0] = invite;
+                    InviteEmailTemplate template = findTemplate(templateId);
+                    LocalDateTime now = LocalDateTime.now();
+                    String rawToken = generateToken();
+                    String acceptUrl =
+                        inviteAcceptUrlBuilder.buildAcceptUrl(invite.getTargetRole(), rawToken);
+                    String subject = render(template.getSubject(), invite, acceptUrl);
+                    String body = renderBody(template.getBody(), invite, acceptUrl);
+
+                    invite.setTokenHash(hash(rawToken));
+                    if (invite.getExpiresAt() == null || invite.getExpiresAt().isBefore(now)) {
+                      invite.setExpiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS));
+                    }
+                    invite.setStatus(AccountInviteStatus.EMAIL_SENT);
+                    invite.setUpdateDate(now);
+                    invite = accountInviteRepository.saveAndFlush(invite);
+                    claimedInvite[0] = invite;
+                    return new DirectInviteDispatch(
+                        invite, template, rawToken, acceptUrl, subject, body, now);
+                  });
+    } catch (RuntimeException claimFailure) {
+      if (claimedInvite[0] != null) {
+        releaseDirectInviteReservations(claimedInvite[0], command);
+      }
+      if (claimFailure instanceof DataIntegrityViolationException) {
+        throw new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
+      }
+      throw claimFailure;
+    }
+
+    InviteMailSendReceipt receipt;
+    try {
+      receipt =
+          inviteMailDispatchService.send(
+              dispatch.invite().getRecipientEmail(),
+              dispatch.subject(),
+              dispatch.body(),
+              dispatch.acceptUrl(),
+              dispatch.invite().getTenantId(),
+              dispatch.template().getLanguage());
+    } catch (SmtpSendException beforeDispatch) {
+      releaseDirectInviteClaim(dispatch.invite(), command, beforeDispatch);
+      throw beforeDispatch;
+    }
+
+    InviteEmailDelivery pendingDelivery =
+        InviteEmailDelivery.builder()
+            .accountInviteId(dispatch.invite().getId())
+            .templateId(dispatch.template().getId())
+            .templateKind(dispatch.template().getKind())
+            .recipientSnapshot(dispatch.invite().getRecipientEmail())
+            .subjectSnapshot(dispatch.subject())
+            .bodySnapshot(dispatch.body())
+            .status(InviteEmailDeliveryStatus.SENT)
+            .sentAt(LocalDateTime.ofInstant(receipt.sentAt(), ZoneId.systemDefault()))
+            .createDate(dispatch.createdAt())
+            .build();
+    InviteEmailDelivery delivery = pendingDelivery;
+    try {
+      delivery =
+          requiresNewTransaction()
+              .execute(transaction -> deliveryRepository.saveAndFlush(pendingDelivery));
+    } catch (RuntimeException auditFailure) {
+      // The committed invite remains the durable deduplication claim. Releasing it after SMTP
+      // would make the next click send a duplicate merely because audit bookkeeping failed.
+      log.error(
+          "Direct invite {} was sent but its delivery audit could not be recorded",
+          dispatch.invite().getId(),
+          auditFailure);
+    }
+    return new InviteSendResult(
+        dispatch.invite(), delivery, dispatch.rawToken(), dispatch.acceptUrl());
+  }
+
+  private TransactionTemplate requiresNewTransaction() {
+    TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+    transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    return transaction;
+  }
+
+  private void releaseDirectInviteClaim(
+      AccountInvite invite, CreateAccountInviteCommand command, RuntimeException sendFailure) {
+    try {
+      requiresNewTransaction()
+          .executeWithoutResult(
+              transaction -> {
+                accountInviteRepository.deleteById(invite.getId());
+                accountInviteRepository.flush();
+              });
       releaseDirectInviteReservations(invite, command);
-      throw exception;
+    } catch (RuntimeException compensationFailure) {
+      log.error(
+          "Direct invite {} failed before dispatch and its committed claim could not be released",
+          invite.getId(),
+          compensationFailure);
+      sendFailure.addSuppressed(compensationFailure);
     }
   }
 
@@ -233,12 +333,11 @@ public class AccountInviteService {
    *       wording of the rule, such an address is just as "already there" as a registered one.
    * </ol>
    *
-   * <p>Deliberately not backed by a database constraint — see {@link
-   * AccountInviteRepository#countNonTerminalInvitesForRecipientEmail} for why the rule is not
-   * expressible as one.
+   * <p>The count provides the user-friendly conflict. New active rows additionally carry a unique
+   * normalized claim so concurrent requests on different replicas cannot both pass this read.
    */
   private void verifyRecipientEmailAvailable(String recipientEmail) {
-    String normalized = recipientEmail.trim().toLowerCase(Locale.ROOT);
+    String normalized = normalizeEmail(recipientEmail);
     if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()
         || accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
                 normalized, ADDRESS_HOLDING_INVITE_STATUSES, LocalDateTime.now())
@@ -379,11 +478,14 @@ public class AccountInviteService {
     InviteSendResult result = sendInvite(replacement, template, oldInvite.getId());
 
     oldInvite.setStatus(AccountInviteStatus.SUPERSEDED);
+    oldInvite.setActiveRecipientKey(null);
     oldInvite.setSupersededAt(now);
     oldInvite.setSupersededByUserId(authenticatedUser.getUserId());
     oldInvite.setSupersededByInviteId(result.invite().getId());
     oldInvite.setUpdateDate(now);
-    accountInviteRepository.save(oldInvite);
+    accountInviteRepository.saveAndFlush(oldInvite);
+    result.invite().setActiveRecipientKey(normalizeEmail(result.invite().getRecipientEmail()));
+    accountInviteRepository.save(result.invite());
     return result;
   }
 
@@ -395,6 +497,7 @@ public class AccountInviteService {
     }
     LocalDateTime now = LocalDateTime.now();
     invite.setStatus(AccountInviteStatus.REVOKED);
+    invite.setActiveRecipientKey(null);
     invite.setRevokedAt(now);
     invite.setRevokedByUserId(authenticatedUser.getUserId());
     invite.setUpdateDate(now);
@@ -417,6 +520,7 @@ public class AccountInviteService {
     }
     if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
       invite.setStatus(AccountInviteStatus.EXPIRED);
+      invite.setActiveRecipientKey(null);
       invite.setUpdateDate(now);
       accountInviteRepository.save(invite);
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
@@ -439,6 +543,7 @@ public class AccountInviteService {
     // Mirror exactly the columns the guarded UPDATE wrote onto the (now detached) entity so the
     // caller sees the persisted state without an extra round trip.
     invite.setStatus(AccountInviteStatus.ACCEPTED);
+    invite.setActiveRecipientKey(null);
     invite.setAcceptedAt(now);
     invite.setAcceptedByUserId(acceptedByUserId);
     invite.setEmailVerificationStatus(EmailVerificationStatus.VERIFIED);
@@ -854,6 +959,10 @@ public class AccountInviteService {
     return value == null || value.trim().isEmpty();
   }
 
+  private static String normalizeEmail(String value) {
+    return value.trim().toLowerCase(Locale.ROOT);
+  }
+
   private static String trimToNull(String value) {
     return isBlank(value) ? null : value.trim();
   }
@@ -906,6 +1015,15 @@ public class AccountInviteService {
 
   public record InviteSendResult(
       AccountInvite invite, InviteEmailDelivery delivery, String rawToken, String acceptUrl) {}
+
+  private record DirectInviteDispatch(
+      AccountInvite invite,
+      InviteEmailTemplate template,
+      String rawToken,
+      String acceptUrl,
+      String subject,
+      String body,
+      LocalDateTime createdAt) {}
 
   public record WaiveTwoFactorCommand(String reason) {}
 }

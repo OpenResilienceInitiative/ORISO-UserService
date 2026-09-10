@@ -51,6 +51,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
@@ -67,6 +68,7 @@ class AccountInviteServiceTest {
   @Mock private InviteMailDispatchService inviteMailDispatchService;
   @Mock private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @Mock private PlatformTransactionManager transactionManager;
 
   @InjectMocks private AccountInviteService service;
 

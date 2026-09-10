@@ -418,6 +418,7 @@ public class CounsellorOnboardingService {
   private AccountInviteLinkException expireIfPastExpiry(AccountInvite invite, LocalDateTime now) {
     if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
       invite.setStatus(AccountInviteStatus.EXPIRED);
+      invite.setActiveRecipientKey(null);
       invite.setUpdateDate(now);
       accountInviteRepository.save(invite);
       return new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
