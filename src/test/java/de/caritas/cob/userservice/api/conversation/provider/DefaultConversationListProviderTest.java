@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.conversation.model.ConversationListType;
 import de.caritas.cob.userservice.api.conversation.model.PageableListRequest;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import java.util.ArrayList;
 import java.util.List;
@@ -28,6 +29,7 @@ import org.mockito.quality.Strictness;
 class DefaultConversationListProviderTest {
 
   @Mock private ConsultantSessionEnricher consultantSessionEnricher;
+  @Mock private SessionSupervisionMarkerService supervisionMarkerService;
 
   private DefaultConversationListProvider provider;
 
@@ -37,7 +39,7 @@ class DefaultConversationListProviderTest {
         .thenAnswer(inv -> inv.getArgument(0));
 
     provider =
-        new DefaultConversationListProvider(consultantSessionEnricher) {
+        new DefaultConversationListProvider(consultantSessionEnricher, supervisionMarkerService) {
           @Override
           public ConsultantSessionListResponseDTO buildConversations(
               PageableListRequest pageableListRequest) {
@@ -129,6 +131,22 @@ class DefaultConversationListProviderTest {
     provider.buildConversations(request, consultant, sessions);
 
     verify(consultantSessionEnricher).updateRequiredConsultantSessionValues(sessions);
+  }
+
+  @Test
+  void buildConversations_Should_AddSupervisionMarker_ForTheRequestingConsultant_OnThePageOnly() {
+    List<ConsultantSessionResponseDTO> sessions = new ArrayList<>();
+    for (int i = 0; i < 5; i++) {
+      sessions.add(new ConsultantSessionResponseDTO());
+    }
+    PageableListRequest request = PageableListRequest.builder().offset(0).count(2).build();
+    Consultant consultant = new Consultant();
+
+    ConsultantSessionListResponseDTO result =
+        provider.buildConversations(request, consultant, sessions);
+
+    verify(supervisionMarkerService).enrich(result.getSessions(), consultant);
+    assertThat(result.getSessions()).hasSize(2);
   }
 
   @Test

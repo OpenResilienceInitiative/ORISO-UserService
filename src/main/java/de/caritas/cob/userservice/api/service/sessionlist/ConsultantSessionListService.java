@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -31,6 +32,7 @@ public class ConsultantSessionListService {
   private final @NonNull ChatService chatService;
   private final @NonNull ConsultantSessionEnricher consultantSessionEnricher;
   private final @NonNull ConsultantChatEnricher consultantChatEnricher;
+  private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
 
   /**
    * @param consultant {@link Consultant}
@@ -194,6 +196,8 @@ public class ConsultantSessionListService {
 
     if (isNotEmpty(sessions)) {
       enrichedSessions = updateConsultantSessionValues(sessions);
+      // ADR-008 marker for the requester — one batched query, see SessionSupervisionMarkerService.
+      supervisionMarkerService.enrich(enrichedSessions, consultant);
     }
 
     if (isNotEmpty(chats)) {
