@@ -21,8 +21,8 @@ public class ConversationDtoMapper {
     anonymousEnquiry.setStatus(StatusEnum.fromValue(statusString));
     /* The department coordinate (agency x topic). The entry room needs both to resolve
     the accepting counselling centre's data-protection declaration once the case reads
-    IN_PROGRESS; without them it can only show the platform fallback, which is not the
-    wording that governs the advice seeker. Either may legitimately be null — an enquiry
+    IN_PROGRESS, or show the explicit non-blocking warning when none is usable. Either may
+    legitimately be null — an enquiry
     with no agency bound yet, or none carrying a topic — and the client falls back. */
     anonymousEnquiry.setAgencyId(agencyIdOf(sessionMap));
     anonymousEnquiry.setMainTopicId(mainTopicIdOf(sessionMap));

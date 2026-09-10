@@ -11,8 +11,8 @@ import org.junit.jupiter.api.Test;
  *
  * <p>Why it is pinned: the entry room resolves the accepting counselling centre's data-protection
  * declaration from (agencyId, topicId) once the case reads IN_PROGRESS. Drop either half and the
- * consent screen silently falls back to the platform wording — which is not the text that governs
- * the advice seeker, and the failure is invisible because the fallback renders perfectly.
+ * consent screen cannot distinguish a configured policy from the non-blocking missing-policy
+ * warning, and that failure is invisible because both states render successfully.
  */
 class ConversationDtoMapperTest {
 
@@ -48,8 +48,8 @@ class ConversationDtoMapperTest {
 
   @Test
   void anonymousEnquiryOf_should_tolerateAMissingCoordinate() {
-    // No agency bound yet, or an enquiry without a topic. The client falls back to the
-    // platform wording; the payload must not fail to build.
+    // No agency bound yet, or an enquiry without a topic. The client keeps its legacy platform
+    // wording because it cannot attribute a missing policy to an agency; the payload must build.
     var enquiry = mapper.anonymousEnquiryOf(sessionMap(null, null), 0, 0L);
 
     assertThat(enquiry.getAgencyId()).isNull();

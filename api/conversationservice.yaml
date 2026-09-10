@@ -352,9 +352,10 @@ components:
           example: 17
           description: >-
             The counselling centre bound to this enquiry, so the entry room can resolve its
-            data-protection declaration (agency x topic) once the case has been accepted and show
-            the advice seeker the wording that actually governs them, rather than the platform
-            fallback; null while no agency is bound. Additive - older clients can ignore it.
+            data-protection declaration (agency x topic) once the case has been accepted. When no
+            usable declaration exists, the client uses this coordinate to show the non-blocking
+            missing-policy warning; null while no agency is bound. Additive - older clients can
+            ignore it.
         mainTopicId:
           type: integer
           format: int64
