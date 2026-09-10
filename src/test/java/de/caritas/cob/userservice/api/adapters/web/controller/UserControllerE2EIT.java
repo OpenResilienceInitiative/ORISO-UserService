@@ -152,6 +152,15 @@ import org.springframework.web.util.UriTemplateHandler;
     })
 @Transactional
 class UserControllerE2EIT {
+  @org.junit.jupiter.api.BeforeEach
+  void recoveryPolicyFixture() {
+    org.mockito.Mockito.when(
+            tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
+  }
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
 
   private static final EasyRandom easyRandom = new EasyRandom();
   private static final String CSRF_HEADER = "X-CSRF-Token";
@@ -237,6 +246,7 @@ class UserControllerE2EIT {
 
   @AfterEach
   void reset() {
+    de.caritas.cob.userservice.api.tenant.TenantContext.clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
       userRepository.save(user);
@@ -292,7 +302,17 @@ class UserControllerE2EIT {
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
-                new de.caritas.cob.userservice.agencyserivce.generated.ApiClient()));
+                new de.caritas.cob.userservice.agencyserivce.generated.ApiClient()) {
+              @Override
+              public java.util.List<
+                      de.caritas.cob.userservice.agencyserivce.generated.web.model
+                          .AgencyResponseDTO>
+                  getAgenciesByIds(java.util.List<Long> ids) {
+                var agencies = super.getAgenciesByIds(ids);
+                agencies.forEach(agency -> agency.setTenantId(1L));
+                return agencies;
+              }
+            });
 
     when(consultingTypeServiceApiControllerFactory.createControllerApi())
         .thenReturn(consultingTypeControllerApi);
@@ -1652,6 +1672,7 @@ class UserControllerE2EIT {
   }
 
   private void givenAUserDTO(String consultantId) {
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(1L);
     userDTO = easyRandom.nextObject(UserDTO.class);
     userDTO.setUsername(RandomStringUtils.randomAlphabetic(5, 30));
     userDTO.setAge("17");

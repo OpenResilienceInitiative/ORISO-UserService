@@ -88,6 +88,12 @@ import org.springframework.web.client.RestTemplate;
 @TestPropertySource(properties = {"feature.topics.enabled=true", "multitenancy.enabled=false"})
 @Transactional
 class UserAdminControllerE2EIT {
+  @org.junit.jupiter.api.BeforeEach
+  void recoveryPolicyFixture() {
+    org.mockito.Mockito.when(
+            tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
+  }
 
   private static final EasyRandom easyRandom = new EasyRandom();
 
@@ -211,6 +217,7 @@ class UserAdminControllerE2EIT {
   private String givenNewConsultantIsCreated() throws Exception {
     // given
     CreateConsultantDTO createAdminDTO = new EasyRandom().nextObject(CreateConsultantDTO.class);
+    createAdminDTO.setTenantId(1L);
     createAdminDTO.setEmail("consultant@email.com");
     // when
     MvcResult mvcResult =
