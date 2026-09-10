@@ -7,6 +7,7 @@ import java.nio.file.Path;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.util.UUID;
+import liquibase.ChecksumVersion;
 import liquibase.Contexts;
 import liquibase.LabelExpression;
 import liquibase.Liquibase;
@@ -43,6 +44,57 @@ class ChatRecoveryMigrationTest {
       for (var table : new String[] {"user", "consultant"}) {
         statement.execute("CREATE TABLE `" + table + "` (id VARCHAR(32) PRIMARY KEY)");
         statement.execute("INSERT INTO `" + table + "` VALUES ('legacy'), ('enrolled')");
+      }
+    }
+  }
+
+  @Test
+  void rollbackRetainsSnapshotsAndReapplyPreservesDataAndForwardChecksum() throws Exception {
+    try (var c = connect()) {
+      resetFixture(c);
+      var database =
+          DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(c));
+      try (var liquibase = new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database)) {
+        var changeSet = liquibase.getDatabaseChangeLog().getChangeSets().getFirst();
+        var withRollback = changeSet.generateCheckSum(ChecksumVersion.latest());
+        var rollbackChanges = new java.util.ArrayList<>(changeSet.getRollback().getChanges());
+        assertFalse(rollbackChanges.isEmpty());
+        changeSet.getRollback().getChanges().clear();
+        changeSet.clearCheckSum();
+        assertEquals(withRollback, changeSet.generateCheckSum(ChecksumVersion.latest()));
+        changeSet.getRollback().getChanges().addAll(rollbackChanges);
+        liquibase.update(new Contexts(), new LabelExpression());
+        try (var sql = c.createStatement()) {
+          for (var table : new String[] {"user", "consultant"}) {
+            sql.execute(
+                "UPDATE `"
+                    + table
+                    + "` SET chat_recovery_mode='LOGIN_PASSWORD', chat_recovery_policy_revision=7 WHERE id='enrolled'");
+          }
+        }
+        c.commit();
+        liquibase.rollback(1, new Contexts(), new LabelExpression());
+        assertEquals(
+            1, liquibase.listUnrunChangeSets(new Contexts(), new LabelExpression()).size());
+        assertSnapshotsPreserved(c);
+        liquibase.update(new Contexts(), new LabelExpression());
+        assertSnapshotsPreserved(c);
+        assertTrue(liquibase.listUnrunChangeSets(new Contexts(), new LabelExpression()).isEmpty());
+      }
+    }
+  }
+
+  private void assertSnapshotsPreserved(Connection c) throws Exception {
+    for (var table : new String[] {"user", "consultant"}) {
+      try (var sql = c.createStatement();
+          var rows = sql.executeQuery("SELECT * FROM `" + table + "` ORDER BY id")) {
+        assertTrue(rows.next());
+        assertEquals("LOGIN_PASSWORD", rows.getString("chat_recovery_mode"));
+        assertEquals(7L, rows.getLong("chat_recovery_policy_revision"));
+        assertTrue(rows.next());
+        assertNull(rows.getString("chat_recovery_mode"));
+        assertNull(rows.getObject("chat_recovery_policy_revision"));
+        assertFalse(rows.next());
       }
     }
   }

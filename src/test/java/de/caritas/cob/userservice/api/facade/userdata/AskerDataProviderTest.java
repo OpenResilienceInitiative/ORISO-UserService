@@ -68,6 +68,22 @@ class AskerDataProviderTest {
   @Mock UserAgencyService userAgencyService;
 
   @Test
+  void retrieveDataPreservesStoredRecoveryPolicy() {
+    givenAnEmailDummySuffixConfig();
+    when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));
+    when(consultingTypeManager.getAllConsultingTypeIds())
+        .thenReturn(IntStream.range(0, 22).boxed().collect(Collectors.toList()));
+    var user = new User();
+    user.setEmail("recovery@example.test");
+    user.setLanguageCode(LanguageCode.de);
+    user.setChatRecoveryMode("LOGIN_PASSWORD");
+    user.setChatRecoveryPolicyRevision(7L);
+    var result = askerDataProvider.retrieveData(user);
+    assertEquals("LOGIN_PASSWORD", result.getChatRecoveryMode());
+    assertEquals(7L, result.getChatRecoveryPolicyRevision());
+  }
+
+  @Test
   void retrieveData_Should_ReturnUserDataWithAgency_When_ProvidedWithUserWithAgencyInSession() {
     givenAnEmailDummySuffixConfig();
     when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.USER.getValue()));

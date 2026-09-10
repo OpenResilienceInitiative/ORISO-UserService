@@ -320,6 +320,90 @@ class UserControllerE2EIT {
   }
 
   @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void getUserDataReturnsUserLegacyRecoveryPolicy() throws Exception {
+    givenABearerToken();
+    givenAValidUser();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
+    user.setChatRecoveryMode(null);
+    user.setChatRecoveryPolicyRevision(null);
+    userRepository.save(user);
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("chatRecoveryMode", is("RECOVERY_KEY")))
+        .andExpect(jsonPath("chatRecoveryPolicyRevision", is(0)));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void getUserDataReturnsUserStoredRecoveryPolicy() throws Exception {
+    givenABearerToken();
+    givenAValidUser();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
+    user.setChatRecoveryMode("LOGIN_PASSWORD");
+    user.setChatRecoveryPolicyRevision(7L);
+    userRepository.save(user);
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("chatRecoveryMode", is("LOGIN_PASSWORD")))
+        .andExpect(jsonPath("chatRecoveryPolicyRevision", is(7)));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void getUserDataReturnsConsultantLegacyRecoveryPolicy() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    consultant.setChatRecoveryMode(null);
+    consultant.setChatRecoveryPolicyRevision(null);
+    consultantRepository.save(consultant);
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("chatRecoveryMode", is("RECOVERY_KEY")))
+        .andExpect(jsonPath("chatRecoveryPolicyRevision", is(0)));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void getUserDataReturnsConsultantStoredRecoveryPolicy() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    consultant.setChatRecoveryMode("LOGIN_PASSWORD");
+    consultant.setChatRecoveryPolicyRevision(7L);
+    consultantRepository.save(consultant);
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("chatRecoveryMode", is("LOGIN_PASSWORD")))
+        .andExpect(jsonPath("chatRecoveryPolicyRevision", is(7)));
+  }
+
+  @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
   void getUserDataShouldRespondWithConsultantDataAndStatusOkWhen2faByAppIsActive()
       throws Exception {

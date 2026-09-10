@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpS
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +17,9 @@ public class ChatRecoveryEnrollmentPolicyService {
   private final TenantService tenantService;
   private final UserRepository userRepository;
   private final ConsultantRepository consultantRepository;
+
+  @Value("${multitenancy.enabled}")
+  private boolean multitenancyEnabled;
 
   public record RecoveryPolicySnapshot(String mode, long revision) {}
 
@@ -45,9 +49,12 @@ public class ChatRecoveryEnrollmentPolicyService {
 
   private RecoveryPolicySnapshot current(Long tenantId, boolean consultant) {
     try {
-      if (tenantId == null || tenantId <= 0)
+      if ((tenantId == null && multitenancyEnabled) || (tenantId != null && tenantId <= 0))
         throw new IllegalStateException("Concrete tenant required");
-      var tenant = tenantService.getRestrictedTenantDataFresh(tenantId);
+      var tenant =
+          tenantId == null
+              ? tenantService.getSingleTenancyTenantDataFresh()
+              : tenantService.getRestrictedTenantDataFresh(tenantId);
       var policy = tenant.getSettings().getTenantAdminControls().getChatRecoverySettings();
       var mode = consultant ? policy.getConsultant() : policy.getAsker();
       if (mode == null || policy.getRevision() == null || policy.getRevision() < 0)

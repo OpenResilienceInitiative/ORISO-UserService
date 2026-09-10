@@ -18,6 +18,57 @@ class ChatRecoveryEnrollmentPolicyServiceTest {
       new ChatRecoveryEnrollmentPolicyService(tenants, users, consultants);
 
   @Test
+  void singleTenantCreationUsesAuthoritativeUncachedEndpointForBothRoles() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "multitenancyEnabled", false);
+    var policy =
+        new ChatRecoverySettings()
+            .asker(ChatRecoveryMode.RECOVERY_KEY)
+            .consultant(ChatRecoveryMode.LOGIN_PASSWORD)
+            .revision(7L);
+    when(tenants.getSingleTenancyTenantDataFresh())
+        .thenReturn(
+            new RestrictedTenantDTO()
+                .id(42L)
+                .settings(
+                    new Settings()
+                        .tenantAdminControls(
+                            new TenantAdminControls().chatRecoverySettings(policy))));
+    assertEquals(
+        new ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot("LOGIN_PASSWORD", 7),
+        service.forNewConsultant(null));
+    assertEquals("RECOVERY_KEY", service.forNewAsker(null).mode());
+    verify(tenants, times(2)).getSingleTenancyTenantDataFresh();
+    verify(tenants, never()).getRestrictedTenantDataFresh(any());
+  }
+
+  @Test
+  void missingSingleTenantPolicyFailsClosed() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "multitenancyEnabled", false);
+    var exception =
+        assertThrows(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class,
+            () -> service.forNewConsultant(null));
+    assertEquals(org.springframework.http.HttpStatus.BAD_GATEWAY, exception.getHttpStatus());
+    verify(tenants).getSingleTenancyTenantDataFresh();
+  }
+
+  @Test
+  void multitenantNullAndTechnicalTenantNeverUseSingleTenantFallback() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        service, "multitenancyEnabled", true);
+    for (Long tenantId : new Long[] {null, 0L, -1L}) {
+      assertThrows(
+          de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+              .class,
+          () -> service.forNewConsultant(tenantId));
+    }
+    verifyNoInteractions(tenants);
+  }
+
+  @Test
   void roleGrantRetainsEnrolledIdentity() {
     var user = new User();
     user.setChatRecoveryMode("LOGIN_PASSWORD");
