@@ -477,6 +477,17 @@
       "status": "bounded"
     },
     {
+      "id": "appointment-lifecycle-notification-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/AppointmentLifecycleNotificationService.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": ["emitUpcomingBriefings"],
+      "decision": "Deduplicates briefing rows through EventNotificationService.createEventOnce (unique recipient+key). Email is sent only when that insert wins. Concurrent replicas may race the insert; the unique-key catch treats a second write as already delivered. Add a lease if briefing side effects grow beyond that insert.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "bounded"
+    },
+    {
       "id": "event-notification-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/notificationretention/scheduler/EventNotificationRetentionScheduler.java",
       "kind": "scheduler",

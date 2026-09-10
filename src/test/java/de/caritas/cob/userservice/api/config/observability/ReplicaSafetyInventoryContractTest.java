@@ -44,6 +44,7 @@ class ReplicaSafetyInventoryContractTest {
           "registered-only-deletion-scheduler",
           "handshake-expiry-scheduler",
           "support-room-expiry-scheduler",
+          "appointment-lifecycle-notification-scheduler",
           "event-notification-retention-scheduler",
           "team-discussion-retention-scheduler",
           "team-discussion-orphan-cleanup-scheduler");
