@@ -87,6 +87,21 @@ class SessionWriteConsentGuardTest {
   }
 
   @Test
+  void guardsARoomWhoseConversationTypeWasNeverStamped() {
+    /* `conversation_type` is nullable, and Session#isConsentGateApplicable treats a null
+    as a gated room on purpose — rows written before the column existed are counselling
+    rooms, not group chats. Pinned separately from the LIVE_CHAT case because the
+    exemption below is the neighbouring branch: widen it to "not a known counselling
+    type" and every un-stamped room silently loses its gate, which is the one failure
+    mode of this class that nothing else would catch. */
+    var session = sessionWithConfirmation(null);
+    session.setConversationType(null);
+
+    assertThatThrownBy(() -> guard.verifyMayWrite(session))
+        .isInstanceOf(ConsentNotRecordedException.class);
+  }
+
+  @Test
   void leavesRoomsWithoutAGateAlone() {
     /* A group chat's session is owned by a tenant system user, not by a person who
     could agree — one pointer there cannot express per-participant consent, so
