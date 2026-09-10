@@ -747,6 +747,88 @@ class AccountInviteServiceTest {
   }
 
   @Test
+  void revokeInvite_Should_releaseTenantIdReservation_When_inviteStillHoldsOne() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .tenantId(17L)
+            .tenantIdReservationToken("token-17")
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.revokeInvite(1L);
+
+    verify(tenantIdAllocationClient).release(17L);
+  }
+
+  @Test
+  void revokeInvite_Should_notReleaseTenantId_When_inviteHoldsNoReservation() {
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).status(AccountInviteStatus.EMAIL_SENT).tenantId(17L).build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.revokeInvite(1L);
+
+    verify(tenantIdAllocationClient, never()).release(anyLong());
+  }
+
+  @Test
+  void revokeInvite_Should_notReleaseTenantId_When_replacementInheritedTheReservation() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .status(AccountInviteStatus.SUPERSEDED)
+            .tenantId(17L)
+            .tenantIdReservationToken("token-17")
+            .supersededByInviteId(2L)
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.revokeInvite(1L);
+
+    verify(tenantIdAllocationClient, never()).release(anyLong());
+  }
+
+  @Test
+  void revokeInvite_Should_notReleaseTenantIdTwice_When_inviteAlreadyRevoked() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .status(AccountInviteStatus.REVOKED)
+            .tenantId(17L)
+            .tenantIdReservationToken("token-17")
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.revokeInvite(1L);
+
+    verify(tenantIdAllocationClient, never()).release(anyLong());
+  }
+
+  @Test
+  void revokeInvite_Should_leaveAgencyIdReservationsAlone() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .tenantId(17L)
+            .tenantIdReservationToken("token-17")
+            .agencyId(42L)
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    service.revokeInvite(1L);
+
+    verifyNoInteractions(agencyIdAllocationClient);
+  }
+
+  @Test
   void revokeInvite_Should_throwNotFound_When_inviteMissing() {
     when(accountInviteRepository.findById(99L)).thenReturn(Optional.empty());
 

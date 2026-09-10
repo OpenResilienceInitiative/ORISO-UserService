@@ -629,6 +629,7 @@ public class TenantAdminOnboardingService {
       invite.setStatus(AccountInviteStatus.EXPIRED);
       invite.setUpdateDate(now);
       accountInviteRepository.save(invite);
+      accountInviteService.releaseTenantIdReservationAfterCommit(invite);
       return new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
     return null;

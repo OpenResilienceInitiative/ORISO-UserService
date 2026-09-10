@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.verify;
 
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
@@ -11,6 +12,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
 import java.time.LocalDateTime;
@@ -21,6 +23,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -51,6 +54,8 @@ class OnboardingInviteExpiryCommitIT {
 
   @Autowired private PlatformTransactionManager transactionManager;
 
+  @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
+
   @Test
   void tenantAdminResolve_expiredInvite_commitsTheExpiredTransitionDespiteTheLinkDeathAnswer() {
     String token = "expiry-commit-tenant-resolve-" + java.util.UUID.randomUUID();
@@ -62,6 +67,8 @@ class OnboardingInviteExpiryCommitIT {
         .isEqualTo(AccountInviteLinkException.Reason.EXPIRED);
 
     assertThat(committedStatusOf(inviteId)).isEqualTo(AccountInviteStatus.EXPIRED);
+    // #1052: the reservation dies with the invite, once the EXPIRED write is durable.
+    verify(tenantIdAllocationClient).release(79L);
   }
 
   @Test
@@ -78,6 +85,7 @@ class OnboardingInviteExpiryCommitIT {
         .isEqualTo(AccountInviteLinkException.Reason.EXPIRED);
 
     assertThat(committedStatusOf(inviteId)).isEqualTo(AccountInviteStatus.EXPIRED);
+    verify(tenantIdAllocationClient).release(79L);
   }
 
   @Test
