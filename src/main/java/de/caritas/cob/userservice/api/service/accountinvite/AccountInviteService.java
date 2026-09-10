@@ -43,6 +43,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.web.client.HttpClientErrorException;
 
 @Slf4j
@@ -347,12 +349,72 @@ public class AccountInviteService {
     if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
       throw new BadRequestException("Accepted invites cannot be revoked");
     }
+    // A second revoke of an already-REVOKED invite must not release a second time: the ID may
+    // have been re-reserved by someone else in the meantime.
+    boolean alreadyRevoked = invite.getStatus() == AccountInviteStatus.REVOKED;
     LocalDateTime now = LocalDateTime.now();
     invite.setStatus(AccountInviteStatus.REVOKED);
     invite.setRevokedAt(now);
     invite.setRevokedByUserId(authenticatedUser.getUserId());
     invite.setUpdateDate(now);
-    return accountInviteRepository.save(invite);
+    AccountInvite revoked = accountInviteRepository.save(invite);
+    if (!alreadyRevoked) {
+      releaseTenantIdReservationAfterCommit(revoked);
+    }
+    return revoked;
+  }
+
+  /**
+   * Returns the tenant ID an invite reserved to the free pool once the invite that justified the
+   * reservation is durably dead (#1052).
+   *
+   * <p>Tenant IDs are short, admin-visible and deliberately chosen — the Admin panel offers a
+   * "next free ID" picker — so a reservation outliving its invite silently degrades the ID space
+   * and makes that suggestion drift away from reality. {@code createInvite} already compensates
+   * this way on its failure path; revoke and expiry are the same orphan.
+   *
+   * <p>After commit, not inline: the reservation may only be freed once the terminal status is
+   * durable. Releasing inside the transaction would hand the ID back and then, on a rollback,
+   * leave a live invite pointing at an ID somebody else can now take. Outside a transaction it
+   * runs inline, which carries the same guarantee because {@code release} never throws.
+   *
+   * <p>Agency IDs are deliberately left alone. {@code agencyId} carries either a reserved ID or a
+   * pre-existing agency's ID and the row does not record which, so releasing it here could free an
+   * ID that belongs to a live agency. Closing that half needs the allocation mode persisted first.
+   */
+  public void releaseTenantIdReservationAfterCommit(AccountInvite invite) {
+    if (invite.getTenantIdReservationToken() == null || invite.getTenantId() == null) {
+      return;
+    }
+    // resendInvite hands the very same reservation to the replacement invite and only marks this
+    // row SUPERSEDED. Releasing here would pull the ID out from under that live replacement.
+    if (invite.getSupersededByInviteId() != null) {
+      return;
+    }
+    long tenantId = invite.getTenantId();
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      tenantIdAllocationClient.release(tenantId);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            try {
+              tenantIdAllocationClient.release(tenantId);
+            } catch (RuntimeException releaseFailure) {
+              // Nothing may escape afterCommit: the invite is already durably dead and an escaping
+              // exception would surface as a 500 on a revoke that has in fact succeeded. The
+              // client swallows its own transport errors; this guards the rest (header supply,
+              // client construction). The reservation ledger stays the source of truth for the
+              // manual cleanup an orphan then needs.
+              log.error(
+                  "Failed to release tenant ID reservation {} after the invite died",
+                  tenantId,
+                  releaseFailure);
+            }
+          }
+        });
   }
 
   @Transactional

@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
@@ -175,6 +176,34 @@ class AccountInviteReservationOrchestrationIT {
     verify(tenantIdAllocationClient).release(21L);
     assertThat(accountInviteRepository.count()).isZero();
     assertThat(tenantIdLedger).isEmpty();
+  }
+
+  @Test
+  void revokedInvite_Should_LeaveNoReservationBehind() {
+    AccountInvite invite =
+        createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "owner@example.org");
+    assertThat(tenantIdLedger).containsExactly(21L);
+
+    service.revokeInvite(invite.getId());
+
+    verify(tenantIdAllocationClient).release(21L);
+    assertThat(tenantIdLedger).isEmpty();
+    assertThat(accountInviteRepository.findById(invite.getId()))
+        .get()
+        .extracting(AccountInvite::getStatus)
+        .isEqualTo(AccountInviteStatus.REVOKED);
+  }
+
+  @Test
+  void revokedInvite_Should_LeaveAgencyIdReservationsAlone() {
+    AccountInvite invite =
+        createTenantAdminInvite(22L, IdAllocationMode.MANUAL, "owner-2@example.org");
+
+    service.revokeInvite(invite.getId());
+
+    // agencyId carries either a reserved ID or a pre-existing agency's ID and the row does not
+    // record which, so revoke must not touch that ledger (#1052).
+    verifyNoInteractions(agencyIdAllocationClient);
   }
 
   private AccountInvite createTenantAdminInvite(
