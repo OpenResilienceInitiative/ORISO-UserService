@@ -158,6 +158,52 @@ public class AccountInviteService {
   }
 
   /**
+   * Creates and directly sends an invite as one database operation.
+   *
+   * <p>A direct-send request is not allowed to leave a {@code DRAFT} invite behind when the SMTP
+   * handover fails: such a draft holds both the recipient address and, for tenant admins, the
+   * tenant-ID reservation, while the admin only saw a failed send. The caller can therefore retry
+   * the same request after a transport failure without first finding and cleaning up hidden state.
+   *
+   * <p>A failed delivery has no committed invite row to attach an independent delivery audit row
+   * to. The transport failure remains logged and is returned to the caller; persisting a dangling
+   * delivery row would violate the delivery foreign-key contract.
+   */
+  @Transactional
+  public InviteSendResult createAndSendInvite(CreateAccountInviteCommand command, Long templateId) {
+    AccountInvite invite = createInvite(command);
+    try {
+      InviteEmailTemplate template = findTemplate(templateId);
+      return sendInvite(invite, template, null);
+    } catch (RuntimeException exception) {
+      releaseDirectInviteReservations(invite, command);
+      throw exception;
+    }
+  }
+
+  /**
+   * External ID reservations do not participate in the database transaction. A failed direct send
+   * must release the holds that {@link #createInvite(CreateAccountInviteCommand)} acquired before
+   * the transaction rolls its database row back. A failed compensation is logged but never masks
+   * the original request failure.
+   */
+  private void releaseDirectInviteReservations(
+      AccountInvite invite, CreateAccountInviteCommand command) {
+    try {
+      if (invite.getTenantIdReservationToken() != null && invite.getTenantId() != null) {
+        tenantIdAllocationClient.release(invite.getTenantId());
+      }
+      if (command.agencyIdAllocationMode() != null && invite.getAgencyId() != null) {
+        agencyIdAllocationClient.release(invite.getAgencyId());
+      }
+    } catch (RuntimeException releaseException) {
+      log.warn(
+          "Could not release direct-invite ID reservation after failed send ({})",
+          releaseException.getClass().getSimpleName());
+    }
+  }
+
+  /**
    * P3: refuses an invite whose recipient address already belongs to a registered identity.
    *
    * <p>Before this guard the collision only surfaced at redemption time — the invitee filled in the
