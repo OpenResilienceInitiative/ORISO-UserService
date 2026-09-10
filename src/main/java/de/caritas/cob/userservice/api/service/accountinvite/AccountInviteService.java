@@ -368,15 +368,15 @@ public class AccountInviteService {
    * Returns the tenant ID an invite reserved to the free pool once the invite that justified the
    * reservation is durably dead (#1052).
    *
-   * <p>Tenant IDs are short, admin-visible and deliberately chosen — the Admin panel offers a
-   * "next free ID" picker — so a reservation outliving its invite silently degrades the ID space
-   * and makes that suggestion drift away from reality. {@code createInvite} already compensates
-   * this way on its failure path; revoke and expiry are the same orphan.
+   * <p>Tenant IDs are short, admin-visible and deliberately chosen — the Admin panel offers a "next
+   * free ID" picker — so a reservation outliving its invite silently degrades the ID space and
+   * makes that suggestion drift away from reality. {@code createInvite} already compensates this
+   * way on its failure path; revoke and expiry are the same orphan.
    *
    * <p>After commit, not inline: the reservation may only be freed once the terminal status is
-   * durable. Releasing inside the transaction would hand the ID back and then, on a rollback,
-   * leave a live invite pointing at an ID somebody else can now take. Outside a transaction it
-   * runs inline, which carries the same guarantee because {@code release} never throws.
+   * durable. Releasing inside the transaction would hand the ID back and then, on a rollback, leave
+   * a live invite pointing at an ID somebody else can now take. Outside a transaction it runs
+   * inline, which carries the same guarantee because {@code release} never throws.
    *
    * <p>Agency IDs are deliberately left alone. {@code agencyId} carries either a reserved ID or a
    * pre-existing agency's ID and the row does not record which, so releasing it here could free an
