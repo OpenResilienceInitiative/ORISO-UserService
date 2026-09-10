@@ -12,7 +12,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.exception.httpresponses.ConsentNotRecordedException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
@@ -24,7 +23,6 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
-import de.caritas.cob.userservice.api.service.session.SessionWriteConsentGuard;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -57,11 +55,6 @@ class MatrixMessageControllerTest {
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private ChatPermissionVerifier chatPermissionVerifier;
 
-  /* ADR-018 §9 (rewritten 2026-09-07): the write-path consent barrier. Mocked here —
-  this test owns the controller's contract towards it; the decision itself is
-  covered by SessionWriteConsentGuardTest. */
-  @Mock private SessionWriteConsentGuard sessionWriteConsentGuard;
-
   private MatrixMessageController controller;
 
   @BeforeEach
@@ -76,7 +69,6 @@ class MatrixMessageControllerTest {
             userService,
             matrixCredentialClient,
             chatPermissionVerifier,
-            sessionWriteConsentGuard,
             Optional.<RedisMessageMirrorService>empty());
   }
 
@@ -274,83 +266,6 @@ class MatrixMessageControllerTest {
     var response = controller.uploadFile(SESSION_ID, file);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-  }
-
-  @Test
-  void sendMessage_ShouldRefuseBeforeMatrixCall_WhenTheAdviceSeekerHasNotConsented() {
-    /* ADR-018 §9, rewritten 2026-09-07: the barrier that used to block the
-    assignment now blocks the write. Before any Matrix call, and not swallowed
-    into a 500 by the surrounding catch — the 409 with its X-Reason is the
-    answer, so the client can say "waiting for consent" instead of the
-    already-taken sentence. */
-    var session = sessionWithMatrixRoom();
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
-    doThrow(new ConsentNotRecordedException("no consent"))
-        .when(sessionWriteConsentGuard)
-        .verifyMayWrite(session);
-
-    assertThrows(
-        ConsentNotRecordedException.class,
-        () -> controller.sendMessage(SESSION_ID, Map.of("message", "blocked")));
-
-    verifyNoInteractions(matrixSynapseService);
-  }
-
-  @Test
-  void uploadFile_ShouldRefuseBeforeMatrixCall_WhenTheAdviceSeekerHasNotConsented() {
-    // An attachment is a message; the same barrier applies.
-    var session = sessionWithMatrixRoom();
-    when(sessionService.getSession(SESSION_ID)).thenReturn(Optional.of(session));
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
-    doThrow(new ConsentNotRecordedException("no consent"))
-        .when(sessionWriteConsentGuard)
-        .verifyMayWrite(session);
-    var file = new MockMultipartFile("file", "a.txt", "text/plain", "a".getBytes());
-
-    assertThrows(ConsentNotRecordedException.class, () -> controller.uploadFile(SESSION_ID, file));
-
-    verifyNoInteractions(matrixSynapseService);
-  }
-
-  @Test
-  void sendMessage_ShouldPassTheBarrier_OnceConsentWasRecorded() {
-    /* The other half of the acceptance criterion: after consent, writing works.
-    The guard stays silent, and the message reaches Matrix. */
-    var session = sessionWithMatrixRoom();
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser)).thenReturn(session);
-    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
-    when(authenticatedUser.getRoles()).thenReturn(Set.of("user"));
-    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId()));
-    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn("matrix-token");
-    when(matrixSynapseService.sendMessage(MATRIX_ROOM_ID, "hello", "matrix-token"))
-        .thenReturn(Map.of("event_id", "$event"));
-
-    var response = controller.sendMessage(SESSION_ID, Map.of("message", "hello"));
-
-    assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(sessionWriteConsentGuard).verifyMayWrite(session);
-    verify(matrixSynapseService).sendMessage(MATRIX_ROOM_ID, "hello", "matrix-token");
-  }
-
-  @Test
-  void syncMessages_ShouldStayOpen_WhileConsentIsStillMissing() {
-    /* Reading is not writing. Somebody who has not agreed yet still sits in the
-    room and must see it — gating the read would replace one dead end with
-    another. */
-    when(sessionService.assertUserHasAccess(SESSION_ID, authenticatedUser))
-        .thenReturn(sessionWithMatrixRoom());
-    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
-    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
-    when(authenticatedUser.isConsultant()).thenReturn(false);
-    when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId()));
-    when(matrixSynapseService.loginAsUserAccessToken(MATRIX_USER_ID)).thenReturn("token");
-    when(matrixSynapseService.syncRoom(MATRIX_ROOM_ID, "token", USERNAME, 30000))
-        .thenReturn(Map.of("messages", List.of("m1")));
-
-    controller.syncMessages(SESSION_ID);
-
-    verifyNoInteractions(sessionWriteConsentGuard);
   }
 
   @Test

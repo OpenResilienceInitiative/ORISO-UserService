@@ -5,7 +5,6 @@ import de.caritas.cob.userservice.api.exception.NoMasterKeyException;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ConsentNotRecordedException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CreateEnquiryMessageException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
@@ -195,34 +194,6 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
     ex.executeLogging();
 
     return handleExceptionInternal(null, null, new HttpHeaders(), HttpStatus.CONFLICT, request);
-  }
-
-  /**
-   * 409 - Conflict, with the one conflict reason a client has to act on differently: the advice
-   * seeker has not confirmed the data protection notice yet.
-   *
-   * <p>Spring picks the most specific handler, so this one wins over {@link #handleCustomConflict}
-   * for the subclass. The distinction matters in the product: the accept and write paths also
-   * answer 409 for "somebody else has already taken this enquiry", and a frontend that cannot tell
-   * the two apart shows the wrong sentence. Only this one carries {@code X-Reason} plus a matching
-   * body, the way {@link CustomValidationHttpStatusException} does. The reason name is a constant
-   * of our own API rather than information about the person, so it is safe to hand out where the
-   * message deliberately is not.
-   *
-   * @param request the invoking request
-   * @param ex the thrown exception
-   */
-  @ExceptionHandler({ConsentNotRecordedException.class})
-  protected ResponseEntity<Object> handleConsentNotRecorded(
-      final ConsentNotRecordedException ex, final WebRequest request) {
-    ex.executeLogging();
-
-    return handleExceptionInternal(
-        null,
-        reasonBody(HttpStatusExceptionReason.DATA_PRIVACY_CONSENT_MISSING.name()),
-        ex.getCustomHttpHeaders(),
-        HttpStatus.CONFLICT,
-        request);
   }
 
   private Optional<String> conflictReasonOf(Throwable throwable) {

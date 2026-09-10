@@ -11,7 +11,6 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
-import de.caritas.cob.userservice.api.service.session.SessionWriteConsentGuard;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Map;
 import java.util.Optional;
@@ -41,14 +40,6 @@ public class MatrixMessageController {
   private final @NonNull UserService userService;
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull ChatPermissionVerifier chatPermissionVerifier;
-
-  /**
-   * ADR-018 §9 (rewritten 2026-09-07): the data-protection barrier sits on the write path, not on
-   * the assignment. These two endpoints are the only ones in this service that put content into a
-   * counselling room, so they are where it applies.
-   */
-  private final @NonNull SessionWriteConsentGuard sessionWriteConsentGuard;
-
   private final Optional<RedisMessageMirrorService> redisMessageMirrorService;
 
   /**
@@ -129,9 +120,6 @@ public class MatrixMessageController {
       @PathVariable Long sessionId, @RequestBody Map<String, Object> messageRequest) {
 
     var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
-    /* Before anything is written, and outside the try: a 409 here is the answer to
-    the caller, not something to swallow into a 500. */
-    sessionWriteConsentGuard.verifyMayWrite(session);
 
     try {
       if (session.getMatrixRoomId() == null) {
@@ -277,8 +265,6 @@ public class MatrixMessageController {
   @GetMapping("/sessions/{sessionId}/sync")
   public ResponseEntity<?> syncMessages(@PathVariable Long sessionId) {
 
-    /* Read path — deliberately not guarded. Somebody who has not consented yet must
-    still be able to see the room they are sitting in; the barrier is on writing. */
     var session = sessionService.assertUserHasAccess(sessionId, authenticatedUser);
 
     try {
@@ -316,11 +302,6 @@ public class MatrixMessageController {
       @PathVariable Long sessionId, @RequestParam("file") MultipartFile file) {
 
     var roomAccess = resolveAuthorizedMatrixRoom(sessionId);
-    /* An attachment is a message. Same barrier, same reason — and outside the try,
-    so the 409 reaches the caller instead of being swallowed into a 500. */
-    roomAccess
-        .map(MatrixRoomAccess::getSession)
-        .ifPresent(sessionWriteConsentGuard::verifyMayWrite);
 
     try {
       log.info("📤 Upload request for session {}, file: {}", sessionId, file.getOriginalFilename());

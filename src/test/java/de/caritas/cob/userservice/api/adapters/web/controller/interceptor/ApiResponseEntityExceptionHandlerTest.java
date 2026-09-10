@@ -9,7 +9,6 @@ import static org.mockito.Mockito.verify;
 import de.caritas.cob.userservice.api.admin.service.consultant.TransactionalStep;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ConsentNotRecordedException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CreateEnquiryMessageException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
@@ -202,11 +201,6 @@ class ApiResponseEntityExceptionHandlerTest {
         HttpStatus.CONFLICT,
         handler.handleCustomConflict(new ConflictException("c"), request).getStatusCode());
     assertEquals(
-        HttpStatus.CONFLICT,
-        handler
-            .handleConsentNotRecorded(new ConsentNotRecordedException("c"), request)
-            .getStatusCode());
-    assertEquals(
         HttpStatus.FORBIDDEN,
         handler.handleForbidden(new ForbiddenException("f"), request).getStatusCode());
     assertEquals(
@@ -221,24 +215,6 @@ class ApiResponseEntityExceptionHandlerTest {
     assertEquals(
         HttpStatus.NO_CONTENT,
         handler.handleInternal(new NoContentException("none"), request).getStatusCode());
-  }
-
-  @Test
-  void consentConflict_carriesAReasonTheAlreadyTakenConflictDoesNot() {
-    /* The field complaint behind ADR-018 §9 (rewritten 2026-09-07): both a missing
-    consent and "somebody else has already taken this enquiry" answer 409, and the
-    frontend showed the wrong sentence. Only the consent conflict carries
-    X-Reason, so the absence of one is itself the signal. */
-    var consent = handler.handleConsentNotRecorded(new ConsentNotRecordedException("c"), request);
-    var alreadyTaken = handler.handleCustomConflict(new ConflictException("taken"), request);
-
-    assertEquals(
-        HttpStatusExceptionReason.DATA_PRIVACY_CONSENT_MISSING.name(),
-        consent.getHeaders().getFirst("X-Reason"));
-    assertEquals(
-        Map.of("reason", HttpStatusExceptionReason.DATA_PRIVACY_CONSENT_MISSING.name()),
-        consent.getBody());
-    assertNull(alreadyTaken.getHeaders().getFirst("X-Reason"));
   }
 
   @Test

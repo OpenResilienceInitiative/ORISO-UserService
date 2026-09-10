@@ -111,12 +111,12 @@ public class AssignEnquiryFacade {
    * @param consultant the consultant to assign
    */
   public void assignAnonymousEnquiry(Session session, Consultant consultant) {
-    /* No consent check here, deliberately, and it must not come back (ADR-018 §9,
-    rewritten 2026-09-07). The entry room reveals the counselling centre only once
-    the case has been accepted, so it asks for consent only after acceptance —
-    a guard on the assignment made every anonymous live chat impossible: the
-    counsellor got a 409 and the advice seeker waited forever. The barrier now
-    sits on the write path, in SessionWriteConsentGuard. */
+    /* Consent is deliberately not an assignment precondition. The advice seeker is informed in
+    the entry room after the counselling centre is known and decides whether to continue at their
+    own risk when that centre has no published policy. A server-side assignment guard created a
+    deadlock: the centre had to accept before its notice could be shown, while acceptance required
+    the notice to have been accepted. The current product decision is disclosure, not a write or
+    assignment lock. */
     assignEnquiry(session, consultant);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
   }

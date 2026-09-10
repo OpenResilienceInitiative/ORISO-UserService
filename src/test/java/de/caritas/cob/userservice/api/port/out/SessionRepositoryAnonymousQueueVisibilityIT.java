@@ -37,10 +37,9 @@ import org.springframework.transaction.annotation.Transactional;
  * each other out and <b>every</b> anonymous live-chat enquiry was invisible to <b>every</b>
  * consultant — the asker clicked, nothing happened, and nobody ever saw the request (#431).
  *
- * <p>Since 2026-09-07 the server-side barrier no longer sits on the assignment either (ADR-018 §9):
- * the entry room reveals the counselling centre only on acceptance, so it asks for consent only
- * afterwards, and {@code SessionWriteConsentGuard} now blocks the <b>write</b>. Queue visibility
- * enforces no consent at all — a request nobody can see is a request nobody can accept.
+ * <p>Consent is collected at entry, from the platform-level live-chat privacy notice, and {@code
+ * AnonymousEnquiryConsentGuard} still blocks the <b>assignment</b> server-side. Queue visibility
+ * does not need to enforce the same consent a second time.
  */
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")

@@ -18,11 +18,5 @@ public enum HttpStatusExceptionReason {
   TENANT_LICENSING_NOT_CONFIGURED,
   PASSWORD_NOT_VALID,
   CONSULTANT_IDENTITY_ALREADY_GRANTED,
-  ROLE_NOT_FOUND,
-  /**
-   * The advice seeker of this counselling room has not confirmed the data protection notice yet, so
-   * nothing may be written into it. Distinct from the other 409 on the same flows — "somebody else
-   * already took this enquiry" — which carries no reason at all.
-   */
-  DATA_PRIVACY_CONSENT_MISSING
+  ROLE_NOT_FOUND
 }
