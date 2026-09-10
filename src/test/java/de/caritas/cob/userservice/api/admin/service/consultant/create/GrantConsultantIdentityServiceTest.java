@@ -29,6 +29,8 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import java.util.List;
 import java.util.Optional;
@@ -43,6 +45,24 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class GrantConsultantIdentityServiceTest {
+  @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
+
+  @org.junit.jupiter.api.BeforeEach
+  void recoveryPolicyFixture() {
+    org.mockito.Mockito.lenient()
+        .when(chatRecoveryEnrollmentPolicyService.forNewAsker(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
+    org.mockito.Mockito.lenient()
+        .when(
+            chatRecoveryEnrollmentPolicyService.forNewConsultant(
+                org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
+    org.mockito.Mockito.lenient()
+        .when(
+            chatRecoveryEnrollmentPolicyService.forExistingIdentity(
+                org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new RecoveryPolicySnapshot("RECOVERY_KEY", 0));
+  }
 
   private static final String ADMIN_ID = "admin-uuid-1";
   private static final String ADMIN_USERNAME = "adminUsername";
@@ -154,6 +174,8 @@ class GrantConsultantIdentityServiceTest {
     verify(consultantService).saveConsultant(consultantCaptor.capture());
     Consultant saved = consultantCaptor.getValue();
     assertThat(saved.getId(), is(ADMIN_ID));
+    assertThat(saved.getChatRecoveryMode(), is("RECOVERY_KEY"));
+    assertThat(saved.getChatRecoveryPolicyRevision(), is(0L));
     assertThat(saved.getEmail(), is("admin@example.com"));
     // create/update dates must be set explicitly: liquibase-created schemas have
     // no column default and reject NULL (found on the local clean-slate stack).

@@ -154,6 +154,8 @@ class AskerDataProviderTest {
 
     UserDataResponseDTO resultUser = askerDataProvider.retrieveData(USER);
 
+    assertEquals("RECOVERY_KEY", resultUser.getChatRecoveryMode());
+    assertEquals(0L, resultUser.getChatRecoveryPolicyRevision());
     assertNotNull(resultUser.getEmail());
     assertEquals(resultUser.getEmail(), USER.getEmail());
   }

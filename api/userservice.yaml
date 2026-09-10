@@ -2594,6 +2594,14 @@ components:
     UserDataResponseDTO:
       type: object
       properties:
+        chatRecoveryMode:
+          type: string
+          enum: [RECOVERY_KEY, LOGIN_PASSWORD]
+          readOnly: true
+        chatRecoveryPolicyRevision:
+          type: integer
+          format: int64
+          readOnly: true
         userId:
           type: string
           example: ajsd89-sdf9-sadk-as8j-asdf8jo

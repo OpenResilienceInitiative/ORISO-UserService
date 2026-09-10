@@ -173,4 +173,5 @@
   <include
     file="db/changelog/changeset/0059_case_handover_reason_policy_repair/0059_changeSet.xml" />
 
+  <include file="db/changelog/changeset/20260910_chat_recovery_policy/changeSet.xml"/>
 </databaseChangeLog>

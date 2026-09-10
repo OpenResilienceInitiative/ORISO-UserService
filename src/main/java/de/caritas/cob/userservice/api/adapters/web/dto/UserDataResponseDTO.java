@@ -26,6 +26,12 @@ public class UserDataResponseDTO {
   @ApiModelProperty(example = "ajsd89-sdf9-sadk-as8j-asdf8jo")
   private String userId;
 
+  @ApiModelProperty(readOnly = true)
+  private String chatRecoveryMode;
+
+  @ApiModelProperty(readOnly = true)
+  private Long chatRecoveryPolicyRevision;
+
   @ApiModelProperty(example = "max.muster", position = 1)
   @JsonSerialize(using = DecodeUsernameJsonSerializer.class)
   private String userName;
