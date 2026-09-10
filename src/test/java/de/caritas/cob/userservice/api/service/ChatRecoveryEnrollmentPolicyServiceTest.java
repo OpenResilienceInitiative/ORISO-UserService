@@ -37,7 +37,9 @@ class ChatRecoveryEnrollmentPolicyServiceTest {
     assertEquals(
         new ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot("LOGIN_PASSWORD", 7),
         service.forNewConsultant(null));
-    assertEquals("RECOVERY_KEY", service.forNewAsker(null).mode());
+    assertEquals(
+        new ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot("RECOVERY_KEY", 7),
+        service.forNewAsker(null));
     verify(tenants, times(2)).getSingleTenancyTenantDataFresh();
     verify(tenants, never()).getRestrictedTenantDataFresh(any());
   }

@@ -169,6 +169,8 @@ class UserControllerE2EIT {
 
   @Autowired private MockMvc mockMvc;
 
+  @Autowired private jakarta.persistence.EntityManager entityManager;
+
   @Autowired private ObjectMapper objectMapper;
 
   @Autowired private UsernameTranscoder usernameTranscoder;
@@ -323,12 +325,9 @@ class UserControllerE2EIT {
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
   void getUserDataReturnsUserLegacyRecoveryPolicy() throws Exception {
     givenABearerToken();
-    givenAValidUser();
+    givenNewUserWithRecoveryPolicy(null, null);
     givenConsultingTypeServiceResponse();
     givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
-    user.setChatRecoveryMode(null);
-    user.setChatRecoveryPolicyRevision(null);
-    userRepository.save(user);
     mockMvc
         .perform(
             get("/users/data")
@@ -344,12 +343,9 @@ class UserControllerE2EIT {
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
   void getUserDataReturnsUserStoredRecoveryPolicy() throws Exception {
     givenABearerToken();
-    givenAValidUser();
+    givenNewUserWithRecoveryPolicy("LOGIN_PASSWORD", 7L);
     givenConsultingTypeServiceResponse();
     givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
-    user.setChatRecoveryMode("LOGIN_PASSWORD");
-    user.setChatRecoveryPolicyRevision(7L);
-    userRepository.save(user);
     mockMvc
         .perform(
             get("/users/data")
@@ -365,12 +361,9 @@ class UserControllerE2EIT {
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
   void getUserDataReturnsConsultantLegacyRecoveryPolicy() throws Exception {
     givenABearerToken();
-    givenAValidConsultant();
+    givenNewConsultantWithRecoveryPolicy(null, null);
     givenConsultingTypeServiceResponse();
     givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
-    consultant.setChatRecoveryMode(null);
-    consultant.setChatRecoveryPolicyRevision(null);
-    consultantRepository.save(consultant);
     mockMvc
         .perform(
             get("/users/data")
@@ -386,12 +379,9 @@ class UserControllerE2EIT {
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
   void getUserDataReturnsConsultantStoredRecoveryPolicy() throws Exception {
     givenABearerToken();
-    givenAValidConsultant();
+    givenNewConsultantWithRecoveryPolicy("LOGIN_PASSWORD", 7L);
     givenConsultingTypeServiceResponse();
     givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
-    consultant.setChatRecoveryMode("LOGIN_PASSWORD");
-    consultant.setChatRecoveryPolicyRevision(7L);
-    consultantRepository.save(consultant);
     mockMvc
         .perform(
             get("/users/data")
@@ -1917,6 +1907,61 @@ class UserControllerE2EIT {
     var tokenManager = mock(TokenManager.class);
     when(tokenManager.getAccessTokenString()).thenReturn(RandomStringUtils.randomAlphanumeric(255));
     when(keycloak.tokenManager()).thenReturn(tokenManager);
+  }
+
+  private void givenNewUserWithRecoveryPolicy(String mode, Long revision) {
+    givenAValidUser();
+    user =
+        User.builder()
+            .userId(java.util.UUID.randomUUID().toString())
+            .username("recovery-asker-fixture")
+            .email("recovery-asker@example.test")
+            .tenantId(user.getTenantId())
+            .encourage2fa(false)
+            .magicLinkLoginEnabled(false)
+            .languageCode(LanguageCode.de)
+            .chatRecoveryMode(mode)
+            .chatRecoveryPolicyRevision(revision)
+            .build();
+    entityManager.persist(user);
+    entityManager.flush();
+    entityManager.clear();
+    user = userRepository.findById(user.getUserId()).orElseThrow();
+    assertThat(user.getChatRecoveryMode()).isEqualTo(mode);
+    assertThat(user.getChatRecoveryPolicyRevision()).isEqualTo(revision);
+    when(authenticatedUser.getUserId()).thenReturn(user.getUserId());
+    when(authenticatedUser.getUsername()).thenReturn(user.getUsername());
+    entityManager.clear();
+  }
+
+  private void givenNewConsultantWithRecoveryPolicy(String mode, Long revision) {
+    givenAValidConsultant();
+    consultant =
+        Consultant.builder()
+            .id(java.util.UUID.randomUUID().toString())
+            .username("recovery-consultant-fixture")
+            .email("recovery-consultant@example.test")
+            .firstName("Recovery")
+            .lastName("Fixture")
+            .notifyEnquiriesRepeating(false)
+            .notifyNewChatMessageFromAdviceSeeker(false)
+            .walkThroughEnabled(false)
+            .tenantId(consultant.getTenantId())
+            .encourage2fa(false)
+            .magicLinkLoginEnabled(false)
+            .languageCode(LanguageCode.de)
+            .chatRecoveryMode(mode)
+            .chatRecoveryPolicyRevision(revision)
+            .build();
+    entityManager.persist(consultant);
+    entityManager.flush();
+    entityManager.clear();
+    consultant = consultantRepository.findById(consultant.getId()).orElseThrow();
+    assertThat(consultant.getChatRecoveryMode()).isEqualTo(mode);
+    assertThat(consultant.getChatRecoveryPolicyRevision()).isEqualTo(revision);
+    when(authenticatedUser.getUserId()).thenReturn(consultant.getId());
+    when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
+    entityManager.clear();
   }
 
   private void givenAValidConsultant() {
