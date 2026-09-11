@@ -99,6 +99,18 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
+  @Query(
+      "SELECT COUNT(i) FROM AccountInvite i"
+          + " WHERE LOWER(i.recipientEmail) = :recipientEmail"
+          + " AND i.id <> :excludedInviteId"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  long countNonTerminalInvitesForRecipientEmailExcludingId(
+      @Param("recipientEmail") String recipientEmail,
+      @Param("excludedInviteId") Long excludedInviteId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
   /**
    * Materializes elapsed address-holding rows before a new claim is inserted. Without this update,
    * the date-aware availability query would allow a retry while the unique recipient key still

@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import java.util.ArrayList;
@@ -65,6 +66,7 @@ class AccountInviteReservationOrchestrationIT {
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
+  @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
 
   // TEN-INV-U6 collaborators of the send path — not exercised by these creation-focused tests.
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
