@@ -807,6 +807,124 @@ public class EventNotificationService {
             null));
   }
 
+  /** Keeps invite identity stable across repeated sync batches and application restarts. */
+  @Transactional
+  public void createCallInvitationNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String senderId,
+      String callId,
+      String mediaRoomId,
+      boolean video) {
+    var params = session.notificationParams();
+    params.put("callId", callId);
+    params.put("callRoomId", mediaRoomId);
+    params.put("callType", video ? "video" : "audio");
+    params.put("callerName", resolveSenderName(senderId));
+    String sourceRoom = session.getMatrixRoomId();
+    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
+    String key;
+    try {
+      key =
+          "call.invited:"
+              + java.util.HexFormat.of()
+                  .formatHex(
+                      java.security.MessageDigest.getInstance("SHA-256")
+                          .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 unavailable", impossible);
+    }
+    createEventOnce(
+        key,
+        recipientId,
+        "call.invited",
+        CATEGORY_SYSTEM,
+        "Call invitation",
+        "You were invited to a call.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  @Transactional
+  public void createCallEndedNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String callId,
+      String mediaRoomId,
+      long startedAt,
+      long endedAt) {
+    var params = session.notificationParams();
+    params.put("callId", callId);
+    params.put("callRoomId", mediaRoomId);
+    params.put("durationSeconds", Long.toString(Math.max(0, endedAt - startedAt) / 1000));
+    String sourceRoom = session.getMatrixRoomId();
+    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
+    String key;
+    try {
+      key =
+          "call.ended:"
+              + java.util.HexFormat.of()
+                  .formatHex(
+                      java.security.MessageDigest.getInstance("SHA-256")
+                          .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 unavailable", impossible);
+    }
+    createEventOnce(
+        key,
+        recipientId,
+        "call.ended",
+        CATEGORY_SYSTEM,
+        "Call ended",
+        "The call has ended.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
+  @Transactional
+  public void createCallMissedNotification(
+      de.caritas.cob.userservice.api.service.matrix.MatrixCallConversation session,
+      String recipientId,
+      boolean consultantRecipient,
+      String callId,
+      String mediaRoomId,
+      boolean video) {
+    var params = session.notificationParams();
+    params.put("callId", callId);
+    params.put("callRoomId", mediaRoomId);
+    params.put("callType", video ? "video" : "audio");
+    String sourceRoom = session.getMatrixRoomId();
+    String identity = sourceRoom.length() + ":" + sourceRoom + ":" + callId;
+    String key;
+    try {
+      key =
+          "call.missed:"
+              + java.util.HexFormat.of()
+                  .formatHex(
+                      java.security.MessageDigest.getInstance("SHA-256")
+                          .digest(identity.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+    } catch (java.security.NoSuchAlgorithmException impossible) {
+      throw new IllegalStateException("SHA-256 unavailable", impossible);
+    }
+    createEventOnce(
+        key,
+        recipientId,
+        "call.missed",
+        CATEGORY_SYSTEM,
+        "Missed call",
+        "You missed a call.",
+        serializeParams(params),
+        session.actionPath(consultantRecipient),
+        session.getSessionId(),
+        session.getTenantId());
+  }
+
   /** Persists an event at most once for a producer-owned key and recipient. */
   @Transactional
   public void createEventOnce(

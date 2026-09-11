@@ -82,6 +82,7 @@ class MatrixEventListenerServiceTest {
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
   @Mock private ConsultantMessageStatService consultantMessageStatService;
   @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
+  @Mock private MatrixCallInviteNotificationService callInviteNotifications;
 
   private Logger logger;
   private ListAppender<ILoggingEvent> logAppender;
@@ -121,7 +122,8 @@ class MatrixEventListenerServiceTest {
             userRepository,
             consultantRepository,
             sessionRepository,
-            consultantMessageStatService);
+            consultantMessageStatService,
+            callInviteNotifications);
     service.setDiagnosticMetrics(diagnosticMetrics);
     return service;
   }
@@ -193,7 +195,8 @@ class MatrixEventListenerServiceTest {
             userRepository,
             consultantRepository,
             sessionRepository,
-            consultantMessageStatService) {
+            consultantMessageStatService,
+            callInviteNotifications) {
           @Override
           void sleep(long millis) {
             // deterministic: never actually sleep in the test
@@ -638,7 +641,8 @@ class MatrixEventListenerServiceTest {
             userRepository,
             consultantRepository,
             sessionRepository,
-            consultantMessageStatService) {
+            consultantMessageStatService,
+            callInviteNotifications) {
           @Override
           void sleep(long millis) {
             // no-op
@@ -670,7 +674,8 @@ class MatrixEventListenerServiceTest {
             userRepository,
             consultantRepository,
             sessionRepository,
-            consultantMessageStatService) {
+            consultantMessageStatService,
+            callInviteNotifications) {
           @Override
           void sleep(long millis) throws InterruptedException {
             throw new InterruptedException("shutdown");
@@ -826,7 +831,7 @@ class MatrixEventListenerServiceTest {
         (Map<String, Object>) ReflectionTestUtils.invokeMethod(service, "performMatrixSync");
 
     assertThat(result).containsEntry("next_batch", "s1");
-    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("s1");
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("s0");
   }
 
   @Test

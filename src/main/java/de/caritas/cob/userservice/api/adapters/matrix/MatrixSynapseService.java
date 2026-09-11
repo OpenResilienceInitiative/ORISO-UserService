@@ -1045,6 +1045,38 @@ public class MatrixSynapseService implements MatrixUserClient {
     return joinRoom(roomId, adminToken);
   }
 
+  /** Reads the call binding with a currently joined caller's authority, without joining admin. */
+  public java.util.Optional<java.util.Map<String, Object>> getCallRoomBinding(
+      String roomId, String memberMatrixUserId) {
+    if (roomId == null
+        || roomId.isBlank()
+        || memberMatrixUserId == null
+        || !getRoomMembers(roomId)
+            .map(members -> members.contains(memberMatrixUserId))
+            .orElse(false)) {
+      return java.util.Optional.empty();
+    }
+    String token = loginAsUserAccessToken(memberMatrixUserId);
+    if (token == null) return java.util.Optional.empty();
+    try {
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_matrix/client/v3/rooms/{roomId}/state/org.oriso.call.binding",
+              java.util.Map.of("roomId", roomId));
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(getClientHttpHeaders(token)),
+              new org.springframework.core.ParameterizedTypeReference<
+                  java.util.Map<String, Object>>() {});
+      return java.util.Optional.ofNullable(response.getBody());
+    } catch (org.springframework.web.client.RestClientException unavailable) {
+      return java.util.Optional.empty();
+    }
+  }
+
   /**
    * Leaves a Matrix room with the given user's own access token.
    *
