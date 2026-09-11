@@ -33,6 +33,7 @@ class ReplicaSafetyInventoryContractTest {
           "tenant-admin-cache",
           "topics-cache",
           "operator-dpa-content-cache",
+          "account-invite-reservation-release-scheduler",
           "appointment-cleanup-scheduler",
           "enquiry-notification-scheduler",
           "group-chat-deactivation-scheduler",
