@@ -11,11 +11,13 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.annotation.Profile;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /** Replica-safe retry worker for reservation releases left pending by failed direct sends. */
 @Component
+@Profile("!testing")
 @RequiredArgsConstructor
 @Slf4j
 public class IdReservationReleaseScheduler {
