@@ -329,6 +329,25 @@ class AccountInviteDirectSendAtomicIT {
   }
 
   @Test
+  void createInvite_ShouldExpireClaimedDraftThatWasNeverOpenedAndPermitReinvite() {
+    AccountInvite expiredDraft = persistedInvite(AccountInviteStatus.DRAFT, RECIPIENT);
+    expiredDraft.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+    expiredDraft.setActiveRecipientKey(RECIPIENT);
+    expiredDraft = accountInviteRepository.saveAndFlush(expiredDraft);
+
+    AccountInvite replacement = service.createInvite(counsellorInvite("Ada"));
+
+    assertThat(accountInviteRepository.findById(expiredDraft.getId()))
+        .get()
+        .satisfies(
+            invite -> {
+              assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+              assertThat(invite.getActiveRecipientKey()).isNull();
+            });
+    assertThat(replacement.getActiveRecipientKey()).isEqualTo(RECIPIENT);
+  }
+
+  @Test
   void acceptInvite_ShouldCommitExpiredStateAndReleaseRecipientClaim() {
     String rawToken = "expired-invite-token";
     AccountInvite expired = persistedInvite(AccountInviteStatus.EMAIL_SENT, RECIPIENT);
