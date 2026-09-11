@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -105,7 +106,7 @@ class AccountInviteDirectSendAtomicIT {
   void directSend_ShouldRollbackInviteWhenSmtpRejects_AndPermitExactlyOneRetry() {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://example.org/invite/token");
-    doThrow(new SmtpSendException("SMTP refused the message"))
+    doThrow(confirmedRejection())
         .doReturn(
             new de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt(
                 RECIPIENT, java.time.Instant.parse("2026-09-10T10:00:00Z")))
@@ -135,7 +136,7 @@ class AccountInviteDirectSendAtomicIT {
     when(agencyIdAllocationClient.getAvailability(23L)).thenReturn(IdAllocationStatus.RESERVED);
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenReturn("https://example.org/invite/token");
-    doThrow(new SmtpSendException("SMTP refused the message"))
+    doThrow(confirmedRejection())
         .when(inviteMailDispatchService)
         .send(any(), any(), any(), any(), any(), any());
 
@@ -145,6 +146,38 @@ class AccountInviteDirectSendAtomicIT {
     assertThat(accountInviteRepository.count()).isZero();
     verify(tenantIdAllocationClient).release(17L);
     verify(agencyIdAllocationClient).release(23L);
+  }
+
+  @Test
+  void directSend_ShouldKeepClaimWhenSmtpDeliveryIsUncertain_AndBlockRetry() {
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
+        .thenReturn("https://example.org/invite/token");
+    doThrow(
+            new SmtpSendException(
+                SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+                SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN,
+                "SMTP connection closed after DATA"))
+        .when(inviteMailDispatchService)
+        .send(any(), any(), any(), any(), any(), any());
+
+    assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminInvite(), templateId))
+        .isInstanceOf(SmtpSendException.class);
+
+    assertThat(accountInviteRepository.findAll())
+        .singleElement()
+        .satisfies(
+            invite -> {
+              assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+              assertThat(invite.getTokenHash()).isNotBlank();
+              assertThat(invite.getActiveRecipientKey()).isEqualTo(RECIPIENT);
+            });
+    verify(tenantIdAllocationClient, never()).release(17L);
+
+    assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminInvite(), templateId))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException.class);
+    verify(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -225,6 +258,13 @@ class AccountInviteDirectSendAtomicIT {
         30L,
         IdAllocationMode.AUTO,
         null);
+  }
+
+  private static SmtpSendException confirmedRejection() {
+    return new SmtpSendException(
+        SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+        SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+        "SMTP refused the message");
   }
 
   private CreateAccountInviteCommand tenantAdminAgencyInvite() {

@@ -170,7 +170,8 @@ public class AccountInviteService {
   }
 
   /**
-   * Commits the address claim and usable token before SMTP, then compensates pre-dispatch errors.
+   * Commits the address claim and usable token before SMTP. Confirmed pre-dispatch failures are
+   * compensated; ambiguous transport failures retain the claim so a retry cannot duplicate mail.
    */
   public InviteSendResult createAndSendInvite(CreateAccountInviteCommand command, Long templateId) {
     DirectInviteDispatch dispatch;
@@ -222,9 +223,17 @@ public class AccountInviteService {
               dispatch.acceptUrl(),
               dispatch.invite().getTenantId(),
               dispatch.template().getLanguage());
-    } catch (SmtpSendException beforeDispatch) {
-      releaseDirectInviteClaim(dispatch.invite(), command, beforeDispatch);
-      throw beforeDispatch;
+    } catch (SmtpSendException sendFailure) {
+      if (sendFailure.isConfirmedNotSent()) {
+        releaseDirectInviteClaim(dispatch.invite(), command, sendFailure);
+      } else {
+        log.warn(
+            "Direct invite {} has an uncertain SMTP delivery outcome; keeping the claim to prevent"
+                + " a duplicate send",
+            dispatch.invite().getId(),
+            sendFailure);
+      }
+      throw sendFailure;
     }
 
     InviteEmailDelivery pendingDelivery =
