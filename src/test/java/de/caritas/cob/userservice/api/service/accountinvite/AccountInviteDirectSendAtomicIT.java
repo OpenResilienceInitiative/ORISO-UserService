@@ -96,6 +96,7 @@ class AccountInviteDirectSendAtomicIT {
 
   @AfterEach
   void cleanUp() {
+    deliveryRepository.deleteAll();
     accountInviteRepository.deleteAll();
     templateRepository.deleteAll();
   }
