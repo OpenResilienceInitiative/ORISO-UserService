@@ -20,6 +20,16 @@ public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
   }
 
   @Test
+  public void updateConsultant_Should_persistPersonalInfo_With_nullUntouchedAndBlankClearing() {
+    super.updateConsultant_Should_persistPersonalInfo_With_nullUntouchedAndBlankClearing();
+  }
+
+  @Test
+  public void updateConsultant_Should_persistBothDisplayNames_With_nullUntouchedAndBlankClearing() {
+    super.updateConsultant_Should_persistBothDisplayNames_With_nullUntouchedAndBlankClearing();
+  }
+
+  @Test
   public void updateConsultant_Should_throwCustomResponseException_When_absenceIsInvalid() {
     super.updateConsultant_Should_throwCustomResponseException_When_absenceIsInvalid();
   }

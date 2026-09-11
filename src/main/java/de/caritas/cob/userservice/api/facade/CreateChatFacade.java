@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -118,10 +119,15 @@ public class CreateChatFacade {
     log.info("Created session {} for group chat", sessionId);
 
     // Persist the Chat entity (needed for frontend - has topic field!)
-    // A Series is visible immediately, but its occurrence is opened explicitly by a counsellor.
-    // Keeping it inactive here preserves the Waiting Area and makes the opened lifecycle event
+    // A Series is visible immediately, but its occurrence is opened explicitly by a counsellor:
+    // keeping it inactive preserves the Waiting Area and makes the opened lifecycle event
     // observable exactly once through StartChatFacade.
-    chat.setActive(false);
+    //
+    // An internal team chat has no occurrence to open. It is a persistent room for colleagues,
+    // so there is nothing to wait for and nobody to open it for — creating it inactive sent
+    // counsellors into the askers' Waiting Area, countdown and all (#979). It is open on
+    // creation.
+    chat.setActive(ConversationType.INTERNAL_GROUP.equals(chat.getConversationType()));
     chat = chatService.saveChat(chat);
     Long chatId = chat.getId();
     log.info("Created chat {} for group chat", chatId);

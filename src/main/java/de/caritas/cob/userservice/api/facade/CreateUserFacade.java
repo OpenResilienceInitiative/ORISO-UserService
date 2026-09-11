@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.email.WelcomeEmailService;
 import de.caritas.cob.userservice.api.service.provisioning.CompensationResult;
 import de.caritas.cob.userservice.api.service.provisioning.ProvisioningAttempt;
 import de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensator;
@@ -70,6 +71,7 @@ public class CreateUserFacade {
   private final @NonNull CreateNewSessionFacade createNewSessionFacade;
   private final @NonNull StatisticsService statisticsService;
   private final @NonNull TopicService topicService;
+  private final @NonNull WelcomeEmailService welcomeEmailService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull SessionService sessionService;
   private final @NonNull ProvisioningCompensator provisioningCompensator;
@@ -160,6 +162,18 @@ public class CreateUserFacade {
       }
 
       activeAttempt.complete();
+
+      // The welcome mail carries the generated user name, which ORISO cannot
+      // recover. Sent after the attempt is marked complete and guarded here:
+      // @Async submission throws synchronously when the executor queue is
+      // full, and neither that nor a later bounce may undo a registration
+      // that has already succeeded.
+      try {
+        welcomeEmailService.sendWelcomeEmail(user, plainUsername);
+      } catch (Exception e) {
+        log.error("Could not schedule welcome mail", e);
+      }
+
       return registration.getSessionId();
     } finally {
       compensateProvisioning(provisioningAttempt);

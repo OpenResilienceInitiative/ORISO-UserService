@@ -70,7 +70,7 @@ public class AgencySilentMembershipService {
 
     int joined = 0;
     for (Consultant consultant : consultants) {
-      if (joinSilently(consultant, roomId, agencyToken)) {
+      if (joinConsultantIntoRoom(consultant, roomId, agencyToken)) {
         joined++;
       }
     }
@@ -84,7 +84,21 @@ public class AgencySilentMembershipService {
     return joined;
   }
 
-  private boolean joinSilently(Consultant consultant, String roomId, String agencyToken) {
+  /**
+   * Invites and joins a single counsellor into an already existing room, provisioning their Matrix
+   * account if they never had one.
+   *
+   * <p>Extracted for US#1060: a counsellor added to the agency after an enquiry arrived has to be
+   * backfilled into the enquiry rooms that already exist (see {@link
+   * AgencyLateJoinerMembershipService}), and that backfill needs exactly the same per-counsellor
+   * membership semantics as the at-creation fan-out.
+   *
+   * @param consultant the counsellor to join
+   * @param roomId the Matrix room to join them into
+   * @param agencyToken access token of the agency service account that owns the room
+   * @return whether the counsellor ended up joined
+   */
+  public boolean joinConsultantIntoRoom(Consultant consultant, String roomId, String agencyToken) {
     try {
       var matrixUserId = ensureMatrixAccount(consultant);
       if (isBlank(matrixUserId)) {

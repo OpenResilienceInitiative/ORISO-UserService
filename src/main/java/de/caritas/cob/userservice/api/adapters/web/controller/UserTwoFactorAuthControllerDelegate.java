@@ -9,7 +9,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import java.util.Locale;
 import lombok.NonNull;
@@ -23,7 +23,7 @@ import org.springframework.stereotype.Component;
 class UserTwoFactorAuthControllerDelegate {
 
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull IdentityPolicy identityPolicy;
   private final @NonNull IdentityManaging identityManager;
   private final @NonNull AccountManaging accountManager;
   private final @NonNull AccountInviteService accountInviteService;
@@ -99,7 +99,7 @@ class UserTwoFactorAuthControllerDelegate {
    * disabled cannot sidestep the policy by choosing the email flow.
    */
   private void assertTwoFactorAuthAllowed() {
-    if (!identityClientConfig.isOtpAllowed(authenticatedUser.getRoles())) {
+    if (!identityPolicy.isTwoFactorAuthenticationAllowed(authenticatedUser.getRoles())) {
       throw new ConflictException("2FA is disabled for user role");
     }
   }

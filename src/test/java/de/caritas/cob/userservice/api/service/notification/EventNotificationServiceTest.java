@@ -6,10 +6,12 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.fasterxml.jackson.databind.JsonNode;
@@ -70,6 +72,70 @@ class EventNotificationServiceTest {
     when(session.getMatrixRoomId()).thenReturn(null);
     when(session.getMatrixRoomId()).thenReturn("!room-1:matrix.example");
     return session;
+  }
+
+  // ---------------------------------------------------------------------------
+  // buildCaseHandoverParams (#1010 task 1a)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void buildCaseHandoverParams_carriesTheFieldsTheClientNeedsToRenderTheCard() throws Exception {
+    Session session = sessionMock();
+
+    String params =
+        eventNotificationService.buildCaseHandoverParams(
+            session, "Dr. Muster", "COUNSELLOR_IS_ILL", "Counsellor is ill", 88L);
+
+    JsonNode parsed = objectMapper.readTree(params);
+    assertThat(parsed.get("sessionId").asLong()).isEqualTo(100L);
+    assertThat(parsed.get("roomRef").asText()).isEqualTo("!room-1:matrix.example");
+    assertThat(parsed.get("requesterName").asText()).isEqualTo("Dr. Muster");
+    assertThat(parsed.get("reasonCode").asText()).isEqualTo("COUNSELLOR_IS_ILL");
+    assertThat(parsed.get("reasonLabel").asText()).isEqualTo("Counsellor is ill");
+    assertThat(parsed.get("caseHandoverRequestId").asLong()).isEqualTo(88L);
+  }
+
+  /**
+   * The params object is the replacement for the stored English sentence, so it must stay a set of
+   * known keys. Nothing here may become a channel for the free text task 1a removed.
+   */
+  @Test
+  void buildCaseHandoverParams_carriesNothingBeyondTheKnownKeys() throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverParams(
+                sessionMock(), "Dr. Muster", "COUNSELLOR_IS_ILL", "Counsellor is ill", 88L));
+
+    assertThat(parsed.fieldNames())
+        .toIterable()
+        .containsExactlyInAnyOrder(
+            "sessionId",
+            "roomRef",
+            "requesterName",
+            "reasonCode",
+            "reasonLabel",
+            "caseHandoverRequestId");
+  }
+
+  @Test
+  void buildCaseHandoverParams_omitsAbsentValuesRatherThanWritingNulls() throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverParams(
+                sessionMock(), "Dr. Muster", null, null, null));
+
+    assertThat(parsed.has("reasonCode")).isFalse();
+    assertThat(parsed.has("reasonLabel")).isFalse();
+    assertThat(parsed.has("caseHandoverRequestId")).isFalse();
+  }
+
+  @Test
+  void buildSessionScopedParams_carriesTheSessionReference() throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(eventNotificationService.buildSessionScopedParams(sessionMock()));
+
+    assertThat(parsed.get("sessionId").asLong()).isEqualTo(100L);
+    assertThat(parsed.get("roomRef").asText()).isEqualTo("!room-1:matrix.example");
   }
 
   // ---------------------------------------------------------------------------
@@ -227,6 +293,9 @@ class EventNotificationServiceTest {
             "callRoomId",
             "isVideo",
             "forcedScopeKey",
+            // #924: opaque Matrix event id, so a timeline card can correlate
+            // with the exact message. An identifier, never content.
+            "matrixEventId",
             // Content-only keys: not read by the frontend's action-target resolver
             // (parseEventActionParams drops them by design) — they are rendered via
             // the persisted title/text fallback. Listed here so the producer sweep
@@ -259,9 +328,31 @@ class EventNotificationServiceTest {
         session, "asker-1", "Sue Pervisor");
     eventNotificationService.createCounselorRenamedNotification(
         session, "asker-1", "Old Name", "New Name");
+    // Envelope-bearing producers emit `matrixEventId` and take the dedup path,
+    // so without this call and the second captor below the sweep would never
+    // see the one key #924 added.
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example",
+        "someone-else",
+        PrivacyEnvelope.builder()
+            .messageId("$event-1:matrix.example")
+            .contentClass("TEXT")
+            .build());
 
     verify(eventNotificationRepository, org.mockito.Mockito.atLeast(9)).save(eventCaptor.capture());
-    for (EventNotification saved : eventCaptor.getAllValues()) {
+    List<EventNotification> emitted = new java.util.ArrayList<>(eventCaptor.getAllValues());
+    ArgumentCaptor<EventNotification> dedupCaptor =
+        ArgumentCaptor.forClass(EventNotification.class);
+    verify(deduplicationWriter, org.mockito.Mockito.atLeastOnce())
+        .persistInNewTransaction(dedupCaptor.capture());
+    emitted.addAll(dedupCaptor.getAllValues());
+
+    assertTrue(
+        emitted.stream()
+            .anyMatch(
+                saved -> saved.getParams() != null && saved.getParams().contains("matrixEventId")),
+        "the sweep never exercised matrixEventId, so it proves nothing about that key");
+    for (EventNotification saved : emitted) {
       if (saved.getParams() == null) {
         continue;
       }
@@ -1089,7 +1180,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createMessageNotificationFromRoom_fullPreviewModeIncludesMessageBody() {
+  void createMessageNotificationFromRoom_fullPreviewModeNeverPersistsMessageBody() {
     ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
     Session session = sessionMock();
     User user = mock(User.class);
@@ -1105,7 +1196,8 @@ class EventNotificationServiceTest {
         "!room-1:matrix.example", "sender", "hello there");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
-    assertThat(eventCaptor.getValue().getText()).contains("hello there");
+    assertThat(eventCaptor.getValue().getText()).contains("sent a new message");
+    assertThat(eventCaptor.getValue().getText()).doesNotContain("hello there");
   }
 
   @Test
@@ -1245,6 +1337,34 @@ class EventNotificationServiceTest {
   }
 
   @Test
+  void getFeed_keepsLegacyMessageEventWithoutMatrixEventIdReadable() {
+    EventNotification legacy = new EventNotification();
+    legacy.setId(100L);
+    legacy.setEventType("message.new");
+    legacy.setCategory(EventNotificationService.CATEGORY_MESSAGE);
+    legacy.setTitle("New message");
+    legacy.setText("You received a new message.");
+    legacy.setParams(null);
+    legacy.setCreateDate(LocalDateTime.of(2026, 1, 1, 11, 0));
+    when(eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDescIdDesc(any(), any()))
+        .thenReturn(List.of(legacy));
+    when(eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(any())).thenReturn(1L);
+
+    var result = eventNotificationService.getFeed("user-1", 0, 10);
+
+    assertThat(result.getItems())
+        .singleElement()
+        .satisfies(
+            item -> {
+              assertThat(item.getParams()).isNull();
+              assertThat(item.getEventType()).isEqualTo("message.new");
+              assertThat(item.getTitle()).isEqualTo("New message");
+              assertThat(item.getText()).isEqualTo("You received a new message.");
+              assertThat(item.getCreatedAt()).isNotNull();
+            });
+  }
+
+  @Test
   void getFeed_setsReadAtNullWhenNotificationIsUnread() {
     EventNotification n = new EventNotification();
     n.setId(1L);
@@ -1293,7 +1413,7 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void createThreadReplyNotificationFromRoom_fullModeIncludesPreviewAndParentPreview() {
+  void createThreadReplyNotificationFromRoom_fullModeNeverPersistsPreviewOrParentPreview() {
     ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
     Session session = sessionMock();
     User user = mock(User.class);
@@ -1316,12 +1436,13 @@ class EventNotificationServiceTest {
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
-    assertThat(text).contains("my reply text");
-    assertThat(text).contains("parent message");
+    assertThat(text).contains("replied in a thread");
+    assertThat(text).doesNotContain("my reply text");
+    assertThat(text).doesNotContain("parent message");
   }
 
   @Test
-  void createThreadReplyNotificationFromRoom_fullModeEmptyPreviewFallsBackToMessageId() {
+  void createThreadReplyNotificationFromRoom_fullModeEmptyPreviewStaysGeneric() {
     ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
     Session session = sessionMock();
     User user = mock(User.class);
@@ -1339,7 +1460,7 @@ class EventNotificationServiceTest {
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
     assertThat(text).contains("replied in a thread");
-    assertThat(text).contains("n/a");
+    assertThat(text).doesNotContain("messageId");
   }
 
   // ---------------------------------------------------------------------------
@@ -1370,6 +1491,120 @@ class EventNotificationServiceTest {
   }
 
   @Test
+  void createMessageNotificationFromRoom_exposesOpaqueMatrixEventIdInParams() throws Exception {
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    PrivacyEnvelope envelope =
+        PrivacyEnvelope.builder().messageId("$event-1:matrix.example").contentClass("TEXT").build();
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example", "sender", envelope);
+
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
+    JsonNode params = objectMapper.readTree(eventCaptor.getValue().getParams());
+    assertThat(params.path("matrixEventId").asText()).isEqualTo("$event-1:matrix.example");
+  }
+
+  @Test
+  void createMessageNotificationFromRoom_deduplicatesSameMatrixEventForRecipient() {
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+    when(eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
+            org.mockito.ArgumentMatchers.eq("asker-1"), anyString()))
+        .thenReturn(false, true);
+    PrivacyEnvelope envelope =
+        PrivacyEnvelope.builder().messageId("$event-1:matrix.example").contentClass("TEXT").build();
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example", "sender", envelope);
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example", "sender", envelope);
+
+    verify(deduplicationWriter, times(1)).persistInNewTransaction(any(EventNotification.class));
+  }
+
+  @Test
+  void createMessageNotificationFromRoom_usesSharedEventKeyForDistinctRecipients() {
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    Consultant consultant = mock(Consultant.class);
+    when(consultant.getId()).thenReturn("consultant-1");
+    when(session.getUser()).thenReturn(user);
+    when(session.getConsultant()).thenReturn(consultant);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("external-sender"))
+        .thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("external-sender"))
+        .thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("external-sender"))
+        .thenReturn(Optional.empty());
+    PrivacyEnvelope envelope =
+        PrivacyEnvelope.builder().messageId("$shared-event").contentClass("TEXT").build();
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example", "external-sender", envelope);
+
+    verify(deduplicationWriter, times(2)).persistInNewTransaction(eventCaptor.capture());
+    assertThat(eventCaptor.getAllValues())
+        .extracting(EventNotification::getRecipientUserId)
+        .containsExactlyInAnyOrder("asker-1", "consultant-1");
+    assertThat(eventCaptor.getAllValues())
+        .extracting(EventNotification::getDeduplicationKey)
+        .containsOnly(eventCaptor.getAllValues().get(0).getDeduplicationKey());
+  }
+
+  @Test
+  void createMessageNotificationFromRoom_keepsOversizedEventIdInParamsWithoutDeduplicating()
+      throws Exception {
+    /*
+     * #942 chose to persist unconditionally when the deduplication key would
+     * exceed the column, rather than hashing it: an oversized key fails the
+     * insert with a truncation error that the dedup path misreads as "already
+     * persisted", which loses the notification outright.
+     *
+     * What #924 needs from that path is unchanged — the opaque event id must
+     * still reach the params, or the card has nothing to correlate against.
+     */
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+    String opaqueEventId = "$" + "event".repeat(100);
+    PrivacyEnvelope envelope =
+        PrivacyEnvelope.builder().messageId(opaqueEventId).contentClass("TEXT").build();
+
+    eventNotificationService.createMessageNotificationFromRoom(
+        "!room-1:matrix.example", "sender", envelope);
+
+    verifyNoInteractions(deduplicationWriter);
+    verify(eventNotificationRepository).save(eventCaptor.capture());
+    JsonNode params = objectMapper.readTree(eventCaptor.getValue().getParams());
+    assertThat(params.path("matrixEventId").asText()).isEqualTo(opaqueEventId);
+  }
+
+  @Test
   void createThreadReplyNotificationFromRoom_envelopeOverloadDelegatesAndCreatesNotification() {
     Session session = sessionMock();
     User user = mock(User.class);
@@ -1388,6 +1623,55 @@ class EventNotificationServiceTest {
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getEventType()).isEqualTo("thread.reply.new");
+    assertThat(eventCaptor.getValue().getText()).contains("file");
+  }
+
+  @Test
+  void createThreadReplyNotificationFromRoom_exposesOpaqueMatrixEventIdInParams() throws Exception {
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+
+    PrivacyEnvelope envelope =
+        PrivacyEnvelope.builder().messageId("$reply-1:matrix.example").contentClass("TEXT").build();
+
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        "!room-1:matrix.example", "sender", "$thread-root", envelope);
+
+    verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
+    JsonNode params = objectMapper.readTree(eventCaptor.getValue().getParams());
+    assertThat(params.path("matrixEventId").asText()).isEqualTo("$reply-1:matrix.example");
+  }
+
+  @Test
+  void createThreadReplyNotificationFromRoom_deduplicatesSameMatrixEventForRecipient() {
+    Session session = sessionMock();
+    User user = mock(User.class);
+    when(user.getUserId()).thenReturn("asker-1");
+    when(session.getUser()).thenReturn(user);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(userRepository.findByUserIdAndDeleteDateIsNull("sender")).thenReturn(Optional.empty());
+    when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
+    when(eventNotificationRepository.existsByRecipientUserIdAndDeduplicationKey(
+            org.mockito.ArgumentMatchers.eq("asker-1"), anyString()))
+        .thenReturn(false, true);
+    PrivacyEnvelope envelope =
+        PrivacyEnvelope.builder().messageId("$reply-1:matrix.example").contentClass("TEXT").build();
+
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        "!room-1:matrix.example", "sender", "$thread-root", envelope);
+    eventNotificationService.createThreadReplyNotificationFromRoom(
+        "!room-1:matrix.example", "sender", "$thread-root", envelope);
+
+    verify(deduplicationWriter, times(1)).persistInNewTransaction(any(EventNotification.class));
   }
 
   // ---------------------------------------------------------------------------
@@ -1487,7 +1771,7 @@ class EventNotificationServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void createMessageNotificationFromRoom_fullMode_truncatesLongPreviewAt117CharsWithEllipsis() {
+  void createMessageNotificationFromRoom_fullMode_doesNotPersistLongPreview() {
     ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
     Session session = sessionMock();
     User user = mock(User.class);
@@ -1505,7 +1789,7 @@ class EventNotificationServiceTest {
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
-    assertThat(text).contains("...");
+    assertThat(text).contains("sent a new message");
     assertThat(text).doesNotContain("A".repeat(118));
   }
 
@@ -1514,7 +1798,7 @@ class EventNotificationServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void createMessageNotificationFromRoom_fullMode_emptyPreviewFallsBackToMessageId() {
+  void createMessageNotificationFromRoom_fullMode_emptyPreviewKeepsEventIdOutOfText() {
     ReflectionTestUtils.setField(eventNotificationService, "notificationPreviewMode", "FULL");
     Session session = sessionMock();
     User user = mock(User.class);
@@ -1532,7 +1816,8 @@ class EventNotificationServiceTest {
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
-    assertThat(text).contains("evt-123");
+    assertThat(text).contains("sent a new message");
+    assertThat(text).doesNotContain("evt-123");
   }
 
   @Test

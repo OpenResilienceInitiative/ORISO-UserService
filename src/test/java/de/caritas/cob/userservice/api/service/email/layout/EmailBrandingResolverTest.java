@@ -4,7 +4,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
@@ -71,22 +70,33 @@ class EmailBrandingResolverTest {
         .isEqualTo("https://cdn.example.org/platform.png");
   }
 
-  /**
-   * Tenant theming may store an inline base64 image. {@code data:} URIs are blocked by Gmail and
-   * Outlook, so they must degrade to the wordmark rather than produce a broken image.
-   */
   @Test
-  void resolve_Should_ignoreBase64AndDataUriLogosAndFallBackToTheWordmark() {
-    givenNoTemplateAttributes();
+  void resolve_ShouldProxyStoredLogosThroughTheTenantsPublicBrandingEndpoint() {
     Theming base64Logo = new Theming();
     base64Logo.setLogo("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ");
     base64Logo.setAssociationLogo("data:image/png;base64,iVBORw0KGgo=");
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant("Nord", base64Logo));
+    RestrictedTenantDTO resolvedTenant = tenant("Nord", base64Logo);
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolvedTenant);
+    when(tenantTemplateSupplier.getTenantBaseUrl(resolvedTenant)).thenReturn("https://nord.org");
 
     EmailBranding branding = resolver("").resolve(7L);
 
-    assertThat(branding.logoUrl()).isNull();
-    assertThat(branding.hasLogo()).isFalse();
+    assertThat(branding.logoUrl())
+        .isEqualTo("https://nord.org/service/tenant/public/branding/logo");
+    assertThat(branding.hasLogo()).isTrue();
+  }
+
+  @Test
+  void resolve_ShouldUseThePlatformBrandingEndpointWhenNoTenantIsKnown() {
+    givenNoTemplateAttributes();
+    Theming platformTheming = new Theming();
+    platformTheming.setLogo("data:image/png;base64,iVBORw0KGgo=");
+    when(tenantService.getPlatformTenantData()).thenReturn(tenant("ORISO", platformTheming));
+
+    EmailBranding branding = resolver("").resolve(null);
+
+    assertThat(branding.logoUrl())
+        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/logo");
   }
 
   // --- colour ---------------------------------------------------------------------------
@@ -160,12 +170,12 @@ class EmailBrandingResolverTest {
   }
 
   @Test
-  void resolve_Should_notCallTenantService_When_NoTenantIdIsKnown() {
+  void resolve_ShouldLoadPlatformBranding_When_NoTenantIdIsKnown() {
     givenNoTemplateAttributes();
 
     resolver("").resolve(null);
 
-    verifyNoInteractions(tenantService);
+    org.mockito.Mockito.verify(tenantService).getPlatformTenantData();
   }
 
   // --- footer ---------------------------------------------------------------------------

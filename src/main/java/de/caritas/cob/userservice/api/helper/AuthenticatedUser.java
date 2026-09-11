@@ -78,6 +78,16 @@ public class AuthenticatedUser {
     return nonNull(roles) && roles.contains(UserRole.TENANT_ADMIN.getValue());
   }
 
+  /**
+   * Tenant-level admin access: tenant admins (single-tenant or tenant super admin) and platform
+   * admins (which always hold the tenant-admin role). Restricted agency admins never qualify. Used
+   * as the gate for consultant {@code adminRemarks} (#994).
+   */
+  @JsonIgnore
+  public boolean hasTenantLevelAdminRole() {
+    return isSingleTenantAdmin() || isTenantSuperAdmin();
+  }
+
   @JsonIgnore
   public boolean isPlatformAdmin() {
     return Long.valueOf(0L).equals(tenantId) && isAgencySuperAdmin() && isTenantSuperAdmin();

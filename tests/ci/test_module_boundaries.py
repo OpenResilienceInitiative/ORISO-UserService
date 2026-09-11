@@ -90,6 +90,53 @@ class ModuleBoundaryContractTest(unittest.TestCase):
             "application services or outbound adapters:\n" + "\n".join(offenders),
         )
 
+    def test_user_web_boundaries_do_not_import_outbound_identity_configuration(self):
+        """The web layer asks an application policy, it does not read provider config.
+
+        Reading `IdentityClientConfig` here put the OTP role rule, the consultant
+        display-name flag and the dummy-email suffix in the controllers, so each
+        caller re-derived the rule. This keeps the seam closed.
+        """
+        sources = [
+            CONTROLLERS / "UserController.java",
+            *CONTROLLERS.glob("User*ControllerDelegate.java"),
+        ]
+        forbidden_import = (
+            "import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;"
+        )
+        offenders = [
+            str(source.relative_to(ROOT))
+            for source in sources
+            if forbidden_import in source.read_text()
+        ]
+
+        self.assertEqual(
+            [],
+            offenders,
+            "User web adapters must ask an application-owned identity policy "
+            "instead of reading outbound identity configuration:\n"
+            + "\n".join(offenders),
+        )
+
+    def test_broad_identity_client_does_not_expose_role_membership_predicates(self):
+        """Role membership is read through the focused lookup, not the broad client.
+
+        `userHasRole` duplicated what `IdentityRoleLookup#findAllByUserId` already
+        returns, and `userHasAuthority` had no caller at all. Re-adding either would
+        put role policy back behind an outbound predicate the application cannot see.
+        """
+        identity_client = (
+            ROOT / "src/main/java/de/caritas/cob/userservice/api/port/out/IdentityClient.java"
+        )
+        source = identity_client.read_text()
+
+        for forbidden in ("userHasRole", "userHasAuthority"):
+            self.assertNotIn(
+                forbidden,
+                source,
+                f"IdentityClient must not expose {forbidden}; use IdentityRoleLookup",
+            )
+
     def test_session_module_depends_on_ports_not_chat_adapters(self):
         session_module = (
             ROOT

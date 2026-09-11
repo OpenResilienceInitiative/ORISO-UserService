@@ -33,6 +33,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.email.WelcomeEmailService;
 import de.caritas.cob.userservice.api.service.provisioning.ProvisioningCompensator;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
@@ -74,6 +75,7 @@ class CreateUserFacadeMatrixUserTest {
   @Mock private AgencyService agencyService;
   @Mock private SessionService sessionService;
   @Mock private ApplicationSettingsService applicationSettingsService;
+  @Mock private WelcomeEmailService welcomeEmailService;
 
   @Spy
   private ProvisioningCompensator provisioningCompensator =

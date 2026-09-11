@@ -121,6 +121,64 @@ public class CreateConsultantSagaTenantAwareIT {
   }
 
   @Test
+  public void createNewConsultant_Should_succeed_When_tenantHasNoConfiguredUserLimit() {
+    // Every tenant created through the invite flow has licensing_allowed_users = NULL — measured on
+    // Pre-Dev: only the seed tenant carries a limit. `allowedNumberOfUsers` was unboxed straight
+    // into a comparison, so creating the first consultant for such a tenant died with a
+    // NullPointerException and the admin saw a bare 500. No limit configured means no limit.
+    TenantContext.setCurrentTenant(1L);
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    var tenant =
+        new TenantDTO()
+            .licensing(new Licensing().allowedNumberOfUsers(null))
+            .settings(
+                new de.caritas.cob.userservice.tenantadminservice.generated.web.model.Settings()
+                    .featureGroupChatV2Enabled(false));
+    when(tenantAdminService.getTenantById(Mockito.anyLong())).thenReturn(tenant);
+
+    CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
+    createConsultantDTO.setUsername(VALID_USERNAME);
+    createConsultantDTO.setEmail(VALID_EMAILADDRESS);
+    createConsultantDTO.setIsGroupchatConsultant(false);
+    createConsultantDTO.setTenantId(1L);
+
+    ConsultantAdminResponseDTO consultant =
+        createConsultantSaga.createNewConsultant(createConsultantDTO);
+
+    assertThat(consultant.getEmbedded(), notNullValue());
+    assertThat(consultant.getEmbedded().getId(), notNullValue());
+    rollbackDBState();
+  }
+
+  @Test
+  public void createNewConsultant_Should_succeed_When_tenantHasNoLicensingBlockAtAll() {
+    // The previous guard was `assert nonNull(...)`, which Java disables at runtime unless -ea is
+    // passed — so it never protected anything in production.
+    TenantContext.setCurrentTenant(1L);
+    when(keycloakService.createUser(any(), anyString(), any()))
+        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    var tenant =
+        new TenantDTO()
+            .settings(
+                new de.caritas.cob.userservice.tenantadminservice.generated.web.model.Settings()
+                    .featureGroupChatV2Enabled(false));
+    when(tenantAdminService.getTenantById(Mockito.anyLong())).thenReturn(tenant);
+
+    CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
+    createConsultantDTO.setUsername(VALID_USERNAME);
+    createConsultantDTO.setEmail(VALID_EMAILADDRESS);
+    createConsultantDTO.setIsGroupchatConsultant(false);
+    createConsultantDTO.setTenantId(1L);
+
+    ConsultantAdminResponseDTO consultant =
+        createConsultantSaga.createNewConsultant(createConsultantDTO);
+
+    assertThat(consultant.getEmbedded(), notNullValue());
+    rollbackDBState();
+  }
+
+  @Test
   public void
       createNewConsultant_Should_addConsultantAndGroupChatConsultantRole_When_isGroupChatConsultantFlagIsEnabled() {
     // given

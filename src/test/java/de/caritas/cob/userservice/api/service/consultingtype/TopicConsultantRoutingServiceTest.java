@@ -8,6 +8,9 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.RoutingOutcome;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.RoutingStage;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
@@ -36,6 +39,7 @@ class TopicConsultantRoutingServiceTest {
   @Mock private ConsultantRepository consultantRepository;
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private ConsultantActivityRegistry consultantActivityRegistry;
+  @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
 
   @InjectMocks private TopicConsultantRoutingService service;
 
@@ -66,6 +70,8 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findAvailableConsultantIds(null);
 
     assertThat(result).isEmpty();
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.AVAILABILITY, RoutingOutcome.INVALID_TOPIC, 0);
     verify(consultantTopicRepository, never()).findConsultantIdsByTopicId(any());
   }
 
@@ -77,6 +83,10 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findAvailableConsultantIds(1L);
 
     assertThat(result).isEmpty();
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.AVAILABILITY, RoutingOutcome.NO_ASSIGNMENT, 0);
+    verify(diagnosticMetrics, never())
+        .recordRouting(RoutingStage.AVAILABILITY, RoutingOutcome.NO_ELIGIBLE_CONSULTANT, 0);
     verify(consultantRepository, never()).findAllByIdIn(any());
   }
 
@@ -89,6 +99,8 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findAvailableConsultantIds(1L);
 
     assertThat(result).isEmpty();
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.AVAILABILITY, RoutingOutcome.NO_ELIGIBLE_CONSULTANT, 0);
     verify(consultantActivityRegistry, never()).filterActive(any(), anyLong());
   }
 
@@ -103,6 +115,8 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findAvailableConsultantIds(1L);
 
     assertThat(result).isEmpty();
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.AVAILABILITY, RoutingOutcome.AVAILABILITY_EXPIRED, 0);
   }
 
   @Test
@@ -170,6 +184,8 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findEligibleConsultantIds(null);
 
     assertThat(result).isEmpty();
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.INVALID_TOPIC, 0);
     verify(consultantTopicRepository, never()).findConsultantIdsByTopicId(any());
   }
 
@@ -181,6 +197,8 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findEligibleConsultantIds(2L);
 
     assertThat(result).isEmpty();
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.NO_ASSIGNMENT, 0);
   }
 
   @Test
@@ -192,6 +210,8 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findEligibleConsultantIds(3L);
 
     assertThat(result).isEmpty();
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.NO_ELIGIBLE_CONSULTANT, 0);
     verify(matrixSynapseService, never()).findOnlineMatrixUserIds(any());
   }
 
@@ -208,6 +228,7 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findEligibleConsultantIds(4L);
 
     assertThat(result).containsExactly("c1");
+    verify(diagnosticMetrics).recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.AVAILABLE, 1);
   }
 
   @Test
@@ -234,6 +255,8 @@ class TopicConsultantRoutingServiceTest {
     List<String> result = service.findEligibleConsultantIds(5L);
 
     assertThat(result).containsExactly("c1");
+    verify(diagnosticMetrics)
+        .recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.PRESENCE_UNAVAILABLE, 1);
   }
 
   @Test

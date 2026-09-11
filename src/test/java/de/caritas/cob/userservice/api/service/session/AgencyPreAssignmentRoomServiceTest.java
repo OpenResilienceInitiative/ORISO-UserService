@@ -11,6 +11,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
@@ -294,10 +295,39 @@ class AgencyPreAssignmentRoomServiceTest {
   }
 
   @Test
+  @DisplayName("ensureHoldingRoom does not persist when the asker invite fails")
+  void ensureHoldingRoom_doesNotPersist_whenAskerInviteFails() throws Exception {
+    stubHappyPathUntilRoomCreation();
+    org.mockito.Mockito.doThrow(new MatrixInviteUserException("rate limited"))
+        .when(sessionRoomGateway)
+        .inviteUser(NEW_ROOM_ID, USER_MATRIX_ID, AGENCY_TOKEN);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(sessionService, never()).saveSession(any());
+    assertNull(session.getMatrixRoomId());
+  }
+
+  @Test
+  @DisplayName("ensureHoldingRoom does not persist when the asker cannot join after invite")
+  void ensureHoldingRoom_doesNotPersist_whenAskerJoinFails() throws Exception {
+    stubHappyPathUntilRoomCreation();
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(false);
+
+    underTest.ensureHoldingRoom(session, user);
+
+    verify(sessionService, never()).saveSession(any());
+    assertNull(session.getMatrixRoomId());
+  }
+
+  @Test
   @DisplayName("a directly addressed enquiry is not fanned out to the whole department")
   void ensureHoldingRoom_skipsDepartment_whenConsultantDirectlySet() throws Exception {
     stubHappyPathUntilRoomCreation();
     session.setIsConsultantDirectlySet(true);
+    when(sessionRoomGateway.loginAsUser(USER_MATRIX_ID)).thenReturn(USER_TOKEN);
+    when(sessionRoomGateway.joinRoom(NEW_ROOM_ID, USER_TOKEN)).thenReturn(true);
 
     underTest.ensureHoldingRoom(session, user);
 

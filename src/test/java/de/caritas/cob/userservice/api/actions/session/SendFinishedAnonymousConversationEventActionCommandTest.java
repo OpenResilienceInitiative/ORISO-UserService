@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.actions.session;
 import static de.caritas.cob.userservice.api.service.notification.EventNotificationService.CATEGORY_SYSTEM;
 import static java.util.Arrays.asList;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
@@ -95,14 +97,15 @@ class SendFinishedAnonymousConversationEventActionCommandTest {
     doThrow(new IllegalStateException("database unavailable"))
         .when(eventNotificationService)
         .createEvent(
-            session.getConsultant().getId(),
-            "conversation.finished",
-            CATEGORY_SYSTEM,
-            "Conversation finished",
-            "The anonymous conversation has ended.",
-            null,
-            session.getId(),
-            session.getTenantId());
+            eq(session.getConsultant().getId()),
+            eq("conversation.finished"),
+            eq(CATEGORY_SYSTEM),
+            eq("Conversation finished"),
+            eq("The anonymous conversation has ended."),
+            any(),
+            eq(null),
+            eq(session.getId()),
+            eq(session.getTenantId()));
 
     assertThatCode(() -> actionCommand.execute(session)).doesNotThrowAnyException();
 
@@ -110,15 +113,18 @@ class SendFinishedAnonymousConversationEventActionCommandTest {
   }
 
   private void verifyFinishedEvent(String recipientId, Session session) {
+    // #1010 task 1a: the event now carries structured params so the client renders the card from
+    // its own i18n templates instead of the stored English sentence.
     verify(eventNotificationService)
         .createEvent(
-            recipientId,
-            "conversation.finished",
-            CATEGORY_SYSTEM,
-            "Conversation finished",
-            "The anonymous conversation has ended.",
-            null,
-            session.getId(),
-            session.getTenantId());
+            eq(recipientId),
+            eq("conversation.finished"),
+            eq(CATEGORY_SYSTEM),
+            eq("Conversation finished"),
+            eq("The anonymous conversation has ended."),
+            any(),
+            eq(null),
+            eq(session.getId()),
+            eq(session.getTenantId()));
   }
 }

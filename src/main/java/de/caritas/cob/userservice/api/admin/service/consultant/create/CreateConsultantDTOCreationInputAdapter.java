@@ -82,6 +82,36 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
     return this.createConsultantDTO.getPublicSlug();
   }
 
+  @Override
+  public String getDisplayName() {
+    return this.createConsultantDTO.getDisplayName();
+  }
+
+  @Override
+  public String getInternalDisplayName() {
+    return this.createConsultantDTO.getInternalDisplayName();
+  }
+
+  @Override
+  public String getSalutation() {
+    return this.createConsultantDTO.getSalutation();
+  }
+
+  @Override
+  public String getPosition() {
+    return this.createConsultantDTO.getPosition();
+  }
+
+  @Override
+  public String getTitle() {
+    return this.createConsultantDTO.getTitle();
+  }
+
+  @Override
+  public String getAdminRemarks() {
+    return this.createConsultantDTO.getAdminRemarks();
+  }
+
   /**
    * Provides the password.
    *

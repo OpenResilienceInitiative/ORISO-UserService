@@ -42,6 +42,9 @@ public class SendFinishedAnonymousConversationEventActionCommand implements Acti
           CATEGORY_SYSTEM,
           "Conversation finished",
           "The anonymous conversation has ended.",
+          // #1010 task 1a: carry structured params so the client can render this card from its own
+          // i18n templates rather than from the stored English text.
+          eventNotificationService.buildSessionScopedParams(session),
           null,
           session.getId(),
           session.getTenantId());

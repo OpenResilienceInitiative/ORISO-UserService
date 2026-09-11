@@ -19,7 +19,7 @@ import de.caritas.cob.userservice.api.identity.IdentityEmailVerification;
 import de.caritas.cob.userservice.api.identity.IdentityEmailVerificationStart;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import java.util.Map;
 import org.junit.jupiter.api.Test;
@@ -38,7 +38,7 @@ class UserTwoFactorAuthControllerDelegateTest {
   private static final String SECRET = "12345678901234567890123456789012";
 
   @Mock private AuthenticatedUser authenticatedUser;
-  @Mock private IdentityClientConfig identityClientConfig;
+  @Mock private IdentityPolicy identityPolicy;
   @Mock private IdentityManaging identityManager;
   @Mock private AccountManaging accountManager;
   @Mock private AccountInviteService accountInviteService;
@@ -154,7 +154,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void activateTwoFactorAuthByAppShouldRejectRoleWithoutOtpPolicy() {
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.activateTwoFactorAuthByApp(oneTimePassword()))
         .isInstanceOf(ConflictException.class)
@@ -165,7 +165,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void startTwoFactorAuthByEmailSetupShouldRejectRoleWithoutOtpPolicy() {
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     assertThatThrownBy(
             () -> delegate.startTwoFactorAuthByEmailSetup(new EmailDTO("person@example.org")))
@@ -177,7 +177,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void finishTwoFactorAuthByEmailSetupShouldRejectRoleWithoutOtpPolicy() {
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.finishTwoFactorAuthByEmailSetup(OTP))
         .isInstanceOf(ConflictException.class)
@@ -228,7 +228,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void activateTwoFactorAuthByApp_consultantDisabled_throwsConflictException() {
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.activateTwoFactorAuthByApp(oneTimePassword()))
         .isInstanceOf(ConflictException.class)
@@ -239,7 +239,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void activateTwoFactorAuthByApp_singleTenantAdminDisabled_throwsConflictException() {
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.activateTwoFactorAuthByApp(oneTimePassword()))
         .isInstanceOf(ConflictException.class)
@@ -250,7 +250,7 @@ class UserTwoFactorAuthControllerDelegateTest {
 
   @Test
   void activateTwoFactorAuthByApp_tenantSuperAdminDisabled_throwsConflictException() {
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(false);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.activateTwoFactorAuthByApp(oneTimePassword()))
         .isInstanceOf(ConflictException.class)
@@ -264,6 +264,6 @@ class UserTwoFactorAuthControllerDelegateTest {
   }
 
   private void allowOtpForCurrentRoles() {
-    when(identityClientConfig.isOtpAllowed(anySet())).thenReturn(true);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(anySet())).thenReturn(true);
   }
 }

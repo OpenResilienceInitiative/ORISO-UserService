@@ -5,6 +5,9 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -16,7 +19,11 @@ import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import java.net.URI;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Properties;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -31,9 +38,14 @@ import org.springframework.stereotype.Service;
 public class SupervisorAddedEmailNotificationService {
   private static final String DEFAULT_EMAIL_THEME_COLOR = "#0f3b8f";
 
+  private static final DateTimeFormatter TIMESTAMP =
+      DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm");
+
   private final @NonNull SystemNotificationEmailSettingsService emailSettingsService;
   private final @NonNull UserService userService;
   private final @NonNull TenantTemplateSupplier tenantTemplateSupplier;
+  private final @NonNull OrisoEmailRenderer emailRenderer;
+  private final @NonNull OrisoEmailBrand emailBrand;
 
   @Value("${app.base.url}")
   private String applicationBaseUrl;
@@ -60,40 +72,34 @@ public class SupervisorAddedEmailNotificationService {
     }
     String appUrl = resolveAppFrontendUrl(tenantData);
     String themeColor = resolveThemeColor(smtpSettings);
-    String userChatUrl = buildSessionUrl(appUrl, sessionId, false);
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
     if (hasValidUserEmail(recipientUser)) {
-      LocalizedEmailContent localizedEmail =
-          localizeSupervisorAssignmentAdded(
-              languageCodeOf(recipientUser), supervisorDisplayName, sessionId);
+      // Neither the case reference nor a session-specific route reaches the advice seeker's
+      // copy: both name what happened as precisely as the anonymised statement text refuses to.
       sendEmailSafely(
           smtpSettings,
           recipientUser.getEmail(),
-          localizedEmail.subject,
-          buildHtmlEmail(
-              localizedEmail.headline,
-              localizedEmail.body,
-              userChatUrl,
-              localizedEmail.buttonText,
-              localizedEmail.footerText,
+          renderTeamChange(
+              languageCodeOf(recipientUser),
+              askerStatementSupervisorJoined(languageCodeOf(recipientUser)),
+              appUrl,
+              appUrl,
+              null,
               themeColor));
     }
 
     if (hasValidConsultantEmail(supervisor)) {
-      LocalizedEmailContent localizedEmail =
-          localizeSupervisorAddedForSupervisor(languageCodeOf(supervisor), sessionId);
       sendEmailSafely(
           smtpSettings,
           supervisor.getEmail(),
-          localizedEmail.subject,
-          buildHtmlEmail(
-              localizedEmail.headline,
-              localizedEmail.body,
+          renderTeamChange(
+              languageCodeOf(supervisor),
+              staffStatementSupervisorAdded(languageCodeOf(supervisor)),
+              appUrl,
               consultantChatUrl,
-              localizedEmail.buttonText,
-              localizedEmail.footerText,
+              sessionId,
               themeColor));
     }
   }
@@ -114,40 +120,32 @@ public class SupervisorAddedEmailNotificationService {
     }
     String appUrl = resolveAppFrontendUrl(tenantData);
     String themeColor = resolveThemeColor(smtpSettings);
-    String userChatUrl = buildSessionUrl(appUrl, sessionId, false);
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
     if (hasValidUserEmail(recipientUser)) {
-      LocalizedEmailContent localizedEmail =
-          localizeSupervisorAssignmentRemoved(
-              languageCodeOf(recipientUser), supervisorDisplayName, sessionId);
       sendEmailSafely(
           smtpSettings,
           recipientUser.getEmail(),
-          localizedEmail.subject,
-          buildHtmlEmail(
-              localizedEmail.headline,
-              localizedEmail.body,
-              userChatUrl,
-              localizedEmail.buttonText,
-              localizedEmail.footerText,
+          renderTeamChange(
+              languageCodeOf(recipientUser),
+              askerStatementSupervisorLeft(languageCodeOf(recipientUser)),
+              appUrl,
+              appUrl,
+              null,
               themeColor));
     }
 
     if (hasValidConsultantEmail(supervisor)) {
-      LocalizedEmailContent localizedEmail =
-          localizeSupervisorRemovedForSupervisor(languageCodeOf(supervisor), sessionId);
       sendEmailSafely(
           smtpSettings,
           supervisor.getEmail(),
-          localizedEmail.subject,
-          buildHtmlEmail(
-              localizedEmail.headline,
-              localizedEmail.body,
+          renderTeamChange(
+              languageCodeOf(supervisor),
+              staffStatementSupervisorRemoved(languageCodeOf(supervisor)),
+              appUrl,
               consultantChatUrl,
-              localizedEmail.buttonText,
-              localizedEmail.footerText,
+              sessionId,
               themeColor));
     }
   }
@@ -164,18 +162,7 @@ public class SupervisorAddedEmailNotificationService {
     }
     String appUrl = resolveAppFrontendUrl(tenantData);
     String themeColor = resolveThemeColor(smtpSettings);
-    LocalizedEmailContent localizedEmail = localizeEmailUpdate();
-    sendEmailSafely(
-        smtpSettings,
-        newEmail,
-        localizedEmail.subject,
-        buildHtmlEmail(
-            localizedEmail.headline,
-            String.format(localizedEmail.body, username),
-            appUrl,
-            localizedEmail.buttonText,
-            localizedEmail.footerText,
-            themeColor));
+    sendEmailSafely(smtpSettings, newEmail, renderEmailChanged(username, appUrl, themeColor));
   }
 
   private Long resolveTenantId(User sessionUser, Consultant supervisor) {
@@ -207,15 +194,14 @@ public class SupervisorAddedEmailNotificationService {
   private void sendEmailSafely(
       SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings smtpSettings,
       String recipientEmail,
-      String subject,
-      String htmlContent) {
+      OrisoEmailRenderer.RenderedEmail email) {
     try {
-      sendDirectSmtpHtmlEmail(smtpSettings, recipientEmail, subject, htmlContent);
+      sendDirectSmtpHtmlEmail(smtpSettings, recipientEmail, email);
     } catch (Exception ex) {
       log.error(
           "Failed to send system notification email to {} with subject '{}'",
           recipientEmail,
-          subject,
+          email.subject(),
           ex);
     }
   }
@@ -223,8 +209,7 @@ public class SupervisorAddedEmailNotificationService {
   private void sendDirectSmtpHtmlEmail(
       SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings smtpSettings,
       String recipientEmail,
-      String subject,
-      String htmlContent)
+      OrisoEmailRenderer.RenderedEmail email)
       throws Exception {
     Properties props = new Properties();
     props.put("mail.smtp.auth", "true");
@@ -247,11 +232,11 @@ public class SupervisorAddedEmailNotificationService {
               }
             });
 
-    Message message = new MimeMessage(session);
+    MimeMessage message = new MimeMessage(session);
     message.setFrom(new InternetAddress(smtpSettings.getFrom()));
     message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipientEmail));
-    message.setSubject(subject);
-    message.setContent(htmlContent, "text/html; charset=UTF-8");
+    message.setSubject(email.subject(), "UTF-8");
+    message.setContent(OrisoEmailMime.alternative(email));
     log.info("Sending direct SMTP system notification email to {}", recipientEmail);
     Transport.send(message);
   }
@@ -311,40 +296,41 @@ public class SupervisorAddedEmailNotificationService {
     }
   }
 
-  private String buildHtmlEmail(
-      String headline,
-      String bodyText,
-      String appUrl,
-      String buttonText,
-      String footerText,
+  /**
+   * Renders a team-change mail from the design system.
+   *
+   * <p>Replaces the hand-written 620px Arial card this class used to build inline. The five
+   * parameters it took — headline, body, button text, footer text, theme colour — were the design
+   * system's card written a second time, in string concatenation, where nobody could review it.
+   */
+  // Package-private so the anonymity rule can be asserted rather than assumed.
+  //
+  // appBaseUrl and ctaUrl are deliberately separate: appBaseUrl is always the plain app root,
+  // used to build the settings/privacy/imprint/unsubscribe links, so those never inherit a
+  // session-specific path. ctaUrl is where the button goes — the deep link into the session for
+  // a counsellor's copy (operational detail is fine there), but the same plain app root for an
+  // advice seeker's copy. A null sessionId renders as "—", the same "no reference" marker already
+  // used when a change has no session at all.
+  OrisoEmailRenderer.RenderedEmail renderTeamChange(
+      LanguageCode languageCode,
+      String statement,
+      String appBaseUrl,
+      String ctaUrl,
+      Long sessionId,
       String themeColor) {
-    String resolvedThemeColor = resolveHexColor(themeColor);
-    return "<!doctype html><html><body style=\"margin:0;padding:0;background:#f6f7fb;font-family:Arial,sans-serif;\">"
-        + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"padding:24px 0;\">"
-        + "<tr><td align=\"center\">"
-        + "<table role=\"presentation\" width=\"620\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:620px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;\">"
-        + "<tr><td style=\"background:"
-        + escapeHtml(resolvedThemeColor)
-        + ";padding:18px 24px;color:#ffffff;font-size:20px;font-weight:700;\">ORISO</td></tr>"
-        + "<tr><td style=\"padding:28px 24px 8px 24px;color:#111827;font-size:24px;line-height:32px;font-weight:700;\">"
-        + escapeHtml(headline)
-        + "</td></tr>"
-        + "<tr><td style=\"padding:0 24px 18px 24px;color:#374151;font-size:16px;line-height:24px;\">"
-        + escapeHtml(bodyText)
-        + "</td></tr>"
-        + "<tr><td style=\"padding:0 24px 24px 24px;\">"
-        + "<a href=\""
-        + escapeHtml(appUrl)
-        + "\" style=\"display:inline-block;background:"
-        + escapeHtml(resolvedThemeColor)
-        + ";color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:700;\">"
-        + escapeHtml(buttonText)
-        + "</a>"
-        + "</td></tr>"
-        + "<tr><td style=\"padding:18px 24px;color:#6b7280;font-size:12px;line-height:18px;border-top:1px solid #e5e7eb;\">"
-        + escapeHtml(footerText)
-        + "</td></tr>"
-        + "</table></td></tr></table></body></html>";
+    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(appBaseUrl, themeColor));
+    values.put("teamChangeStatement", statement);
+    values.put("caseReference", sessionId == null ? "—" : "#" + sessionId);
+    values.put("teamChangedAt", LocalDateTime.now().format(TIMESTAMP));
+    values.put("appUrl", ctaUrl);
+    return emailRenderer.render("team-aenderung", OrisoEmailRenderer.Tone.of(languageCode), values);
+  }
+
+  private OrisoEmailRenderer.RenderedEmail renderEmailChanged(
+      String username, String appUrl, String themeColor) {
+    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(appUrl, themeColor));
+    values.put("username", username);
+    return emailRenderer.render("email-geaendert", OrisoEmailRenderer.Tone.DE_FORMAL, values);
   }
 
   private String buildSessionUrl(String baseUrl, Long sessionId, boolean consultantView) {
@@ -389,119 +375,36 @@ public class SupervisorAddedEmailNotificationService {
     return languageCode == null || "de".equalsIgnoreCase(languageCode.name());
   }
 
-  private LocalizedEmailContent localizeSupervisorAssignmentAdded(
-      LanguageCode languageCode, String supervisorDisplayName, Long sessionId) {
-    String displayName =
-        isNotBlank(supervisorDisplayName) ? supervisorDisplayName : "Eine Beraterin/Ein Berater";
-    String session = String.valueOf(sessionId);
-    if (!isGerman(languageCode)) {
-      return new LocalizedEmailContent(
-          "Supervisor added to your chat",
-          "New system notification",
-          String.format(
-              "%s was added as supervisor consultant to your chat #%s.", displayName, session),
-          "Open chat",
-          "This message was sent automatically.");
-    }
-    return new LocalizedEmailContent(
-        "Supervisor zu Ihrem Chat hinzugefuegt",
-        "Neue Systembenachrichtigung",
-        String.format(
-            "%s wurde als Supervisor-Berater:in zu Ihrem Chat #%s hinzugefuegt.",
-            displayName, session),
-        "Zum Chat",
-        "Diese Nachricht wurde automatisch versendet.");
+  /**
+   * What the advice seeker is told.
+   *
+   * <p>Deliberately names nobody. The previous version put the supervisor's display name and the
+   * session number into a mail to an advice seeker, which is exactly what ADR-019 forbids: a mail
+   * to an advice seeker states that something happened, and the application — behind a login,
+   * encrypted — states what. The counsellor's copy below is unchanged in substance, because a
+   * counsellor's mail may carry operational detail.
+   */
+  String askerStatementSupervisorJoined(LanguageCode languageCode) {
+    return isGerman(languageCode)
+        ? "Eine weitere Fachkraft unterstützt Ihre Beratung ab sofort mit."
+        : "Another member of staff is now supporting your counselling.";
   }
 
-  private LocalizedEmailContent localizeSupervisorAddedForSupervisor(
-      LanguageCode languageCode, Long sessionId) {
-    String session = String.valueOf(sessionId);
-    if (!isGerman(languageCode)) {
-      return new LocalizedEmailContent(
-          "You were added as supervisor",
-          "New system notification",
-          String.format("You were added as supervisor consultant to chat #%s.", session),
-          "Open chat",
-          "This message was sent automatically.");
-    }
-    return new LocalizedEmailContent(
-        "Sie wurden als Supervisor hinzugefuegt",
-        "Neue Systembenachrichtigung",
-        String.format("Sie wurden als Supervisor-Berater:in zu Chat #%s hinzugefuegt.", session),
-        "Zum Chat",
-        "Diese Nachricht wurde automatisch versendet.");
+  String askerStatementSupervisorLeft(LanguageCode languageCode) {
+    return isGerman(languageCode)
+        ? "Eine Fachkraft unterstützt Ihre Beratung nicht mehr mit."
+        : "A member of staff is no longer supporting your counselling.";
   }
 
-  private LocalizedEmailContent localizeSupervisorAssignmentRemoved(
-      LanguageCode languageCode, String supervisorDisplayName, Long sessionId) {
-    String displayName =
-        isNotBlank(supervisorDisplayName) ? supervisorDisplayName : "Eine Beraterin/Ein Berater";
-    String session = String.valueOf(sessionId);
-    if (!isGerman(languageCode)) {
-      return new LocalizedEmailContent(
-          "Supervisor removed from your chat",
-          "New system notification",
-          String.format(
-              "%s was removed as supervisor consultant from your chat #%s.", displayName, session),
-          "Open chat",
-          "This message was sent automatically.");
-    }
-    return new LocalizedEmailContent(
-        "Supervisor aus Ihrem Chat entfernt",
-        "Neue Systembenachrichtigung",
-        String.format(
-            "%s wurde als Supervisor-Berater:in aus Ihrem Chat #%s entfernt.",
-            displayName, session),
-        "Zum Chat",
-        "Diese Nachricht wurde automatisch versendet.");
+  String staffStatementSupervisorAdded(LanguageCode languageCode) {
+    return isGerman(languageCode)
+        ? "Sie wurden als Supervisor-Berater:in zu diesem Vorgang hinzugefügt."
+        : "You were added as supervisor consultant to this case.";
   }
 
-  private LocalizedEmailContent localizeSupervisorRemovedForSupervisor(
-      LanguageCode languageCode, Long sessionId) {
-    String session = String.valueOf(sessionId);
-    if (!isGerman(languageCode)) {
-      return new LocalizedEmailContent(
-          "Supervisor assignment removed",
-          "New system notification",
-          String.format("You were removed as supervisor consultant from chat #%s.", session),
-          "Open chat",
-          "This message was sent automatically.");
-    }
-    return new LocalizedEmailContent(
-        "Supervisor-Zuweisung entfernt",
-        "Neue Systembenachrichtigung",
-        String.format("Sie wurden als Supervisor-Berater:in aus Chat #%s entfernt.", session),
-        "Zum Chat",
-        "Diese Nachricht wurde automatisch versendet.");
-  }
-
-  private LocalizedEmailContent localizeEmailUpdate() {
-    return new LocalizedEmailContent(
-        "Email updated",
-        "E-Mail-Adresse erfolgreich aktualisiert",
-        "Die E-Mail-Adresse fuer den Benutzer %s wurde erfolgreich geaendert.",
-        "Zum Profil",
-        "Diese Nachricht wurde automatisch versendet.");
-  }
-
-  @lombok.Value
-  private static class LocalizedEmailContent {
-    String subject;
-    String headline;
-    String body;
-    String buttonText;
-    String footerText;
-  }
-
-  private String escapeHtml(String value) {
-    if (value == null) {
-      return "";
-    }
-    return value
-        .replace("&", "&amp;")
-        .replace("<", "&lt;")
-        .replace(">", "&gt;")
-        .replace("\"", "&quot;")
-        .replace("'", "&#39;");
+  String staffStatementSupervisorRemoved(LanguageCode languageCode) {
+    return isGerman(languageCode)
+        ? "Sie wurden als Supervisor-Berater:in aus diesem Vorgang entfernt."
+        : "You were removed as supervisor consultant from this case.";
   }
 }

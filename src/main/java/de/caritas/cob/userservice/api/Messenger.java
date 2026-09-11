@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api;
 import static java.util.Objects.isNull;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -40,6 +41,7 @@ public class Messenger implements Messaging {
   private final GroupChatMembershipService groupChatMembershipService;
   private final MatrixSynapseService matrixSynapseService;
   private final ConsultantActivityRegistry consultantActivityRegistry;
+  private final LiveChatDiagnosticMetrics diagnosticMetrics;
 
   @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
   private long liveChatQueueActivePeriodMinutes;
@@ -110,17 +112,21 @@ public class Messenger implements Messaging {
   public long countPendingEnquiriesAheadOf(
       Long agencyId, Integer consultingTypeId, Long mainTopicId, LocalDateTime beforeDate) {
     if (beforeDate == null || consultingTypeId == null) {
+      diagnosticMetrics.recordInvalidQueueRequest();
       return 0L;
     }
     var minUpdateDate = LocalDateTime.now().minusMinutes(liveChatQueueActivePeriodMinutes);
-    return sessionRepository.countPendingEnquiriesAheadOf(
-        SessionStatus.NEW,
-        beforeDate,
-        consultingTypeId,
-        mainTopicId,
-        agencyId,
-        minUpdateDate,
-        RegistrationType.ANONYMOUS);
+    var queueDepth =
+        sessionRepository.countPendingEnquiriesAheadOf(
+            SessionStatus.NEW,
+            beforeDate,
+            consultingTypeId,
+            mainTopicId,
+            agencyId,
+            minUpdateDate,
+            RegistrationType.ANONYMOUS);
+    diagnosticMetrics.recordQueueDepth(queueDepth);
+    return queueDepth;
   }
 
   @Override

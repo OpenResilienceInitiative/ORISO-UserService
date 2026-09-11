@@ -52,6 +52,15 @@ public class TenantService {
         .getRestrictedTenantDataByTenantId(tenantId);
   }
 
+  /** Explicit platform-branding lookup; generic tenant operations still reject technical id 0. */
+  @Cacheable(cacheNames = CacheManagerConfig.TENANT_CACHE, key = "'platform-branding'")
+  public RestrictedTenantDTO getPlatformTenantData() {
+    log.info("Calling tenant service to get platform branding data");
+    return tenantServiceApiControllerFactory
+        .createControllerApi()
+        .getRestrictedTenantDataByTenantId(TenantContext.TECHNICAL_TENANT_ID);
+  }
+
   public List<RestrictedTenantDTO> getRestrictedTenantData(Set<Long> tenantIds) {
     var concreteTenantIds =
         tenantIds.stream()

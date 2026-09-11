@@ -1,0 +1,25 @@
+Neues Passwort festlegen
+========================
+
+Du hast ein neues Passwort für deinen Zugang bei {{platformName}} angefordert.
+
+Der Link ist {{expiryHours}} Stunden gültig und lässt sich nur einmal verwenden.
+
+Passwort neu setzen:
+{{resetUrl}}
+
+Wenn du das nicht angefordert hast, ignoriere diese E-Mail einfach. Dein Passwort bleibt dann unverändert.
+
+----------------------------------------------------------------
+Deine Nachrichten sind Ende-zu-Ende verschlüsselt. Niemand außer dir und deiner Beratung kann sie lesen – auch wir nicht.
+
+{{orgName}}
+{{orgAddress}}
+{{contactLine}}
+
+{{platformName}} ist ein Angebot von {{orgName}}.
+
+Datenschutz: {{privacyUrl}}
+Impressum: {{imprintUrl}}
+
+Diese E-Mail wurde automatisch versendet. Bitte antworte nicht darauf.

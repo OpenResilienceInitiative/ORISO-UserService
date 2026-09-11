@@ -223,7 +223,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "WHERE s.consultingTypeId IN :consultingTypeIds "
           + "AND s.registrationType = :registrationType "
           + "AND s.status = :sessionStatus "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
           + "ORDER BY s.createDate DESC")
   Page<Session> findAnonymousEnquiriesVisibleForConsultants(
       @Param("consultingTypeIds") Set<Integer> consultingTypeIds,
@@ -237,7 +236,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "WHERE s.consultingTypeId IN :consultingTypeIds "
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
           + "AND s.updateDate >= :minUpdateDate "
           + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
           + "     OR u.username LIKE 'Anonymous-%') "
@@ -256,7 +254,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "WHERE s.consultingTypeId IN :consultingTypeIds "
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
           + "AND s.updateDate >= :minUpdateDate "
           + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
           + "     OR u.username LIKE 'Anonymous-%') "
@@ -276,6 +273,16 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * topic-bound and deliberately cross-agency/cross-tenant. Used instead of the consulting-type
    * variant so the queue never needs an authenticated AgencyService lookup to resolve the
    * consultant's consulting types.
+   *
+   * <p><b>None of the anonymous queue queries filter on {@code dataPrivacyConfirmation}, and
+   * re-adding it would silently break the live chat again</b> (#431). {@code CreateUserFacade}
+   * clears that field for anonymous registrations on purpose, so the in-chat consent gate fires
+   * (ADR-018 §9, #927). Requiring it here made those two deliberate decisions cancel each other
+   * out: every anonymous live-chat enquiry was invisible to every consultant, the asker clicked and
+   * nothing happened. Consent is taken at entry from the platform-level live-chat privacy notice —
+   * at that point no agency is bound yet, so there is no agency declaration to show — and {@link
+   * de.caritas.cob.userservice.api.facade.assignsession.AnonymousEnquiryConsentGuard} still blocks
+   * the <b>assignment</b> server-side, which is where special-category data starts flowing.
    */
   @Query(
       "SELECT s FROM Session s "
@@ -283,7 +290,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "WHERE s.mainTopicId IN :topicIds "
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
           + "AND s.updateDate >= :minUpdateDate "
           + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
           + "     OR u.username LIKE 'Anonymous-%') "
@@ -313,7 +319,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "AND s.mainTopicId IN :topicIds "
           + "AND s.status = :sessionStatus "
           + "AND s.consultant IS NULL "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
           + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
           + "     OR u.username LIKE 'Anonymous-%') ")
   List<Session> findVisibleAnonymousLiveChatEnquiriesForConsultantByIds(
@@ -336,7 +341,6 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
           + "AND s.createDate < :beforeDate "
           + "AND s.consultingTypeId = :consultingTypeId "
           + "AND ((:mainTopicId IS NULL AND s.mainTopicId IS NULL) OR s.mainTopicId = :mainTopicId) "
-          + "AND u.dataPrivacyConfirmation IS NOT NULL "
           + "AND s.updateDate >= :minUpdateDate "
           + "AND (s.registrationType = :anonymousRegistrationType OR s.postcode = '00000' "
           + "     OR u.username LIKE 'Anonymous-%') "

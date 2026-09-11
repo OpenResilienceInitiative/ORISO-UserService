@@ -89,10 +89,23 @@ public class AdminResponseDTOBuilder implements HalLinkBuilder {
         .tenantId(String.valueOf(admin.getTenantId()))
         .createDate(String.valueOf(admin.getCreateDate()))
         .updateDate(String.valueOf(admin.getUpdateDate()))
-        .publicName(null)
+        .publicName(publicNameOf(admin))
         .roleInOrg(roleInOrgOf(admin.getType()))
         .vacated(false)
         .adminRights(true);
+  }
+
+  /**
+   * publicName was dead scaffolding hardcoded to null (#996). Admin accounts have no separate
+   * display name, so their public name is the full name (username as last resort).
+   */
+  private String publicNameOf(Admin admin) {
+    var fullName =
+        ((admin.getFirstName() == null ? "" : admin.getFirstName().trim())
+                + " "
+                + (admin.getLastName() == null ? "" : admin.getLastName().trim()))
+            .trim();
+    return fullName.isBlank() ? admin.getUsername() : fullName;
   }
 
   private String roleInOrgOf(Admin.AdminType adminType) {

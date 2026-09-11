@@ -22,9 +22,8 @@ import org.springframework.stereotype.Component;
  *   <li><b>Name</b> — tenant name → configured platform name.
  *   <li><b>Logo</b> — tenant {@code theming.logo} → tenant {@code theming.associationLogo} →
  *       configured platform logo → no image at all, in which case the layout renders the text
- *       wordmark. Only absolute {@code http(s)} URLs are accepted: the tenant theming fields may
- *       hold inline base64 images, and {@code data:} URIs are blocked by Gmail and Outlook, so a
- *       base64 logo deliberately degrades to the wordmark instead of producing a broken image.
+ *       wordmark. Stored inline images are exposed through TenantService's public HTTP asset
+ *       endpoint because mail clients block {@code data:} URIs.
  *   <li><b>Accent colour</b> — tenant {@code theming.primaryColor} → {@link
  *       EmailColors#PLATFORM_ACCENT_DARK}. Contrast-safe foregrounds are derived from it in {@link
  *       EmailBranding}, so a light theme colour never yields light-on-light text. See {@link
@@ -75,20 +74,38 @@ public class EmailBrandingResolver {
 
     return new EmailBranding(
         brandName,
-        resolveLogoUrl(theming),
+        resolveLogoUrl(tenant, theming),
         resolveAccentColor(theming),
         resolveFooterUrl(tenant, "/impressum"),
         resolveFooterUrl(tenant, "/datenschutz"));
   }
 
-  private String resolveLogoUrl(Theming theming) {
+  private String resolveLogoUrl(RestrictedTenantDTO tenant, Theming theming) {
     if (theming != null) {
       String tenantLogo = firstAbsoluteUrl(theming.getLogo(), theming.getAssociationLogo());
       if (tenantLogo != null) {
         return tenantLogo;
       }
+      if (!isBlank(theming.getLogo()) || !isBlank(theming.getAssociationLogo())) {
+        String baseUrl = resolveBrandingAssetBaseUrl(tenant);
+        if (!isBlank(baseUrl)) {
+          return baseUrl + "/service/tenant/public/branding/logo";
+        }
+      }
     }
     return firstAbsoluteUrl(platformLogoUrl);
+  }
+
+  private String resolveBrandingAssetBaseUrl(RestrictedTenantDTO tenant) {
+    if (tenant != null
+        && tenant.getId() != null
+        && !TenantContext.TECHNICAL_TENANT_ID.equals(tenant.getId())) {
+      String tenantBaseUrl = normalizeBaseUrl(tenantTemplateSupplier.getTenantBaseUrl(tenant));
+      if (!isBlank(tenantBaseUrl) && firstAbsoluteUrl(tenantBaseUrl) != null) {
+        return tenantBaseUrl;
+      }
+    }
+    return firstAbsoluteUrl(applicationBaseUrl);
   }
 
   /**
@@ -143,7 +160,7 @@ public class EmailBrandingResolver {
 
   private RestrictedTenantDTO loadTenantQuietly(Long tenantId) {
     if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
-      return null;
+      return loadPlatformTenantQuietly();
     }
     try {
       return tenantService.getRestrictedTenantData(tenantId);
@@ -152,6 +169,17 @@ public class EmailBrandingResolver {
       log.debug(
           "No tenant branding available for tenantId {} ({}) — using platform branding",
           tenantId,
+          exception.getClass().getSimpleName());
+      return loadPlatformTenantQuietly();
+    }
+  }
+
+  private RestrictedTenantDTO loadPlatformTenantQuietly() {
+    try {
+      return tenantService.getPlatformTenantData();
+    } catch (RuntimeException exception) {
+      log.debug(
+          "No platform branding available ({}) — using configured fallbacks",
           exception.getClass().getSimpleName());
       return null;
     }

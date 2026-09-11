@@ -47,6 +47,11 @@ class ScheduledTaskClaimWriterTest {
     assertThat(captor.getValue().getTaskName()).isEqualTo(TASK_NAME);
     assertThat(captor.getValue().getClaimedAt()).isEqualTo(NOW);
     assertThat(captor.getValue().getClaimedUntil()).isEqualTo(NOW.plusMinutes(30));
+    // A fresh claim must report itself as new so Spring Data INSERTs it. A merge here would
+    // silently UPDATE a row a competing replica committed in the race window, letting two
+    // replicas run the same scheduled task (flaky DeleteUsersRegisteredOnlySchedulerReplicaIT).
+    assertThat(captor.getValue().isNew()).isTrue();
+    assertThat(captor.getValue().getId()).isEqualTo(TASK_NAME);
   }
 
   @Test

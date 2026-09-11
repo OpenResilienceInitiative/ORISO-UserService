@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
@@ -48,6 +49,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 @RequiredArgsConstructor
@@ -62,6 +65,64 @@ public class CaseHandoverService {
   private static final String OUTCOME_CLIENT_CONSENT_DECLINED = "CLIENT_CONSENT_DECLINED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
+
+  private record ClientHandoverCopy(
+      String grantedTitle,
+      String grantedDescription,
+      String pendingTitle,
+      String pendingDescription) {}
+
+  /**
+   * Built-in client-safe copy used until the tenant-scoped effective policy cache in
+   * ORISO-UserService#201 becomes the canonical source. No entry contains reason-derived wording;
+   * internal illness, absence, emergency, and staffing details stay on staff and audit surfaces.
+   * Unknown languages deliberately fall back to German, while every currently supported language
+   * has an explicit entry. fr/ru/tr/uk/ti copy requires native-speaker review before final release.
+   */
+  private static final Map<String, ClientHandoverCopy> CLIENT_SAFE_HANDOVER_COPY =
+      Map.of(
+          "de",
+          new ClientHandoverCopy(
+              "Neue Beratungsperson hat deinen Fall übernommen",
+              "{{newAdvisor}} hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.",
+              "Zugriffsanfrage einer Beratungsperson",
+              "{{newAdvisor}} bittet um Zugriff auf deinen Fall. Deine Zustimmung ist erforderlich."),
+          "en",
+          new ClientHandoverCopy(
+              "New counsellor took over your case",
+              "{{newAdvisor}} has taken over your case and will continue your counselling from now on.",
+              "Counsellor access request",
+              "{{newAdvisor}} requested access to your case. Your consent is required."),
+          "fr",
+          new ClientHandoverCopy(
+              "Un nouveau conseiller ou une nouvelle conseillère a repris votre dossier",
+              "{{newAdvisor}} a repris votre dossier et poursuivra désormais votre accompagnement.",
+              "Demande d’accès d’un conseiller ou d’une conseillère",
+              "{{newAdvisor}} demande l’accès à votre dossier. Votre consentement est requis."),
+          "ru",
+          new ClientHandoverCopy(
+              "Новый консультант принял ваше дело",
+              "{{newAdvisor}} принял(а) ваше дело и с этого момента продолжит консультирование.",
+              "Запрос консультанта на доступ",
+              "{{newAdvisor}} запросил(а) доступ к вашему делу. Требуется ваше согласие."),
+          "tr",
+          new ClientHandoverCopy(
+              "Yeni bir danışman vakanızı devraldı",
+              "{{newAdvisor}} vakanızı devraldı ve bundan sonra danışmanlığınıza devam edecek.",
+              "Danışman erişim talebi",
+              "{{newAdvisor}} vakanıza erişim istedi. Onayınız gerekiyor."),
+          "uk",
+          new ClientHandoverCopy(
+              "Новий консультант перейняв вашу справу",
+              "{{newAdvisor}} перейняв(-ла) вашу справу й відтепер продовжуватиме консультування.",
+              "Запит консультанта на доступ",
+              "{{newAdvisor}} запитує доступ до вашої справи. Потрібна ваша згода."),
+          "ti",
+          new ClientHandoverCopy(
+              "ሓድሽ ኣማኻሪ ጉዳይካ ተረኪቡ",
+              "{{newAdvisor}} ጉዳይካ ተረኪቡ ካብ ሕጂ ንደሓር ምኽሪ ክቕጽል እዩ።",
+              "ናይ ኣማኻሪ ናይ ምእታው ሕቶ",
+              "{{newAdvisor}} ናብ ጉዳይካ ክኣቱ ሓቲቱ። ፍቓድካ የድሊ።"));
 
   /**
    * Default client-facing notification templates per reason and language (de/en/tr/uk). Source:
@@ -180,6 +241,14 @@ public class CaseHandoverService {
               .build());
 
   private final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
+
+  /**
+   * ADR-008 "Supervision (auto-assigned)": a takeover hands the case to a new owner, so the new
+   * owner's standing supervisor must attach. Invoked after commit — see {@link
+   * #attachStandingSupervisorAfterCommit}.
+   */
+  private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
+
   private final @NonNull CaseHandoverReasonPolicyRepository caseHandoverReasonPolicyRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
@@ -360,6 +429,7 @@ public class CaseHandoverService {
       session.setConsultant(requester);
       session.setUpdateDate(now);
       sessionRepository.save(session);
+      attachStandingSupervisorAfterCommit(session.getId(), requester);
       notifyGranted(saved);
     } else {
       notifyPendingConsent(saved);
@@ -382,7 +452,7 @@ public class CaseHandoverService {
     }
 
     if (request.getStatus() != Status.PENDING_CLIENT_CONSENT) {
-      return toStatus(request);
+      return toClientStatus(request);
     }
 
     LocalDateTime now = LocalDateTime.now();
@@ -392,7 +462,7 @@ public class CaseHandoverService {
         request.setStatus(Status.DENIED);
         request.setAuditOutcome(OUTCOME_ALREADY_ANSWERED);
         CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
-        return toStatus(saved);
+        return toClientStatus(saved);
       }
 
       request.setStatus(Status.GRANTED);
@@ -402,16 +472,67 @@ public class CaseHandoverService {
       session.setConsultant(request.getRequesterConsultant());
       session.setUpdateDate(now);
       sessionRepository.save(session);
+      attachStandingSupervisorAfterCommit(session.getId(), request.getRequesterConsultant());
       CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
       notifyGranted(saved);
-      return toStatus(saved);
+      return toClientStatus(saved);
     }
 
     request.setStatus(Status.CLIENT_CONSENT_DECLINED);
     request.setAuditOutcome(OUTCOME_CLIENT_CONSENT_DECLINED);
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
     notifyConsentDeclined(saved);
-    return toStatus(saved);
+    return toClientStatus(saved);
+  }
+
+  /**
+   * ADR-008 "Supervision (auto-assigned)": attach the new owner's standing supervisor once the
+   * takeover has actually committed.
+   *
+   * <p>Deliberately NOT a direct call. {@code addSupervisor} is itself {@code @Transactional}, so
+   * called from inside this service's transaction it would join it — and any exception it raises
+   * (client opted out, that supervisor is already on the case, no Matrix user id) marks the shared
+   * transaction rollback-only. The facade swallowing the exception would not save us: the handover
+   * would still fail at commit with an UnexpectedRollbackException. Running after commit keeps the
+   * facade's contract intact — a supervision problem leaves the case unsupervised, it never undoes
+   * the handover.
+   *
+   * <p>Outside a transaction (unit tests, future non-transactional callers) it runs inline, which
+   * carries the same guarantee because the facade never throws.
+   *
+   * <p>The PREVIOUS counsellor's supervisor is deliberately left attached. ADR-008 leaves this
+   * open, and stripping oversight from a live case is not something a handover should do silently;
+   * removing a supervisor stays an explicit act.
+   */
+  private void attachStandingSupervisorAfterCommit(Long sessionId, Consultant newOwner) {
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      sessionSupervisorFacade.attachStandingSupervisorIfAssigned(sessionId, newOwner);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            try {
+              // Must be the REQUIRES_NEW entry point: at afterCommit the committed transaction's
+              // resources are still bound, so a write through the plain method would join a
+              // transaction that can no longer commit and the SessionSupervisor row would be lost.
+              sessionSupervisorFacade.attachStandingSupervisorInNewTransaction(sessionId, newOwner);
+            } catch (RuntimeException supervisionFailure) {
+              // The catch has to sit OUTSIDE the proxied boundary. The facade swallows its own
+              // exceptions, but a swallowed persistence failure has already marked the new
+              // transaction rollback-only, so the commit the proxy attempts afterwards throws
+              // UnexpectedRollbackException — after this method returned. Escaping here would
+              // surface as a 500 on a handover that has already committed, which is exactly the
+              // guarantee this indirection exists to protect.
+              log.warn(
+                  "Standing supervisor attach failed after the handover of session {} committed;"
+                      + " the case stays unsupervised",
+                  sessionId,
+                  supervisionFailure);
+            }
+          }
+        });
   }
 
   private Consultant retrieveCurrentConsultant() {
@@ -461,6 +582,13 @@ public class CaseHandoverService {
                 session.getConsultant() != null
                     ? decodeUsername(session.getConsultant().getDisplayName())
                     : null),
+            // The candidate list renders the internal name with fallback (#996), so the search
+            // must cover it too — otherwise an internal-name-only query filters the session out
+            // before it is rendered. The public display name above stays a valid search term.
+            nullable(
+                session.getConsultant() != null
+                    ? decodeUsername(session.getConsultant().getInternalDisplayNameOrFallback())
+                    : null),
             nullable(
                 session.getConsultant() != null ? session.getConsultant().getFirstName() : null),
             nullable(
@@ -501,7 +629,8 @@ public class CaseHandoverService {
               .firstName(consultant.getFirstName())
               .lastName(consultant.getLastName())
               .username(decodeUsername(consultant.getUsername()))
-              .displayName(decodeUsername(consultant.getDisplayName())));
+              // Handover candidates are shown to colleagues (internal surface, #996).
+              .displayName(decodeUsername(consultant.getInternalDisplayNameOrFallback())));
     }
 
     return dto;
@@ -714,23 +843,44 @@ public class CaseHandoverService {
         .build();
   }
 
+  private CaseHandoverStatus toClientStatus(CaseHandoverRequest request) {
+    return CaseHandoverStatus.builder()
+        .requestId(request.getId())
+        .sessionId(request.getSession().getId())
+        .status(request.getStatus().name())
+        .canViewContent(request.getStatus() == Status.GRANTED)
+        .clientConsentRequired(Boolean.TRUE.equals(request.getClientConsentRequired()))
+        .auditOutcome(request.getAuditOutcome())
+        .createdAt(request.getCreatedAt())
+        .resolvedAt(request.getResolvedAt())
+        .build();
+  }
+
   private void notifyGranted(CaseHandoverRequest request) {
     Session session = request.getSession();
     Consultant requester = request.getRequesterConsultant();
     String requesterName = resolveConsultantName(requester);
-    postGrantedChatSystemMessage(request, session, requesterName);
-    String text =
-        String.format(
-            "%s took over your case. Reason: %s. Explanation: %s",
-            requesterName, request.getReasonLabel(), request.getExplanation());
+    ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
+    String clientDescription = renderClientCopy(clientCopy.grantedDescription(), requesterName);
+    postGrantedChatSystemMessage(session, requesterName, clientDescription);
+    // #1010 task 1a: the explanation is counsellor-written free text that can reference case
+    // content. It is no longer copied into the notification, which kept it in plaintext for good;
+    // the handover-request API serves it on demand instead.
+    String params =
+        eventNotificationService.buildCaseHandoverParams(
+            session, requesterName, request.getReasonCode(), request.getReasonLabel(), null);
 
     if (session.getUser() != null && session.getUser().getUserId() != null) {
+      String clientParams =
+          eventNotificationService.buildCaseHandoverParams(
+              session, requesterName, null, null, null);
       eventNotificationService.createEvent(
           session.getUser().getUserId(),
           "case.handover.granted",
           EventNotificationService.CATEGORY_SYSTEM,
-          "New counsellor took over your case",
-          text,
+          clientCopy.grantedTitle(),
+          clientDescription,
+          clientParams,
           buildAskerSessionActionPath(session),
           session.getId(),
           session.getTenantId());
@@ -746,6 +896,7 @@ public class CaseHandoverService {
           String.format(
               "%s took over case #%s. Reason: %s",
               requesterName, session.getId(), request.getReasonLabel()),
+          params,
           buildConsultantSessionActionPath(session),
           session.getId(),
           session.getTenantId());
@@ -757,11 +908,10 @@ public class CaseHandoverService {
    * session's Matrix room. Emission failures must never fail the handover itself.
    */
   private void postGrantedChatSystemMessage(
-      CaseHandoverRequest request, Session session, String requesterName) {
+      Session session, String requesterName, String description) {
     try {
-      var description = resolveClientNotificationDescription(request, requesterName);
       matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
-          session, requesterName, request.getReasonLabel(), request.getExplanation(), description);
+          session, requesterName, description);
     } catch (RuntimeException exception) {
       log.warn(
           "Case-handover system message for session {} could not be posted: {}",
@@ -770,24 +920,12 @@ public class CaseHandoverService {
     }
   }
 
-  private String resolveClientNotificationDescription(
-      CaseHandoverRequest request, String requesterName) {
-    var reasonCode = normalizeReasonCode(request.getReasonCode());
-    Map<String, String> templates =
-        caseHandoverReasonPolicyRepository
-            .findById(reasonCode)
-            .map(CaseHandoverReasonPolicy::getClientNotificationTemplates)
-            .filter(map -> map != null && !map.isEmpty())
-            .orElseGet(() -> DEFAULT_CLIENT_NOTIFICATION_TEMPLATES.get(reasonCode));
-    if (templates == null || templates.isEmpty()) {
-      return null;
-    }
-    var language = resolveSessionLanguage(request.getSession());
-    var template =
-        templates.getOrDefault(
-            language,
-            templates.getOrDefault(
-                "de", templates.getOrDefault("en", templates.values().iterator().next())));
+  private ClientHandoverCopy resolveClientHandoverCopy(Session session) {
+    var language = resolveSessionLanguage(session);
+    return CLIENT_SAFE_HANDOVER_COPY.getOrDefault(language, CLIENT_SAFE_HANDOVER_COPY.get("de"));
+  }
+
+  private String renderClientCopy(String template, String requesterName) {
     return template.replace("{{newAdvisor}}", requesterName);
   }
 
@@ -803,16 +941,19 @@ public class CaseHandoverService {
     if (session.getUser() == null || session.getUser().getUserId() == null) {
       return;
     }
+    String requesterName = resolveConsultantName(request.getRequesterConsultant());
+    ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
+    // The request id remains so the advice seeker can answer the consent prompt. The configured
+    // reason and counsellor-written explanation stay staff-only and are never copied into the
+    // advice seeker's notification payload.
     eventNotificationService.createEvent(
         session.getUser().getUserId(),
         "case.handover.consent.requested",
         EventNotificationService.CATEGORY_SYSTEM,
-        "Counsellor access request",
-        String.format(
-            "%s requested access to your case. Reason: %s. Explanation: %s",
-            resolveConsultantName(request.getRequesterConsultant()),
-            request.getReasonLabel(),
-            request.getExplanation()),
+        clientCopy.pendingTitle(),
+        renderClientCopy(clientCopy.pendingDescription(), requesterName),
+        eventNotificationService.buildCaseHandoverParams(
+            session, requesterName, null, null, request.getId()),
         buildAskerSessionActionPath(session) + "?caseHandoverRequestId=" + request.getId(),
         session.getId(),
         session.getTenantId());
@@ -832,6 +973,12 @@ public class CaseHandoverService {
         String.format(
             "Client consent was declined for case #%s. Reason: %s",
             session.getId(), request.getReasonLabel()),
+        eventNotificationService.buildCaseHandoverParams(
+            session,
+            resolveConsultantName(requester),
+            request.getReasonCode(),
+            request.getReasonLabel(),
+            request.getId()),
         buildConsultantSessionActionPath(session),
         session.getId(),
         session.getTenantId());

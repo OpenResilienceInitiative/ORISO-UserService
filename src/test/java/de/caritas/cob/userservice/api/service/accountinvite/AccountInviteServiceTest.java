@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -22,6 +23,8 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
@@ -63,6 +66,7 @@ class AccountInviteServiceTest {
   @Mock private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @Mock private InviteMailDispatchService inviteMailDispatchService;
   @Mock private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
+  @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
 
   @InjectMocks private AccountInviteService service;
 
@@ -112,7 +116,8 @@ class AccountInviteServiceTest {
         ArgumentCaptor.forClass(InviteEmailDelivery.class);
     verify(deliveryRepository).save(deliveryCaptor.capture());
     assertThat(deliveryCaptor.getValue().getSubjectSnapshot()).isEqualTo("Welcome Ada");
-    assertThat(deliveryCaptor.getValue().getBodySnapshot()).contains(result.rawToken());
+    // The action link reaches the recipient through the layout CTA, not the body.
+    assertThat(deliveryCaptor.getValue().getBodySnapshot()).doesNotContain(result.rawToken());
     assertThat(deliveryCaptor.getValue().getRecipientSnapshot()).isEqualTo("owner@example.org");
     assertThat(deliveryCaptor.getValue().getStatus()).isEqualTo(InviteEmailDeliveryStatus.SENT);
   }
@@ -406,6 +411,224 @@ class AccountInviteServiceTest {
         new CreateAccountInviteCommand(
             AccountInviteTargetRole.COUNSELLOR, 7L, "   ", "A", "B", null, null, null);
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+  }
+
+  // --- P3 (#Problem 3): duplicate recipient e-mail is refused at invite CREATION time, not only
+  // at redemption. Both invite kinds and both creation paths ("send now" / "add to list") funnel
+  // through createInvite, so a single guard here covers all of them.
+
+  @Test
+  void createInvite_Should_ThrowEmailNotAvailable_When_RecipientEmailBelongsToRegisteredUser() {
+    when(identityEmailOwnerLookup.findByEmail("taken@example.org"))
+        .thenReturn(Optional.of(new IdentityEmailOwner("existing-user")));
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "taken@example.org",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class)
+        .satisfies(
+            thrown -> {
+              var ex = (CustomValidationHttpStatusException) thrown;
+              assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(ex.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("EMAIL_NOT_AVAILABLE");
+            });
+
+    verifyNoInteractions(accountInviteRepository);
+  }
+
+  @Test
+  void createInvite_Should_ThrowEmailNotAvailable_When_TenantAdminRecipientEmailIsRegistered() {
+    when(identityEmailOwnerLookup.findByEmail("taken@example.org"))
+        .thenReturn(Optional.of(new IdentityEmailOwner("existing-user")));
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            7L,
+            "taken@example.org",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+
+    // The guard runs before any tenant-ID reservation, so nothing has to be compensated.
+    verifyNoInteractions(tenantIdAllocationClient);
+    verifyNoInteractions(accountInviteRepository);
+  }
+
+  @Test
+  void createInvite_Should_NormalizeRecipientEmail_When_CheckingAvailability() {
+    when(identityEmailOwnerLookup.findByEmail("taken@example.org"))
+        .thenReturn(Optional.of(new IdentityEmailOwner("existing-user")));
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "  Taken@Example.ORG  ",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+  }
+
+  @Test
+  void createInvite_Should_Succeed_When_RecipientEmailIsUnknownToIdentityProvider() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(identityEmailOwnerLookup.findByEmail("free@example.org")).thenReturn(Optional.empty());
+    when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                7L,
+                "free@example.org",
+                "A",
+                "B",
+                null,
+                null,
+                null));
+
+    assertThat(invite.getRecipientEmail()).isEqualTo("free@example.org");
+  }
+
+  // --- P3 gap closure: the identity probe alone is not enough. A Keycloak user only exists once
+  // an invite has been ACCEPTED, so an invite still sitting in DRAFT or EMAIL_SENT is invisible to
+  // it — and a second invite for the same address slipped through. A pending invite "holds" the
+  // address just as a registered account does, so it must produce the very same 409.
+
+  @Test
+  void createInvite_Should_ThrowEmailNotAvailable_When_ANonTerminalInviteAlreadyHoldsTheAddress() {
+    when(identityEmailOwnerLookup.findByEmail("pending@example.org")).thenReturn(Optional.empty());
+    when(accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+            eq("pending@example.org"), any(), any()))
+        .thenReturn(1L);
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "pending@example.org",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class)
+        .satisfies(
+            thrown -> {
+              var ex = (CustomValidationHttpStatusException) thrown;
+              // Identical contract to the registered-account case — the admin renders exactly one
+              // inline field error for EMAIL_NOT_AVAILABLE; a new reason code would fall through
+              // to a generic toast.
+              assertThat(ex.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(ex.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("EMAIL_NOT_AVAILABLE");
+            });
+
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void createInvite_Should_ThrowEmailNotAvailable_When_TenantAdminAddressHasANonTerminalInvite() {
+    when(identityEmailOwnerLookup.findByEmail("pending@example.org")).thenReturn(Optional.empty());
+    when(accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+            eq("pending@example.org"), any(), any()))
+        .thenReturn(1L);
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            7L,
+            "pending@example.org",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+
+    // Still ahead of the role branch: no tenant-ID reservation to compensate, nothing persisted.
+    verifyNoInteractions(tenantIdAllocationClient);
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void createInvite_Should_MatchAPendingInviteCaseInsensitively() {
+    when(identityEmailOwnerLookup.findByEmail("pending@example.org")).thenReturn(Optional.empty());
+    // The probe receives the normalized address; the query lower-cases the stored column, so a
+    // row persisted as "Pending@Example.ORG" is found just the same.
+    when(accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+            eq("pending@example.org"), any(), any()))
+        .thenReturn(1L);
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "  Pending@Example.ORG  ",
+            "A",
+            "B",
+            null,
+            null,
+            null);
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+  }
+
+  @Test
+  void createInvite_Should_OnlyLetNonTerminalInviteStatusesBlockTheAddress() {
+    when(authenticatedUser.getUserId()).thenReturn("admin-1");
+    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    when(identityEmailOwnerLookup.findByEmail("reusable@example.org")).thenReturn(Optional.empty());
+    when(accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+            eq("reusable@example.org"), any(), any()))
+        .thenReturn(0L);
+    when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    var invite =
+        service.createInvite(
+            new CreateAccountInviteCommand(
+                AccountInviteTargetRole.COUNSELLOR,
+                7L,
+                "reusable@example.org",
+                "A",
+                "B",
+                null,
+                null,
+                null));
+
+    assertThat(invite.getRecipientEmail()).isEqualTo("reusable@example.org");
+    // ACCEPTED / EXPIRED / REVOKED / SUPERSEDED are never asked about: an accepted invite is
+    // already covered by the identity probe, and a revoked, expired or superseded one must leave
+    // the address free — otherwise a mistyped or withdrawn invite would strand the admin with no
+    // way to invite that person again.
+    verify(accountInviteRepository)
+        .countNonTerminalInvitesForRecipientEmail(
+            eq("reusable@example.org"),
+            eq(List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT)),
+            any());
   }
 
   @Test
@@ -1100,7 +1323,66 @@ class AccountInviteServiceTest {
         .buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, result.rawToken());
     assertThat(result.acceptUrl())
         .isEqualTo("https://app.oriso.org/account-invite/" + result.rawToken());
-    assertThat(result.delivery().getBodySnapshot()).isEqualTo("Link: " + result.acceptUrl());
+    // The body no longer carries the link: the branded layout renders it as a button
+    // plus a visible copy-paste line, so a body that also inlined it produced the same
+    // URL twice in the received mail.
+    assertThat(result.delivery().getBodySnapshot()).isEqualTo("Link:");
+    assertThat(result.delivery().getBodySnapshot()).doesNotContain(result.acceptUrl());
+  }
+
+  @Test
+  void sendInvite_Should_dropTheActionLinkLine_soTheLayoutRendersTheLinkExactlyOnce() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("a@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(20L)
+            .subject("s")
+            .body("Bitte schliessen Sie die Einrichtung ab:\n\n{{inviteLink}}\n\nViele Gruesse")
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    givenSuccessfulDispatch();
+
+    var result = service.sendInvite(new SendInviteCommand(1L, 20L));
+
+    // The whole line goes, not just the token, so the sentence runs straight into the
+    // CTA button instead of leaving a hole where the raw URL used to be.
+    assertThat(result.delivery().getBodySnapshot())
+        .isEqualTo("Bitte schliessen Sie die Einrichtung ab:\n\nViele Gruesse");
+    assertThat(result.delivery().getBodySnapshot()).doesNotContain(result.acceptUrl());
+  }
+
+  @Test
+  void sendInvite_Should_stillHandTheActionUrlToTheLayout_soTheCtaSurvives() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("a@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    givenSuccessfulDispatch();
+
+    var result = service.sendInvite(new SendInviteCommand(1L, 20L));
+
+    // Removing the token from the body must not remove the link from the mail: the
+    // dispatcher still receives the accept URL as the primary action.
+    verify(inviteMailDispatchService)
+        .send(any(), any(), any(), eq(result.acceptUrl()), any(), any());
   }
 
   @Test
@@ -1129,7 +1411,40 @@ class AccountInviteServiceTest {
 
     assertThat(result.acceptUrl())
         .isEqualTo("https://app.oriso.org/admin/tenant-onboarding/" + result.rawToken());
-    assertThat(result.delivery().getBodySnapshot()).contains("/admin/tenant-onboarding/");
+    // Body-only assertion inverted with the duplicate-link fix: the URL reaches the
+    // recipient through the layout's CTA, not through the authored body.
+    assertThat(result.delivery().getBodySnapshot()).doesNotContain("/admin/tenant-onboarding/");
+  }
+
+  @Test
+  void renderBody_Should_defineExactlyWhatHappensToAnInlineActionLinkToken() {
+    AccountInvite invite =
+        AccountInvite.builder().id(1L).recipientEmail("a@example.org").firstName("Ada").build();
+
+    // Alone on its line: the line goes with it, so the introducing sentence runs
+    // straight into the CTA button.
+    assertThat(
+            AccountInviteService.renderBody(
+                "Hallo {{firstName}},\n\n{{inviteLink}}\n\nViele Gruesse", invite, "https://x/t"))
+        .isEqualTo("Hallo Ada,\n\nViele Gruesse");
+
+    // Inside a sentence: the token and the space before it go; the author's own
+    // wording is left alone, dangling colon and all. We remove a link, we do not
+    // rewrite prose.
+    assertThat(
+            AccountInviteService.renderBody(
+                "Hier: {{inviteLink}} — viel Erfolg", invite, "https://x/t"))
+        .isEqualTo("Hier: — viel Erfolg");
+
+    // A body that never used the token is untouched.
+    assertThat(AccountInviteService.renderBody("Hallo {{firstName}}", invite, "https://x/t"))
+        .isEqualTo("Hallo Ada");
+
+    // Whatever the shape, the URL never reaches the body.
+    assertThat(
+            AccountInviteService.renderBody(
+                "a {{inviteLink}} b\n{{inviteLink}}\n", invite, "https://x/t"))
+        .doesNotContain("https://x/t");
   }
 
   @Test

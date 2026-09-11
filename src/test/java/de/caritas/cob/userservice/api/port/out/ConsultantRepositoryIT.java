@@ -232,6 +232,54 @@ class ConsultantRepositoryIT {
   }
 
   @Test
+  void findAllByInfixShouldFindConsultantByInternalDisplayName() {
+    var infix = RandomStringUtils.randomAlphanumeric(16);
+    // A seeded consultant can contain the random infix by chance, so only the delta is asserted.
+    var preExisting = underTest.findAllByInfix(infix, null, Pageable.unpaged()).getTotalElements();
+    var consultant = givenConsultantMatchingInternalDisplayName(infix);
+    matchingIds.add(consultant.getId());
+
+    var consultantPage = underTest.findAllByInfix(infix, null, Pageable.unpaged());
+
+    assertEquals(preExisting + 1, consultantPage.getTotalElements());
+    var foundIds =
+        consultantPage.stream().map(Consultant.ConsultantBase::getId).collect(Collectors.toSet());
+    assertTrue(foundIds.contains(consultant.getId()));
+  }
+
+  @Test
+  void findAllByInfixAndAgencyIdsShouldFindConsultantByInternalDisplayName() {
+    var infix = RandomStringUtils.randomAlphanumeric(16);
+    var agencyId = easyRandom.nextLong(1000, Long.MAX_VALUE);
+    var consultant = givenConsultantMatchingInternalDisplayName(infix);
+    saveConsultantAgency(consultant, agencyId);
+    underTest.save(consultant);
+    matchingIds.add(consultant.getId());
+
+    var consultantPage =
+        underTest.findAllByInfixAndAgencyIds(infix, List.of(agencyId), null, Pageable.unpaged());
+
+    var foundIds =
+        consultantPage.stream().map(Consultant.ConsultantBase::getId).collect(Collectors.toSet());
+    assertTrue(foundIds.contains(consultant.getId()));
+  }
+
+  private Consultant givenConsultantMatchingInternalDisplayName(String infix) {
+    var dbConsultant = underTest.findAll().iterator().next();
+    var consultant = new Consultant();
+    BeanUtils.copyProperties(dbConsultant, consultant);
+    consultant.setId(UUID.randomUUID().toString());
+    consultant.setUsername(RandomStringUtils.randomAlphabetic(8));
+    consultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
+    consultant.setFirstName(aStringWithoutInfix(infix));
+    consultant.setLastName(aStringWithoutInfix(infix));
+    consultant.setEmail(aValidEmailWithoutInfix(infix));
+    consultant.setDisplayName(aStringWithoutInfix(infix));
+    consultant.setInternalDisplayName("Team " + infix + " Nord");
+    return underTest.save(consultant);
+  }
+
+  @Test
   void findAllByInfixShouldReturnEmptyResultIfNoneMatching() {
     var infix = RandomStringUtils.randomAlphanumeric(4);
     // A seeded consultant can contain the random infix by chance, so only the delta is asserted.

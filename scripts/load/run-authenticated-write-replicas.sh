@@ -156,6 +156,9 @@ start_replica() {
     SPRING_DATA_REDIS_HOST=127.0.0.1 \
     SPRING_DATA_REDIS_PORT="${redis_port}" \
     IDENTITY_OPENID_CONNECT_URL="${identity_url}" \
+    IDENTITY_TECHNICAL_USER_USERNAME=load-test-technical-user \
+    IDENTITY_TECHNICAL_USER_PASSWORD=load-test-technical-user-password \
+    MATRIX_REGISTRATION_SHARED_SECRET=load-test-registration-shared-secret \
     KEYCLOAK_AUTH_SERVER_URL="http://127.0.0.1:${jwk_stub_port}/auth" \
     MATRIX_EVENT_LISTENER_ENABLED=false \
     SPRING_TASK_SCHEDULING_ENABLED=false \

@@ -7,6 +7,7 @@ import static org.apache.commons.collections4.CollectionUtils.isNotEmpty;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsentDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
@@ -24,6 +25,7 @@ import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionFilter;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -55,6 +57,22 @@ class UserSessionControllerDelegate {
   private final @NonNull ConsultantDtoMapper consultantDtoMapper;
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull ConsultantService consultantService;
+  private final @NonNull SessionConsentService sessionConsentService;
+
+  /**
+   * Gate 2 of ADR-022: records which legal-text version this room is cleared for. The pointer is
+   * overwritten on re-consent — there is no consent log, and nothing about who agreed when is
+   * stored. Ownership of the session is verified in {@link SessionConsentService}.
+   *
+   * <p>Seam for ADR-022 decisions 4–7 (separate work): the in-chat change notification and the
+   * Yes/No re-consent control change what triggers this call, not what it writes.
+   */
+  ResponseEntity<Void> recordSessionConsent(Long sessionId, SessionConsentDTO sessionConsentDTO) {
+    var adviceSeeker = userAccountProvider.retrieveValidatedUser();
+    sessionConsentService.recordConsent(
+        sessionId, adviceSeeker, sessionConsentDTO.getLegalVersionId());
+    return new ResponseEntity<>(HttpStatus.NO_CONTENT);
+  }
 
   ResponseEntity<UserSessionListResponseDTO> getSessionsForAuthenticatedUser() {
     var user = this.userAccountProvider.retrieveValidatedUser();

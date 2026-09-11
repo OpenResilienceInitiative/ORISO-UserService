@@ -167,8 +167,10 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
     consultant.setCreateDate((String) consultantMap.get("createdAt"));
     consultant.setUpdateDate((String) consultantMap.get("updatedAt"));
     consultant.setDeleteDate((String) consultantMap.get("deletedAt"));
+    // displayName IS the public name (#996) — publicName stays its alias.
     consultant.setDisplayName((String) consultantMap.get("displayName"));
     consultant.setPublicName((String) consultantMap.get("displayName"));
+    consultant.setInternalDisplayName((String) consultantMap.get("internalDisplayName"));
     consultant.setVacated(consultantMap.get("deletedAt") != null);
     Long tenantId = (Long) consultantMap.get("tenantId");
     if (tenantId != null) {

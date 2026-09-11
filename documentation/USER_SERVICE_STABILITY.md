@@ -43,13 +43,16 @@ python3 scripts/ci/suite-inventory.py
 
 What is enforced rather than described:
 
-- `scripts/ci/run-required-integration-tests.sh` owns the complete `*IT` suite,
-  requires at least 75 reports and 830 executed tests, and fails on any failure
-  or error;
+- `scripts/ci/run-required-integration-tests.sh` owns the application/H2 `*IT`
+  inventory, requires at least 75 reports and 830 executed tests, and fails on
+  any failure, error, or skipped testcase;
 - a required CI guard rejects newly disabled or ignored tests;
-- the MariaDB schema and statistics contracts and the Redis availability
-  contract run as their own required jobs, so they are dedicated environment
-  proofs rather than part of the primary inventory.
+- the MariaDB schema and statistics contracts run in their separately required
+  MariaDB job and are excluded from discovery in the primary inventory;
+- `ConsultantActivityRegistryRedisIT` proves Redis-backed availability and
+  `RedisOneTimeTokenStoreIT` proves shared one-time-token state. Both run in the
+  primary required inventory; the pull-request workflow additionally reruns
+  them in its separately required `redis-contract` job.
 
 The historical 4,707 figure is the raw failing discovery run, not the same test
 inventory with failures simply subtracted. After the original repair work, the

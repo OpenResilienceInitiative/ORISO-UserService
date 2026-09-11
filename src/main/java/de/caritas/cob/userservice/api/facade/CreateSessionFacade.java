@@ -74,6 +74,7 @@ public class CreateSessionFacade {
     }
 
     var agencyDTO = obtainVerifiedAgency(userDTO, extendedConsultingTypeResponseDTO);
+    verifyAgencyServesMainTopic(userDTO, agencyDTO);
 
     if (validationConstraints.contains(
         NewSessionValidationConstraint.ONE_SESSION_PER_TOPIC_ID_AND_AGENCY_ID)) {
@@ -201,6 +202,40 @@ public class CreateSessionFacade {
     }
 
     return agencyDTO;
+  }
+
+  /**
+   * The agency id and the main topic id reach us as two independent request fields, so a client can
+   * pair a topic with an agency that never offered it. Registration then puts the advice seeker's
+   * disclosure in front of a counselling centre that is not responsible for the subject, which is
+   * exactly what agency search prevents by only listing agencies for the selected topic. Reject the
+   * pairing here as well (ORISO-Frontend#1143).
+   *
+   * <p>Only a known, non-empty topic list is treated as an authority. An absent or empty list means
+   * "this agency reports no topics", which is not the same statement as "this agency serves no
+   * topics": the agency lookup can degrade to an unverified stub, and a deployment that does not
+   * run topics in registration populates nothing. Enforcing on that would fail closed on missing
+   * data and take registration down with it, while adding no protection - agency search already
+   * inner-joins {@code agency_topic}, so an agency without topic rows cannot be offered to an
+   * advice seeker in the first place.
+   */
+  private void verifyAgencyServesMainTopic(UserDTO userDTO, AgencyDTO agencyDTO) {
+    var mainTopicId = userDTO.getMainTopicId();
+    var agencyTopicIds = agencyDTO.getTopicIds();
+
+    if (isNull(mainTopicId) || isNull(agencyTopicIds) || agencyTopicIds.isEmpty()) {
+      return;
+    }
+
+    if (!agencyTopicIds.contains(mainTopicId)) {
+      log.warn(
+          "Rejected enquiry for agency {} with topic {}; the agency serves topics {}.",
+          agencyDTO.getId(),
+          mainTopicId,
+          agencyTopicIds);
+      throw new BadRequestException(
+          String.format("Agency %s does not serve topic %s", agencyDTO.getId(), mainTopicId));
+    }
   }
 
   private void checkIfAlreadyRegisteredToTopicAndSameAgency(

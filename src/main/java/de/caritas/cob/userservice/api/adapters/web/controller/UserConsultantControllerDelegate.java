@@ -66,10 +66,12 @@ class UserConsultantControllerDelegate {
                         .firstName(consultant.getFirstName())
                         .lastName(consultant.getLastName())
                         .username(consultant.getUsername())
+                        // Internal team list: internal name with fallback to the public one
+                        // (#996), then the legacy full-name fallback.
                         .displayName(
-                            consultant.getDisplayName() != null
-                                    && !consultant.getDisplayName().isBlank()
-                                ? consultant.getDisplayName()
+                            consultant.getInternalDisplayNameOrFallback() != null
+                                    && !consultant.getInternalDisplayNameOrFallback().isBlank()
+                                ? consultant.getInternalDisplayNameOrFallback()
                                 : consultant.getFullName())
                         .isSupervisor(consultant.isSupervisor()))
             .toList();

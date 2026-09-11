@@ -86,13 +86,13 @@ class UserConsultantControllerDelegateTest {
 
   @Test
   void getTenantConsultantsUsesTheAuthenticatedTenantBoundary() {
-    var consultant = org.mockito.Mockito.mock(Consultant.class);
+    var consultant = new Consultant();
+    consultant.setId("consultant-1");
+    consultant.setFirstName("Ada");
+    consultant.setLastName("Lovelace");
+    consultant.setUsername("ada");
+    consultant.setDisplayName("Ada L.");
     when(authenticatedUser.getTenantId()).thenReturn(7L);
-    when(consultant.getId()).thenReturn("consultant-1");
-    when(consultant.getFirstName()).thenReturn("Ada");
-    when(consultant.getLastName()).thenReturn("Lovelace");
-    when(consultant.getUsername()).thenReturn("ada");
-    when(consultant.getDisplayName()).thenReturn("Ada L.");
     when(consultantService.findActiveConsultantsForTenant(7L)).thenReturn(List.of(consultant));
 
     var response = delegate.getTenantConsultants();
@@ -105,6 +105,28 @@ class UserConsultantControllerDelegateTest {
               assertThat(item.getConsultantId()).isEqualTo("consultant-1");
               assertThat(item.getDisplayName()).isEqualTo("Ada L.");
             });
+  }
+
+  @Test
+  void getTenantConsultantsPrefersTheInternalDisplayName() {
+    var consultant = new Consultant();
+    consultant.setId("consultant-1");
+    consultant.setFirstName("Ada");
+    consultant.setLastName("Lovelace");
+    consultant.setUsername("ada");
+    consultant.setDisplayName("Ada L.");
+    consultant.setInternalDisplayName("Ada Lovelace (Standort Nord)");
+    when(authenticatedUser.getTenantId()).thenReturn(7L);
+    when(consultantService.findActiveConsultantsForTenant(7L)).thenReturn(List.of(consultant));
+
+    var response = delegate.getTenantConsultants();
+
+    // The tenant team list is an internal surface (#996): internal name first,
+    // public display name as fallback.
+    assertThat(response.getBody())
+        .singleElement()
+        .satisfies(
+            item -> assertThat(item.getDisplayName()).isEqualTo("Ada Lovelace (Standort Nord)"));
   }
 
   @Test

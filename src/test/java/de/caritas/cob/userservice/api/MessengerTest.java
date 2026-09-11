@@ -7,6 +7,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -40,6 +41,7 @@ class MessengerTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private UserServiceMapper mapper;
   @Mock private ConsultantActivityRegistry consultantActivityRegistry;
+  @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
 
   @Mock
   private de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService
@@ -81,6 +83,7 @@ class MessengerTest {
     long result = messenger.countPendingEnquiriesAheadOf(1L, 1, 1L, null);
 
     assertThat(result).isZero();
+    verify(diagnosticMetrics).recordInvalidQueueRequest();
     verify(sessionRepository, never())
         .countPendingEnquiriesAheadOf(any(), any(), any(), any(), any(), any(), any());
   }
@@ -90,6 +93,7 @@ class MessengerTest {
     long result = messenger.countPendingEnquiriesAheadOf(1L, null, 1L, LocalDateTime.now());
 
     assertThat(result).isZero();
+    verify(diagnosticMetrics).recordInvalidQueueRequest();
   }
 
   @Test
@@ -102,6 +106,7 @@ class MessengerTest {
     long result = messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, before);
 
     assertThat(result).isEqualTo(5L);
+    verify(diagnosticMetrics).recordQueueDepth(5L);
   }
 
   // ── markAsDirectConsultant ────────────────────────────────────────────────

@@ -99,6 +99,40 @@ class DraftMessageServiceTest {
     verify(draftMessageRepository, never()).save(any());
   }
 
+  // #983: TipTap serialises an empty document as markup, so the emptiness check must look past
+  // the tags — otherwise merely visiting a conversation persists a zero-content draft row.
+  @Test
+  void upsertDraft_emptyTipTapDocument_deletesExistingDraft() {
+    draftMessageService.upsertDraft(USER_ID, SCOPE_KEY, upsertRequest("<p></p>"), TENANT_ID);
+
+    verify(draftMessageRepository).deleteByUserIdAndScopeKey(USER_ID, SCOPE_KEY);
+    verify(draftMessageRepository, never()).save(any());
+  }
+
+  @Test
+  void upsertDraft_markupOnlyDraft_deletesExistingDraft() {
+    draftMessageService.upsertDraft(
+        USER_ID, SCOPE_KEY, upsertRequest("<p><br></p><p>&nbsp;</p>"), TENANT_ID);
+
+    verify(draftMessageRepository).deleteByUserIdAndScopeKey(USER_ID, SCOPE_KEY);
+    verify(draftMessageRepository, never()).save(any());
+  }
+
+  // #983: an E2EE draft is opaque ciphertext without markup and must never be treated as empty.
+  @Test
+  void upsertDraft_encryptedDraft_isPersisted() {
+    when(draftMessageRepository.findByUserIdAndScopeKey(USER_ID, SCOPE_KEY))
+        .thenReturn(Optional.empty());
+
+    draftMessageService.upsertDraft(
+        USER_ID, SCOPE_KEY, upsertRequest("AwgBmE3yLpFhZ0uK+ciphertext=="), TENANT_ID);
+
+    ArgumentCaptor<DraftMessage> captor = ArgumentCaptor.forClass(DraftMessage.class);
+    verify(draftMessageRepository).save(captor.capture());
+    assertThat(captor.getValue().getText()).isEqualTo("AwgBmE3yLpFhZ0uK+ciphertext==");
+    verify(draftMessageRepository, never()).deleteByUserIdAndScopeKey(any(), any());
+  }
+
   // First keystroke for a scope creates a new draft row with tenant attribution.
   @Test
   void upsertDraft_noExistingDraft_savesNewDraftWithAllFields() {

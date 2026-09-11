@@ -1,6 +1,9 @@
 package de.caritas.cob.userservice.api.service.consultingtype;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.RoutingOutcome;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics.RoutingStage;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
@@ -27,6 +30,7 @@ public class TopicConsultantRoutingService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull ConsultantActivityRegistry consultantActivityRegistry;
+  private final @NonNull LiveChatDiagnosticMetrics diagnosticMetrics;
 
   @Value("${consultant.availability.activeWindowMs:120000}")
   private long activeWindowMs;
@@ -45,28 +49,47 @@ public class TopicConsultantRoutingService {
    */
   public List<String> findAvailableConsultantIds(Long topicId) {
     if (topicId == null) {
+      diagnosticMetrics.recordRouting(RoutingStage.AVAILABILITY, RoutingOutcome.INVALID_TOPIC, 0);
       return Collections.emptyList();
     }
 
-    List<String> activeConsultantIds =
+    AvailableCandidates candidates =
         runCrossTenant(
             () -> {
               List<String> topicConsultantIds =
                   consultantTopicRepository.findConsultantIdsByTopicId(topicId);
               if (topicConsultantIds.isEmpty()) {
-                return Collections.emptyList();
+                return new AvailableCandidates(Collections.emptyList(), false);
               }
-              return consultantRepository.findAllByIdIn(topicConsultantIds).stream()
-                  .filter(consultant -> consultant != null && !consultant.isAbsent())
-                  .map(Consultant::getId)
-                  .collect(Collectors.toList());
+              return new AvailableCandidates(
+                  consultantRepository.findAllByIdIn(topicConsultantIds).stream()
+                      .filter(consultant -> consultant != null && !consultant.isAbsent())
+                      .map(Consultant::getId)
+                      .collect(Collectors.toList()),
+                  true);
             });
-    if (activeConsultantIds.isEmpty()) {
+    if (!candidates.hasAssignments()) {
+      diagnosticMetrics.recordRouting(RoutingStage.AVAILABILITY, RoutingOutcome.NO_ASSIGNMENT, 0);
       return Collections.emptyList();
     }
 
-    return new ArrayList<>(
-        consultantActivityRegistry.filterActive(activeConsultantIds, activeWindowMs));
+    List<String> activeConsultantIds = candidates.consultantIds();
+    if (activeConsultantIds.isEmpty()) {
+      diagnosticMetrics.recordRouting(
+          RoutingStage.AVAILABILITY, RoutingOutcome.NO_ELIGIBLE_CONSULTANT, 0);
+      return Collections.emptyList();
+    }
+
+    var availableConsultantIds =
+        new ArrayList<>(
+            consultantActivityRegistry.filterActive(activeConsultantIds, activeWindowMs));
+    diagnosticMetrics.recordRouting(
+        RoutingStage.AVAILABILITY,
+        availableConsultantIds.isEmpty()
+            ? RoutingOutcome.AVAILABILITY_EXPIRED
+            : RoutingOutcome.AVAILABLE,
+        availableConsultantIds.size());
+    return availableConsultantIds;
   }
 
   /**
@@ -88,13 +111,17 @@ public class TopicConsultantRoutingService {
     }
   }
 
+  private record AvailableCandidates(List<String> consultantIds, boolean hasAssignments) {}
+
   public List<String> findEligibleConsultantIds(Long topicId) {
     if (topicId == null) {
+      diagnosticMetrics.recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.INVALID_TOPIC, 0);
       return Collections.emptyList();
     }
 
     List<String> topicConsultantIds = consultantTopicRepository.findConsultantIdsByTopicId(topicId);
     if (topicConsultantIds.isEmpty()) {
+      diagnosticMetrics.recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.NO_ASSIGNMENT, 0);
       return Collections.emptyList();
     }
 
@@ -106,6 +133,8 @@ public class TopicConsultantRoutingService {
             .collect(Collectors.toList());
 
     if (activeConsultantIds.isEmpty()) {
+      diagnosticMetrics.recordRouting(
+          RoutingStage.ELIGIBILITY, RoutingOutcome.NO_ELIGIBLE_CONSULTANT, 0);
       return Collections.emptyList();
     }
 
@@ -125,19 +154,29 @@ public class TopicConsultantRoutingService {
     if (onlineMatrixUserIds.isPresent()) {
       // Authoritative answer from Matrix — trust it even when empty (genuinely nobody online).
       Set<String> online = onlineMatrixUserIds.get();
-      return consultants.stream()
-          .filter(consultant -> consultant != null && !consultant.isAbsent())
-          .filter(
-              consultant ->
-                  consultant.getMatrixUserId() != null
-                      && online.contains(consultant.getMatrixUserId()))
-          .map(Consultant::getId)
-          .collect(Collectors.toList());
+      var eligibleConsultantIds =
+          consultants.stream()
+              .filter(consultant -> consultant != null && !consultant.isAbsent())
+              .filter(
+                  consultant ->
+                      consultant.getMatrixUserId() != null
+                          && online.contains(consultant.getMatrixUserId()))
+              .map(Consultant::getId)
+              .collect(Collectors.toList());
+      diagnosticMetrics.recordRouting(
+          RoutingStage.ELIGIBILITY,
+          eligibleConsultantIds.isEmpty()
+              ? RoutingOutcome.NO_ELIGIBLE_CONSULTANT
+              : RoutingOutcome.AVAILABLE,
+          eligibleConsultantIds.size());
+      return eligibleConsultantIds;
     }
 
     // Presence may be disabled or temporarily unavailable. Assignment remains possible for all
     // non-absent topic consultants; the stricter public availability indicator uses the activity
     // registry in findAvailableConsultantIds.
+    diagnosticMetrics.recordRouting(
+        RoutingStage.ELIGIBILITY, RoutingOutcome.PRESENCE_UNAVAILABLE, activeConsultantIds.size());
     return activeConsultantIds;
   }
 }

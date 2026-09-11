@@ -334,6 +334,33 @@ class MatrixSessionSystemMessageServiceTest {
   }
 
   @Test
+  void postCaseHandoverGrantedMessage_shouldNotExposeInternalReasonOrExplanation() {
+    // The room is shared with the advice seeker. Staff-only handover metadata must never be
+    // serialized into this client-visible event; only the approved localized description belongs
+    // here.
+    var session = sessionWithUserMatrixId(USER_MATRIX_ID, "asker.username");
+    when(matrixSynapseService.loginAsUserAccessToken(USER_MATRIX_ID)).thenReturn(ACCESS_TOKEN);
+    when(matrixSynapseService.sendMessage(anyString(), anyString(), eq(ACCESS_TOKEN)))
+        .thenReturn(Map.of("event_id", "$evt"));
+
+    matrixSessionSystemMessageService.postCaseHandoverGrantedMessage(
+        session, "New Advisor", "Deine Beratung wird jetzt von New Advisor fortgefuehrt.");
+
+    var bodyCaptor = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService)
+        .sendMessage(eq(MATRIX_ROOM_ID), bodyCaptor.capture(), eq(ACCESS_TOKEN));
+
+    assertThat(bodyCaptor.getValue())
+        .contains("\"type\":\"CASE_HANDOVER_GRANTED\"")
+        .contains("\"username\":\"New Advisor\"")
+        .contains("Deine Beratung wird jetzt von New Advisor fortgefuehrt.")
+        .doesNotContain("reasonLabel")
+        .doesNotContain("Counsellor is ill")
+        .doesNotContain("explanation")
+        .doesNotContain("Client disclosed sensitive information");
+  }
+
+  @Test
   void postUserLeftChatMessage_shouldNotSendMessage_whenAgencyCredentialsEmpty() {
     var session = sessionWithoutHumanMatrixIds();
     when(agencyMatrixCredentialClient.fetchMatrixCredentials(AGENCY_ID))

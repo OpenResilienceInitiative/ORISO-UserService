@@ -14,6 +14,9 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
@@ -27,6 +30,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -67,6 +71,8 @@ public class PasswordResetService {
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull OneTimeTokenStore oneTimeTokenStore;
   private final @NonNull ApplicationSettingsService applicationSettingsService;
+  private final @NonNull OrisoEmailRenderer emailRenderer;
+  private final @NonNull OrisoEmailBrand emailBrand;
 
   /**
    * Runs the (potentially slow) account lookup + mail dispatch off the request thread so the HTTP
@@ -276,8 +282,13 @@ public class PasswordResetService {
     return resolveAccount(username);
   }
 
+  /**
+   * Only "en" renders in its own tone; every other locale — including fr/ru/ti/tr, which exist in
+   * the content model but are withheld from this template set per ADR-022 until their translations
+   * are signed off — falls back to formal German rather than claiming support it cannot render.
+   */
   private String resolveLocale(String locale) {
-    return isNotBlank(locale) && EMAIL_CONTENT.containsKey(locale) ? locale : "de";
+    return "en".equalsIgnoreCase(locale) ? "en" : "de";
   }
 
   private void sendPasswordResetEmailSafely(
@@ -305,10 +316,9 @@ public class PasswordResetService {
 
     String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
     String resetUrl = buildResetFrontendUrl(oneTimeToken, frontendBaseUrl);
-    EmailContent content = EMAIL_CONTENT.get(locale);
 
     try {
-      mailSender.send(target.getEmail(), locale, resetUrl, smtpSettings, content);
+      mailSender.send(target.getEmail(), locale, resetUrl, smtpSettings);
     } catch (Exception ex) {
       // Do not leave a token behind for a mail that never went out, and never log PII (account id,
       // recipient, or the raw exception message) — record the exception class only.
@@ -325,11 +335,7 @@ public class PasswordResetService {
   }
 
   private void sendViaSmtp(
-      String recipient,
-      String locale,
-      String resetUrl,
-      GlobalSmtpSettings smtpSettings,
-      EmailContent content)
+      String recipient, String locale, String resetUrl, GlobalSmtpSettings smtpSettings)
       throws Exception {
     Properties props = new Properties();
     props.put("mail.smtp.auth", "true");
@@ -352,13 +358,12 @@ public class PasswordResetService {
               }
             });
 
-    Message message = new MimeMessage(session);
+    var email = renderPasswordReset(locale, resetUrl, smtpSettings.getEmailThemeColor());
+    MimeMessage message = new MimeMessage(session);
     message.setFrom(new InternetAddress(smtpSettings.getFrom()));
     message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
-    message.setSubject(content.getSubject());
-    message.setContent(
-        buildHtml(content, resetUrl, smtpSettings.getEmailThemeColor()),
-        "text/html; charset=UTF-8");
+    message.setSubject(email.subject(), "UTF-8");
+    message.setContent(OrisoEmailMime.alternative(email));
     Transport.send(message);
   }
 
@@ -367,45 +372,29 @@ public class PasswordResetService {
    */
   @FunctionalInterface
   interface PasswordResetMailSender {
-    void send(
-        String recipient,
-        String locale,
-        String resetUrl,
-        GlobalSmtpSettings smtpSettings,
-        EmailContent content)
+    void send(String recipient, String locale, String resetUrl, GlobalSmtpSettings smtpSettings)
         throws Exception;
   }
 
-  private String buildHtml(EmailContent content, String resetUrl, String emailThemeColor) {
-    String color =
-        isNotBlank(emailThemeColor) && emailThemeColor.matches("^#([A-Fa-f0-9]{6})$")
-            ? emailThemeColor
-            : "#d80003";
-
-    return "<!doctype html><html><body style=\"margin:0;padding:0;background:#f6f7fb;font-family:Arial,sans-serif;\">"
-        + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"padding:24px 0;\">"
-        + "<tr><td align=\"center\">"
-        + "<table role=\"presentation\" width=\"620\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:620px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;\">"
-        + "<tr><td style=\"background:"
-        + color
-        + ";padding:18px 24px;color:#ffffff;font-size:20px;font-weight:700;\">Caritas Online-Beratung</td></tr>"
-        + "<tr><td style=\"padding:28px 24px 8px 24px;color:#111827;font-size:22px;line-height:30px;font-weight:700;\">"
-        + content.getSubject()
-        + "</td></tr>"
-        + "<tr><td style=\"padding:0 24px 14px 24px;color:#374151;font-size:16px;line-height:24px;\">"
-        + content.getIntro()
-        + "</td></tr>"
-        + "<tr><td style=\"padding:0 24px 18px 24px;\"><a href=\""
-        + resetUrl
-        + "\" style=\"display:inline-block;background:"
-        + color
-        + ";color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:600;\">"
-        + content.getLinkLabel()
-        + "</a></td></tr>"
-        + "<tr><td style=\"padding:0 24px 24px 24px;color:#6b7280;font-size:14px;line-height:22px;\">"
-        + content.getExpiry()
-        + "</td></tr>"
-        + "</table></td></tr></table></body></html>";
+  /**
+   * Renders the password-reset mail from the design system.
+   *
+   * <p>Replaces the inline card this class used to concatenate. The subject, the button label and
+   * the expiry sentence now come from the template rather than from {@code EMAIL_CONTENT}, so the
+   * wording is reviewed in Storybook next to every other ORISO mail instead of in a string constant
+   * halfway down this file.
+   */
+  private OrisoEmailRenderer.RenderedEmail renderPasswordReset(
+      String locale, String resetUrl, String emailThemeColor) {
+    Map<String, String> values =
+        new LinkedHashMap<>(emailBrand.values(passwordResetFrontendBaseUrl, emailThemeColor));
+    values.put("resetUrl", resetUrl);
+    values.put("expiryHours", String.valueOf(Math.max(1, RESET_TOKEN_TTL.toHours())));
+    OrisoEmailRenderer.Tone tone =
+        "en".equalsIgnoreCase(locale)
+            ? OrisoEmailRenderer.Tone.EN
+            : OrisoEmailRenderer.Tone.DE_FORMAL;
+    return emailRenderer.render("passwort-zuruecksetzen", tone, values);
   }
 
   private String generateAndStoreToken(String keycloakUserId) {
@@ -540,51 +529,4 @@ public class PasswordResetService {
     String from;
     String emailThemeColor;
   }
-
-  @lombok.Value
-  static class EmailContent {
-    String subject;
-    String intro;
-    String linkLabel;
-    String expiry;
-  }
-
-  private static final Map<String, EmailContent> EMAIL_CONTENT =
-      Map.of(
-          "de",
-          new EmailContent(
-              "Passwort zurücksetzen",
-              "Es wurde eine Änderung der Anmeldeinformationen für Ihren Account Caritas Onlineberatung angefordert. Wenn Sie diese Änderung beantragt haben, klicken Sie auf den unten stehenden Link.",
-              "Link zum Zurücksetzen von Anmeldeinformationen",
-              "Die Gültigkeit des Links wird in 120 Minuten verfallen. Sollten Sie keine Änderung vollziehen wollen, können Sie diese Nachricht ignorieren."),
-          "en",
-          new EmailContent(
-              "Reset password",
-              "A change of login credentials for your Caritas Online Counselling account has been requested. If you requested this change, click the link below.",
-              "Link to reset login credentials",
-              "This link will expire in 120 minutes. If you do not want to make this change, you can ignore this message."),
-          "fr",
-          new EmailContent(
-              "Réinitialiser le mot de passe",
-              "Une modification des informations de connexion de votre compte Caritas Online-Beratung a été demandée. Si vous êtes à l'origine de cette demande, cliquez sur le lien ci-dessous.",
-              "Lien pour réinitialiser les informations de connexion",
-              "Ce lien expirera dans 120 minutes. Si vous ne souhaitez pas effectuer cette modification, vous pouvez ignorer ce message."),
-          "ru",
-          new EmailContent(
-              "Сброс пароля",
-              "Был запрошен сброс учётных данных для входа в ваш аккаунт Caritas Online-Beratung. Если вы запросили это изменение, перейдите по ссылке ниже.",
-              "Ссылка для сброса учётных данных",
-              "Срок действия ссылки истекает через 120 минут. Если вы не хотите вносить это изменение, просто проигнорируйте это письмо."),
-          "ti",
-          new EmailContent(
-              "ፓስዎርድ ዳግማይ ምቕማጥ",
-              "ንኣካውንትካ Caritas Online-Beratung ናይ መእተዊ ሓበሬታ ንምቕያር ተሓቲቱ ኣሎ። እዚ ለውጢ እዚ ንስኻ እንተኾንካ ሓቲትካዮ፣ ነቲ ኣብ ታሕቲ ዘሎ ሊንክ ጠውቕ።",
-              "ናይ መእተዊ ሓበሬታ ዳግማይ ንምቕማጥ ዝኸውን ሊንክ",
-              "ጽንዓት እዚ ሊንክ እዚ ኣብ 120 ደቓይቕ ክውዳእ እዩ። እዚ ለውጢ እዚ ክትገብር ዘይትደሊ እንተኾንካ፣ ነዚ መልእኽቲ እዚ ክትንዕቆ ትኽእል ኢኻ።"),
-          "tr",
-          new EmailContent(
-              "Şifreyi sıfırla",
-              "Caritas Online-Beratung hesabınız için oturum açma bilgilerinizde bir değişiklik talep edildi. Bu değişikliği siz talep ettiyseniz aşağıdaki bağlantıya tıklayın.",
-              "Oturum açma bilgilerini sıfırlama bağlantısı",
-              "Bu bağlantının geçerlilik süresi 120 dakika içinde dolacaktır. Bu değişikliği yapmak istemiyorsanız bu mesajı yok sayabilirsiniz."));
 }

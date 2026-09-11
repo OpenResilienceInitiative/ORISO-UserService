@@ -147,6 +147,8 @@ public class ConsultantAdminServiceTest {
     var result = consultantAdminService.findConsultantById("c-1");
 
     assertThat(result.getEmbedded().getDisplayName()).isEqualTo("Test User");
+    // publicName is the alias of the public display name (#996), no longer null scaffolding.
+    assertThat(result.getEmbedded().getPublicName()).isEqualTo("Test User");
   }
 
   @Test
@@ -175,6 +177,149 @@ public class ConsultantAdminServiceTest {
 
     assertThat(result).isNotNull();
     verify(appointmentService).updateConsultant(result);
+  }
+
+  // ---------------------------------------------------------------------------
+  // #996 review — every consultant admin response carries displayName + publicName
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createNewConsultant_Should_populateDisplayAndPublicName() {
+    var embedded = new ConsultantDTO().id("c1");
+    var response = new ConsultantAdminResponseDTO().embedded(embedded);
+    when(this.createConsultantSaga.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(response);
+    when(this.consultantTopicRepository.findTopicIdsByConsultantId("c1")).thenReturn(List.of());
+    when(accountManager.findConsultant("c1"))
+        .thenReturn(Optional.of(Map.of("displayName", "Anna B.")));
+
+    var result = this.consultantAdminService.createNewConsultant(mock(CreateConsultantDTO.class));
+
+    assertThat(result.getEmbedded().getDisplayName()).isEqualTo("Anna B.");
+    assertThat(result.getEmbedded().getPublicName()).isEqualTo("Anna B.");
+  }
+
+  @Test
+  void updateConsultant_Should_populateDisplayAndPublicName() {
+    var updated = new Consultant();
+    updated.setId("c-1");
+    var dto = new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO();
+    when(consultantUpdateService.updateConsultant("c-1", dto)).thenReturn(updated);
+    when(consultantTopicRepository.findTopicIdsByConsultantId("c-1")).thenReturn(List.of());
+    when(accountManager.findConsultant("c-1"))
+        .thenReturn(Optional.of(Map.of("displayName", "Anna B.")));
+
+    var result = consultantAdminService.updateConsultant("c-1", dto);
+
+    assertThat(result.getEmbedded().getDisplayName()).isEqualTo("Anna B.");
+    assertThat(result.getEmbedded().getPublicName()).isEqualTo("Anna B.");
+  }
+
+  // ---------------------------------------------------------------------------
+  // #994 — personal-info fields and the adminRemarks tenant-level-admin gate
+  // ---------------------------------------------------------------------------
+
+  private Consultant consultantWithPersonalInfo() {
+    var consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setSalutation("counsellor_female");
+    consultant.setPosition("Head of counselling centre north");
+    consultant.setTitle("Dipl.-Soz.Päd.");
+    consultant.setAdminRemarks("Internal note");
+    return consultant;
+  }
+
+  @Test
+  void findConsultantById_Should_includePersonalInfoAndAdminRemarks_When_TenantLevelAdmin() {
+    when(authenticatedUser.hasTenantLevelAdminRole()).thenReturn(true);
+    when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(Optional.of(consultantWithPersonalInfo()));
+    when(consultantTopicRepository.findTopicIdsByConsultantId("c-1")).thenReturn(List.of());
+    when(accountManager.findConsultant("c-1")).thenReturn(Optional.empty());
+
+    var result = consultantAdminService.findConsultantById("c-1");
+
+    assertThat(result.getEmbedded().getSalutation()).isEqualTo("counsellor_female");
+    assertThat(result.getEmbedded().getPosition()).isEqualTo("Head of counselling centre north");
+    assertThat(result.getEmbedded().getTitle()).isEqualTo("Dipl.-Soz.Päd.");
+    assertThat(result.getEmbedded().getAdminRemarks()).isEqualTo("Internal note");
+  }
+
+  @Test
+  void findConsultantById_Should_stripAdminRemarks_When_CallerLacksTenantLevelAdminRole() {
+    when(authenticatedUser.hasTenantLevelAdminRole()).thenReturn(false);
+    when(consultantRepository.findByIdAndDeleteDateIsNull("c-1"))
+        .thenReturn(Optional.of(consultantWithPersonalInfo()));
+    when(consultantTopicRepository.findTopicIdsByConsultantId("c-1")).thenReturn(List.of());
+    when(accountManager.findConsultant("c-1")).thenReturn(Optional.empty());
+
+    var result = consultantAdminService.findConsultantById("c-1");
+
+    assertThat(result.getEmbedded().getAdminRemarks()).isNull();
+    assertThat(result.getEmbedded().getSalutation()).isEqualTo("counsellor_female");
+  }
+
+  @Test
+  void updateConsultant_Should_ignoreAdminRemarks_When_CallerLacksTenantLevelAdminRole() {
+    when(authenticatedUser.hasTenantLevelAdminRole()).thenReturn(false);
+    var updated = consultantWithPersonalInfo();
+    var dto =
+        new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO()
+            .adminRemarks("must not be written");
+    when(consultantUpdateService.updateConsultant("c-1", dto)).thenReturn(updated);
+    when(consultantTopicRepository.findTopicIdsByConsultantId("c-1")).thenReturn(List.of());
+
+    var result = consultantAdminService.updateConsultant("c-1", dto);
+
+    assertThat(dto.getAdminRemarks()).isNull();
+    assertThat(result.getEmbedded().getAdminRemarks()).isNull();
+  }
+
+  @Test
+  void updateConsultant_Should_exposeAdminRemarks_When_CallerIsTenantLevelAdmin() {
+    when(authenticatedUser.hasTenantLevelAdminRole()).thenReturn(true);
+    var updated = consultantWithPersonalInfo();
+    var dto =
+        new de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO()
+            .adminRemarks("Internal note");
+    when(consultantUpdateService.updateConsultant("c-1", dto)).thenReturn(updated);
+    when(consultantTopicRepository.findTopicIdsByConsultantId("c-1")).thenReturn(List.of());
+
+    var result = consultantAdminService.updateConsultant("c-1", dto);
+
+    assertThat(dto.getAdminRemarks()).isEqualTo("Internal note");
+    assertThat(result.getEmbedded().getAdminRemarks()).isEqualTo("Internal note");
+  }
+
+  @Test
+  void createNewConsultant_Should_stripAdminRemarks_When_CallerLacksTenantLevelAdminRole() {
+    when(authenticatedUser.hasTenantLevelAdminRole()).thenReturn(false);
+    var embedded = new ConsultantDTO().id("c1");
+    var response = new ConsultantAdminResponseDTO().embedded(embedded);
+    when(this.createConsultantSaga.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(response);
+    when(this.consultantTopicRepository.findTopicIdsByConsultantId("c1")).thenReturn(List.of());
+    var dto = new CreateConsultantDTO().adminRemarks("must not be written");
+
+    var result = this.consultantAdminService.createNewConsultant(dto);
+
+    assertThat(dto.getAdminRemarks()).isNull();
+    assertThat(result.getEmbedded().getAdminRemarks()).isNull();
+  }
+
+  @Test
+  void createNewConsultant_Should_exposeAdminRemarks_When_CallerIsTenantLevelAdmin() {
+    when(authenticatedUser.hasTenantLevelAdminRole()).thenReturn(true);
+    var embedded = new ConsultantDTO().id("c1");
+    var response = new ConsultantAdminResponseDTO().embedded(embedded);
+    when(this.createConsultantSaga.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(response);
+    when(this.consultantTopicRepository.findTopicIdsByConsultantId("c1")).thenReturn(List.of());
+    var dto = new CreateConsultantDTO().adminRemarks("Internal note");
+
+    var result = this.consultantAdminService.createNewConsultant(dto);
+
+    assertThat(result.getEmbedded().getAdminRemarks()).isEqualTo("Internal note");
   }
 
   @Test

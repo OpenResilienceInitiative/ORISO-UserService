@@ -183,7 +183,17 @@ public class SecurityConfig {
                     "/users/account-invites/{token}/onboarding/register",
                     "/service/users/account-invites/{token}/onboarding/register",
                     "/users/account-invites/{token}/onboarding/two-factor",
-                    "/service/users/account-invites/{token}/onboarding/two-factor")
+                    "/service/users/account-invites/{token}/onboarding/two-factor",
+                    "/users/account-invites/{token}/onboarding/dpa-forward",
+                    "/service/users/account-invites/{token}/onboarding/dpa-forward")
+                .permitAll()
+                // PUBLIC signed-notice hint from TenantService (ORISO-UserService#1005): carries
+                // no data and reveals nothing; all facts are re-read through the authenticated
+                // technical-user client and an exactly-once ledger absorbs spoofed hints.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/tenants/{tenantId}/dpa-signed-notices",
+                    "/service/users/tenants/{tenantId}/dpa-signed-notices")
                 .permitAll()
                 // Password-reset request/confirm are already permitted by the exact requestMatchers
                 // above (with and without the /service prefix); no broad regex needed.
@@ -271,6 +281,15 @@ public class SecurityConfig {
                     "/users/sessions/{sessionId:[0-9]+}/supervision/opt-out",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervision/opt-out")
                 .hasAuthority(USER_DEFAULT)
+                /* Gate 2 consent pointer (ADR-022 decision 2). Anonymous help-seekers are the
+                main case — they hold ANONYMOUS_DEFAULT, not USER_DEFAULT — but a registered
+                help-seeker passes the same gate in the room. Ownership of the session is
+                verified in SessionConsentService, not here. */
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/users/sessions/{sessionId:[0-9]+}/consent",
+                    "/service/users/sessions/{sessionId:[0-9]+}/consent")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers(
                     HttpMethod.GET, "/users/sessions/room", "/service/users/sessions/room")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)

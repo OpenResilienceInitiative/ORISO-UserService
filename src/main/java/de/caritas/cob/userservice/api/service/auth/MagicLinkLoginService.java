@@ -11,6 +11,9 @@ import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
@@ -22,8 +25,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.OffsetDateTime;
-import java.time.format.DateTimeFormatter;
+import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Properties;
@@ -49,6 +51,8 @@ public class MagicLinkLoginService {
   private final @NonNull IdentitySessionExchange identitySessionExchange;
   private final @NonNull OneTimeTokenStore oneTimeTokenStore;
   private final @NonNull ApplicationSettingsService applicationSettingsService;
+  private final @NonNull OrisoEmailRenderer emailRenderer;
+  private final @NonNull OrisoEmailBrand emailBrand;
 
   @Value("${identity.email-dummy-suffix:@beratungcaritas.de}")
   private String emailDummySuffix;
@@ -210,12 +214,12 @@ public class MagicLinkLoginService {
                 }
               });
 
-      Message message = new MimeMessage(session);
+      var email = renderMagicLink(magicUrl, smtpSettings.getEmailThemeColor());
+      MimeMessage message = new MimeMessage(session);
       message.setFrom(new InternetAddress(smtpSettings.getFrom()));
       message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(target.getEmail()));
-      message.setSubject("Your ORISO magic login link");
-      message.setContent(
-          buildHtml(magicUrl, smtpSettings.getEmailThemeColor()), "text/html; charset=UTF-8");
+      message.setSubject(email.subject(), "UTF-8");
+      message.setContent(OrisoEmailMime.alternative(email));
       Transport.send(message);
     } catch (Exception ex) {
       log.warn(
@@ -225,31 +229,25 @@ public class MagicLinkLoginService {
     }
   }
 
-  private String buildHtml(String magicUrl, String emailThemeColor) {
-    String color =
-        isNotBlank(emailThemeColor) && emailThemeColor.matches("^#([A-Fa-f0-9]{6})$")
-            ? emailThemeColor
-            : "#0f3b8f";
-    String now = OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME);
-
-    return "<!doctype html><html><body style=\"margin:0;padding:0;background:#f6f7fb;font-family:Arial,sans-serif;\">"
-        + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\" style=\"padding:24px 0;\">"
-        + "<tr><td align=\"center\">"
-        + "<table role=\"presentation\" width=\"620\" cellpadding=\"0\" cellspacing=\"0\" style=\"max-width:620px;background:#ffffff;border:1px solid #e5e7eb;border-radius:12px;overflow:hidden;\">"
-        + "<tr><td style=\"background:"
-        + color
-        + ";padding:18px 24px;color:#ffffff;font-size:20px;font-weight:700;\">ORISO</td></tr>"
-        + "<tr><td style=\"padding:28px 24px 8px 24px;color:#111827;font-size:24px;line-height:32px;font-weight:700;\">Login with magic link</td></tr>"
-        + "<tr><td style=\"padding:0 24px 14px 24px;color:#374151;font-size:16px;line-height:24px;\">Use this one-time link to continue your ORISO login flow.</td></tr>"
-        + "<tr><td style=\"padding:0 24px 18px 24px;\"><a href=\""
-        + magicUrl
-        + "\" style=\"display:inline-block;background:"
-        + color
-        + ";color:#ffffff;text-decoration:none;padding:12px 18px;border-radius:8px;font-weight:600;\">Open Magic Link</a></td></tr>"
-        + "<tr><td style=\"padding:0 24px 24px 24px;color:#6b7280;font-size:14px;line-height:22px;\">This link expires in 15 minutes. Sent at: "
-        + now
-        + "</td></tr>"
-        + "</table></td></tr></table></body></html>";
+  /**
+   * Renders the sign-in link from the design system.
+   *
+   * <p>Replaces the 620px Arial card this class used to concatenate inline, which sat on {@code
+   * #f6f7fb} with an {@code #e5e7eb} border while the design system specifies a 600px card on
+   * {@code #f2efef} with {@code #e0dada} — three values that made every ORISO mail look like it
+   * came from a different sender.
+   *
+   * <p>The mail is German now. The old subject read "Your ORISO magic login link" while the rest of
+   * the platform addresses German-speaking users, which was an accident of the inline copy rather
+   * than a decision.
+   */
+  private OrisoEmailRenderer.RenderedEmail renderMagicLink(
+      String magicUrl, String emailThemeColor) {
+    Map<String, String> values =
+        new LinkedHashMap<>(emailBrand.values(magicLinkFrontendBaseUrl, emailThemeColor));
+    values.put("loginUrl", magicUrl);
+    values.put("expiryMinutes", String.valueOf(MAGIC_LINK_TOKEN_TTL.toMinutes()));
+    return emailRenderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values);
   }
 
   private String generateAndStoreToken(String keycloakUserId) {

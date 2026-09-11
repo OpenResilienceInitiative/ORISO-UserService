@@ -34,6 +34,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.BiConsumer;
 import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -287,6 +288,9 @@ public class UserServiceMapper {
     map.put("isTeamConsultant", nonNull(fullConsultant) && fullConsultant.isTeamConsultant());
     map.put("isSupervisor", nonNull(fullConsultant) && fullConsultant.isSupervisor());
     map.put("displayName", nonNull(fullConsultant) ? fullConsultant.getDisplayName() : null);
+    map.put(
+        "internalDisplayName",
+        nonNull(fullConsultant) ? fullConsultant.getInternalDisplayName() : null);
     map.put("publicSlug", nonNull(fullConsultant) ? fullConsultant.getPublicSlug() : null);
     map.put(
         "pendingPublicSlug",
@@ -522,29 +526,56 @@ public class UserServiceMapper {
     user.setNotificationsSettings(JsonSerializationUtils.serializeToJsonString(patchedSettings));
   }
 
+  /**
+   * One switch of the notification matrix, as a getter/setter pair.
+   *
+   * <p>A list rather than a chain of ifs on purpose. The failure mode of the chain is a forgotten
+   * block, and a forgotten block does not fail — it silently drops one switch on every save, which
+   * is the hardest kind of bug to notice in a settings screen. `NotificationsSettingsMergeTest`
+   * walks the DTO by reflection so a field added to the API spec and not added here fails the
+   * build.
+   */
+  record NotificationSetting(
+      Function<NotificationsSettingsDTO, Boolean> read,
+      BiConsumer<NotificationsSettingsDTO, Boolean> write) {}
+
+  static final List<NotificationSetting> NOTIFICATION_SETTINGS =
+      List.of(
+          new NotificationSetting(
+              NotificationsSettingsDTO::getAppointmentNotificationEnabled,
+              NotificationsSettingsDTO::setAppointmentNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getNewChatMessageNotificationEnabled,
+              NotificationsSettingsDTO::setNewChatMessageNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getInitialEnquiryNotificationEnabled,
+              NotificationsSettingsDTO::setInitialEnquiryNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getReassignmentNotificationEnabled,
+              NotificationsSettingsDTO::setReassignmentNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getAssignmentNotificationEnabled,
+              NotificationsSettingsDTO::setAssignmentNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getFeedbackNotificationEnabled,
+              NotificationsSettingsDTO::setFeedbackNotificationEnabled),
+          new NotificationSetting(
+              NotificationsSettingsDTO::getServiceNoticeNotificationEnabled,
+              NotificationsSettingsDTO::setServiceNoticeNotificationEnabled));
+
   private NotificationsSettingsDTO patchNotificationsSettingsDTO(
       NotificationsAware user, EmailNotificationsDTO emailNotifications) {
     NotificationsSettingsDTO newSettings = emailNotifications.getSettings();
     NotificationsSettingsDTO existingSettings =
         deserializeNotificationSettingsDTOOrDefaultIfNull(user);
-    if (newSettings.getAppointmentNotificationEnabled() != null) {
-      existingSettings.setAppointmentNotificationEnabled(
-          newSettings.getAppointmentNotificationEnabled());
-    }
 
-    if (newSettings.getNewChatMessageNotificationEnabled() != null) {
-      existingSettings.setNewChatMessageNotificationEnabled(
-          newSettings.getNewChatMessageNotificationEnabled());
-    }
-
-    if (newSettings.getInitialEnquiryNotificationEnabled() != null) {
-      existingSettings.setInitialEnquiryNotificationEnabled(
-          newSettings.getInitialEnquiryNotificationEnabled());
-    }
-
-    if (newSettings.getReassignmentNotificationEnabled() != null) {
-      existingSettings.setReassignmentNotificationEnabled(
-          newSettings.getReassignmentNotificationEnabled());
+    // A null means "not sent in this patch", not "switch it off": the settings
+    // screen sends one switch at a time.
+    for (NotificationSetting setting : NOTIFICATION_SETTINGS) {
+      Boolean value = setting.read().apply(newSettings);
+      if (value != null) {
+        setting.write().accept(existingSettings, value);
+      }
     }
     return existingSettings;
   }

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -12,6 +13,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomReques
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserResponseDTO;
+import de.caritas.cob.userservice.api.config.observability.LiveChatDiagnosticMetrics;
 import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.util.HashMap;
@@ -46,6 +48,7 @@ class MatrixRoomClientTest {
 
   @Mock private MatrixConfig matrixConfig;
   @Mock private RestTemplate restTemplate;
+  @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
 
   @Captor private ArgumentCaptor<HttpEntity<MatrixCreateRoomRequestDTO>> createRoomRequestCaptor;
   @Captor private ArgumentCaptor<HttpEntity<MatrixInviteUserRequestDTO>> inviteRequestCaptor;
@@ -83,6 +86,7 @@ class MatrixRoomClientTest {
     assertThat(request.getBody().getPreset()).isEqualTo("private_chat");
     assertThat(request.getBody().getVisibility()).isEqualTo("private");
     assertThat(request.getBody().getInitialState()).isEmpty();
+    verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.SUCCESS);
   }
 
   @Test
@@ -103,6 +107,7 @@ class MatrixRoomClientTest {
     assertThat(event.getType()).isEqualTo("m.room.encryption");
     assertThat(event.getStateKey()).isEmpty();
     assertThat(event.getContent()).isEqualTo(Map.of("algorithm", "m.megolm.v1.aes-sha2"));
+    verify(diagnosticMetrics).recordRoomCreation(true, LiveChatDiagnosticMetrics.Outcome.SUCCESS);
   }
 
   @Test
@@ -123,6 +128,7 @@ class MatrixRoomClientTest {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException.class)
         .hasMessageContaining("Could not create room (Room name) in Matrix");
+    verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.FAILURE);
   }
 
   @Test
@@ -137,6 +143,23 @@ class MatrixRoomClientTest {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException.class)
         .hasMessage("Could not create room (Room name) in Matrix");
+    verify(diagnosticMetrics).recordRoomCreation(false, LiveChatDiagnosticMetrics.Outcome.FAILURE);
+  }
+
+  @Test
+  void createRoom_ShouldRejectSuccessfulResponseWithoutRoomId() {
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/createRoom")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixCreateRoomResponseDTO.class)))
+        .thenReturn(ResponseEntity.ok(new MatrixCreateRoomResponseDTO()));
+
+    assertThatThrownBy(
+            () -> matrixRoomClient.createRoom("Room name", "room-alias", ACCESS_TOKEN, true))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException.class)
+        .hasMessage("Could not create room (Room name) in Matrix");
+    verify(diagnosticMetrics).recordRoomCreation(true, LiveChatDiagnosticMetrics.Outcome.FAILURE);
   }
 
   @Test
@@ -174,6 +197,33 @@ class MatrixRoomClientTest {
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException.class)
         .hasMessageContaining("Could not invite user");
+  }
+
+  @Test
+  void inviteUserToRoom_ShouldRetry_WhenMatrixRateLimitsInvite() throws Exception {
+    var responseBody = new MatrixInviteUserResponseDTO();
+    when(restTemplate.postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.TOO_MANY_REQUESTS,
+                "Too Many Requests",
+                null,
+                "{\"errcode\":\"M_LIMIT_EXCEEDED\",\"retry_after_ms\":1}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8))
+        .thenReturn(ResponseEntity.ok(responseBody));
+
+    var response = matrixRoomClient.inviteUserToRoom(ROOM_ID, USER_ID, ACCESS_TOKEN);
+
+    assertThat(response.getBody()).isSameAs(responseBody);
+    verify(restTemplate, times(2))
+        .postForEntity(
+            eq(uri(API_URL + "/_matrix/client/r0/rooms/" + ENCODED_ROOM_ID + "/invite")),
+            org.mockito.ArgumentMatchers.any(HttpEntity.class),
+            eq(MatrixInviteUserResponseDTO.class));
   }
 
   @Test

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.facade.assignsession;
 
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
+import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -38,6 +39,13 @@ public class AssignSessionFacade {
   private final @NonNull HttpServletRequest httpServletRequest;
 
   /**
+   * ADR-008 "Supervision (auto-assigned)": a case that changes hands must pick up the NEW
+   * counsellor's standing supervisor. Until now only the enquiry-accept path did, so every
+   * reassignment silently left the case unsupervised.
+   */
+  private final @NonNull SessionSupervisorFacade sessionSupervisorFacade;
+
+  /**
    * Assigns the given {@link Session} session to the given {@link Consultant}. Removes consultants
    * from the Matrix room when they no longer have the right to view this session.
    *
@@ -56,6 +64,11 @@ public class AssignSessionFacade {
     if (!authenticatedUser.isAdviceSeeker()) {
       sendEmailForConsultantChange(session, consultantToAssign);
     }
+    // The case now belongs to consultantToAssign, so layer their standing supervision on top.
+    // Never throws (see the facade's contract): a supervision problem must degrade to "this case
+    // is unsupervised", never to "the reassignment failed". This method is not transactional, so
+    // the direct call is safe here — the handover paths need an after-commit hook instead.
+    sessionSupervisorFacade.attachStandingSupervisorIfAssigned(session.getId(), consultantToAssign);
 
     var event =
         new AssignSessionStatisticsEvent(

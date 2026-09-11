@@ -21,8 +21,4 @@ public interface IdentityClient {
   void removeRoleIfPresent(final String userId, final String roleName);
 
   void updateRole(final String userId, final String roleName);
-
-  boolean userHasAuthority(String userId, String authority);
-
-  boolean userHasRole(String userId, String userRole);
 }
