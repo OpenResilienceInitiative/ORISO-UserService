@@ -10,7 +10,9 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
@@ -38,6 +40,8 @@ import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.context.annotation.Import;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
@@ -58,7 +62,7 @@ class AccountInviteDirectSendAtomicIT {
   private static final String RECIPIENT = "owner@example.org";
 
   @Autowired private AccountInviteService service;
-  @Autowired private AccountInviteRepository accountInviteRepository;
+  @MockitoSpyBean private AccountInviteRepository accountInviteRepository;
   @Autowired private InviteEmailTemplateRepository templateRepository;
   @MockitoSpyBean private InviteEmailDeliveryRepository deliveryRepository;
 
@@ -145,6 +149,44 @@ class AccountInviteDirectSendAtomicIT {
 
     assertThat(accountInviteRepository.count()).isZero();
     verify(tenantIdAllocationClient).release(17L);
+    verify(agencyIdAllocationClient).release(23L);
+  }
+
+  @Test
+  void directSend_ShouldKeepReservationsWhenCommittedClaimCannotBeDeleted() {
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
+        .thenReturn("https://example.org/invite/token");
+    doThrow(confirmedRejection())
+        .when(inviteMailDispatchService)
+        .send(any(), any(), any(), any(), any(), any());
+    doThrow(new DataAccessResourceFailureException("database unavailable"))
+        .when(accountInviteRepository)
+        .deleteById(any());
+
+    assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminInvite(), templateId))
+        .isInstanceOf(SmtpSendException.class)
+        .satisfies(exception -> assertThat(exception.getSuppressed()).hasSize(1));
+
+    assertThat(accountInviteRepository.findAll()).hasSize(1);
+    verify(tenantIdAllocationClient, never()).release(17L);
+  }
+
+  @Test
+  void directSend_ShouldAttemptAgencyReleaseWhenTenantReleaseFails() {
+    when(agencyIdAllocationClient.reserve(null, 17L)).thenReturn(23L);
+    when(agencyIdAllocationClient.getAvailability(23L)).thenReturn(IdAllocationStatus.RESERVED);
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
+        .thenReturn("https://example.org/invite/token");
+    doThrow(confirmedRejection())
+        .when(inviteMailDispatchService)
+        .send(any(), any(), any(), any(), any(), any());
+    doThrow(new IllegalStateException("tenant allocator unavailable"))
+        .when(tenantIdAllocationClient)
+        .release(17L);
+
+    assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminAgencyInvite(), templateId))
+        .isInstanceOf(SmtpSendException.class);
+
     verify(agencyIdAllocationClient).release(23L);
   }
 
@@ -246,6 +288,73 @@ class AccountInviteDirectSendAtomicIT {
     assertThat(mailCalls).hasValue(1);
   }
 
+  @Test
+  void createInvite_ShouldExpireElapsedClaimAndPermitReinvite() {
+    AccountInvite expired = persistedInvite(AccountInviteStatus.EMAIL_SENT, RECIPIENT);
+    expired.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+    expired.setActiveRecipientKey(RECIPIENT);
+    expired = accountInviteRepository.saveAndFlush(expired);
+
+    AccountInvite replacement = service.createInvite(counsellorInvite("Ada"));
+
+    assertThat(accountInviteRepository.findById(expired.getId()))
+        .get()
+        .satisfies(
+            invite -> {
+              assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+              assertThat(invite.getActiveRecipientKey()).isNull();
+            });
+    assertThat(replacement.getActiveRecipientKey()).isEqualTo(RECIPIENT);
+  }
+
+  @Test
+  void acceptInvite_ShouldCommitExpiredStateAndReleaseRecipientClaim() {
+    String rawToken = "expired-invite-token";
+    AccountInvite expired = persistedInvite(AccountInviteStatus.EMAIL_SENT, RECIPIENT);
+    expired.setTokenHash(AccountInviteService.hash(rawToken));
+    expired.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+    expired.setActiveRecipientKey(RECIPIENT);
+    expired = accountInviteRepository.saveAndFlush(expired);
+
+    assertThatThrownBy(() -> service.acceptInvite(rawToken, "user-1"))
+        .isInstanceOf(AccountInviteLinkException.class);
+
+    assertThat(accountInviteRepository.findById(expired.getId()))
+        .get()
+        .satisfies(
+            invite -> {
+              assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+              assertThat(invite.getActiveRecipientKey()).isNull();
+            });
+  }
+
+  @Test
+  void resendInvite_ShouldRejectExistingRecipientClaimBeforeMailDispatch() {
+    AccountInvite oldInvite = persistedInvite(AccountInviteStatus.EXPIRED, RECIPIENT);
+    oldInvite.setActiveRecipientKey(null);
+    oldInvite = accountInviteRepository.saveAndFlush(oldInvite);
+    accountInviteRepository.saveAndFlush(
+        persistedInvite(AccountInviteStatus.EMAIL_SENT, RECIPIENT));
+
+    Long oldInviteId = oldInvite.getId();
+    assertThatThrownBy(
+            () ->
+                service.resendInvite(
+                    new AccountInviteService.SendInviteCommand(oldInviteId, templateId)))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+
+    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void createInvite_ShouldNotMisreportUnrelatedIntegrityFailureAsEmailConflict() {
+    CreateAccountInviteCommand command = counsellorInvite("x".repeat(300));
+
+    assertThatThrownBy(() -> service.createInvite(command))
+        .isInstanceOf(DataIntegrityViolationException.class)
+        .isNotInstanceOf(CustomValidationHttpStatusException.class);
+  }
+
   private CreateAccountInviteCommand tenantAdminInvite() {
     return new CreateAccountInviteCommand(
         AccountInviteTargetRole.TENANT_ADMIN,
@@ -279,5 +388,39 @@ class AccountInviteDirectSendAtomicIT {
         30L,
         IdAllocationMode.AUTO,
         IdAllocationMode.AUTO);
+  }
+
+  private static CreateAccountInviteCommand counsellorInvite(String firstName) {
+    return new CreateAccountInviteCommand(
+        AccountInviteTargetRole.COUNSELLOR,
+        null,
+        RECIPIENT,
+        firstName,
+        "Lovelace",
+        null,
+        null,
+        30L,
+        null,
+        null);
+  }
+
+  private static AccountInvite persistedInvite(AccountInviteStatus status, String recipient) {
+    LocalDateTime now = LocalDateTime.now();
+    return AccountInvite.builder()
+        .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+        .tenantId(17L)
+        .tenantIdReservationToken("reservation-17")
+        .recipientEmail(recipient)
+        .activeRecipientKey(recipient)
+        .expiresAt(now.plusDays(30))
+        .status(status)
+        .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+        .emailVerificationStatus(EmailVerificationStatus.PENDING)
+        .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+        .createdByUserId("admin-1")
+        .createdByUsername("admin@example.org")
+        .createDate(now)
+        .updateDate(now)
+        .build();
   }
 }

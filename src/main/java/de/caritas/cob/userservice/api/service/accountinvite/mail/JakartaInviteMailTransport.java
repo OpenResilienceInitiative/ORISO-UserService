@@ -4,6 +4,7 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import jakarta.mail.Address;
+import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
@@ -75,14 +76,10 @@ public class JakartaInviteMailTransport implements InviteMailTransport {
     try {
       Transport.send(message);
       return new InviteMailSendReceipt(recipient, Instant.now());
-    } catch (SendFailedException exception) {
-      SmtpSendException.DeliveryDisposition disposition =
-          allRecipientsConfirmedUnsent(recipients, exception)
-              ? SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT
-              : SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN;
+    } catch (MessagingException exception) {
       throw new SmtpSendException(
           SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
-          disposition,
+          deliveryDisposition(recipients, exception),
           "Account invite email could not be sent",
           exception);
     } catch (Exception exception) {
@@ -94,6 +91,18 @@ public class JakartaInviteMailTransport implements InviteMailTransport {
           "Account invite email delivery outcome is uncertain",
           exception);
     }
+  }
+
+  static SmtpSendException.DeliveryDisposition deliveryDisposition(
+      Address[] intendedRecipients, MessagingException exception) {
+    if (exception instanceof AuthenticationFailedException) {
+      return SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT;
+    }
+    if (exception instanceof SendFailedException sendFailure
+        && allRecipientsConfirmedUnsent(intendedRecipients, sendFailure)) {
+      return SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT;
+    }
+    return SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN;
   }
 
   static boolean allRecipientsConfirmedUnsent(

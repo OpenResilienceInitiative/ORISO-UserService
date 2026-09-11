@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -129,7 +130,15 @@ class AccountInviteControllerTest {
     // Business reason: a direct-send request must not leave an invisible draft if SMTP rejects it.
     var request = new AccountInviteController.CreateAccountInviteRequestDTO();
     request.targetRole = AccountInviteTargetRole.COUNSELLOR.name();
+    request.tenantId = 7L;
     request.recipientEmail = "invitee@example.org";
+    request.firstName = "Ada";
+    request.lastName = "Lovelace";
+    request.agencyId = 9L;
+    request.departmentId = 11L;
+    request.expiresInDays = 14L;
+    request.tenantIdAllocationMode = "AUTO";
+    request.agencyIdAllocationMode = "MANUAL";
     request.templateId = 12L;
     request.acceptBaseUrl = "https://example.org/invite";
 
@@ -142,7 +151,36 @@ class AccountInviteControllerTest {
 
     assertEquals(HttpStatus.CREATED, response.getStatusCode());
     assertEquals("raw-token", response.getBody().rawToken);
-    verify(accountInviteService).createAndSendInvite(any(), eq(12L));
+    var commandCaptor =
+        ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
+    verify(accountInviteService).createAndSendInvite(commandCaptor.capture(), eq(12L));
+    var command = commandCaptor.getValue();
+    assertEquals(AccountInviteTargetRole.COUNSELLOR, command.targetRole());
+    assertEquals(7L, command.tenantId());
+    assertEquals("invitee@example.org", command.recipientEmail());
+    assertEquals("Ada", command.firstName());
+    assertEquals("Lovelace", command.lastName());
+    assertEquals(9L, command.agencyId());
+    assertEquals(11L, command.departmentId());
+    assertEquals(14L, command.expiresInDays());
+    assertEquals(IdAllocationMode.AUTO, command.tenantIdAllocationMode());
+    assertEquals(IdAllocationMode.MANUAL, command.agencyIdAllocationMode());
+  }
+
+  @Test
+  void createInvite_withTemplateId_propagatesSmtpFailure() {
+    // Business reason: the controller must preserve the service's 502 error contract when a
+    // direct-send attempt cannot be confirmed.
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.COUNSELLOR.name();
+    request.recipientEmail = "invitee@example.org";
+    request.templateId = 12L;
+    var failure = new SmtpSendException("SMTP refused the message");
+    when(accountInviteService.createAndSendInvite(any(), eq(12L))).thenThrow(failure);
+
+    var thrown = assertThrows(SmtpSendException.class, () -> controller.createInvite(request));
+
+    assertEquals(failure, thrown);
   }
 
   @Test

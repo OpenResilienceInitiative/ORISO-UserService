@@ -1,3 +1,5 @@
 ALTER TABLE account_invite
-  DROP INDEX idx_account_invite_active_recipient,
-  DROP COLUMN active_recipient_key;
+  DROP INDEX IF EXISTS idx_account_invite_active_recipient;
+
+ALTER TABLE account_invite
+  DROP COLUMN IF EXISTS active_recipient_key;

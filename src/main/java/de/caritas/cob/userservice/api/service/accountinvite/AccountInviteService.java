@@ -54,6 +54,8 @@ import org.springframework.web.client.HttpClientErrorException;
 @RequiredArgsConstructor
 public class AccountInviteService {
 
+  private static final String ACTIVE_RECIPIENT_CONSTRAINT = "idx_account_invite_active_recipient";
+
   private static final int TOKEN_BYTES = 32;
   private static final long DEFAULT_EXPIRY_DAYS = 30L;
   private static final SecureRandom RANDOM = new SecureRandom();
@@ -161,9 +163,8 @@ public class AccountInviteService {
       if (tenantReservation != null) {
         tenantIdAllocationClient.release(tenantReservation.tenantId());
       }
-      if (exception instanceof DataIntegrityViolationException) {
-        throw new CustomValidationHttpStatusException(
-            HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
+      if (isActiveRecipientConflict(exception)) {
+        throw emailNotAvailable(exception);
       }
       throw exception;
     }
@@ -206,9 +207,8 @@ public class AccountInviteService {
       if (claimedInvite[0] != null) {
         releaseDirectInviteReservations(claimedInvite[0], command);
       }
-      if (claimFailure instanceof DataIntegrityViolationException) {
-        throw new CustomValidationHttpStatusException(
-            HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
+      if (isActiveRecipientConflict(claimFailure)) {
+        throw emailNotAvailable(claimFailure);
       }
       throw claimFailure;
     }
@@ -273,6 +273,7 @@ public class AccountInviteService {
 
   private void releaseDirectInviteClaim(
       AccountInvite invite, CreateAccountInviteCommand command, RuntimeException sendFailure) {
+    boolean claimReleased = false;
     try {
       requiresNewTransaction()
           .executeWithoutResult(
@@ -280,6 +281,7 @@ public class AccountInviteService {
                 accountInviteRepository.deleteById(invite.getId());
                 accountInviteRepository.flush();
               });
+      claimReleased = true;
     } catch (RuntimeException compensationFailure) {
       log.error(
           "Direct invite {} failed before dispatch and its committed claim could not be released",
@@ -287,7 +289,9 @@ public class AccountInviteService {
           compensationFailure);
       sendFailure.addSuppressed(compensationFailure);
     }
-    releaseDirectInviteReservations(invite, command);
+    if (claimReleased) {
+      releaseDirectInviteReservations(invite, command);
+    }
   }
 
   /**
@@ -298,18 +302,27 @@ public class AccountInviteService {
    */
   private void releaseDirectInviteReservations(
       AccountInvite invite, CreateAccountInviteCommand command) {
-    try {
-      if (invite.getTenantIdReservationToken() != null && invite.getTenantId() != null) {
+    if (invite.getTenantIdReservationToken() != null && invite.getTenantId() != null) {
+      try {
         tenantIdAllocationClient.release(invite.getTenantId());
+      } catch (RuntimeException releaseException) {
+        logReservationReleaseFailure("tenant", releaseException);
       }
-      if (command.agencyIdAllocationMode() != null && invite.getAgencyId() != null) {
-        agencyIdAllocationClient.release(invite.getAgencyId());
-      }
-    } catch (RuntimeException releaseException) {
-      log.warn(
-          "Could not release direct-invite ID reservation after failed send ({})",
-          releaseException.getClass().getSimpleName());
     }
+    if (command.agencyIdAllocationMode() != null && invite.getAgencyId() != null) {
+      try {
+        agencyIdAllocationClient.release(invite.getAgencyId());
+      } catch (RuntimeException releaseException) {
+        logReservationReleaseFailure("agency", releaseException);
+      }
+    }
+  }
+
+  private void logReservationReleaseFailure(String allocationType, RuntimeException exception) {
+    log.warn(
+        "Could not release direct-invite {} ID reservation after failed send ({})",
+        allocationType,
+        exception.getClass().getSimpleName());
   }
 
   /**
@@ -347,16 +360,20 @@ public class AccountInviteService {
    */
   private void verifyRecipientEmailAvailable(String recipientEmail) {
     String normalized = normalizeEmail(recipientEmail);
-    if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()
-        || accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
-                normalized, ADDRESS_HOLDING_INVITE_STATUSES, LocalDateTime.now())
-            > 0) {
+    if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()) {
+      throw emailNotAvailable(null);
+    }
+    LocalDateTime now = LocalDateTime.now();
+    accountInviteRepository.expireElapsedRecipientClaims(
+        normalized, ADDRESS_HOLDING_INVITE_STATUSES, now);
+    if (accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
+            normalized, ADDRESS_HOLDING_INVITE_STATUSES, now)
+        > 0) {
       // 409 + X-Reason: EMAIL_NOT_AVAILABLE — distinguishable from the bare 400 of a malformed
       // address and from the reason-less 409 of a taken tenant ID. Both sources answer with the
       // SAME reason on purpose: the admin renders one inline field error for it, and a second
       // code would degrade to a generic toast.
-      throw new CustomValidationHttpStatusException(
-          HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
+      throw emailNotAvailable(null);
     }
   }
 
@@ -466,6 +483,7 @@ public class AccountInviteService {
             // tenant ID, so it must also keep the token that consumes the reservation.
             .tenantIdReservationToken(oldInvite.getTenantIdReservationToken())
             .recipientEmail(oldInvite.getRecipientEmail())
+            .activeRecipientKey(normalizeEmail(oldInvite.getRecipientEmail()))
             .firstName(oldInvite.getFirstName())
             .lastName(oldInvite.getLastName())
             .agencyId(oldInvite.getAgencyId())
@@ -480,21 +498,31 @@ public class AccountInviteService {
             .updateDate(now)
             .build();
 
-    // Transport first (TEN-INV-U6): the old invite is only superseded and the replacement only
-    // persisted after the SMTP server accepted the replacement mail. A failed handover leaves
-    // the previous invite fully intact and resendable. The FAILED audit row anchors on the old
-    // invite because the replacement does not exist outside this transaction.
+    // Transfer the unique recipient claim before SMTP. Both writes belong to this transaction, so
+    // a rejected send restores the old claim; a competing invite fails this flush before mail.
+    oldInvite.setActiveRecipientKey(null);
+    accountInviteRepository.saveAndFlush(oldInvite);
+    try {
+      replacement = accountInviteRepository.saveAndFlush(replacement);
+    } catch (DataIntegrityViolationException conflict) {
+      if (isActiveRecipientConflict(conflict)) {
+        throw emailNotAvailable(conflict);
+      }
+      throw conflict;
+    }
+
+    // Transport first (TEN-INV-U6): the old invite is only superseded after the SMTP server
+    // accepted the replacement mail. A failed handover rolls this transaction back, restoring
+    // the old claim and removing the replacement. The FAILED audit row anchors on the committed
+    // old invite because the replacement does not exist outside this transaction.
     InviteSendResult result = sendInvite(replacement, template, oldInvite.getId());
 
     oldInvite.setStatus(AccountInviteStatus.SUPERSEDED);
-    oldInvite.setActiveRecipientKey(null);
     oldInvite.setSupersededAt(now);
     oldInvite.setSupersededByUserId(authenticatedUser.getUserId());
     oldInvite.setSupersededByInviteId(result.invite().getId());
     oldInvite.setUpdateDate(now);
-    accountInviteRepository.saveAndFlush(oldInvite);
-    result.invite().setActiveRecipientKey(normalizeEmail(result.invite().getRecipientEmail()));
-    accountInviteRepository.save(result.invite());
+    accountInviteRepository.save(oldInvite);
     return result;
   }
 
@@ -513,7 +541,7 @@ public class AccountInviteService {
     return accountInviteRepository.save(invite);
   }
 
-  @Transactional
+  @Transactional(noRollbackFor = AccountInviteLinkException.class)
   public AccountInvite acceptInvite(String rawToken, String acceptedByUserId) {
     if (isBlank(rawToken)) {
       throw new BadRequestException("Invite token is required");
@@ -970,6 +998,29 @@ public class AccountInviteService {
 
   private static String normalizeEmail(String value) {
     return value.trim().toLowerCase(Locale.ROOT);
+  }
+
+  private static boolean isActiveRecipientConflict(Throwable exception) {
+    Throwable current = exception;
+    while (current != null) {
+      String message = current.getMessage();
+      if (message != null
+          && message.toLowerCase(Locale.ROOT).contains(ACTIVE_RECIPIENT_CONSTRAINT)) {
+        return true;
+      }
+      current = current.getCause();
+    }
+    return false;
+  }
+
+  private static CustomValidationHttpStatusException emailNotAvailable(Throwable cause) {
+    CustomValidationHttpStatusException conflict =
+        new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE, HttpStatus.CONFLICT);
+    if (cause != null) {
+      conflict.initCause(cause);
+    }
+    return conflict;
   }
 
   private static String trimToNull(String value) {

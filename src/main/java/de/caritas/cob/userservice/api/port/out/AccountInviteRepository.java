@@ -99,6 +99,27 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
+  /**
+   * Materializes elapsed address-holding rows before a new claim is inserted. Without this update,
+   * the date-aware availability query would allow a retry while the unique recipient key still
+   * rejects it.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i"
+          + " SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.EXPIRED,"
+          + " i.activeRecipientKey = NULL,"
+          + " i.updateDate = :now"
+          + " WHERE i.activeRecipientKey = :recipientEmail"
+          + " AND i.status IN :statuses"
+          + " AND i.expiresAt IS NOT NULL"
+          + " AND i.expiresAt <= :now")
+  int expireElapsedRecipientClaims(
+      @Param("recipientEmail") String recipientEmail,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
   @Query(
       "SELECT i FROM AccountInvite i"
           + " WHERE (:tenantId IS NULL OR i.tenantId = :tenantId)"

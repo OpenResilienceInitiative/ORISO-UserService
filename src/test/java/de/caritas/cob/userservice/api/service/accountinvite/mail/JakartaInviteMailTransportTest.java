@@ -2,7 +2,9 @@ package de.caritas.cob.userservice.api.service.accountinvite.mail;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import jakarta.mail.Address;
+import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.SendFailedException;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMultipart;
@@ -115,6 +117,16 @@ class JakartaInviteMailTransportTest {
             JakartaInviteMailTransport.allRecipientsConfirmedUnsent(
                 new Address[] {recipient}, ambiguousFailure))
         .isFalse();
+  }
+
+  @Test
+  void deliveryDisposition_Should_confirmAuthenticationFailureWasNotSent() throws Exception {
+    Address recipient = new InternetAddress("owner@example.org");
+
+    assertThat(
+            JakartaInviteMailTransport.deliveryDisposition(
+                new Address[] {recipient}, new AuthenticationFailedException("535 rejected")))
+        .isEqualTo(SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT);
   }
 
   private static InviteSmtpSettings insecureSettings() {

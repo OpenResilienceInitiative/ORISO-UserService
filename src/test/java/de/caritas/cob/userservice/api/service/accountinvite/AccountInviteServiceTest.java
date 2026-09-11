@@ -145,6 +145,8 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
@@ -292,6 +294,8 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any())).thenReturn("https://x/y");
     when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenThrow(new SmtpSendException("SMTP refused the message"));
@@ -299,7 +303,8 @@ class AccountInviteServiceTest {
     assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(10L, 20L)))
         .isInstanceOf(SmtpSendException.class);
 
-    // The previous invite must stay valid and resendable — no supersede, no replacement.
+    // The transaction boundary (covered by AccountInviteDirectSendAtomicIT) rolls the claim
+    // transfer back. At this unit seam, prove that the failure never supersedes the old invite.
     assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
     assertThat(oldInvite.getSupersededByInviteId()).isNull();
     verify(accountInviteRepository, never()).save(any());
@@ -1957,6 +1962,8 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
