@@ -271,7 +271,6 @@ public class AccountInviteService {
                 accountInviteRepository.deleteById(invite.getId());
                 accountInviteRepository.flush();
               });
-      releaseDirectInviteReservations(invite, command);
     } catch (RuntimeException compensationFailure) {
       log.error(
           "Direct invite {} failed before dispatch and its committed claim could not be released",
@@ -279,6 +278,7 @@ public class AccountInviteService {
           compensationFailure);
       sendFailure.addSuppressed(compensationFailure);
     }
+    releaseDirectInviteReservations(invite, command);
   }
 
   /**
