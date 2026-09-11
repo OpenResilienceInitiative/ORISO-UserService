@@ -136,6 +136,7 @@ public class SecurityConfig {
                     "/service/conversations/anonymous/availability",
                     "/users/consultants/{consultantId:" + PUBLIC_CONSULTANT_ID_PATTERN + "}",
                     "/users/consultants/languages",
+                    "/service/users/consultants/languages",
                     "/error-reports",
                     "/service/error-reports",
                     "/users/magic-link/request",
