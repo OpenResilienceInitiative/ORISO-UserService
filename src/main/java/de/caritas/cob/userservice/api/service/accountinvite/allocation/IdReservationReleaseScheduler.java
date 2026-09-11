@@ -35,10 +35,13 @@ public class IdReservationReleaseScheduler {
 
   @Scheduled(fixedDelayString = "${account-invite.reservation-release.retry-delay-ms:60000}")
   public void retryPendingReleases() {
+    ScheduledTaskClaimService.ClaimLease lease = null;
     try {
-      if (!taskClaimService.tryClaim(TASK_NAME, claimDuration)) {
+      var acquiredLease = taskClaimService.tryClaimLease(TASK_NAME, claimDuration);
+      if (acquiredLease.isEmpty()) {
         return;
       }
+      lease = acquiredLease.get();
       tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
       var technicalUser = identityClientConfig.getTechnicalUser();
       var login =
@@ -56,6 +59,13 @@ public class IdReservationReleaseScheduler {
     } finally {
       TechnicalAccessTokenContext.clear();
       TenantContext.clear();
+      if (lease != null) {
+        try {
+          taskClaimService.release(lease);
+        } catch (RuntimeException exception) {
+          log.warn("Could not release account-invite reservation scheduler claim", exception);
+        }
+      }
     }
   }
 }

@@ -4,11 +4,14 @@ import de.caritas.cob.userservice.api.model.IdReservationReleaseTask;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -23,9 +26,17 @@ public class IdReservationReleaseProcessor {
   private final @NonNull TenantIdAllocationClient tenantIdAllocationClient;
   private final @NonNull AgencyIdAllocationClient agencyIdAllocationClient;
 
+  @Value("${account-invite.reservation-release.max-attempts:10}")
+  private int maxAttempts;
+
+  @Value("${account-invite.reservation-release.retry-backoff:PT5M}")
+  private Duration retryBackoff;
+
   @Transactional(readOnly = true)
   public List<Long> pendingTaskIds() {
-    return taskRepository.findTop100ByOrderByCreateDateAsc().stream()
+    return taskRepository
+        .findRetryable(maxAttempts, LocalDateTime.now().minus(retryBackoff), PageRequest.of(0, 100))
+        .stream()
         .map(IdReservationReleaseTask::getId)
         .toList();
   }

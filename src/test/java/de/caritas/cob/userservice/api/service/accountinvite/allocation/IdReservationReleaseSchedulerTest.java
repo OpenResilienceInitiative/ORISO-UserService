@@ -16,7 +16,9 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
+import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,6 +39,9 @@ class IdReservationReleaseSchedulerTest {
   @Mock private IdentityAuthentication identityAuthentication;
 
   private final Duration claimDuration = Duration.ofMinutes(5);
+  private final ScheduledTaskClaimService.ClaimLease lease =
+      new ScheduledTaskClaimService.ClaimLease(
+          IdReservationReleaseScheduler.TASK_NAME, LocalDateTime.of(2026, 9, 11, 18, 0));
 
   @BeforeEach
   void setUp() {
@@ -51,8 +56,8 @@ class IdReservationReleaseSchedulerTest {
 
   @Test
   void retryPendingReleases_ShouldSkipWork_WhenClaimIsLost() {
-    when(taskClaimService.tryClaim(IdReservationReleaseScheduler.TASK_NAME, claimDuration))
-        .thenReturn(false);
+    when(taskClaimService.tryClaimLease(IdReservationReleaseScheduler.TASK_NAME, claimDuration))
+        .thenReturn(Optional.empty());
 
     scheduler.retryPendingReleases();
 
@@ -65,19 +70,26 @@ class IdReservationReleaseSchedulerTest {
     TechnicalUserConfig technicalUser = new TechnicalUserConfig();
     technicalUser.setUsername("technical");
     technicalUser.setPassword("secret");
-    when(taskClaimService.tryClaim(IdReservationReleaseScheduler.TASK_NAME, claimDuration))
-        .thenReturn(true);
+    when(taskClaimService.tryClaimLease(IdReservationReleaseScheduler.TASK_NAME, claimDuration))
+        .thenReturn(Optional.of(lease));
     when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
     when(identityAuthentication.login("technical", "secret"))
         .thenReturn(new IdentityLogin("token", 60, 60, "refresh"));
     when(processor.pendingTaskIds()).thenReturn(List.of(1L, 2L));
     doThrow(new IllegalStateException("database unavailable")).when(processor).process(1L);
+    when(processor.process(2L))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TechnicalAccessTokenContext.get()).contains("token");
+              return true;
+            });
 
     scheduler.retryPendingReleases();
 
     verify(tenantContextProvider).setTechnicalContextIfMultiTenancyIsEnabled();
     verify(processor).process(1L);
     verify(processor).process(2L);
+    verify(taskClaimService).release(lease);
     assertThat(TechnicalAccessTokenContext.get()).isEmpty();
     assertThat(TenantContext.contextIsSet()).isFalse();
   }

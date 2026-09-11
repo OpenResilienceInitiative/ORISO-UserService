@@ -11,15 +11,19 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.IdReservationReleaseTask;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseType;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Set;
@@ -60,6 +64,7 @@ class AccountInviteReservationOrchestrationIT {
 
   @Autowired private AccountInviteService service;
   @Autowired private AccountInviteRepository accountInviteRepository;
+  @Autowired private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
@@ -115,7 +120,7 @@ class AccountInviteReservationOrchestrationIT {
     org.mockito.Mockito.doAnswer(
             invocation -> {
               tenantIdLedger.remove((long) invocation.getArgument(0));
-              return null;
+              return true;
             })
         .when(tenantIdAllocationClient)
         .release(anyLong());
@@ -124,6 +129,7 @@ class AccountInviteReservationOrchestrationIT {
   @AfterEach
   void cleanUp() {
     accountInviteRepository.deleteAll();
+    reservationReleaseTaskRepository.deleteAll();
     tenantIdLedger.clear();
   }
 
@@ -173,6 +179,26 @@ class AccountInviteReservationOrchestrationIT {
     assertThatThrownBy(
             () -> createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "owner@example.org"))
         .isInstanceOf(ConflictException.class);
+
+    verify(tenantIdAllocationClient).release(21L);
+    assertThat(accountInviteRepository.count()).isZero();
+    assertThat(tenantIdLedger).isEmpty();
+  }
+
+  @Test
+  void staleReleaseTask_ShouldBlockAReissuedReservationUntilCleanupCompletes() {
+    reservationReleaseTaskRepository.saveAndFlush(
+        IdReservationReleaseTask.builder()
+            .allocationType(IdReservationReleaseType.TENANT)
+            .reservedId(21L)
+            .tenantContextId(21L)
+            .createDate(LocalDateTime.now())
+            .build());
+
+    assertThatThrownBy(
+            () -> createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "owner@example.org"))
+        .isInstanceOf(ConflictException.class)
+        .hasMessageContaining("pending reservation cleanup");
 
     verify(tenantIdAllocationClient).release(21L);
     assertThat(accountInviteRepository.count()).isZero();

@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
@@ -129,6 +130,7 @@ class AccountInviteDirectSendAtomicIT {
 
     assertThat(accountInviteRepository.count()).isZero();
     verify(tenantIdAllocationClient).release(17L);
+    verifyNoInteractions(deliveryFailureRecorder);
 
     service.createAndSendInvite(tenantAdminInvite(), templateId);
 
@@ -216,14 +218,22 @@ class AccountInviteDirectSendAtomicIT {
     assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminInvite(), templateId))
         .isInstanceOf(SmtpSendException.class);
 
-    assertThat(accountInviteRepository.findAll())
-        .singleElement()
+    AccountInvite retained = accountInviteRepository.findAll().getFirst();
+    assertThat(retained)
         .satisfies(
             invite -> {
               assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
               assertThat(invite.getTokenHash()).isNotBlank();
               assertThat(invite.getActiveRecipientKey()).isEqualTo(RECIPIENT);
             });
+    verify(deliveryFailureRecorder)
+        .recordFailure(
+            org.mockito.ArgumentMatchers.eq(retained.getId()),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any(),
+            org.mockito.ArgumentMatchers.any());
     verify(tenantIdAllocationClient, never()).release(17L);
 
     assertThatThrownBy(() -> service.createAndSendInvite(tenantAdminInvite(), templateId))

@@ -221,7 +221,8 @@ public class AccountInviteService {
 
     return deliverPreparedInvite(
         dispatch,
-        null,
+        dispatch.invite().getId(),
+        false,
         sendFailure -> releaseDirectInviteClaim(dispatch.invite(), command, sendFailure));
   }
 
@@ -444,6 +445,18 @@ public class AccountInviteService {
   private void revalidateReservations(
       TenantIdReservation tenantReservation, Long reservedAgencyId) {
     if (tenantReservation != null
+        && reservationReleaseTaskRepository.existsByAllocationTypeAndReservedId(
+            IdReservationReleaseType.TENANT, tenantReservation.tenantId())) {
+      throw new ConflictException(
+          "tenantId " + tenantReservation.tenantId() + " still has a pending reservation cleanup");
+    }
+    if (reservedAgencyId != null
+        && reservationReleaseTaskRepository.existsByAllocationTypeAndReservedId(
+            IdReservationReleaseType.AGENCY, reservedAgencyId)) {
+      throw new ConflictException(
+          "agencyId " + reservedAgencyId + " still has a pending reservation cleanup");
+    }
+    if (tenantReservation != null
         && tenantIdAllocationClient.getAvailability(tenantReservation.tenantId())
             != IdAllocationStatus.RESERVED) {
       throw new ConflictException(
@@ -482,6 +495,7 @@ public class AccountInviteService {
     return deliverPreparedInvite(
         resend.dispatch(),
         resend.oldInviteId(),
+        true,
         sendFailure -> restoreResendAfterConfirmedFailure(resend, sendFailure));
   }
 
@@ -582,6 +596,7 @@ public class AccountInviteService {
   private InviteSendResult deliverPreparedInvite(
       DirectInviteDispatch dispatch,
       Long failureAuditInviteId,
+      boolean auditConfirmedNotSent,
       ConfirmedSendFailureHandler confirmedFailureHandler) {
     InviteMailSendReceipt receipt;
     try {
@@ -595,7 +610,7 @@ public class AccountInviteService {
               dispatch.template().getLanguage());
     } catch (SmtpSendException sendFailure) {
       recordDeliveryFailureSafely(
-          failureAuditInviteId,
+          sendFailure.isConfirmedNotSent() && !auditConfirmedNotSent ? null : failureAuditInviteId,
           dispatch.template(),
           dispatch.invite(),
           dispatch.subject(),
