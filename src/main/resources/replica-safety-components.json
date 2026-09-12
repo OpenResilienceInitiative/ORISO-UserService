@@ -301,6 +301,22 @@
       "status": "blocker"
     },
     {
+      "id": "account-invite-reservation-release-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/allocation/IdReservationReleaseScheduler.java",
+      "kind": "scheduler",
+      "owner": "agency-tenant",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "retryPendingReleases"
+      ],
+      "decision": "Lease each batch and use idempotent release endpoints plus row locks for safe replay.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
       "id": "enquiry-notification-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/enquirynotification/scheduler/EnquiryNotificationScheduler.java",
       "kind": "scheduler",

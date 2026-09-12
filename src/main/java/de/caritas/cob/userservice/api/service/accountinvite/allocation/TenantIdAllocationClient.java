@@ -52,21 +52,25 @@ public class TenantIdAllocationClient {
   }
 
   /**
-   * Best-effort compensation: releases an unconsumed reservation so the ID becomes assignable
-   * again. Never throws — a failed release must not mask the original creation failure; the
-   * upstream reservation ledger stays the single source of truth for manual cleanup.
+   * Releases an unconsumed reservation so the ID becomes assignable again.
+   *
+   * @return whether the reservation is now confirmed released; transient failures return false so
+   *     callers can retain a durable retry task without masking the original creation failure
    */
-  public void release(long tenantId) {
+  public boolean release(long tenantId) {
     try {
       createControllerApi().releaseTenantIdReservation(tenantId);
+      return true;
     } catch (HttpClientErrorException.NotFound exception) {
       log.info("Tenant ID reservation {} was already released", tenantId);
+      return true;
     } catch (RestClientException exception) {
       log.error(
           "Failed to release tenant ID reservation {} — possible orphaned reservation in"
               + " TenantService",
           tenantId,
           exception);
+      return false;
     }
   }
 

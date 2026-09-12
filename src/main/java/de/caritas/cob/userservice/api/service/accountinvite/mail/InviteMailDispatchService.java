@@ -22,7 +22,8 @@ import org.springframework.web.client.RestTemplate;
  * Sends account-invite mails via the platform's global SMTP settings with a strict
  * receipt-after-send contract (TEN-INV-U6, #890): either the SMTP server accepted the message and
  * an {@link InviteMailSendReceipt} is returned, or an {@link SmtpSendException} propagates. There
- * is no silent-failure path — a caller that does not receive a receipt must never persist SENT.
+ * is no silent-failure path. Failures additionally say whether non-delivery is confirmed or the
+ * SMTP outcome is uncertain, allowing callers with an existing deduplication claim to retry safely.
  *
  * <p>Settings resolution mirrors {@link
  * de.caritas.cob.userservice.api.service.auth.PasswordResetService}: connection settings come from
@@ -103,10 +104,34 @@ public class InviteMailDispatchService {
       String primaryActionUrl,
       Long tenantId,
       String language) {
-    InviteSmtpSettings smtp = resolveGlobalSmtpSettings();
-    BrandedEmail mail =
-        renderBrandedMail(subject, bodyContent, primaryActionUrl, tenantId, language);
-    return inviteMailTransport.send(smtp, recipient, subject, mail.html(), mail.plainText());
+    InviteSmtpSettings smtp;
+    BrandedEmail mail;
+    try {
+      smtp = resolveGlobalSmtpSettings();
+      mail = renderBrandedMail(subject, bodyContent, primaryActionUrl, tenantId, language);
+    } catch (SmtpSendException exception) {
+      throw exception;
+    } catch (RuntimeException exception) {
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+          "Invite mail could not be prepared before SMTP dispatch",
+          exception);
+    }
+
+    try {
+      return inviteMailTransport.send(smtp, recipient, subject, mail.html(), mail.plainText());
+    } catch (SmtpSendException exception) {
+      throw exception;
+    } catch (RuntimeException exception) {
+      // A transport implementation that violates the checked contract can still fail after the
+      // SMTP server accepted the message. Treat that as ambiguous so callers keep their claim.
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN,
+          "Invite mail transport failed without a confirmed delivery outcome",
+          exception);
+    }
   }
 
   /**

@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
@@ -33,6 +34,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
@@ -51,6 +53,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.http.HttpStatus;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.web.client.HttpClientErrorException;
 
 @ExtendWith(MockitoExtension.class)
@@ -67,6 +70,9 @@ class AccountInviteServiceTest {
   @Mock private InviteMailDispatchService inviteMailDispatchService;
   @Mock private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @Mock private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
+  @Mock private IdReservationReleaseProcessor reservationReleaseProcessor;
+  @Mock private PlatformTransactionManager transactionManager;
 
   @InjectMocks private AccountInviteService service;
 
@@ -143,8 +149,8 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
 
     var result = service.resendInvite(new SendInviteCommand(10L, 20L));
@@ -290,14 +296,20 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any())).thenReturn("https://x/y");
     when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
-        .thenThrow(new SmtpSendException("SMTP refused the message"));
+        .thenThrow(
+            new SmtpSendException(
+                SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+                SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+                "SMTP refused the message"));
 
     assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(10L, 20L)))
         .isInstanceOf(SmtpSendException.class);
 
-    // The previous invite must stay valid and resendable — no supersede, no replacement.
+    // The confirmed failure compensation restores the old claim after the committed handover.
     assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
     assertThat(oldInvite.getSupersededByInviteId()).isNull();
     verify(accountInviteRepository, never()).save(any());
@@ -328,7 +340,6 @@ class AccountInviteServiceTest {
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-
     givenSuccessfulDispatch();
     service.sendInvite(new SendInviteCommand(10L, 20L));
     template.setSubject("Changed");
@@ -1099,7 +1110,6 @@ class AccountInviteServiceTest {
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-
     givenSuccessfulDispatch();
     service.sendInvite(new SendInviteCommand(1L, 20L));
 
@@ -1955,8 +1965,8 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
-    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
 
     givenSuccessfulDispatch();
     var result = service.resendInvite(new SendInviteCommand(10L, 20L));

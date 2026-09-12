@@ -5,6 +5,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -50,5 +52,18 @@ class ScheduledTaskClaimServiceTest {
         .isInstanceOf(IllegalArgumentException.class);
     assertThatThrownBy(() -> service.tryClaim("task", null))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void claimLeaseShouldBeReleasedWithItsExactVersion() {
+    var service = new ScheduledTaskClaimService(claimWriter);
+    var duration = Duration.ofMinutes(30);
+    var claimedUntil = LocalDateTime.of(2026, 9, 11, 18, 30);
+    when(claimWriter.claimUntil("task", duration)).thenReturn(Optional.of(claimedUntil));
+    when(claimWriter.release("task", claimedUntil)).thenReturn(true);
+
+    var lease = service.tryClaimLease("task", duration).orElseThrow();
+
+    assertThat(service.release(lease)).isTrue();
   }
 }

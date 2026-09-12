@@ -50,6 +50,7 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
           + " i.acceptedByUserId = :acceptedByUserId,"
           + " i.emailVerificationStatus ="
           + " de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus.VERIFIED,"
+          + " i.activeRecipientKey = NULL,"
           + " i.updateDate = :now"
           + " WHERE i.id = :id AND i.status ="
           + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.EMAIL_SENT")
@@ -82,17 +83,11 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
    * <p>The caller passes the non-terminal statuses; terminal ones ({@code ACCEPTED}, {@code
    * EXPIRED}, {@code REVOKED}, {@code SUPERSEDED}) must never block a fresh invite.
    *
-   * <p><b>Why this stays advisory instead of becoming a unique constraint.</b> The rule above is
-   * not expressible as one. MariaDB has no partial indexes, so it would have to become a persisted
-   * generated column plus a unique index — and that column cannot contain {@code NOW()}, so it
-   * could not carry the expiry clause. The resulting constraint would be strictly harsher than the
-   * rule it is meant to enforce and would reject the legitimate re-invite after a lapsed invite,
-   * with no way for an admin to recover as long as expiry stays lazily materialized. On top of
-   * that, rows violating it already exist in the wild (two Pre-Dev addresses each hold two
-   * unaccepted invites), so the changeset would need a destructive data migration before it could
-   * even apply, and Liquibase does not run in the test profile — the migration would ship with no
-   * test coverage at all. A constraint becomes worth revisiting once invite expiry is swept
-   * eagerly; until then the service-side guard is the enforcement point.
+   * <p>The date-aware rule is not itself expressible as a MariaDB unique constraint. New active
+   * rows therefore also hold a nullable normalized key whose unique index closes the concurrent
+   * create race; terminal transitions clear that key. Legacy rows remain null so existing
+   * duplicates do not require a destructive migration. This query stays authoritative for expiry
+   * and for those legacy rows, while the key is the final cross-replica concurrency guard.
    */
   @Query(
       "SELECT COUNT(i) FROM AccountInvite i"
@@ -100,6 +95,39 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
           + " AND i.status IN :statuses"
           + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
   long countNonTerminalInvitesForRecipientEmail(
+      @Param("recipientEmail") String recipientEmail,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  @Query(
+      "SELECT COUNT(i) FROM AccountInvite i"
+          + " WHERE LOWER(i.recipientEmail) = :recipientEmail"
+          + " AND i.id <> :excludedInviteId"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  long countNonTerminalInvitesForRecipientEmailExcludingId(
+      @Param("recipientEmail") String recipientEmail,
+      @Param("excludedInviteId") Long excludedInviteId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * Materializes elapsed address-holding rows before a new claim is inserted. Without this update,
+   * the date-aware availability query would allow a retry while the unique recipient key still
+   * rejects it.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i"
+          + " SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.EXPIRED,"
+          + " i.activeRecipientKey = NULL,"
+          + " i.updateDate = :now"
+          + " WHERE i.activeRecipientKey = :recipientEmail"
+          + " AND i.status IN :statuses"
+          + " AND i.expiresAt IS NOT NULL"
+          + " AND i.expiresAt <= :now")
+  int expireElapsedRecipientClaims(
       @Param("recipientEmail") String recipientEmail,
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
