@@ -2122,6 +2122,7 @@ components:
           description: Matrix user ID of the asker
         consultantMatrixUserId:
           type: string
+          nullable: true
           example: "@consultant:matrix.example"
           description: Matrix user id of the assigned consultant (null when no consultant is assigned)
         e2eLastMessage:
