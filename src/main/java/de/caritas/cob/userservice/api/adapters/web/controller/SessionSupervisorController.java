@@ -242,7 +242,11 @@ public class SessionSupervisorController {
     dto.setSessionId(supervisor.getSession().getId());
     dto.setSupervisorConsultantId(supervisor.getSupervisorConsultant().getId());
     dto.setSupervisorUsername(supervisor.getSupervisorConsultant().getUsername());
-    dto.setSupervisorMatrixUserId(supervisor.getSupervisorConsultant().getMatrixUserId());
+    String supervisorMatrixUserId = supervisor.getSupervisorConsultant().getMatrixUserId();
+    dto.setSupervisorMatrixUserId(
+        supervisorMatrixUserId == null || supervisorMatrixUserId.isBlank()
+            ? null
+            : supervisorMatrixUserId);
     dto.setAddedByConsultantId(supervisor.getAddedByConsultant().getId());
     dto.setAddedDate(supervisor.getAddedDate());
     dto.setMatrixRoomId(supervisor.getMatrixRoomId());
