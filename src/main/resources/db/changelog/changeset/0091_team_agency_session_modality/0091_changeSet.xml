@@ -8,9 +8,9 @@
        type; real group chats (group_chat_participant row / shared chat room / system user) are left
        alone. Data-only, no schema change. See migrate.sql.
 
-       Guarded twice: the SQL's WHERE clause excludes already-corrected rows, and runOnChange lets a
-       later edit of migrate.sql re-apply without a new id. -->
-  <changeSet id="0091-team-agency-session-modality" author="frank" runOnChange="true">
+       The SQL's WHERE clause excludes already-corrected rows. Future corrections must use a new
+       append-only changeset rather than editing and rerunning this one. -->
+  <changeSet id="0091-team-agency-session-modality" author="frank">
     <preConditions onFail="MARK_RAN">
       <tableExists tableName="session"/>
       <tableExists tableName="group_chat_participant"/>
