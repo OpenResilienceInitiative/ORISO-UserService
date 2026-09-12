@@ -31,9 +31,9 @@ import org.springframework.transaction.annotation.Transactional;
 /**
  * {@link ConversationListProvider} for anonymous Live Chat enquiries.
  *
- * <p>ADR-008 limits standing supervision to registered Matrix cases. Anonymous Live Chat has no
- * client room for a supervisor to observe, so this provider deliberately does not add supervision
- * markers.
+ * <p>ADR-008 limits standing supervision to registered cases, so this provider deliberately does
+ * not add supervision markers. The shared marker and supervisor-management paths enforce the same
+ * registration boundary after an anonymous enquiry has been assigned.
  */
 @Slf4j
 @Service

@@ -149,6 +149,42 @@ class SessionSupervisionMarkerServiceTest {
   }
 
   @Test
+  void enrich_ShouldExcludeAnonymousSessionsFromTheBatchedLookupAndMarker() {
+    var anonymous = entry(14L);
+    anonymous.getSession().setRegistrationType("ANONYMOUS");
+    var registered = entry(15L);
+    registered.getSession().setRegistrationType("REGISTERED");
+    when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
+        .thenReturn(List.of(new SessionSupervisorMarkerRow(15L, "me", "me-user", null, null)));
+
+    service.enrich(List.of(anonymous, registered), consultant("me"));
+
+    ArgumentCaptor<Collection<Long>> ids = ArgumentCaptor.forClass(Collection.class);
+    verify(sessionSupervisorRepository).findActiveMarkerRowsBySessionIdIn(ids.capture());
+    assertThat(ids.getValue()).containsExactly(15L);
+    assertThat(anonymous.getSession().getSupervision()).isNull();
+    assertThat(registered.getSession().getSupervision().getSupervisedByMe()).isTrue();
+  }
+
+  @Test
+  void enrich_ShouldHideSideRoomWhenActiveAssignmentsDisagreeSessionWide() {
+    var entry = entry(16L, "owner-16");
+    when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
+        .thenReturn(
+            List.of(
+                new SessionSupervisorMarkerRow(
+                    16L, "me", "me-user", null, null, "!side-a:matrix", "!client:matrix"),
+                new SessionSupervisorMarkerRow(
+                    16L, "other", "other-user", null, null, "!side-b:matrix", "!client:matrix")));
+    when(consultantRepository.findAllByIdIn(anyList())).thenReturn(List.of());
+
+    service.enrich(List.of(entry), consultant("me"));
+
+    assertThat(entry.getSession().getSupervision().getSupervisedByMe()).isTrue();
+    assertThat(entry.getSession().getSupervision().getSideRoomId().orElse(null)).isNull();
+  }
+
+  @Test
   void enrich_Should_ResolveDisplayNames_Through_TheInternalNameRule() {
     var entry = entry(7L);
     when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))

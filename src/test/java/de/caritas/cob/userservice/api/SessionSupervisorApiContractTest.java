@@ -23,12 +23,13 @@ class SessionSupervisorApiContractTest {
     assertThat(operation.get("operationId")).isEqualTo("getSessionSupervisors");
     assertThat(operation.get("tags")).isEqualTo(List.of("session-supervisor-controller"));
     assertThat(operation.get("x-internal")).isEqualTo(true);
-    assertThat(
-            map(operation.get("responses")).keySet().containsAll(List.of(200, 401, 403, 404, 500)))
-        .isTrue();
+    Map<?, ?> responses = anyMap(operation.get("responses"));
+    assertThat(responses.keySet().stream().map(String::valueOf).toList())
+        .contains("200", "401", "403", "500")
+        .doesNotContain("404");
     assertThat(operation.get("security")).isEqualTo(List.of(Map.of("Bearer", List.of())));
 
-    Map<String, Object> okResponse = map(map(operation.get("responses")).get(200));
+    Map<String, Object> okResponse = map(responses.get(200));
     Map<String, Object> responseSchema =
         map(map(map(okResponse.get("content")).get("application/json")).get("schema"));
     assertThat(responseSchema.get("type")).isEqualTo("array");
@@ -40,6 +41,9 @@ class SessionSupervisorApiContractTest {
     Map<String, Object> supervisionProperties = map(supervision.get("properties"));
     assertThat(map(supervisionProperties.get("sideRoomId"))).containsEntry("nullable", true);
     assertThat(((List<?>) supervision.get("required")).contains("sideRoomId")).isFalse();
+    assertThat(map(supervisionProperties.get("counsellorDisplayName")))
+        .containsEntry("nullable", true);
+    assertThat(((List<?>) supervision.get("required")).contains("counsellorDisplayName")).isFalse();
 
     Map<String, Object> response = map(schemas.get("SessionSupervisorResponseDTO"));
     Map<String, Object> properties = map(response.get("properties"));
@@ -65,5 +69,10 @@ class SessionSupervisorApiContractTest {
   private Map<String, Object> map(Object value) {
     assertThat(value).isInstanceOf(Map.class);
     return (Map<String, Object>) value;
+  }
+
+  private Map<?, ?> anyMap(Object value) {
+    assertThat(value).isInstanceOf(Map.class);
+    return (Map<?, ?>) value;
   }
 }

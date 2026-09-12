@@ -67,7 +67,7 @@ public class SessionSupervisionMarkerService {
     Set<Long> sessionIds = new LinkedHashSet<>();
     Set<String> counsellorIds = new LinkedHashSet<>();
     for (var entry : entries) {
-      if (nonNull(entry.getSession()) && nonNull(entry.getSession().getId())) {
+      if (isEligibleForSupervision(entry.getSession())) {
         sessionIds.add(entry.getSession().getId());
         if (nonNull(entry.getConsultant()) && nonNull(entry.getConsultant().getId())) {
           counsellorIds.add(entry.getConsultant().getId());
@@ -83,7 +83,7 @@ public class SessionSupervisionMarkerService {
     var mapper = new SessionMapper();
     for (var entry : entries) {
       var session = entry.getSession();
-      if (nonNull(session) && nonNull(session.getId())) {
+      if (isEligibleForSupervision(session)) {
         var counsellorId = nonNull(entry.getConsultant()) ? entry.getConsultant().getId() : null;
         session.setSupervision(
             mapper.toSupervisionDTO(
@@ -106,7 +106,10 @@ public class SessionSupervisionMarkerService {
    * @return the marker, or null when the session, its id or the requester is missing
    */
   public SessionSupervisionDTO buildFor(Session session, Consultant requester) {
-    if (isNull(session) || isNull(session.getId()) || isNull(requester)) {
+    if (isNull(session)
+        || isNull(session.getId())
+        || isNull(requester)
+        || Session.RegistrationType.ANONYMOUS.equals(session.getRegistrationType())) {
       return null;
     }
     var sessionId = session.getId();
@@ -142,5 +145,12 @@ public class SessionSupervisionMarkerService {
   private String displayNameOf(SessionSupervisorMarkerRow row) {
     return consultantDisplayNameResolver.resolveInternalDisplayName(
         row.internalDisplayName(), row.displayName(), row.username());
+  }
+
+  private boolean isEligibleForSupervision(
+      de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO session) {
+    return nonNull(session)
+        && nonNull(session.getId())
+        && !Session.RegistrationType.ANONYMOUS.name().equals(session.getRegistrationType());
   }
 }

@@ -27,7 +27,8 @@ class TeamAgencySessionModalityChangelogContractTest {
     assertThat(migration)
         .contains("conversation_type = 'INTERNAL_GROUP' OR conversation_type IS NULL")
         .contains("NOT EXISTS (SELECT 1 FROM group_chat_participant")
-        .contains("NOT EXISTS (SELECT 1 FROM chat");
+        .contains("NOT EXISTS (SELECT 1 FROM chat")
+        .contains("AND session.user_id NOT LIKE 'group-chat-system%'");
   }
 
   private String resource(String path) throws IOException {

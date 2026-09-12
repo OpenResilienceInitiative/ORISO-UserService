@@ -128,6 +128,10 @@ public class SessionSupervisorFacade {
             .findById(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
 
+    if (Session.RegistrationType.ANONYMOUS.equals(session.getRegistrationType())) {
+      throw new BadRequestException("Anonymous sessions do not support supervision");
+    }
+
     // Client opt-out gate (grill 2026-07-13): the ratsuchende can switch supervision off for their
     // case; while it is off no supervisor may be attached and no Matrix access is provisioned.
     if (Boolean.TRUE.equals(session.getSupervisionOptedOut())) {

@@ -247,8 +247,11 @@ public class SessionListFacadeTest {
     assertEquals(COUNT_1, result.getSessions().size());
     assertSame(CONSULTANT_SESSION_RESPONSE_DTO_LIST.get(1), result.getSessions().getFirst());
     Mockito.verify(consultantSessionListService)
+        .retrieveSessionsForAuthenticatedConsultant(CONSULTANT, sessionListQueryParameter);
+    Mockito.verify(consultantSessionListService)
         .enrichWithSupervision(
             java.util.List.of(CONSULTANT_SESSION_RESPONSE_DTO_LIST.get(1)), CONSULTANT);
+    Mockito.verifyNoMoreInteractions(consultantSessionListService);
   }
 
   @Test
@@ -388,8 +391,11 @@ public class SessionListFacadeTest {
     assertEquals(COUNT_1, result.getSessions().size());
     assertSame(CONSULTANT_SESSION_RESPONSE_DTO_LIST.get(1), result.getSessions().getFirst());
     Mockito.verify(consultantSessionListService)
+        .retrieveTeamSessionsForAuthenticatedConsultant(CONSULTANT, sessionListQueryParameter);
+    Mockito.verify(consultantSessionListService)
         .enrichWithSupervision(
             java.util.List.of(CONSULTANT_SESSION_RESPONSE_DTO_LIST.get(1)), CONSULTANT);
+    Mockito.verifyNoMoreInteractions(consultantSessionListService);
   }
 
   // ---------------------------------------------------------------------------

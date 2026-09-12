@@ -157,13 +157,16 @@ public class SessionMapper {
             nonNull(requestingConsultantId) && requestingConsultantId.equals(row.consultantId());
       }
     }
-    String sideRoomId =
+    String uniqueSideRoomId = uniqueRealSideRoom(activeSupervisors);
+    boolean requesterIsCounsellor =
+        nonNull(requestingConsultantId) && requestingConsultantId.equals(counsellorConsultantId);
+    boolean requesterOwnsSideRoom =
         supervisedByMe
-            ? uniqueRealSideRoom(activeSupervisors, requestingConsultantId)
-            : nonNull(requestingConsultantId)
-                    && requestingConsultantId.equals(counsellorConsultantId)
-                ? uniqueRealSideRoom(activeSupervisors, null)
-                : null;
+            && supervisorOwnsSideRoom(activeSupervisors, requestingConsultantId, uniqueSideRoomId);
+    String sideRoomId =
+        nonNull(uniqueSideRoomId) && (requesterIsCounsellor || requesterOwnsSideRoom)
+            ? uniqueSideRoomId
+            : null;
     return new SessionSupervisionDTO()
         .supervisedByMe(supervisedByMe)
         .supervisorConsultantIds(ids)
@@ -172,17 +175,12 @@ public class SessionMapper {
         .sideRoomId(sideRoomId);
   }
 
-  private String uniqueRealSideRoom(
-      List<SessionSupervisorMarkerRow> activeSupervisors, String supervisorConsultantId) {
+  private String uniqueRealSideRoom(List<SessionSupervisorMarkerRow> activeSupervisors) {
     if (isNull(activeSupervisors)) {
       return null;
     }
     var roomIds =
         activeSupervisors.stream()
-            .filter(
-                row ->
-                    isNull(supervisorConsultantId)
-                        || supervisorConsultantId.equals(row.consultantId()))
             .filter(
                 row ->
                     nonNull(row.sideRoomId())
@@ -193,6 +191,21 @@ public class SessionMapper {
             .limit(2)
             .toList();
     return roomIds.size() == 1 ? roomIds.getFirst() : null;
+  }
+
+  private boolean supervisorOwnsSideRoom(
+      List<SessionSupervisorMarkerRow> activeSupervisors,
+      String supervisorConsultantId,
+      String sideRoomId) {
+    return nonNull(activeSupervisors)
+        && nonNull(supervisorConsultantId)
+        && nonNull(sideRoomId)
+        && activeSupervisors.stream()
+            .anyMatch(
+                row ->
+                    supervisorConsultantId.equals(row.consultantId())
+                        && sideRoomId.equals(row.sideRoomId())
+                        && !sideRoomId.equals(row.clientRoomId()));
   }
 
   private SessionUserDTO convertToSessionUserDTO(Session session) {
