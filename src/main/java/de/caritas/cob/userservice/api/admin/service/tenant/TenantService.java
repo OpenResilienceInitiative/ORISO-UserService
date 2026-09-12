@@ -52,6 +52,13 @@ public class TenantService {
         .getRestrictedTenantDataByTenantId(tenantId);
   }
 
+  /** Uncached policy lookup using the server's configured single-tenant identity. */
+  public RestrictedTenantDTO getSingleTenancyTenantDataFresh() {
+    return tenantServiceApiControllerFactory
+        .createControllerApi()
+        .getRestrictedSingleTenancyTenantData();
+  }
+
   /** Explicit platform-branding lookup; generic tenant operations still reject technical id 0. */
   @Cacheable(cacheNames = CacheManagerConfig.TENANT_CACHE, key = "'platform-branding'")
   public RestrictedTenantDTO getPlatformTenantData() {

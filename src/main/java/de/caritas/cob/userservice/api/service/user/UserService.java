@@ -72,7 +72,26 @@ public class UserService {
       String email,
       boolean languageFormal,
       String preferredLanguage) {
+    return createUser(userId, oldId, username, email, languageFormal, preferredLanguage, null);
+  }
+
+  public User createUser(
+      String userId,
+      Long oldId,
+      String username,
+      String email,
+      boolean languageFormal,
+      String preferredLanguage,
+      de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService
+              .RecoveryPolicySnapshot
+          snapshot) {
+    var existing = userRepository.findById(userId);
+    if (existing.isPresent()) return existing.get();
     var user = new User(userId, oldId, username, email, languageFormal);
+    if (snapshot != null) {
+      user.setChatRecoveryMode(snapshot.mode());
+      user.setChatRecoveryPolicyRevision(snapshot.revision());
+    }
     user.setTenantId(TenantContext.getCurrentTenant());
     auditingHandler.markCreated(user);
     if (nonNull(preferredLanguage)) {

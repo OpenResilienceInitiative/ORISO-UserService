@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import java.util.Set;
 import lombok.NonNull;
@@ -56,6 +57,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Slf4j
 public class GrantConsultantIdentityService {
 
+  private final ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
   private static final String GRANT_CONSULTANT_IDENTITY = "grantConsultantIdentity";
 
   private final @NonNull AdminRepository adminRepository;
@@ -104,11 +106,14 @@ public class GrantConsultantIdentityService {
     consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
         dto.getTopicIds(), dto.getAgencyIds(), admin.getTenantId());
 
+    var snapshot = chatRecoveryEnrollmentPolicyService.forExistingIdentity(adminId);
     assignKeycloakRoles(adminId, dto);
 
     String matrixUserId = createMatrixAccount(admin);
 
     var consultant = buildConsultant(admin, encodedUsername, dto, matrixUserId);
+    consultant.setChatRecoveryMode(snapshot.mode());
+    consultant.setChatRecoveryPolicyRevision(snapshot.revision());
     saveConsultantOrRollback(adminId, dto, consultant);
 
     try {

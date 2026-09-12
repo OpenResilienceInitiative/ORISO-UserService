@@ -58,6 +58,8 @@ public class AskerDataProvider {
     var sessionsByUser = sessionsByUser(user);
     var userDataResponseDTOBuilder =
         UserDataResponseDTO.builder()
+            .chatRecoveryMode(user.getEffectiveChatRecoveryMode())
+            .chatRecoveryPolicyRevision(user.getEffectiveChatRecoveryPolicyRevision())
             .userId(user.getUserId())
             .userName(user.getUsername())
             .email(observeUserEmailAddress(user))
