@@ -87,6 +87,8 @@ class ConsultantDisplayNameResolverTest {
   @Test
   @DisplayName("an encoded internal name is treated as absent")
   void resolveInternalDisplayName_Should_IgnoreAnEncodedInternalName() {
+    assertThat(resolver.resolveInternalDisplayName("enc.QW5nZWxh", "Frau A.", "beraterin1"))
+        .isEqualTo("Frau A.");
     assertThat(resolver.resolveInternalDisplayName("enc.QW5nZWxh", null, "beraterin1"))
         .isEqualTo("beraterin1");
   }

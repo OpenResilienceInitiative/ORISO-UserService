@@ -18,7 +18,8 @@ SET conversation_type = CASE
                         END
 WHERE is_team_session = 1
   AND (conversation_type = 'INTERNAL_GROUP' OR conversation_type IS NULL)
-  AND NOT EXISTS (SELECT 1 FROM group_chat_participant gcp WHERE gcp.chat_id = session.id)
+  AND NOT EXISTS (SELECT 1 FROM group_chat_participant gcp
+                  WHERE gcp.chat_id = session.id)
   AND NOT EXISTS (SELECT 1 FROM chat c
                   WHERE c.matrix_room_id IS NOT NULL
                     AND c.matrix_room_id = session.matrix_room_id)
