@@ -230,7 +230,7 @@ public class ConsultantSessionListService {
     return allSessions;
   }
 
-  /** Adds ADR-008 requester markers to the final response slice with one batched query. */
+  /** Adds ADR-008 requester markers with constant batched work for the final response slice. */
   public void enrichWithSupervision(
       List<ConsultantSessionResponseDTO> sessions, Consultant consultant) {
     if (isNotEmpty(sessions)) {

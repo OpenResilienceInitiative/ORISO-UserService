@@ -32,7 +32,7 @@ public abstract class DefaultConversationListProvider implements ConversationLis
 
     List<ConsultantSessionResponseDTO> pageList = enquiriesForConsultant.getPageList();
     consultantSessionEnricher.updateRequiredConsultantSessionValues(pageList);
-    // ADR-008 marker for the requester, resolved for the page only (one batched query).
+    // ADR-008 marker for the requester, resolved with constant batched work for this page only.
     supervisionMarkerService.enrich(pageList, consultant);
 
     return new ConsultantSessionListResponseDTO()

@@ -12,7 +12,6 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.session.SessionMapper;
-import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -29,7 +28,13 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** {@link ConversationListProvider} to provide anonymous enquiry conversations. */
+/**
+ * {@link ConversationListProvider} for anonymous Live Chat enquiries.
+ *
+ * <p>ADR-008 limits standing supervision to registered Matrix cases. Anonymous Live Chat has no
+ * client room for a supervisor to observe, so this provider deliberately does not add supervision
+ * markers.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -39,7 +44,6 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantSessionEnricher consultantSessionEnricher;
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
-  private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
 
   @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
   private long liveChatQueueActivePeriodMinutes;
@@ -70,16 +74,6 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
     } catch (Exception e) {
       log.error(
           "Anonymous enquiry enrichment failed for consultant {} — returning {} un-enriched queue entries",
-          consultant.getId(),
-          sessions.size(),
-          e);
-    }
-
-    try {
-      supervisionMarkerService.enrich(sessions, consultant);
-    } catch (Exception e) {
-      log.error(
-          "Anonymous enquiry supervision enrichment failed for consultant {} — returning {} queue entries without supervision markers",
           consultant.getId(),
           sessions.size(),
           e);

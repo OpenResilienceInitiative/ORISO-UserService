@@ -37,6 +37,10 @@ import org.springframework.stereotype.Service;
  * id/firstName/lastName and the public consultant endpoint hides the display name of a non-public
  * consultant; without it a supervisor's panel cannot title the case by its counsellor.
  *
+ * <p>The same supervisor projection carries the ADR-008 side-room and client-room ids. The mapper
+ * exposes a validated side room only to its assigned counsellor or the matching active supervisor;
+ * unrelated team-list viewers and advice seekers never receive it.
+ *
  * <p>Two batched queries per list page (supervisor rows, counsellor names), never one per session.
  */
 @Service
@@ -86,7 +90,8 @@ public class SessionSupervisionMarkerService {
                 rowsBySession.getOrDefault(session.getId(), List.of()),
                 requester.getId(),
                 this::displayNameOf,
-                nonNull(counsellorId) ? counsellorNames.get(counsellorId) : null));
+                nonNull(counsellorId) ? counsellorNames.get(counsellorId) : null,
+                counsellorId));
       }
     }
     return entries;
@@ -111,7 +116,8 @@ public class SessionSupervisionMarkerService {
             rows,
             requester.getId(),
             this::displayNameOf,
-            consultantDisplayNameResolver.resolveInternalDisplayName(session.getConsultant()));
+            consultantDisplayNameResolver.resolveInternalDisplayName(session.getConsultant()),
+            nonNull(session.getConsultant()) ? session.getConsultant().getId() : null);
   }
 
   /** One query for all counsellors of the page; id → internal display name (#996 rule). */

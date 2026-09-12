@@ -131,6 +131,21 @@ public class SessionMapper {
       String requestingConsultantId,
       Function<SessionSupervisorMarkerRow, String> displayName,
       String counsellorDisplayName) {
+    return toSupervisionDTO(
+        activeSupervisors, requestingConsultantId, displayName, counsellorDisplayName, null);
+  }
+
+  /**
+   * Builds the marker including the private ADR-008 side room. The room is disclosed only to its
+   * assigned counsellor or an active supervisor. Legacy rows that stored the help-seeker room in
+   * the side-room column are rejected, as are inconsistent active rows naming multiple rooms.
+   */
+  public SessionSupervisionDTO toSupervisionDTO(
+      List<SessionSupervisorMarkerRow> activeSupervisors,
+      String requestingConsultantId,
+      Function<SessionSupervisorMarkerRow, String> displayName,
+      String counsellorDisplayName,
+      String counsellorConsultantId) {
     List<String> ids = new ArrayList<>();
     List<String> names = new ArrayList<>();
     boolean supervisedByMe = false;
@@ -142,11 +157,42 @@ public class SessionMapper {
             nonNull(requestingConsultantId) && requestingConsultantId.equals(row.consultantId());
       }
     }
+    String sideRoomId =
+        supervisedByMe
+            ? uniqueRealSideRoom(activeSupervisors, requestingConsultantId)
+            : nonNull(requestingConsultantId)
+                    && requestingConsultantId.equals(counsellorConsultantId)
+                ? uniqueRealSideRoom(activeSupervisors, null)
+                : null;
     return new SessionSupervisionDTO()
         .supervisedByMe(supervisedByMe)
         .supervisorConsultantIds(ids)
         .supervisorDisplayNames(names)
-        .counsellorDisplayName(counsellorDisplayName);
+        .counsellorDisplayName(counsellorDisplayName)
+        .sideRoomId(sideRoomId);
+  }
+
+  private String uniqueRealSideRoom(
+      List<SessionSupervisorMarkerRow> activeSupervisors, String supervisorConsultantId) {
+    if (isNull(activeSupervisors)) {
+      return null;
+    }
+    var roomIds =
+        activeSupervisors.stream()
+            .filter(
+                row ->
+                    isNull(supervisorConsultantId)
+                        || supervisorConsultantId.equals(row.consultantId()))
+            .filter(
+                row ->
+                    nonNull(row.sideRoomId())
+                        && !row.sideRoomId().isBlank()
+                        && !row.sideRoomId().equals(row.clientRoomId()))
+            .map(SessionSupervisorMarkerRow::sideRoomId)
+            .distinct()
+            .limit(2)
+            .toList();
+    return roomIds.size() == 1 ? roomIds.getFirst() : null;
   }
 
   private SessionUserDTO convertToSessionUserDTO(Session session) {
