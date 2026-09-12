@@ -140,9 +140,9 @@ public class AgencySilentMembershipService {
    * Counsellor Matrix accounts are provisioned lazily elsewhere (on accept, or on direct-session
    * creation), so a counsellor who has never handled a case yet has none. Without one they cannot
    * be a room member and the enquiry stays invisible to them, which is the very bug being fixed —
-   * so provision here too.
+   * so provision here too. Group-room creators use this before their first room exists.
    */
-  private String ensureMatrixAccount(Consultant consultant) {
+  public String ensureMatrixAccount(Consultant consultant) {
     if (!isBlank(consultant.getMatrixUserId())) {
       return consultant.getMatrixUserId();
     }

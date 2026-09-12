@@ -172,6 +172,8 @@
   <include
     file="db/changelog/changeset/0092_id_reservation_release_task/0092_changeSet.xml" />
 
+  <include file="db/changelog/changeset/0091_group_session_tenant/0091_changeSet.xml" />
+
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
   <include
