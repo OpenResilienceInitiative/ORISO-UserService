@@ -134,14 +134,15 @@ class SessionSupervisionMarkerServiceTest {
     ArgumentCaptor<List<String>> ids = ArgumentCaptor.forClass(List.class);
     verify(consultantRepository, times(1)).findAllByIdIn(ids.capture());
     assertThat(ids.getValue()).containsExactlyInAnyOrder("anna", "bob");
-    assertThat(ownedByAnna.getSession().getSupervision().getCounsellorDisplayName())
+    assertThat(ownedByAnna.getSession().getSupervision().getCounsellorDisplayName().orElse(null))
         .isEqualTo("Anna (int)");
-    assertThat(alsoAnna.getSession().getSupervision().getCounsellorDisplayName())
+    assertThat(alsoAnna.getSession().getSupervision().getCounsellorDisplayName().orElse(null))
         .isEqualTo("Anna (int)");
-    assertThat(ownedByBob.getSession().getSupervision().getCounsellorDisplayName())
+    assertThat(ownedByBob.getSession().getSupervision().getCounsellorDisplayName().orElse(null))
         .isEqualTo("Bob (int)");
     assertThat(unassigned.getSession().getSupervision()).isNotNull();
-    assertThat(unassigned.getSession().getSupervision().getCounsellorDisplayName()).isNull();
+    assertThat(unassigned.getSession().getSupervision().getCounsellorDisplayName().orElse(null))
+        .isNull();
   }
 
   @Test
@@ -153,7 +154,8 @@ class SessionSupervisionMarkerServiceTest {
     service.enrich(List.of(entry), consultant("me"));
 
     verify(consultantRepository, never()).findAllByIdIn(any());
-    assertThat(entry.getSession().getSupervision().getCounsellorDisplayName()).isNull();
+    assertThat(entry.getSession().getSupervision().getCounsellorDisplayName().orElse(null))
+        .isNull();
   }
 
   @Test
@@ -192,7 +194,7 @@ class SessionSupervisionMarkerServiceTest {
     assertThat(marker.getSupervisedByMe()).isTrue();
     assertThat(marker.getSupervisorConsultantIds()).containsExactly("me");
     assertThat(marker.getSupervisorDisplayNames()).containsExactly("Me");
-    assertThat(marker.getCounsellorDisplayName()).isEqualTo("Anna (int)");
+    assertThat(marker.getCounsellorDisplayName().orElse(null)).isEqualTo("Anna (int)");
     verify(consultantRepository, never()).findAllByIdIn(any());
   }
 
@@ -206,7 +208,7 @@ class SessionSupervisionMarkerServiceTest {
     var marker = service.buildFor(session(6L, null), consultant("me"));
 
     assertThat(marker.getSupervisedByMe()).isFalse();
-    assertThat(marker.getCounsellorDisplayName()).isNull();
+    assertThat(marker.getCounsellorDisplayName().orElse(null)).isNull();
   }
 
   @Test

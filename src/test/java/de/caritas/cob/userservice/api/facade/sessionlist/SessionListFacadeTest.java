@@ -246,6 +246,8 @@ public class SessionListFacadeTest {
             CONSULTANT, sessionListQueryParameter);
 
     assertEquals(COUNT_1, result.getSessions().size());
+    Mockito.verify(consultantSessionListService)
+        .enrichWithSupervision(result.getSessions(), CONSULTANT);
   }
 
   @Test
@@ -384,6 +386,8 @@ public class SessionListFacadeTest {
             CONSULTANT, sessionListQueryParameter);
 
     assertEquals(COUNT_1, result.getSessions().size());
+    Mockito.verify(consultantSessionListService)
+        .enrichWithSupervision(result.getSessions(), CONSULTANT);
   }
 
   // ---------------------------------------------------------------------------

@@ -204,6 +204,17 @@ class SessionSupervisorControllerTest {
   }
 
   @Test
+  void getSupervisors_blankMatrixAccount_leavesMatrixUserIdNull() {
+    var first = supervisor(32L, "sup-5", "added-by-5", "Display Five", "Full Five", user("u-5"));
+    first.getSupervisorConsultant().setMatrixUserId("  ");
+    when(sessionSupervisorFacade.getSupervisors(80L)).thenReturn(List.of(first));
+
+    var response = controller.getSupervisors(80L);
+
+    assertNull(response.getBody().get(0).getSupervisorMatrixUserId());
+  }
+
+  @Test
   void getSupervisors_emptyList_returnsEmptyArrayNotNull() {
     // Business reason: frontend expects stable empty arrays instead of null for list endpoints.
     when(sessionSupervisorFacade.getSupervisors(78L)).thenReturn(List.of());

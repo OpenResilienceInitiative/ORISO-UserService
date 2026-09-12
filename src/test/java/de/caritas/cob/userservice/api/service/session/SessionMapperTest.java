@@ -193,7 +193,7 @@ class SessionMapperTest {
 
     SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
 
-    assertEquals("@counsellor:matrix.example", sessionDTO.getConsultantMatrixUserId());
+    assertEquals("@counsellor:matrix.example", sessionDTO.getConsultantMatrixUserId().orElse(null));
   }
 
   @Test
@@ -204,7 +204,7 @@ class SessionMapperTest {
 
     SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
 
-    assertNull(sessionDTO.getConsultantMatrixUserId());
+    assertNull(sessionDTO.getConsultantMatrixUserId().orElse(null));
   }
 
   @Test
@@ -392,7 +392,7 @@ class SessionMapperTest {
 
     assertThat(dto.getSupervisedByMe(), is(false));
     assertThat(dto.getSupervisorConsultantIds(), is(empty()));
-    assertThat(dto.getCounsellorDisplayName(), is(nullValue()));
+    assertThat(dto.getCounsellorDisplayName().orElse(null), is(nullValue()));
   }
 
   @Test
@@ -405,7 +405,7 @@ class SessionMapperTest {
 
     assertThat(dto.getSupervisedByMe(), is(true));
     assertThat(dto.getSupervisorConsultantIds(), contains("sup-1"));
-    assertThat(dto.getCounsellorDisplayName(), is("Anna (int)"));
+    assertThat(dto.getCounsellorDisplayName().orElse(null), is("Anna (int)"));
   }
 
   @Test
@@ -414,6 +414,6 @@ class SessionMapperTest {
         new SessionMapper().toSupervisionDTO(List.of(), "me", row -> row.consultantId(), null);
 
     assertThat(dto.getSupervisedByMe(), is(false));
-    assertThat(dto.getCounsellorDisplayName(), is(nullValue()));
+    assertThat(dto.getCounsellorDisplayName().orElse(null), is(nullValue()));
   }
 }

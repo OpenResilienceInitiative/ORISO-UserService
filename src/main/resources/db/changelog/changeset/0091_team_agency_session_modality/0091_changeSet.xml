@@ -16,6 +16,7 @@
       <tableExists tableName="group_chat_participant"/>
       <tableExists tableName="chat"/>
       <columnExists tableName="session" columnName="conversation_type"/>
+      <columnExists tableName="group_chat_participant" columnName="chat_id"/>
     </preConditions>
     <sqlFile
       path="db/changelog/changeset/0091_team_agency_session_modality/migrate.sql"

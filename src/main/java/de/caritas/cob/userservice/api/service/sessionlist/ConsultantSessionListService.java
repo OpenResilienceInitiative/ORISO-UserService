@@ -47,7 +47,9 @@ public class ConsultantSessionListService {
         sessionService.getAllowedSessionsByConsultantAndRoomIds(consultant, matrixRoomIds, roles);
     var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
 
-    return mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    var result = mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    enrichWithSupervision(result, consultant);
+    return result;
   }
 
   /**
@@ -66,7 +68,9 @@ public class ConsultantSessionListService {
             .collect(Collectors.toSet());
     var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
 
-    return mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    var result = mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    enrichWithSupervision(result, consultant);
+    return result;
   }
 
   /**
@@ -196,8 +200,6 @@ public class ConsultantSessionListService {
 
     if (isNotEmpty(sessions)) {
       enrichedSessions = updateConsultantSessionValues(sessions);
-      // ADR-008 marker for the requester — one batched query, see SessionSupervisionMarkerService.
-      supervisionMarkerService.enrich(enrichedSessions, consultant);
     }
 
     if (isNotEmpty(chats)) {
@@ -226,6 +228,14 @@ public class ConsultantSessionListService {
     allSessions.addAll(chatsByMatrixRoomId.values());
 
     return allSessions;
+  }
+
+  /** Adds ADR-008 requester markers to the final response slice with one batched query. */
+  public void enrichWithSupervision(
+      List<ConsultantSessionResponseDTO> sessions, Consultant consultant) {
+    if (isNotEmpty(sessions)) {
+      supervisionMarkerService.enrich(sessions, consultant);
+    }
   }
 
   private void sortSessionsByLastMessageDateDesc(List<ConsultantSessionResponseDTO> sessions) {

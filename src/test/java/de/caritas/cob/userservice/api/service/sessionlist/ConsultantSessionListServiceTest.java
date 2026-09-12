@@ -64,7 +64,7 @@ class ConsultantSessionListServiceTest {
   }
 
   @Test
-  void retrieveSessionsForAuthenticatedConsultant_Should_AddTheSupervisionMarkerForTheRequester() {
+  void retrieveSessionsForAuthenticatedConsultant_Should_DeferSupervisionUntilAfterPagination() {
     when(sessionService.getRegisteredEnquiriesForConsultant(Mockito.any()))
         .thenReturn(CONSULTANT_SESSION_RESPONSE_DTO_LIST);
     when(this.consultantSessionEnricher.updateRequiredConsultantSessionValues(
@@ -74,7 +74,8 @@ class ConsultantSessionListServiceTest {
     consultantSessionListService.retrieveSessionsForAuthenticatedConsultant(
         CONSULTANT, createStandardSessionListQueryParameterObject(SESSION_STATUS_NEW));
 
-    verify(supervisionMarkerService).enrich(CONSULTANT_SESSION_RESPONSE_DTO_LIST, CONSULTANT);
+    verify(supervisionMarkerService, never())
+        .enrich(CONSULTANT_SESSION_RESPONSE_DTO_LIST, CONSULTANT);
   }
 
   @Test
