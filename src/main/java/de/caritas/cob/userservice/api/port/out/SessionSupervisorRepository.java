@@ -55,7 +55,8 @@ public interface SessionSupervisorRepository extends JpaRepository<SessionSuperv
    */
   @Query(
       "SELECT new de.caritas.cob.userservice.api.port.out.SessionSupervisorMarkerRow("
-          + "ss.session.id, c.id, c.username, c.displayName, c.internalDisplayName) "
+          + "ss.session.id, c.id, c.username, c.displayName, c.internalDisplayName, "
+          + "ss.matrixRoomId, ss.session.matrixRoomId) "
           + "FROM SessionSupervisor ss JOIN ss.supervisorConsultant c "
           + "WHERE ss.session.id IN :sessionIds AND ss.isActive = true")
   List<SessionSupervisorMarkerRow> findActiveMarkerRowsBySessionIdIn(

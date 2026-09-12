@@ -37,6 +37,10 @@ import org.springframework.stereotype.Service;
  * id/firstName/lastName and the public consultant endpoint hides the display name of a non-public
  * consultant; without it a supervisor's panel cannot title the case by its counsellor.
  *
+ * <p>The same supervisor projection carries the ADR-008 side-room and client-room ids. The mapper
+ * exposes a validated side room only to its assigned counsellor or the matching active supervisor;
+ * unrelated team-list viewers and advice seekers never receive it.
+ *
  * <p>Two batched queries per list page (supervisor rows, counsellor names), never one per session.
  */
 @Service
@@ -63,7 +67,7 @@ public class SessionSupervisionMarkerService {
     Set<Long> sessionIds = new LinkedHashSet<>();
     Set<String> counsellorIds = new LinkedHashSet<>();
     for (var entry : entries) {
-      if (nonNull(entry.getSession()) && nonNull(entry.getSession().getId())) {
+      if (isEligibleForSupervision(entry.getSession())) {
         sessionIds.add(entry.getSession().getId());
         if (nonNull(entry.getConsultant()) && nonNull(entry.getConsultant().getId())) {
           counsellorIds.add(entry.getConsultant().getId());
@@ -79,14 +83,15 @@ public class SessionSupervisionMarkerService {
     var mapper = new SessionMapper();
     for (var entry : entries) {
       var session = entry.getSession();
-      if (nonNull(session) && nonNull(session.getId())) {
+      if (isEligibleForSupervision(session)) {
         var counsellorId = nonNull(entry.getConsultant()) ? entry.getConsultant().getId() : null;
         session.setSupervision(
             mapper.toSupervisionDTO(
                 rowsBySession.getOrDefault(session.getId(), List.of()),
                 requester.getId(),
                 this::displayNameOf,
-                nonNull(counsellorId) ? counsellorNames.get(counsellorId) : null));
+                nonNull(counsellorId) ? counsellorNames.get(counsellorId) : null,
+                counsellorId));
       }
     }
     return entries;
@@ -101,7 +106,10 @@ public class SessionSupervisionMarkerService {
    * @return the marker, or null when the session, its id or the requester is missing
    */
   public SessionSupervisionDTO buildFor(Session session, Consultant requester) {
-    if (isNull(session) || isNull(session.getId()) || isNull(requester)) {
+    if (isNull(session)
+        || isNull(session.getId())
+        || isNull(requester)
+        || Session.RegistrationType.ANONYMOUS.equals(session.getRegistrationType())) {
       return null;
     }
     var sessionId = session.getId();
@@ -111,7 +119,8 @@ public class SessionSupervisionMarkerService {
             rows,
             requester.getId(),
             this::displayNameOf,
-            consultantDisplayNameResolver.resolveInternalDisplayName(session.getConsultant()));
+            consultantDisplayNameResolver.resolveInternalDisplayName(session.getConsultant()),
+            nonNull(session.getConsultant()) ? session.getConsultant().getId() : null);
   }
 
   /** One query for all counsellors of the page; id → internal display name (#996 rule). */
@@ -136,5 +145,12 @@ public class SessionSupervisionMarkerService {
   private String displayNameOf(SessionSupervisorMarkerRow row) {
     return consultantDisplayNameResolver.resolveInternalDisplayName(
         row.internalDisplayName(), row.displayName(), row.username());
+  }
+
+  private boolean isEligibleForSupervision(
+      de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO session) {
+    return nonNull(session)
+        && nonNull(session.getId())
+        && !Session.RegistrationType.ANONYMOUS.name().equals(session.getRegistrationType());
   }
 }

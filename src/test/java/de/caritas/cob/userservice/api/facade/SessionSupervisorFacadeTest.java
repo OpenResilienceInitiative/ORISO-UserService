@@ -292,6 +292,19 @@ class SessionSupervisorFacadeTest {
   }
 
   @Test
+  void addSupervisor_ShouldRejectAnonymousSessionsBeforeProvisioningMatrixAccess()
+      throws Exception {
+    session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+
+    assertThatThrownBy(
+            () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("Anonymous sessions");
+    verify(matrixSynapseService, never()).createRoom(any(), any(), any());
+    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+  }
+
+  @Test
   void addSupervisor_Should_computeNotRequiredConsent_for_peerSupport() {
     SessionSupervisor saved =
         facade.addSupervisor(

@@ -31,7 +31,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * ADR-008 supervisor marker: the requesting consultant learns whether a list entry is theirs
- * because they supervise it, and who supervises it — resolved with ONE batched query per list.
+ * because they supervise it, and who supervises it — resolved with constant batched work per list,
+ * never one query per row.
  */
 @ExtendWith(MockitoExtension.class)
 class SessionSupervisionMarkerServiceTest {
@@ -63,7 +64,7 @@ class SessionSupervisionMarkerServiceTest {
   }
 
   @Test
-  void enrich_Should_MarkSupervisedEntries_With_OneBatchedQuery() {
+  void enrich_Should_MarkSupervisedEntries_With_OneBatchedSupervisorQuery() {
     var mine = entry(1L);
     var theirs = entry(2L);
     var unsupervised = entry(3L);
@@ -101,6 +102,89 @@ class SessionSupervisionMarkerServiceTest {
   }
 
   @Test
+  void enrich_ShouldExposeOnlyARealSideRoomToTheAssignedCounsellorOrActiveSupervisor() {
+    var supervisedByMe = entry(10L, "owner-10");
+    var counselledByMe = entry(11L, "me");
+    var unrelatedTeamCase = entry(12L, "owner-12");
+    var legacyClientRoom = entry(13L, "owner-13");
+    when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
+        .thenReturn(
+            List.of(
+                new SessionSupervisorMarkerRow(
+                    10L, "me", "me-user", null, null, "!side-10:matrix", "!client-10:matrix"),
+                new SessionSupervisorMarkerRow(
+                    11L,
+                    "supervisor-11",
+                    "sup-user",
+                    null,
+                    null,
+                    "!side-11:matrix",
+                    "!client-11:matrix"),
+                new SessionSupervisorMarkerRow(
+                    12L,
+                    "supervisor-12",
+                    "sup-user",
+                    null,
+                    null,
+                    "!side-12:matrix",
+                    "!client-12:matrix"),
+                new SessionSupervisorMarkerRow(
+                    13L, "me", "me-user", null, null, "!client-13:matrix", "!client-13:matrix")));
+    when(consultantRepository.findAllByIdIn(anyList())).thenReturn(List.of());
+
+    service.enrich(
+        List.of(supervisedByMe, counselledByMe, unrelatedTeamCase, legacyClientRoom),
+        consultant("me"));
+
+    assertThat(supervisedByMe.getSession().getSupervision().getSideRoomId().orElse(null))
+        .isEqualTo("!side-10:matrix");
+    assertThat(counselledByMe.getSession().getSupervision().getSideRoomId().orElse(null))
+        .isEqualTo("!side-11:matrix");
+    assertThat(unrelatedTeamCase.getSession().getSupervision().getSideRoomId().orElse(null))
+        .isNull();
+    assertThat(legacyClientRoom.getSession().getSupervision().getSideRoomId().orElse(null))
+        .isNull();
+    verify(sessionSupervisorRepository, times(1))
+        .findActiveMarkerRowsBySessionIdIn(anyCollection());
+  }
+
+  @Test
+  void enrich_ShouldExcludeAnonymousSessionsFromTheBatchedLookupAndMarker() {
+    var anonymous = entry(14L);
+    anonymous.getSession().setRegistrationType("ANONYMOUS");
+    var registered = entry(15L);
+    registered.getSession().setRegistrationType("REGISTERED");
+    when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
+        .thenReturn(List.of(new SessionSupervisorMarkerRow(15L, "me", "me-user", null, null)));
+
+    service.enrich(List.of(anonymous, registered), consultant("me"));
+
+    ArgumentCaptor<Collection<Long>> ids = ArgumentCaptor.forClass(Collection.class);
+    verify(sessionSupervisorRepository).findActiveMarkerRowsBySessionIdIn(ids.capture());
+    assertThat(ids.getValue()).containsExactly(15L);
+    assertThat(anonymous.getSession().getSupervision()).isNull();
+    assertThat(registered.getSession().getSupervision().getSupervisedByMe()).isTrue();
+  }
+
+  @Test
+  void enrich_ShouldHideSideRoomWhenActiveAssignmentsDisagreeSessionWide() {
+    var entry = entry(16L, "owner-16");
+    when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
+        .thenReturn(
+            List.of(
+                new SessionSupervisorMarkerRow(
+                    16L, "me", "me-user", null, null, "!side-a:matrix", "!client:matrix"),
+                new SessionSupervisorMarkerRow(
+                    16L, "other", "other-user", null, null, "!side-b:matrix", "!client:matrix")));
+    when(consultantRepository.findAllByIdIn(anyList())).thenReturn(List.of());
+
+    service.enrich(List.of(entry), consultant("me"));
+
+    assertThat(entry.getSession().getSupervision().getSupervisedByMe()).isTrue();
+    assertThat(entry.getSession().getSupervision().getSideRoomId().orElse(null)).isNull();
+  }
+
+  @Test
   void enrich_Should_ResolveDisplayNames_Through_TheInternalNameRule() {
     var entry = entry(7L);
     when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
@@ -116,7 +200,7 @@ class SessionSupervisionMarkerServiceTest {
   }
 
   @Test
-  void enrich_Should_CarryTheCounsellorDisplayName_With_OneBatchedQuery() {
+  void enrich_Should_CarryTheCounsellorDisplayName_With_OneBatchedCounsellorQuery() {
     var ownedByAnna = entry(1L, "anna");
     var alsoAnna = entry(2L, "anna");
     var ownedByBob = entry(3L, "bob");

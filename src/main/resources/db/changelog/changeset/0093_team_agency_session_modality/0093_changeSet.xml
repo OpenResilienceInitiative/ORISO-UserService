@@ -8,9 +8,12 @@
        type; real group chats (group_chat_participant row / shared chat room / system user) are left
        alone. Data-only, no schema change. See migrate.sql.
 
-       The SQL's WHERE clause excludes already-corrected rows. Future corrections must use a new
-       append-only changeset rather than editing and rerunning this one. -->
-  <changeSet id="0091-team-agency-session-modality" author="frank">
+       Renumbered from the branch-only 0091 identity because dev already owns 0091 for the active
+       invite recipient migration. A sandbox that recorded the former path may execute 0093 once;
+       the SQL's WHERE clause excludes already-corrected rows, so both histories converge. Future
+       corrections must use a new append-only changeset rather than editing and rerunning this one.
+       -->
+  <changeSet id="0093-team-agency-session-modality" author="frank">
     <preConditions onFail="MARK_RAN">
       <tableExists tableName="session"/>
       <tableExists tableName="group_chat_participant"/>
@@ -19,7 +22,7 @@
       <columnExists tableName="group_chat_participant" columnName="chat_id"/>
     </preConditions>
     <sqlFile
-      path="db/changelog/changeset/0091_team_agency_session_modality/migrate.sql"
+      path="db/changelog/changeset/0093_team_agency_session_modality/migrate.sql"
       relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"
       encoding="UTF-8"/>
     <rollback>
