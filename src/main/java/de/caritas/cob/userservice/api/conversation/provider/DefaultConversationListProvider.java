@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResp
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.conversation.model.PageableListRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import java.util.List;
 import lombok.NonNull;
@@ -15,6 +16,7 @@ import org.springframework.beans.support.PagedListHolder;
 public abstract class DefaultConversationListProvider implements ConversationListProvider {
 
   private final @NonNull ConsultantSessionEnricher consultantSessionEnricher;
+  private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
 
   /** {@inheritDoc} */
   protected ConsultantSessionListResponseDTO buildConversations(
@@ -30,6 +32,8 @@ public abstract class DefaultConversationListProvider implements ConversationLis
 
     List<ConsultantSessionResponseDTO> pageList = enquiriesForConsultant.getPageList();
     consultantSessionEnricher.updateRequiredConsultantSessionValues(pageList);
+    // ADR-008 marker for the requester, resolved for the page only (one batched query).
+    supervisionMarkerService.enrich(pageList, consultant);
 
     return new ConsultantSessionListResponseDTO()
         .sessions(pageList)

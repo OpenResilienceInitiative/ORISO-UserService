@@ -8,11 +8,13 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.conversation.model.PageableListRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -44,6 +46,7 @@ class AnonymousEnquiryConversationListProviderCrossTenantTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantSessionEnricher consultantSessionEnricher;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
+  @Mock private SessionSupervisionMarkerService supervisionMarkerService;
 
   @AfterEach
   void clearTenant() {
@@ -56,7 +59,8 @@ class AnonymousEnquiryConversationListProviderCrossTenantTest {
             userAccountProvider,
             sessionRepository,
             consultantSessionEnricher,
-            consultantTopicRepository);
+            consultantTopicRepository,
+            supervisionMarkerService);
     ReflectionTestUtils.setField(provider, "liveChatQueueActivePeriodMinutes", 60L);
     return provider;
   }
@@ -88,6 +92,31 @@ class AnonymousEnquiryConversationListProviderCrossTenantTest {
 
     assertThat(tenantDuringQuery.get()).isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
     assertThat(TenantContext.getCurrentTenant()).isEqualTo(CONSULTANT_TENANT);
+  }
+
+  @Test
+  void buildConversations_Should_addSupervisionMarkersToTheReturnedPage() {
+    var consultant = consultant();
+    var session =
+        Session.builder()
+            .id(91L)
+            .registrationType(Session.RegistrationType.ANONYMOUS)
+            .postcode("12345")
+            .languageCode(LanguageCode.de)
+            .status(Session.SessionStatus.NEW)
+            .teamSession(false)
+            .build();
+    when(userAccountProvider.retrieveValidatedConsultant()).thenReturn(consultant);
+    when(consultantTopicRepository.findTopicIdsByConsultantId("consultant-83"))
+        .thenReturn(List.of(11L));
+    when(sessionRepository.findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
+            anySet(), any(), any(), any(), any(Pageable.class)))
+        .thenReturn(new PageImpl<>(List.of(session)));
+
+    var response =
+        newProvider().buildConversations(PageableListRequest.builder().count(5).offset(0).build());
+
+    verify(supervisionMarkerService).enrich(response.getSessions(), consultant);
   }
 
   @Test

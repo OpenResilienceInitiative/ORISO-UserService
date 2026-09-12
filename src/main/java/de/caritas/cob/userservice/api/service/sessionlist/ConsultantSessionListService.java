@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
+import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashSet;
@@ -31,6 +32,7 @@ public class ConsultantSessionListService {
   private final @NonNull ChatService chatService;
   private final @NonNull ConsultantSessionEnricher consultantSessionEnricher;
   private final @NonNull ConsultantChatEnricher consultantChatEnricher;
+  private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
 
   /**
    * @param consultant {@link Consultant}
@@ -45,7 +47,9 @@ public class ConsultantSessionListService {
         sessionService.getAllowedSessionsByConsultantAndRoomIds(consultant, matrixRoomIds, roles);
     var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
 
-    return mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    var result = mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    enrichWithSupervision(result, consultant);
+    return result;
   }
 
   /**
@@ -64,7 +68,9 @@ public class ConsultantSessionListService {
             .collect(Collectors.toSet());
     var chats = chatService.getChatSessionsForConsultantByRoomIds(matrixRoomIds);
 
-    return mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    var result = mergeConsultantSessionsAndChats(consultant, sessions, chats);
+    enrichWithSupervision(result, consultant);
+    return result;
   }
 
   /**
@@ -222,6 +228,14 @@ public class ConsultantSessionListService {
     allSessions.addAll(chatsByMatrixRoomId.values());
 
     return allSessions;
+  }
+
+  /** Adds ADR-008 requester markers to the final response slice with one batched query. */
+  public void enrichWithSupervision(
+      List<ConsultantSessionResponseDTO> sessions, Consultant consultant) {
+    if (isNotEmpty(sessions)) {
+      supervisionMarkerService.enrich(sessions, consultant);
+    }
   }
 
   private void sortSessionsByLastMessageDateDesc(List<ConsultantSessionResponseDTO> sessions) {

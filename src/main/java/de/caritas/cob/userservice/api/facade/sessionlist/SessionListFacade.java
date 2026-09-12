@@ -267,6 +267,7 @@ public class SessionListFacade {
       consultantSessionsSublist =
           retrieveConsultantSessionsSublist(sessionListQueryParameter, consultantSessions);
     }
+    consultantSessionListService.enrichWithSupervision(consultantSessionsSublist, consultant);
 
     return new ConsultantSessionListResponseDTO()
         .sessions(consultantSessionsSublist)
@@ -335,6 +336,7 @@ public class SessionListFacade {
     if (topicsFeatureEnabled) {
       enrichWithTopicData(teamSessionsSublist);
     }
+    consultantSessionListService.enrichWithSupervision(teamSessionsSublist, consultant);
 
     return new ConsultantSessionListResponseDTO()
         .sessions(teamSessionsSublist)

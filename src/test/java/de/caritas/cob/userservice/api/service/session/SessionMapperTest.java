@@ -4,6 +4,8 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.toIsoTim
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANONYMOUS;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.REGISTERED;
 import static org.hamcrest.MatcherAssert.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.hamcrest.Matchers.empty;
 import static org.hamcrest.Matchers.hasEntry;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
@@ -17,11 +19,14 @@ import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForUserD
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
 import de.caritas.cob.userservice.api.config.AppConfig;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionData;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.SessionSupervisorMarkerRow;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 
@@ -176,6 +181,33 @@ class SessionMapperTest {
   }
 
   @Test
+  void convertToSessionDTO_Should_carryTheAssignedConsultantsMatrixUserId() {
+    // ADR-002 silent membership: the room header shows only asker, assigned counsellor and
+    // active supervisors, so the list/room DTO has to name the counsellor's Matrix id itself.
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setRegistrationType(REGISTERED);
+    Consultant consultant = new Consultant();
+    consultant.setMatrixUserId("@counsellor:matrix.example");
+    consultant.setUsername("must-not-leak");
+    session.setConsultant(consultant);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertEquals("@counsellor:matrix.example", sessionDTO.getConsultantMatrixUserId().orElse(null));
+  }
+
+  @Test
+  void convertToSessionDTO_Should_leaveConsultantMatrixUserIdNull_When_noConsultantIsAssigned() {
+    Session session = new EasyRandom().nextObject(Session.class);
+    session.setRegistrationType(REGISTERED);
+    session.setConsultant(null);
+
+    SessionDTO sessionDTO = new SessionMapper().convertToSessionDTO(session);
+
+    assertNull(sessionDTO.getConsultantMatrixUserId().orElse(null));
+  }
+
+  @Test
   void toConsultantSessionDto_Should_populateUserConsultantAndLatestMessage() {
     Session session = new EasyRandom().nextObject(Session.class);
     session.setRegistrationType(REGISTERED);
@@ -315,5 +347,73 @@ class SessionMapperTest {
     assertEquals("Alice", response.getConsultant().getFirstName());
     assertEquals("Smith", response.getConsultant().getLastName());
     assertEquals("Alice S.", response.getConsultant().getDisplayName());
+  }
+
+  // ---------------------------------------------------------------------------
+  // toSupervisionDTO — ADR-008 supervisor marker for consultant session lists
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void toSupervisionDTOShouldMarkRequesterAsSupervisorAndListAllActiveSupervisors() {
+    var rows =
+        List.of(
+            new SessionSupervisorMarkerRow(1L, "sup-1", "u1", "Public One", "Internal One"),
+            new SessionSupervisorMarkerRow(1L, "sup-2", "u2", null, null));
+
+    var dto = new SessionMapper().toSupervisionDTO(rows, "sup-2", row -> row.consultantId() + "!");
+
+    assertThat(dto.getSupervisedByMe(), is(true));
+    assertThat(dto.getSupervisorConsultantIds(), contains("sup-1", "sup-2"));
+    assertThat(dto.getSupervisorDisplayNames(), contains("sup-1!", "sup-2!"));
+  }
+
+  @Test
+  void toSupervisionDTOShouldNotMarkRequesterWhoIsNotAmongTheSupervisors() {
+    var rows = List.of(new SessionSupervisorMarkerRow(1L, "sup-1", "u1", "Public One", null));
+
+    var dto = new SessionMapper().toSupervisionDTO(rows, "owner", row -> row.consultantId());
+
+    assertThat(dto.getSupervisedByMe(), is(false));
+    assertThat(dto.getSupervisorConsultantIds(), contains("sup-1"));
+  }
+
+  @Test
+  void toSupervisionDTOShouldReportEmptyMarkerWhenNothingIsSupervised() {
+    var dto = new SessionMapper().toSupervisionDTO(List.of(), "me", row -> row.consultantId());
+
+    assertThat(dto.getSupervisedByMe(), is(false));
+    assertThat(dto.getSupervisorConsultantIds(), is(empty()));
+    assertThat(dto.getSupervisorDisplayNames(), is(empty()));
+  }
+
+  @Test
+  void toSupervisionDTOShouldTreatNullRowsAndNullRequesterAsNothingSupervised() {
+    var dto = new SessionMapper().toSupervisionDTO(null, null, row -> row.consultantId());
+
+    assertThat(dto.getSupervisedByMe(), is(false));
+    assertThat(dto.getSupervisorConsultantIds(), is(empty()));
+    assertThat(dto.getCounsellorDisplayName().orElse(null), is(nullValue()));
+  }
+
+  @Test
+  void toSupervisionDTOShouldCarryTheCounsellorDisplayNameNextToTheSupervisors() {
+    var rows = List.of(new SessionSupervisorMarkerRow(1L, "sup-1", "u1", "Public One", null));
+
+    var dto =
+        new SessionMapper()
+            .toSupervisionDTO(rows, "sup-1", row -> row.consultantId(), "Anna (int)");
+
+    assertThat(dto.getSupervisedByMe(), is(true));
+    assertThat(dto.getSupervisorConsultantIds(), contains("sup-1"));
+    assertThat(dto.getCounsellorDisplayName().orElse(null), is("Anna (int)"));
+  }
+
+  @Test
+  void toSupervisionDTOShouldLeaveTheCounsellorDisplayNameNullWhenNoneIsGiven() {
+    var dto =
+        new SessionMapper().toSupervisionDTO(List.of(), "me", row -> row.consultantId(), null);
+
+    assertThat(dto.getSupervisedByMe(), is(false));
+    assertThat(dto.getCounsellorDisplayName().orElse(null), is(nullValue()));
   }
 }

@@ -186,9 +186,32 @@ class SessionSupervisorControllerTest {
     assertEquals(77L, dto.getSessionId());
     assertEquals("sup-3", dto.getSupervisorConsultantId());
     assertEquals("Display Three", dto.getSupervisorUsername());
+    assertEquals("rc-sup-3", dto.getSupervisorMatrixUserId());
     assertEquals("added-by-3", dto.getAddedByConsultantId());
     assertEquals("room-77", dto.getMatrixRoomId());
     assertEquals("note-30", dto.getNotes());
+  }
+
+  @Test
+  void getSupervisors_supervisorWithoutMatrixAccount_leavesMatrixUserIdNull() {
+    var first = supervisor(31L, "sup-4", "added-by-4", "Display Four", "Full Four", user("u-4"));
+    first.getSupervisorConsultant().setMatrixUserId(null);
+    when(sessionSupervisorFacade.getSupervisors(79L)).thenReturn(List.of(first));
+
+    var response = controller.getSupervisors(79L);
+
+    assertNull(response.getBody().get(0).getSupervisorMatrixUserId());
+  }
+
+  @Test
+  void getSupervisors_blankMatrixAccount_leavesMatrixUserIdNull() {
+    var first = supervisor(32L, "sup-5", "added-by-5", "Display Five", "Full Five", user("u-5"));
+    first.getSupervisorConsultant().setMatrixUserId("  ");
+    when(sessionSupervisorFacade.getSupervisors(80L)).thenReturn(List.of(first));
+
+    var response = controller.getSupervisors(80L);
+
+    assertNull(response.getBody().get(0).getSupervisorMatrixUserId());
   }
 
   @Test
