@@ -392,6 +392,9 @@ public class SessionSupervisorFacade {
     if (!session.isAdvisedBy(requestingConsultant) && !activeSupervisor) {
       throw new ForbiddenException("Consultant does not have access to this supervision session");
     }
+    if (AnonymousSessionRegistration.matches(session)) {
+      return List.of();
+    }
     return getSupervisors(sessionId);
   }
 
