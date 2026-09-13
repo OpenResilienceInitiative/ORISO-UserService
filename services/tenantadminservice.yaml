@@ -1681,7 +1681,7 @@ components:
         - labels
         - enabled
         - accessAllowed
-        - clientConsent
+        - clientConsentRequired
         - approvalRoles
         - clientNotificationTemplates
       properties:
@@ -1701,6 +1701,7 @@ components:
           $ref: '#/components/schemas/BooleanPermissionPolicy'
         clientConsent:
           $ref: '#/components/schemas/ConsentPermissionPolicy'
+          description: Canonical typed consent policy. Optional while legacy clients migrate from clientConsentRequired.
         clientConsentRequired:
           $ref: '#/components/schemas/BooleanPermissionPolicy'
           deprecated: true

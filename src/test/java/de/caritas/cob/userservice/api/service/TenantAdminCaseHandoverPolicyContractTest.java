@@ -28,8 +28,8 @@ class TenantAdminCaseHandoverPolicyContractTest {
     assertThat((List<String>) consentValue.get("enum"))
         .containsExactly("OPT_IN", "OPT_OUT", "NONE");
     assertThat((List<String>) consentPolicy.get("required")).containsExactly("value", "mode");
-    assertThat(reasonRequired).contains("clientConsent");
-    assertThat(reasonRequired).doesNotContain("clientConsentRequired");
+    assertThat(reasonRequired).contains("clientConsentRequired");
+    assertThat(reasonRequired).doesNotContain("clientConsent");
     assertThat((Map<String, Object>) reasonProperties.get("clientConsentRequired"))
         .containsEntry("deprecated", true);
   }

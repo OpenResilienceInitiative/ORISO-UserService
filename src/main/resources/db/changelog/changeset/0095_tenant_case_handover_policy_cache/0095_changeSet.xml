@@ -5,7 +5,7 @@
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
   <changeSet id="0095-tenant-case-handover-policy-cache" author="oriso">
     <sqlFile
-      path="db/changelog/changeset/0094_tenant_case_handover_policy_cache/create.sql"
+      path="db/changelog/changeset/0095_tenant_case_handover_policy_cache/create.sql"
       relativeToChangelogFile="false"
       splitStatements="true"
       stripComments="true"
