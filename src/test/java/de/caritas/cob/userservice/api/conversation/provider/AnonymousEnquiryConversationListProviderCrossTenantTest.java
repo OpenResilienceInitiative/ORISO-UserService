@@ -14,7 +14,6 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
-import de.caritas.cob.userservice.api.service.session.SessionSupervisionMarkerService;
 import de.caritas.cob.userservice.api.service.sessionlist.ConsultantSessionEnricher;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -46,7 +45,6 @@ class AnonymousEnquiryConversationListProviderCrossTenantTest {
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantSessionEnricher consultantSessionEnricher;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
-  @Mock private SessionSupervisionMarkerService supervisionMarkerService;
 
   @AfterEach
   void clearTenant() {
@@ -59,8 +57,7 @@ class AnonymousEnquiryConversationListProviderCrossTenantTest {
             userAccountProvider,
             sessionRepository,
             consultantSessionEnricher,
-            consultantTopicRepository,
-            supervisionMarkerService);
+            consultantTopicRepository);
     ReflectionTestUtils.setField(provider, "liveChatQueueActivePeriodMinutes", 60L);
     return provider;
   }
@@ -95,7 +92,7 @@ class AnonymousEnquiryConversationListProviderCrossTenantTest {
   }
 
   @Test
-  void buildConversations_Should_addSupervisionMarkersToTheReturnedPage() {
+  void buildConversations_Should_notAddSupervisionMarkersBecauseLiveChatIsOutOfScope() {
     var consultant = consultant();
     var session =
         Session.builder()
@@ -116,7 +113,8 @@ class AnonymousEnquiryConversationListProviderCrossTenantTest {
     var response =
         newProvider().buildConversations(PageableListRequest.builder().count(5).offset(0).build());
 
-    verify(supervisionMarkerService).enrich(response.getSessions(), consultant);
+    assertThat(response.getSessions()).hasSize(1);
+    assertThat(response.getSessions().getFirst().getSession().getSupervision()).isNull();
   }
 
   @Test

@@ -10,10 +10,25 @@ package de.caritas.cob.userservice.api.port.out;
  * @param username the supervisor's (encoded) username — last-resort display name
  * @param displayName the supervisor's public display name (nullable)
  * @param internalDisplayName the supervisor's internal display name, #996 (nullable)
+ * @param sideRoomId the room recorded on this active supervision row (nullable)
+ * @param clientRoomId the help-seeker room id, used only to reject legacy rows that stored the
+ *     client room where the side room belongs
  */
 public record SessionSupervisorMarkerRow(
     Long sessionId,
     String consultantId,
     String username,
     String displayName,
-    String internalDisplayName) {}
+    String internalDisplayName,
+    String sideRoomId,
+    String clientRoomId) {
+
+  public SessionSupervisorMarkerRow(
+      Long sessionId,
+      String consultantId,
+      String username,
+      String displayName,
+      String internalDisplayName) {
+    this(sessionId, consultantId, username, displayName, internalDisplayName, null, null);
+  }
+}

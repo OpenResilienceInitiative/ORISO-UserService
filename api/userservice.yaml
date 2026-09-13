@@ -1587,6 +1587,42 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/supervisors:
+    get:
+      tags:
+        - session-supervisor-controller
+      summary: 'Returns all active supervisors of a session. [Authorization: Role: consultant]'
+      operationId: getSessionSupervisors
+      # The endpoint is implemented by the dedicated handwritten SessionSupervisorController.
+      # Do not add its mapping to the generated UsersApi implemented by UserController as well.
+      x-internal: true
+      parameters:
+        - name: sessionId
+          in: path
+          description: Session id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionSupervisorResponseDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - a session with such an ID does not exist
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /users/2fa/email:
     put:
       tags:
@@ -2212,6 +2248,64 @@ components:
             name, else username). Never a real name. Absent when the session has no consultant yet
             (enquiry not taken). Lets a supervisor's panel title the case by its counsellor without
             a second lookup.
+        sideRoomId:
+          type: string
+          nullable: true
+          example: "!supervision-side-room:matrix.example.org"
+          description: >-
+            Matrix room id of the private ADR-008 supervision back-channel. Returned only when the
+            requesting consultant is the session's assigned counsellor or an active supervisor.
+            Never contains the help-seeker room id; null for unrelated team-list viewers, legacy
+            rows that stored the client room, missing rooms, or inconsistent active assignments.
+
+    SessionSupervisorResponseDTO:
+      type: object
+      description: An active supervision assignment for a session.
+      required:
+        - id
+        - sessionId
+        - supervisorConsultantId
+        - supervisorUsername
+        - addedByConsultantId
+        - addedDate
+      properties:
+        id:
+          type: integer
+          format: int64
+        sessionId:
+          type: integer
+          format: int64
+        supervisorConsultantId:
+          type: string
+          description: Keycloak id of the supervising consultant.
+        supervisorUsername:
+          type: string
+        supervisorMatrixUserId:
+          type: string
+          nullable: true
+          description: Matrix user id of the supervisor; null when no Matrix id is available.
+        addedByConsultantId:
+          type: string
+          description: Keycloak id of the consultant who created the assignment.
+        addedDate:
+          type: string
+          format: date-time
+        matrixRoomId:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+          description: Human-readable supervision notes decoded from the stored payload.
+        reasonCode:
+          type: string
+          nullable: true
+        justification:
+          type: string
+          nullable: true
+        consent:
+          type: string
+          nullable: true
 
     SessionConsentDTO:
       type: object

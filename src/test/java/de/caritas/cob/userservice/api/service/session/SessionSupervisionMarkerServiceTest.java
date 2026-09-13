@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -31,7 +32,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
  * ADR-008 supervisor marker: the requesting consultant learns whether a list entry is theirs
- * because they supervise it, and who supervises it — resolved with ONE batched query per list.
+ * because they supervise it, and who supervises it — resolved with constant batched work per list,
+ * never one query per row.
  */
 @ExtendWith(MockitoExtension.class)
 class SessionSupervisionMarkerServiceTest {
@@ -63,7 +65,7 @@ class SessionSupervisionMarkerServiceTest {
   }
 
   @Test
-  void enrich_Should_MarkSupervisedEntries_With_OneBatchedQuery() {
+  void enrich_Should_MarkSupervisedEntries_With_OneBatchedSupervisorQuery() {
     var mine = entry(1L);
     var theirs = entry(2L);
     var unsupervised = entry(3L);
@@ -101,6 +103,123 @@ class SessionSupervisionMarkerServiceTest {
   }
 
   @Test
+  void enrich_ShouldExposeOnlyARealSideRoomToTheAssignedCounsellorOrActiveSupervisor() {
+    var supervisedByMe = entry(10L, "owner-10");
+    var counselledByMe = entry(11L, "me");
+    var unrelatedTeamCase = entry(12L, "owner-12");
+    var legacyClientRoom = entry(13L, "owner-13");
+    when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
+        .thenReturn(
+            List.of(
+                new SessionSupervisorMarkerRow(
+                    10L, "me", "me-user", null, null, "!side-10:matrix", "!client-10:matrix"),
+                new SessionSupervisorMarkerRow(
+                    11L,
+                    "supervisor-11",
+                    "sup-user",
+                    null,
+                    null,
+                    "!side-11:matrix",
+                    "!client-11:matrix"),
+                new SessionSupervisorMarkerRow(
+                    12L,
+                    "supervisor-12",
+                    "sup-user",
+                    null,
+                    null,
+                    "!side-12:matrix",
+                    "!client-12:matrix"),
+                new SessionSupervisorMarkerRow(
+                    13L, "me", "me-user", null, null, "!client-13:matrix", "!client-13:matrix")));
+    when(consultantRepository.findAllByIdIn(anyList())).thenReturn(List.of());
+
+    service.enrich(
+        List.of(supervisedByMe, counselledByMe, unrelatedTeamCase, legacyClientRoom),
+        consultant("me"));
+
+    assertThat(supervisedByMe.getSession().getSupervision().getSideRoomId().orElse(null))
+        .isEqualTo("!side-10:matrix");
+    assertThat(counselledByMe.getSession().getSupervision().getSideRoomId().orElse(null))
+        .isEqualTo("!side-11:matrix");
+    assertThat(unrelatedTeamCase.getSession().getSupervision().getSideRoomId().orElse(null))
+        .isNull();
+    assertThat(legacyClientRoom.getSession().getSupervision().getSideRoomId().orElse(null))
+        .isNull();
+    verify(sessionSupervisorRepository, times(1))
+        .findActiveMarkerRowsBySessionIdIn(anyCollection());
+  }
+
+  @Test
+  void enrich_ShouldExcludeAnonymousSessionsFromTheBatchedLookupAndMarker() {
+    var anonymous = entry(14L);
+    anonymous.getSession().setRegistrationType("ANONYMOUS");
+    var registered = entry(15L);
+    registered.getSession().setRegistrationType("REGISTERED");
+    when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
+        .thenReturn(List.of(new SessionSupervisorMarkerRow(15L, "me", "me-user", null, null)));
+
+    service.enrich(List.of(anonymous, registered), consultant("me"));
+
+    ArgumentCaptor<Collection<Long>> ids = ArgumentCaptor.forClass(Collection.class);
+    verify(sessionSupervisorRepository).findActiveMarkerRowsBySessionIdIn(ids.capture());
+    assertThat(ids.getValue()).containsExactly(15L);
+    assertThat(anonymous.getSession().getSupervision()).isNull();
+    assertThat(registered.getSession().getSupervision().getSupervisedByMe()).isTrue();
+  }
+
+  @Test
+  void enrich_ShouldExcludeRegisteredAnonymousStyleSessionsFromTheBatchedLookupAndMarker() {
+    var postcodeAnonymous = entry(17L);
+    postcodeAnonymous.getSession().setRegistrationType("REGISTERED");
+    postcodeAnonymous.getSession().setPostcode("00000");
+    var usernameAnonymous = entry(18L);
+    usernameAnonymous.getSession().setRegistrationType("REGISTERED");
+    usernameAnonymous.getSession().setPostcode("12345");
+    usernameAnonymous.setUser(new SessionUserDTO("u-18", "Anonymous-18", null, false, null));
+
+    service.enrich(List.of(postcodeAnonymous, usernameAnonymous), consultant("me"));
+
+    verify(sessionSupervisorRepository, never()).findActiveMarkerRowsBySessionIdIn(any());
+    assertThat(postcodeAnonymous.getSession().getSupervision()).isNull();
+    assertThat(usernameAnonymous.getSession().getSupervision()).isNull();
+  }
+
+  @Test
+  void enrich_ShouldHideSideRoomWhenActiveAssignmentsDisagreeSessionWide() {
+    var entry = entry(16L, "owner-16");
+    when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
+        .thenReturn(
+            List.of(
+                new SessionSupervisorMarkerRow(
+                    16L, "me", "me-user", null, null, "!side-a:matrix", "!client:matrix"),
+                new SessionSupervisorMarkerRow(
+                    16L, "other", "other-user", null, null, "!side-b:matrix", "!client:matrix")));
+    when(consultantRepository.findAllByIdIn(anyList())).thenReturn(List.of());
+
+    service.enrich(List.of(entry), consultant("me"));
+
+    assertThat(entry.getSession().getSupervision().getSupervisedByMe()).isTrue();
+    assertThat(entry.getSession().getSupervision().getSideRoomId().orElse(null)).isNull();
+  }
+
+  @Test
+  void enrich_ShouldHideSideRoomWhenAnyActiveAssignmentHasNoClientRoom() {
+    var entry = entry(19L, "me");
+    when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
+        .thenReturn(
+            List.of(
+                new SessionSupervisorMarkerRow(
+                    19L, "supervisor-a", "a", null, null, "!side:matrix", "!client:matrix"),
+                new SessionSupervisorMarkerRow(
+                    19L, "supervisor-b", "b", null, null, "!side:matrix", " ")));
+    when(consultantRepository.findAllByIdIn(anyList())).thenReturn(List.of());
+
+    service.enrich(List.of(entry), consultant("me"));
+
+    assertThat(entry.getSession().getSupervision().getSideRoomId().orElse(null)).isNull();
+  }
+
+  @Test
   void enrich_Should_ResolveDisplayNames_Through_TheInternalNameRule() {
     var entry = entry(7L);
     when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
@@ -116,7 +235,7 @@ class SessionSupervisionMarkerServiceTest {
   }
 
   @Test
-  void enrich_Should_CarryTheCounsellorDisplayName_With_OneBatchedQuery() {
+  void enrich_Should_CarryTheCounsellorDisplayName_With_OneBatchedCounsellorQuery() {
     var ownedByAnna = entry(1L, "anna");
     var alsoAnna = entry(2L, "anna");
     var ownedByBob = entry(3L, "bob");
@@ -216,6 +335,16 @@ class SessionSupervisionMarkerServiceTest {
     assertThat(service.buildFor(null, consultant("me"))).isNull();
     assertThat(service.buildFor(session(null, null), consultant("me"))).isNull();
     assertThat(service.buildFor(session(5L, null), null)).isNull();
+    verify(sessionSupervisorRepository, never()).findActiveMarkerRowsBySessionIdIn(any());
+  }
+
+  @Test
+  void buildFor_Should_ReturnNull_ForRegisteredAnonymousStyleSession() {
+    var anonymousStyle = session(20L, consultant("owner"));
+    anonymousStyle.setRegistrationType(Session.RegistrationType.REGISTERED);
+    anonymousStyle.setPostcode("00000");
+
+    assertThat(service.buildFor(anonymousStyle, consultant("me"))).isNull();
     verify(sessionSupervisorRepository, never()).findActiveMarkerRowsBySessionIdIn(any());
   }
 }

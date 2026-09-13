@@ -6,12 +6,16 @@
   <!-- ADR-006 addendum 2026-09-04: team-agency 1:1 cases were persisted as INTERNAL_GROUP because
        saveSession derived the modality from is_team_session. Re-stamps those rows by registration
        type; real group chats (group_chat_participant row / shared chat room / system user) are left
-       alone. Data-only, no schema change. See migrate.sql.
+       alone. A scoped backup table preserves the original values for an exact rollback. See
+       migrate.sql and rollback.sql.
 
-       The SQL's WHERE clause excludes already-corrected rows. Future corrections must use a new
-       append-only changeset rather than editing and rerunning this one. -->
-  <changeSet id="0091-team-agency-session-modality" author="frank">
-    <preConditions onFail="MARK_RAN">
+       Renumbered from the branch-only 0091 identity because dev already owns 0091 for the active
+       invite recipient migration. A sandbox that recorded the former path may execute 0093 once;
+       the SQL's WHERE clause excludes already-corrected rows, so both histories converge. Future
+       corrections must use a new append-only changeset rather than editing and rerunning this one.
+       -->
+  <changeSet id="0093-team-agency-session-modality" author="frank">
+    <preConditions onFail="HALT">
       <tableExists tableName="session"/>
       <tableExists tableName="group_chat_participant"/>
       <tableExists tableName="chat"/>
@@ -19,13 +23,14 @@
       <columnExists tableName="group_chat_participant" columnName="chat_id"/>
     </preConditions>
     <sqlFile
-      path="db/changelog/changeset/0091_team_agency_session_modality/migrate.sql"
+      path="db/changelog/changeset/0093_team_agency_session_modality/migrate.sql"
       relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"
       encoding="UTF-8"/>
     <rollback>
-      <comment>The previous INTERNAL_GROUP label was the defect; there is nothing correct to
-        restore. Rolling back is a no-op.</comment>
-      <sql>SELECT 1;</sql>
+      <sqlFile
+        path="db/changelog/changeset/0093_team_agency_session_modality/rollback.sql"
+        relativeToChangelogFile="false" splitStatements="true" stripComments="true"
+        endDelimiter=";" encoding="UTF-8"/>
     </rollback>
   </changeSet>
 </databaseChangeLog>
