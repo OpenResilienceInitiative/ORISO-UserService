@@ -172,13 +172,13 @@
   <include
     file="db/changelog/changeset/0092_id_reservation_release_task/0092_changeSet.xml" />
   <include
-    file="db/changelog/changeset/0091_team_agency_session_modality/0091_changeSet.xml" />
+    file="db/changelog/changeset/0093_team_agency_session_modality/0093_changeSet.xml" />
   <include
-    file="db/changelog/changeset/0093_case_handover_co_access/0093_changeSet.xml" />
+    file="db/changelog/changeset/0094_case_handover_co_access/0094_changeSet.xml" />
   <include
-    file="db/changelog/changeset/0094_tenant_case_handover_policy_cache/0094_changeSet.xml" />
+    file="db/changelog/changeset/0095_tenant_case_handover_policy_cache/0095_changeSet.xml" />
   <include
-    file="db/changelog/changeset/0095_case_handover_consent_mode/0095_changeSet.xml" />
+    file="db/changelog/changeset/0096_case_handover_consent_mode/0096_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

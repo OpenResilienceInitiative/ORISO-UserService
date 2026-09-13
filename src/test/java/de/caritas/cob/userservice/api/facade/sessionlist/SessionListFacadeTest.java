@@ -231,11 +231,10 @@ public class SessionListFacadeTest {
   }
 
   @Test
-  public void
-      retrieveSessionsForAuthenticatedConsultant_Should_ReturnCorrectNumberOfSessions_When_CountIsSmallerThanTotal() {
+  public void retrieveSessionsForAuthenticatedConsultant_Should_EnrichOnlyTheReturnedPage() {
 
     SessionListQueryParameter sessionListQueryParameter =
-        createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_1, SessionFilter.ALL);
+        createStandardSessionListQueryParameterObject(COUNT_1, COUNT_1, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveSessionsForAuthenticatedConsultant(
             CONSULTANT, sessionListQueryParameter))
@@ -246,8 +245,13 @@ public class SessionListFacadeTest {
             CONSULTANT, sessionListQueryParameter);
 
     assertEquals(COUNT_1, result.getSessions().size());
+    assertSame(CONSULTANT_SESSION_RESPONSE_DTO_LIST.get(1), result.getSessions().getFirst());
     Mockito.verify(consultantSessionListService)
-        .enrichWithSupervision(result.getSessions(), CONSULTANT);
+        .retrieveSessionsForAuthenticatedConsultant(CONSULTANT, sessionListQueryParameter);
+    Mockito.verify(consultantSessionListService)
+        .enrichWithSupervision(
+            java.util.List.of(CONSULTANT_SESSION_RESPONSE_DTO_LIST.get(1)), CONSULTANT);
+    Mockito.verifyNoMoreInteractions(consultantSessionListService);
   }
 
   @Test
@@ -371,11 +375,10 @@ public class SessionListFacadeTest {
   }
 
   @Test
-  public void
-      retrieveTeamSessionsForAuthenticatedConsultant_Should_ReturnCorrectNumberOfSessions_When_CountIsSmallerThanTotal() {
+  public void retrieveTeamSessionsForAuthenticatedConsultant_Should_EnrichOnlyTheReturnedPage() {
 
     SessionListQueryParameter sessionListQueryParameter =
-        createStandardSessionListQueryParameterObject(OFFSET_0, COUNT_1, SessionFilter.ALL);
+        createStandardSessionListQueryParameterObject(COUNT_1, COUNT_1, SessionFilter.ALL);
 
     when(consultantSessionListService.retrieveTeamSessionsForAuthenticatedConsultant(
             CONSULTANT, sessionListQueryParameter))
@@ -386,8 +389,13 @@ public class SessionListFacadeTest {
             CONSULTANT, sessionListQueryParameter);
 
     assertEquals(COUNT_1, result.getSessions().size());
+    assertSame(CONSULTANT_SESSION_RESPONSE_DTO_LIST.get(1), result.getSessions().getFirst());
     Mockito.verify(consultantSessionListService)
-        .enrichWithSupervision(result.getSessions(), CONSULTANT);
+        .retrieveTeamSessionsForAuthenticatedConsultant(CONSULTANT, sessionListQueryParameter);
+    Mockito.verify(consultantSessionListService)
+        .enrichWithSupervision(
+            java.util.List.of(CONSULTANT_SESSION_RESPONSE_DTO_LIST.get(1)), CONSULTANT);
+    Mockito.verifyNoMoreInteractions(consultantSessionListService);
   }
 
   // ---------------------------------------------------------------------------

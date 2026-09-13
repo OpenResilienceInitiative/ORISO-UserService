@@ -212,7 +212,12 @@ public class SessionSupervisorController {
   public ResponseEntity<List<SessionSupervisorResponseDTO>> getSupervisors(
       @PathVariable @NotNull Long sessionId) {
     log.info("Get supervisors request: sessionId={}", sessionId);
-    List<SessionSupervisor> supervisors = sessionSupervisorFacade.getSupervisors(sessionId);
+    Consultant currentConsultant = userAccountService.retrieveValidatedConsultant();
+    if (currentConsultant == null) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    }
+    List<SessionSupervisor> supervisors =
+        sessionSupervisorFacade.getSupervisors(sessionId, currentConsultant);
     List<SessionSupervisorResponseDTO> response =
         supervisors.stream().map(this::mapToDTO).collect(Collectors.toList());
     return ResponseEntity.ok(response);

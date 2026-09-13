@@ -1143,6 +1143,7 @@ class SessionServiceTest {
   @Test
   void isAnonymousStyleRegistration_Should_ReturnFalse_When_NormalRegisteredSession() {
     Session session = easyRandom.nextObject(Session.class);
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
     session.setPostcode("12345");
     session.getUser().setUsername("regular-user");
 
