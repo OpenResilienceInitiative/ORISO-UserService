@@ -115,9 +115,7 @@ public class CreateUserFacade {
       agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
 
       RecoveryPolicySnapshot snapshot =
-          shouldClearPrivacyConfirmations(UserRole.USER, userDTO)
-              ? null
-              : chatRecoveryEnrollmentPolicyService.forNewAsker(TenantContext.getCurrentTenant());
+          chatRecoveryEnrollmentPolicyService.forNewAsker(TenantContext.getCurrentTenant());
       CreatedIdentity response = identityClient.createUser(userDTO);
       String identityUserId = CreatedIdentity.requireUserId(response);
       provisioningAttempt = provisioningCompensator.begin(ProvisioningWorkflow.REGISTERED_USER);
@@ -299,7 +297,7 @@ public class CreateUserFacade {
         userDTO,
         role,
         shouldClearPrivacyConfirmations(role, userDTO)
-            ? null
+            ? chatRecoveryEnrollmentPolicyService.forNewAsker(TenantContext.getCurrentTenant())
             : chatRecoveryEnrollmentPolicyService.forExistingIdentity(userId));
   }
 

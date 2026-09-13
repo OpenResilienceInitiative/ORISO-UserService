@@ -174,8 +174,8 @@ class GrantConsultantIdentityServiceTest {
     verify(consultantService).saveConsultant(consultantCaptor.capture());
     Consultant saved = consultantCaptor.getValue();
     assertThat(saved.getId(), is(ADMIN_ID));
-    assertThat(saved.getChatRecoveryMode(), is("RECOVERY_KEY"));
-    assertThat(saved.getChatRecoveryPolicyRevision(), is(0L));
+    assertThat(saved.getChatRecoveryMode(), is("LOGIN_PASSWORD"));
+    assertThat(saved.getChatRecoveryPolicyRevision(), is(3L));
     assertThat(saved.getEmail(), is("admin@example.com"));
     // create/update dates must be set explicitly: liquibase-created schemas have
     // no column default and reject NULL (found on the local clean-slate stack).
@@ -186,6 +186,8 @@ class GrantConsultantIdentityServiceTest {
     assertThat(response, notNullValue());
     assertThat(response.getEmbedded(), notNullValue());
     assertThat(response.getEmbedded().getId(), is(ADMIN_ID));
+    verify(chatRecoveryEnrollmentPolicyService).forNewConsultant(1L);
+    verify(chatRecoveryEnrollmentPolicyService, never()).forExistingIdentity(anyString());
   }
 
   @Test

@@ -106,7 +106,7 @@ public class GrantConsultantIdentityService {
     consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
         dto.getTopicIds(), dto.getAgencyIds(), admin.getTenantId());
 
-    var snapshot = chatRecoveryEnrollmentPolicyService.forExistingIdentity(adminId);
+    var snapshot = chatRecoveryEnrollmentPolicyService.forNewConsultant(admin.getTenantId());
     assignKeycloakRoles(adminId, dto);
 
     String matrixUserId = createMatrixAccount(admin);

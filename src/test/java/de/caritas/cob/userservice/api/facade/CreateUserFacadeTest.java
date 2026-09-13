@@ -801,17 +801,19 @@ public class CreateUserFacadeTest {
             .consultingType(USER_DTO_SUCHT.getConsultingType())
             .build();
 
-    org.mockito.Mockito.lenient()
-        .doThrow(new IllegalStateException("Recovery policy unavailable"))
-        .when(chatRecoveryEnrollmentPolicyService)
-        .forExistingIdentity(any());
     User result =
         createUserFacade.updateIdentityAndCreateAccount(
             USER_ID, anonymousPostcodeDto, UserRole.USER);
-    org.mockito.Mockito.verifyNoInteractions(chatRecoveryEnrollmentPolicyService);
+    verify(chatRecoveryEnrollmentPolicyService).forNewAsker(org.mockito.ArgumentMatchers.any());
     verify(userService)
         .createUser(
-            any(), any(), any(), any(), anyBoolean(), any(), org.mockito.ArgumentMatchers.isNull());
+            any(),
+            any(),
+            any(),
+            any(),
+            anyBoolean(),
+            any(),
+            eq(new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3)));
 
     assertThat(result.getTermsAndConditionsConfirmation(), nullValue());
     assertThat(result.getDataPrivacyConfirmation(), nullValue());
@@ -839,6 +841,17 @@ public class CreateUserFacadeTest {
     User result =
         createUserFacade.updateIdentityAndCreateAccount(
             USER_ID, anonymousUsernameDto, UserRole.USER);
+
+    verify(chatRecoveryEnrollmentPolicyService).forNewAsker(org.mockito.ArgumentMatchers.any());
+    verify(userService)
+        .createUser(
+            any(),
+            any(),
+            any(),
+            any(),
+            anyBoolean(),
+            any(),
+            eq(new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3)));
 
     assertThat(result.getTermsAndConditionsConfirmation(), nullValue());
     assertThat(result.getDataPrivacyConfirmation(), nullValue());
