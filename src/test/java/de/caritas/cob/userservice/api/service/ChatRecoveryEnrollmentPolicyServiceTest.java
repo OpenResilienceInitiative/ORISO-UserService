@@ -3,12 +3,19 @@ package de.caritas.cob.userservice.api.service;
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.*;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
+import java.nio.charset.StandardCharsets;
 import org.junit.jupiter.api.Test;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
 
 class ChatRecoveryEnrollmentPolicyServiceTest {
   private final TenantService tenants = mock(TenantService.class);
@@ -16,6 +23,56 @@ class ChatRecoveryEnrollmentPolicyServiceTest {
   private final ConsultantRepository consultants = mock(ConsultantRepository.class);
   private final ChatRecoveryEnrollmentPolicyService service =
       new ChatRecoveryEnrollmentPolicyService(tenants, users, consultants);
+
+  @Test
+  void unavailableTenantLogsFailureTypeWithoutRequestOrResponseSecrets() {
+    String secret = "sensitive-fixture-password-token-and-response";
+    var failures =
+        new RuntimeException[] {
+          new ResourceAccessException(secret, new java.io.IOException(secret)),
+          HttpServerErrorException.create(
+              HttpStatus.SERVICE_UNAVAILABLE,
+              secret,
+              HttpHeaders.EMPTY,
+              secret.getBytes(StandardCharsets.UTF_8),
+              StandardCharsets.UTF_8)
+        };
+    for (var failure : failures) {
+      doThrow(failure).when(tenants).getRestrictedTenantDataFresh(1L);
+      try (var logs = LogbackCaptor.forClass(ChatRecoveryEnrollmentPolicyService.class)) {
+        var exception =
+            assertThrows(
+                de.caritas.cob.userservice.api.exception.httpresponses
+                    .CustomValidationHttpStatusException.class,
+                () -> service.forNewAsker(1L));
+        assertEquals(HttpStatus.BAD_GATEWAY, exception.getHttpStatus());
+        assertEquals(1, logs.count(Level.WARN));
+        assertTrue(logs.contains(Level.WARN, "stage=tenant_lookup"));
+        assertTrue(logs.contains(Level.WARN, "type=" + failure.getClass().getSimpleName()));
+        assertNull(logs.events().getFirst().getThrowableProxy());
+        assertFalse(logs.events().getFirst().getFormattedMessage().contains(secret));
+      }
+    }
+  }
+
+  @Test
+  void malformedPolicyAndInvalidTenantHaveDistinctSafeDiagnostics() {
+    when(tenants.getRestrictedTenantDataFresh(1L)).thenReturn(new RestrictedTenantDTO());
+    try (var logs = LogbackCaptor.forClass(ChatRecoveryEnrollmentPolicyService.class)) {
+      assertThrows(
+          de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+              .class,
+          () -> service.forNewConsultant(1L));
+      assertTrue(logs.contains(Level.WARN, "stage=policy_validation"));
+      assertThrows(
+          de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+              .class,
+          () -> service.forNewConsultant(0L));
+      assertTrue(logs.contains(Level.WARN, "stage=tenant_validation"));
+      assertEquals(2, logs.count(Level.WARN));
+      logs.events().forEach(event -> assertNull(event.getThrowableProxy()));
+    }
+  }
 
   @Test
   void singleTenantCreationUsesAuthoritativeUncachedEndpointForBothRoles() {

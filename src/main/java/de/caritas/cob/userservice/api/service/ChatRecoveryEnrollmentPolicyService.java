@@ -6,12 +6,14 @@ import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpS
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /** Resolves creation defaults without caching; existing identities never re-enroll. */
 @Service
+@Slf4j
 @RequiredArgsConstructor
 public class ChatRecoveryEnrollmentPolicyService {
   private final TenantService tenantService;
@@ -48,19 +50,27 @@ public class ChatRecoveryEnrollmentPolicyService {
   }
 
   private RecoveryPolicySnapshot current(Long tenantId, boolean consultant) {
+    String stage = "tenant_validation";
     try {
       if ((tenantId == null && multitenancyEnabled) || (tenantId != null && tenantId <= 0))
         throw new IllegalStateException("Concrete tenant required");
+      stage = "tenant_lookup";
       var tenant =
           tenantId == null
               ? tenantService.getSingleTenancyTenantDataFresh()
               : tenantService.getRestrictedTenantDataFresh(tenantId);
+      stage = "policy_validation";
       var policy = tenant.getSettings().getTenantAdminControls().getChatRecoverySettings();
       var mode = consultant ? policy.getConsultant() : policy.getAsker();
       if (mode == null || policy.getRevision() == null || policy.getRevision() < 0)
         throw new IllegalStateException("Invalid recovery policy");
       return new RecoveryPolicySnapshot(mode.toString(), policy.getRevision());
     } catch (RuntimeException exception) {
+      // Upstream messages and stack traces can include response bodies or request credentials.
+      log.warn(
+          "Chat recovery policy unavailable: stage={}, type={}",
+          stage,
+          exception.getClass().getSimpleName());
       throw new CustomValidationHttpStatusException(
           HttpStatusExceptionReason.CHAT_RECOVERY_POLICY_UNAVAILABLE, HttpStatus.BAD_GATEWAY);
     }
