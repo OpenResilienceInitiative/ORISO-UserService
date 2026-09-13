@@ -46,6 +46,18 @@ class TenantServiceTest {
             new StubTenantServiceApiControllerFactory(tenantControllerApi), testCacheManager());
   }
 
+  @Test
+  void singleTenantLookupUsesAuthoritativeEndpointOnEveryCall() {
+    var expected = new RestrictedTenantDTO().id(42L);
+    tenantControllerApi.singleTenantResult = expected;
+    assertThat(tenantService.getSingleTenancyTenantDataFresh()).isSameAs(expected);
+    var updated = new RestrictedTenantDTO().id(87L);
+    tenantControllerApi.singleTenantResult = updated;
+    assertThat(tenantService.getSingleTenancyTenantDataFresh()).isSameAs(updated);
+    assertThat(tenantControllerApi.singleTenantCalls.get()).isEqualTo(2);
+    assertThat(tenantControllerApi.tenantIdCalls.get()).isZero();
+  }
+
   // Tenant resolution must reach the external tenant service on a cache miss.
   @Test
   void getRestrictedTenantData_validSubdomain_returnsDtoFromApi() {
@@ -308,6 +320,15 @@ class TenantServiceTest {
   }
 
   static final class StubTenantControllerApi extends TenantControllerApi {
+
+    RestrictedTenantDTO singleTenantResult;
+    final AtomicInteger singleTenantCalls = new AtomicInteger();
+
+    @Override
+    public RestrictedTenantDTO getRestrictedSingleTenancyTenantData() {
+      singleTenantCalls.incrementAndGet();
+      return singleTenantResult;
+    }
 
     RestrictedTenantDTO subdomainResult;
     RestrictedTenantDTO tenantIdResult;
