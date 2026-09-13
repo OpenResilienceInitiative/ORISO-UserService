@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.actions.registry.ActionsRegistry;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
@@ -20,6 +21,7 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.testConfig.ApiControllerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.KeycloakTestConfig;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -58,6 +60,8 @@ class DeactivateAnonymousUserSchedulerIT {
 
   @MockitoBean MatrixSynapseService matrixSynapseService;
 
+  @MockitoBean TenantService tenantService;
+
   @Value("${user.anonymous.deactivateworkflow.periodMinutes}")
   private long deactivatePeriodInMinutes;
 
@@ -66,6 +70,8 @@ class DeactivateAnonymousUserSchedulerIT {
   @BeforeEach
   public void setup() throws MatrixCreateUserException {
     deleteSchedulerClaim();
+    when(tenantService.getSingleTenancyTenantDataFresh())
+        .thenReturn(ChatRecoveryPolicyFixtures.tenant());
     var matrixUserResponse = new MatrixCreateUserResponseDTO();
     matrixUserResponse.setUserId("@anonymous:matrix.test");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
