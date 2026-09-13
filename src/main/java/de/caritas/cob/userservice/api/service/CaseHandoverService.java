@@ -41,14 +41,12 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
-import java.util.function.Function;
 import java.util.stream.Collectors;
 import lombok.AccessLevel;
 import lombok.AllArgsConstructor;
@@ -361,35 +359,6 @@ public class CaseHandoverService {
   @Transactional(readOnly = true)
   public List<CaseHandoverReason> listReasonPolicies() {
     return listReasons(TenantContext.getCurrentTenant(), "de", true);
-  }
-
-  @Transactional
-  public List<CaseHandoverReason> updateReasonPolicies(List<CaseHandoverReason> requestedReasons) {
-    if (requestedReasons == null || requestedReasons.isEmpty()) {
-      throw new BadRequestException("At least one handover reason policy is required");
-    }
-
-    // Keep the first row per code: a plain toMap throws IllegalStateException (-> 500)
-    // if the table ever holds duplicate codes, e.g. after a hand-applied seed on an
-    // environment where the guarded 0057 changeset was skipped. Note that code is the
-    // table's PRIMARY KEY in both the 0057 and 0059 schemas, so the DB already enforces
-    // uniqueness; no extra UNIQUE constraint is needed and this merge is defense-in-depth
-    // for rows created outside Liquibase (review note on #324).
-    Map<String, CaseHandoverReasonPolicy> existingPolicies =
-        caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc().stream()
-            .collect(
-                Collectors.toMap(
-                    CaseHandoverReasonPolicy::getCode,
-                    Function.identity(),
-                    (first, ignored) -> first));
-    LocalDateTime now = LocalDateTime.now(clock);
-    List<CaseHandoverReasonPolicy> policiesToSave =
-        requestedReasons.stream()
-            .map(reason -> toPolicy(reason, existingPolicies.get(reason.getCode()), now))
-            .collect(Collectors.toList());
-
-    caseHandoverReasonPolicyRepository.saveAll(policiesToSave);
-    return listReasonPolicies();
   }
 
   @Transactional(readOnly = true)
@@ -1042,54 +1011,6 @@ public class CaseHandoverService {
     };
   }
 
-  private CaseHandoverReasonPolicy toPolicy(
-      CaseHandoverReason reason, CaseHandoverReasonPolicy existingPolicy, LocalDateTime now) {
-    String code = normalizeReasonCode(reason.getCode());
-    String label = reason.getLabel() == null ? "" : reason.getLabel().trim();
-    if (code.isBlank() || label.isBlank()) {
-      throw new BadRequestException("Handover reason code and label are required");
-    }
-    CaseHandoverReasonPolicy policy =
-        existingPolicy != null ? existingPolicy : new CaseHandoverReasonPolicy();
-    policy.setCode(code);
-    policy.setLabel(label);
-    CaseHandoverConsentMode clientConsent = effectiveClientConsent(reason);
-    policy.setClientConsent(clientConsent);
-    policy.setClientConsentRequired(clientConsent == CaseHandoverConsentMode.OPT_IN);
-    policy.setAccessAllowed(isAccessAllowed(reason));
-    policy.setEnabled(reason.isEnabled());
-    policy.setDisplayOrder(reason.getDisplayOrder() != null ? reason.getDisplayOrder() : 100);
-    policy.setPolicyAuthority(
-        reason.getPolicyAuthority() == null || reason.getPolicyAuthority().isBlank()
-            ? POLICY_AUTHORITY
-            : reason.getPolicyAuthority().trim());
-    policy.setClientNotificationTemplates(
-        sanitizeNotificationTemplates(reason.getClientNotificationTemplates()));
-    policy.setMaxAccessDurationMinutes(
-        validateMaxAccessDuration(code, reason.getMaxAccessDurationMinutes()));
-    policy.setUpdatedAt(now);
-    return policy;
-  }
-
-  private Map<String, String> sanitizeNotificationTemplates(Map<String, String> templates) {
-    if (templates == null || templates.isEmpty()) {
-      return null;
-    }
-    Map<String, String> sanitized = new LinkedHashMap<>();
-    templates.forEach(
-        (language, template) -> {
-          if (language == null || template == null) {
-            return;
-          }
-          var languageKey = language.trim().toLowerCase();
-          var text = template.trim();
-          if (languageKey.matches("[a-z]{2}") && !text.isBlank()) {
-            sanitized.put(languageKey, text);
-          }
-        });
-    return sanitized.isEmpty() ? null : sanitized;
-  }
-
   private String normalizeReasonCode(String reasonCode) {
     return reasonCode == null ? "" : reasonCode.trim().toUpperCase(Locale.ROOT);
   }
@@ -1268,15 +1189,24 @@ public class CaseHandoverService {
   }
 
   private CaseHandoverStatus toClientStatus(CaseHandoverRequest request) {
+    AccessType accessType = effectiveAccessType(request);
     return CaseHandoverStatus.builder()
         .requestId(request.getId())
         .sessionId(request.getSession().getId())
         .status(request.getStatus().name())
         .canViewContent(request.getStatus() == Status.GRANTED)
+        .clientConsent(
+            request.getClientConsent() != null
+                ? request.getClientConsent()
+                : (Boolean.TRUE.equals(request.getClientConsentRequired())
+                    ? CaseHandoverConsentMode.OPT_IN
+                    : CaseHandoverConsentMode.NONE))
         .clientConsentRequired(Boolean.TRUE.equals(request.getClientConsentRequired()))
         .auditOutcome(request.getAuditOutcome())
         .createdAt(request.getCreatedAt())
         .resolvedAt(request.getResolvedAt())
+        .accessType(accessType.name())
+        .expiresAt(request.getExpiresAt())
         .build();
   }
 

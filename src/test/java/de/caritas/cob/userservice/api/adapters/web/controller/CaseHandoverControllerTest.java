@@ -6,7 +6,6 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
-import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -18,7 +17,6 @@ import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandov
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverReason;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
-import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -78,84 +76,13 @@ class CaseHandoverControllerTest {
   }
 
   @Test
-  void updateReasonPolicies_happyPath_returnsUpdatedPolicies() {
-    // Business reason: policy updates should immediately return persisted policy state.
-    var input = List.of(CaseHandoverReason.builder().code("P2").label("Policy 2").build());
-    var output =
-        List.of(CaseHandoverReason.builder().code("P2").label("Policy 2").enabled(true).build());
-    when(caseHandoverService.updateReasonPolicies(input)).thenReturn(output);
-
-    var response = controller.updateReasonPolicies(input);
-
-    assertEquals(HttpStatus.OK, response.getStatusCode());
-    assertEquals(output, response.getBody());
-    verify(caseHandoverService).updateReasonPolicies(input);
-  }
-
-  @Test
-  void updateReasonPolicies_validJson_deserializesAndUpdatesPolicies() throws Exception {
-    var updated =
-        List.of(
-            CaseHandoverReason.builder()
-                .code("COUNSELLOR_IS_ILL")
-                .label("Illness")
-                .clientConsentRequired(true)
-                .accessAllowed(true)
-                .enabled(true)
-                .displayOrder(10)
-                .policyAuthority("TENANT")
-                .build());
-    when(caseHandoverService.updateReasonPolicies(org.mockito.ArgumentMatchers.anyList()))
-        .thenReturn(updated);
-
+  void reasonPolicies_putIsNotExposedBecauseTenantServiceOwnsWrites() throws Exception {
     mockMvc
         .perform(
             put("/service/users/case-handover/reason-policies")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    """
-                    [{
-                      "code": "COUNSELLOR_IS_ILL",
-                      "label": "Illness",
-                      "clientConsentRequired": true,
-                      "accessAllowed": true,
-                      "enabled": true,
-                      "displayOrder": 10,
-                      "policyAuthority": "TENANT",
-                      "clientNotificationTemplates": {"de": "Neue Beratung"}
-                    }]
-                    """))
-        .andExpect(status().isOk());
-
-    verify(caseHandoverService)
-        .updateReasonPolicies(
-            org.mockito.ArgumentMatchers.argThat(
-                policies ->
-                    policies.size() == 1
-                        && "COUNSELLOR_IS_ILL".equals(policies.get(0).getCode())
-                        && Boolean.TRUE.equals(policies.get(0).getAccessAllowed())
-                        && "Neue Beratung"
-                            .equals(policies.get(0).getClientNotificationTemplates().get("de"))));
-  }
-
-  @Test
-  void updateReasonPolicies_malformedJson_isRejectedBeforeServiceExecution() throws Exception {
-    mockMvc
-        .perform(
-            put("/service/users/case-handover/reason-policies")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("[{\"code\":]"))
-        .andExpect(status().isBadRequest());
-
-    verifyNoInteractions(caseHandoverService);
-  }
-
-  @Test
-  void updateReasonPolicies_requestBody_hasValidAnnotation() throws Exception {
-    // Business reason: policy payload must pass bean validation before service execution.
-    Method method = CaseHandoverController.class.getMethod("updateReasonPolicies", List.class);
-
-    assertTrue(method.getParameters()[0].isAnnotationPresent(Valid.class));
+                .content("[]"))
+        .andExpect(status().isMethodNotAllowed());
   }
 
   @Test

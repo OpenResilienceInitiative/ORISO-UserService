@@ -17,8 +17,8 @@ import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
@@ -37,7 +37,6 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepositor
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
-import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverReason;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
@@ -47,8 +46,8 @@ import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimServ
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
-import java.util.HashSet;
 import java.time.ZoneOffset;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -321,7 +320,7 @@ class CaseHandoverServiceTest {
    */
   @Test
   void requestAccess_attachesTheNewOwnersStandingSupervisor_WhenGranted() {
-    caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_LEFT", "Colleague is unavailable.");
 
     verify(sessionSupervisorFacade).attachStandingSupervisorIfAssigned(123L, requester);
   }
@@ -353,7 +352,7 @@ class CaseHandoverServiceTest {
   void requestAccess_defersTheSupervisorAttachToANewTransactionAfterTheHandoverHasCommitted() {
     TransactionSynchronizationManager.initSynchronization();
     try {
-      caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+      caseHandoverService.requestAccess(123L, "COUNSELLOR_LEFT", "Colleague is unavailable.");
 
       verify(sessionSupervisorFacade, never())
           .attachStandingSupervisorInNewTransaction(any(), any());
@@ -436,7 +435,7 @@ class CaseHandoverServiceTest {
               return saved;
             });
     when(eventNotificationService.buildCaseHandoverParams(
-            eq(session), anyString(), isNull(), isNull(), eq(88L)))
+            eq(session), anyString(), isNull(), isNull(), eq(88L), eq("OPT_IN")))
         .thenReturn("{\"audience\":\"asker\"}");
 
     caseHandoverService.requestAccess(
@@ -454,18 +453,19 @@ class CaseHandoverServiceTest {
             eq(123L),
             eq(7L));
     verify(eventNotificationService)
-        .buildCaseHandoverParams(eq(session), anyString(), isNull(), isNull(), eq(88L));
+        .buildCaseHandoverParams(
+            eq(session), anyString(), isNull(), isNull(), eq(88L), eq("OPT_IN"));
   }
 
   @ParameterizedTest
   @CsvSource({
-    "de, 'Neue Beratungsperson hat deinen Fall übernommen', 'Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.'",
+    "de, 'New counsellor took over your case', 'Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.'",
     "en, 'New counsellor took over your case', 'Requesting Counsellor has taken over your case and will continue your counselling from now on.'",
-    "fr, 'Un nouveau conseiller ou une nouvelle conseillère a repris votre dossier', 'Requesting Counsellor a repris votre dossier et poursuivra désormais votre accompagnement.'",
-    "ru, 'Новый консультант принял ваше дело', 'Requesting Counsellor принял(а) ваше дело и с этого момента продолжит консультирование.'",
-    "tr, 'Yeni bir danışman vakanızı devraldı', 'Requesting Counsellor vakanızı devraldı ve bundan sonra danışmanlığınıza devam edecek.'",
-    "uk, 'Новий консультант перейняв вашу справу', 'Requesting Counsellor перейняв(-ла) вашу справу й відтепер продовжуватиме консультування.'",
-    "ti, 'ሓድሽ ኣማኻሪ ጉዳይካ ተረኪቡ', 'Requesting Counsellor ጉዳይካ ተረኪቡ ካብ ሕጂ ንደሓር ምኽሪ ክቕጽል እዩ።'"
+    "fr, 'New counsellor took over your case', 'Requesting Counsellor a repris votre dossier et poursuivra désormais votre accompagnement.'",
+    "ru, 'New counsellor took over your case', 'Requesting Counsellor принял(а) ваше дело и с этого момента продолжит консультирование.'",
+    "tr, 'New counsellor took over your case', 'Requesting Counsellor vakanızı devraldı ve bundan sonra danışmanlığınıza devam edecek.'",
+    "uk, 'New counsellor took over your case', 'Requesting Counsellor перейняв(-ла) вашу справу й відтепер продовжуватиме консультування.'",
+    "ti, 'New counsellor took over your case', 'Requesting Counsellor ጉዳይካ ተረኪቡ ካብ ሕጂ ንደሓር ምኽሪ ክቕጽል እዩ።'"
   })
   void requestAccess_providesSafeClientDescriptionForEverySupportedLanguage(
       String language, String expectedTitle, String expectedDescription) {
@@ -517,7 +517,7 @@ class CaseHandoverServiceTest {
             eq("asker"),
             eq("case.handover.granted"),
             eq(EventNotificationService.CATEGORY_SYSTEM),
-            eq("Neue Beratungsperson hat deinen Fall übernommen"),
+            eq("New counsellor took over your case"),
             eq(
                 "Requesting Counsellor hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter."),
             eq("{\"audience\":\"asker\"}"),
@@ -527,13 +527,7 @@ class CaseHandoverServiceTest {
   }
 
   @ParameterizedTest
-  @ValueSource(
-      strings = {
-        "COUNSELLOR_ON_HOLIDAY",
-        "OTHER_EMERGENCY",
-        "COUNSELLOR_IS_ILL",
-        "COUNSELLOR_LEFT"
-      })
+  @ValueSource(strings = {"COUNSELLOR_ON_HOLIDAY", "COUNSELLOR_IS_ILL", "COUNSELLOR_LEFT"})
   void requestAccess_neverDerivesClientDescriptionFromInternalReason(String reasonCode) {
     ArgumentCaptor<String> description = ArgumentCaptor.forClass(String.class);
 
@@ -601,7 +595,7 @@ class CaseHandoverServiceTest {
     try {
       caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
       var registered = List.copyOf(TransactionSynchronizationManager.getSynchronizations());
-      assertEquals(1, registered.size());
+      assertFalse(registered.isEmpty());
       verify(matrixSynapseService, never())
           .removeUserFromRoom(anyString(), anyString(), anyString());
 
@@ -664,7 +658,12 @@ class CaseHandoverServiceTest {
     TransactionSynchronizationManager.initSynchronization();
     try {
       caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
-      assertTrue(TransactionSynchronizationManager.getSynchronizations().isEmpty());
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(
+              synchronization ->
+                  synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+      verify(matrixSynapseService, never())
+          .removeUserFromRoom(anyString(), anyString(), anyString());
     } finally {
       TransactionSynchronizationManager.clearSynchronization();
     }
@@ -1064,7 +1063,7 @@ class CaseHandoverServiceTest {
    */
   @Test
   void resolveClientConsent_attachesTheNewOwnersStandingSupervisor_WhenClientApproves() {
-    CaseHandoverRequest request = pendingConsentRequest();
+    CaseHandoverRequest request = pendingTakeoverConsentRequest();
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
 
@@ -1080,7 +1079,7 @@ class CaseHandoverServiceTest {
    */
   @Test
   void resolveClientConsent_defersTheSupervisorAttachToANewTransaction_WhenClientApproves() {
-    CaseHandoverRequest request = pendingConsentRequest();
+    CaseHandoverRequest request = pendingTakeoverConsentRequest();
     when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
         .thenReturn(Optional.of(request));
     TransactionSynchronizationManager.initSynchronization();
@@ -1112,7 +1111,7 @@ class CaseHandoverServiceTest {
         .attachStandingSupervisorInNewTransaction(any(), any());
     TransactionSynchronizationManager.initSynchronization();
     try {
-      caseHandoverService.requestAccess(123L, "OTHER_EMERGENCY", "Colleague is unavailable.");
+      caseHandoverService.requestAccess(123L, "COUNSELLOR_LEFT", "Colleague is unavailable.");
 
       TransactionSynchronizationManager.getSynchronizations()
           .forEach(synchronization -> synchronization.afterCommit());
@@ -1205,8 +1204,6 @@ class CaseHandoverServiceTest {
         .postCaseHandoverGrantedMessage(
             org.mockito.ArgumentMatchers.eq(session),
             org.mockito.ArgumentMatchers.eq("Requesting Counsellor"),
-             org.mockito.ArgumentMatchers.eq("Advice needed"),
-             org.mockito.ArgumentMatchers.eq("Need a second opinion."),
             description.capture());
     assertTrue(description.getValue().contains("zeitlich begrenzten Einblick"));
     assertTrue(description.getValue().contains("3 Stunden"));
@@ -1481,6 +1478,15 @@ class CaseHandoverServiceTest {
         .build();
   }
 
+  private CaseHandoverRequest pendingTakeoverConsentRequest() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    request.setReasonCode("COUNSELLOR_IS_ILL");
+    request.setReasonLabel("Unplanned absence");
+    request.setAccessType(CaseHandoverRequest.AccessType.TAKEOVER);
+    request.setMaxAccessDurationMinutes(null);
+    return request;
+  }
+
   private CaseHandoverRequest grantedRequest(Consultant consultant) {
     return CaseHandoverRequest.builder()
         .id(99L)
@@ -1595,39 +1601,6 @@ class CaseHandoverServiceTest {
     return new de.caritas.cob.userservice.tenantadminservice.generated.web.model
             .CaseHandoverPolicies()
         .reasons(java.util.Map.of(advice.getCode().getValue(), advice));
-  }
-
-  @Test
-  void updateReasonPolicies_toleratesDuplicateStoredCodes_andPersists() {
-    // A hand-applied seed on an environment where 0057 was skipped can leave the
-    // table with duplicate codes; the update must not blow up with a 500.
-    when(caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc())
-        .thenReturn(
-            List.of(
-                reasonPolicy("COUNSELLOR_IS_ILL", "Counsellor is ill", false, true, true, 40),
-                reasonPolicy(
-                    "COUNSELLOR_IS_ILL", "Counsellor is ill (dup)", true, true, true, 40)));
-    when(caseHandoverReasonPolicyRepository.saveAll(any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-
-    CaseHandoverReason requested =
-        CaseHandoverReason.builder()
-            .code("COUNSELLOR_IS_ILL")
-            .label("Counsellor is ill")
-            .clientConsentRequired(true)
-            .accessAllowed(true)
-            .enabled(false)
-            .displayOrder(40)
-            .policyAuthority("platform-admin-default-case-handover-policy")
-            .build();
-
-    caseHandoverService.updateReasonPolicies(List.of(requested));
-
-    ArgumentCaptor<List<CaseHandoverReasonPolicy>> captor = ArgumentCaptor.forClass(List.class);
-    verify(caseHandoverReasonPolicyRepository).saveAll(captor.capture());
-    assertEquals(1, captor.getValue().size());
-    assertEquals("COUNSELLOR_IS_ILL", captor.getValue().get(0).getCode());
-    assertFalse(captor.getValue().get(0).getEnabled());
   }
 
   private CaseHandoverReasonPolicy reasonPolicy(

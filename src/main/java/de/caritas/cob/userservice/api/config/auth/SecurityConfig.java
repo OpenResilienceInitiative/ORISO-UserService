@@ -430,6 +430,7 @@ public class SecurityConfig {
                 .requestMatchers("/users/supervisors/logs", "/service/users/supervisors/logs")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
                 .requestMatchers(
+                    HttpMethod.GET,
                     "/users/case-handover/reason-policies",
                     "/service/users/case-handover/reason-policies")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)

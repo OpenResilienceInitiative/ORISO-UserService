@@ -3,9 +3,9 @@
   xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
   xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
-  <changeSet id="0086-case-handover-co-access" author="oriso">
+  <changeSet id="0093-case-handover-co-access" author="oriso">
     <sqlFile
-      path="db/changelog/changeset/0086_case_handover_co_access/migrate.sql"
+      path="db/changelog/changeset/0093_case_handover_co_access/migrate.sql"
       relativeToChangelogFile="false"
       splitStatements="true"
       stripComments="true"
