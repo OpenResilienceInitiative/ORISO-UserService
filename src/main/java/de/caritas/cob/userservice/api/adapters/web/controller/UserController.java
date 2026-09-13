@@ -331,8 +331,22 @@ public class UserController implements UsersApi {
     return userAccountControllerDelegate.updateConsultantData(updateConsultantDTO);
   }
 
+  /**
+   * Returns the languages of all consultants working for the given agency.
+   *
+   * <p>Public by design: anonymous registration reads this list before an account exists. Mapped to
+   * both the direct path and the /service/ prefix because the API gateway forwards /service
+   * unchanged and the deployed frontend calls the prefixed route.
+   *
+   * @param agencyId (required) the agency to read the consultant languages of
+   * @return {@link ResponseEntity} containing {@link LanguageResponseDTO}
+   */
+  @GetMapping(
+      value = {"/users/consultants/languages", "/service/users/consultants/languages"},
+      produces = MediaType.APPLICATION_JSON_VALUE)
   @Override
-  public ResponseEntity<LanguageResponseDTO> getLanguages(Long agencyId) {
+  public ResponseEntity<LanguageResponseDTO> getLanguages(
+      @RequestParam(value = "agencyId", required = true) Long agencyId) {
     return userConsultantControllerDelegate.getLanguages(agencyId);
   }
 

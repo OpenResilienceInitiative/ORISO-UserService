@@ -28,7 +28,13 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** {@link ConversationListProvider} to provide anonymous enquiry conversations. */
+/**
+ * {@link ConversationListProvider} for anonymous Live Chat enquiries.
+ *
+ * <p>ADR-008 limits standing supervision to registered cases, so this provider deliberately does
+ * not add supervision markers. The shared marker and supervisor-management paths enforce the same
+ * registration boundary after an anonymous enquiry has been assigned.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor

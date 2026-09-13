@@ -57,21 +57,25 @@ public class AgencyIdAllocationClient {
   }
 
   /**
-   * Best-effort compensation: releases an unconsumed reservation so the ID becomes assignable
-   * again. Never throws — a failed release must not mask the original creation failure; the
-   * upstream reservation ledger stays the single source of truth for manual cleanup.
+   * Releases an unconsumed reservation so the ID becomes assignable again.
+   *
+   * @return whether the reservation is now confirmed released; transient failures return false so
+   *     callers can retain a durable retry task without masking the original creation failure
    */
-  public void release(long agencyId) {
+  public boolean release(long agencyId) {
     try {
       createControllerApi().releaseAgencyIdReservation(agencyId);
+      return true;
     } catch (HttpClientErrorException.NotFound exception) {
       log.info("Agency ID reservation {} was already released", agencyId);
+      return true;
     } catch (RestClientException exception) {
       log.error(
           "Failed to release agency ID reservation {} — possible orphaned reservation in"
               + " AgencyService",
           agencyId,
           exception);
+      return false;
     }
   }
 

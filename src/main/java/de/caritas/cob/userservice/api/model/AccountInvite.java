@@ -28,7 +28,11 @@ import lombok.ToString;
     indexes = {
       @Index(name = "idx_account_invite_tenant_status", columnList = "tenant_id,status"),
       @Index(name = "idx_account_invite_target_role", columnList = "target_role"),
-      @Index(name = "idx_account_invite_token_hash", columnList = "token_hash", unique = true)
+      @Index(name = "idx_account_invite_token_hash", columnList = "token_hash", unique = true),
+      @Index(
+          name = "idx_account_invite_active_recipient",
+          columnList = "active_recipient_key",
+          unique = true)
     })
 @Getter
 @Setter
@@ -52,6 +56,14 @@ public class AccountInvite {
 
   @Column(name = "recipient_email", nullable = false)
   private String recipientEmail;
+
+  /**
+   * Normalized recipient while this invite holds the address. Null for terminal and legacy rows.
+   * The unique index is the cross-replica concurrency guard; the service-side count remains the
+   * user-friendly validation for ordinary requests.
+   */
+  @Column(name = "active_recipient_key")
+  private String activeRecipientKey;
 
   @Column(name = "first_name")
   private String firstName;

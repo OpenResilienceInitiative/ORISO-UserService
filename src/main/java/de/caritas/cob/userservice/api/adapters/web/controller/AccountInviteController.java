@@ -61,29 +61,27 @@ public class AccountInviteController {
       @RequestBody(required = false) CreateAccountInviteRequestDTO request) {
     CreateAccountInviteRequestDTO safe =
         request == null ? new CreateAccountInviteRequestDTO() : request;
-    AccountInvite invite =
-        accountInviteService.createInvite(
-            new CreateAccountInviteCommand(
-                parseEnum(AccountInviteTargetRole.class, safe.targetRole, "targetRole"),
-                safe.tenantId,
-                safe.recipientEmail,
-                safe.firstName,
-                safe.lastName,
-                safe.agencyId,
-                safe.departmentId,
-                safe.expiresInDays,
-                parseOptionalEnum(
-                    IdAllocationMode.class, safe.tenantIdAllocationMode, "tenantIdAllocationMode"),
-                parseOptionalEnum(
-                    IdAllocationMode.class,
-                    safe.agencyIdAllocationMode,
-                    "agencyIdAllocationMode")));
+    CreateAccountInviteCommand command =
+        new CreateAccountInviteCommand(
+            parseEnum(AccountInviteTargetRole.class, safe.targetRole, "targetRole"),
+            safe.tenantId,
+            safe.recipientEmail,
+            safe.firstName,
+            safe.lastName,
+            safe.agencyId,
+            safe.departmentId,
+            safe.expiresInDays,
+            parseOptionalEnum(
+                IdAllocationMode.class, safe.tenantIdAllocationMode, "tenantIdAllocationMode"),
+            parseOptionalEnum(
+                IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"));
 
     if (safe.templateId != null) {
-      InviteSendResult result =
-          accountInviteService.sendInvite(new SendInviteCommand(invite.getId(), safe.templateId));
+      InviteSendResult result = accountInviteService.createAndSendInvite(command, safe.templateId);
       return new ResponseEntity<>(AccountInviteResponseDTO.from(result), HttpStatus.CREATED);
     }
+
+    AccountInvite invite = accountInviteService.createInvite(command);
 
     return new ResponseEntity<>(
         AccountInviteResponseDTO.from(

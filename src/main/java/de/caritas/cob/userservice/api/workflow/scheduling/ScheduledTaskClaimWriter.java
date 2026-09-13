@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.port.out.ScheduledTaskClaimRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -21,17 +22,22 @@ public class ScheduledTaskClaimWriter {
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public boolean claim(String taskName, Duration claimDuration) {
+    return claimUntil(taskName, claimDuration).isPresent();
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public Optional<LocalDateTime> claimUntil(String taskName, Duration claimDuration) {
     LocalDateTime now = LocalDateTime.now(clock);
     var existingClaim = claimRepository.findByTaskNameForUpdate(taskName);
     if (existingClaim.isPresent()) {
       var claim = existingClaim.get();
       if (claim.getClaimedUntil().isAfter(now)) {
-        return false;
+        return Optional.empty();
       }
       claim.setClaimedAt(now);
       claim.setClaimedUntil(now.plus(claimDuration));
       claimRepository.saveAndFlush(claim);
-      return true;
+      return Optional.of(claim.getClaimedUntil());
     }
 
     claimRepository.saveAndFlush(
@@ -40,7 +46,13 @@ public class ScheduledTaskClaimWriter {
             .claimedAt(now)
             .claimedUntil(now.plus(claimDuration))
             .build());
-    return true;
+    return Optional.of(now.plus(claimDuration));
+  }
+
+  /** Deletes only the exact lease version acquired by this execution. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public boolean release(String taskName, LocalDateTime claimedUntil) {
+    return claimRepository.deleteByTaskNameAndClaimedUntil(taskName, claimedUntil) == 1;
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)

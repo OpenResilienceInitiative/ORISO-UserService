@@ -3,10 +3,13 @@ package de.caritas.cob.userservice.api.service.accountinvite.mail;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import jakarta.mail.Address;
+import jakarta.mail.AuthenticationFailedException;
 import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
 import jakarta.mail.MessagingException;
 import jakarta.mail.PasswordAuthentication;
+import jakarta.mail.SendFailedException;
 import jakarta.mail.Session;
 import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
@@ -14,7 +17,10 @@ import jakarta.mail.internet.MimeBodyPart;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Locale;
 import java.util.Properties;
+import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
@@ -37,6 +43,8 @@ public class JakartaInviteMailTransport implements InviteMailTransport {
       String subject,
       String htmlBody,
       String plainTextBody) {
+    Message message;
+    Address[] recipients;
     try {
       Session session =
           Session.getInstance(
@@ -47,20 +55,87 @@ public class JakartaInviteMailTransport implements InviteMailTransport {
                   return new PasswordAuthentication(settings.username(), settings.password());
                 }
               });
-      Message message = new MimeMessage(session);
+      message = new MimeMessage(session);
       message.setFrom(new InternetAddress(settings.from()));
-      message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient, true));
+      recipients = InternetAddress.parse(recipient, true);
+      message.setRecipients(Message.RecipientType.TO, recipients);
       message.setSubject(subject);
       if (isBlank(plainTextBody)) {
         message.setContent(htmlBody, "text/html; charset=UTF-8");
       } else {
         message.setContent(buildAlternativeContent(htmlBody, plainTextBody));
       }
+    } catch (Exception exception) {
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+          "Account invite email could not be prepared for SMTP dispatch",
+          exception);
+    }
+
+    try {
       Transport.send(message);
       return new InviteMailSendReceipt(recipient, Instant.now());
+    } catch (MessagingException exception) {
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          deliveryDisposition(recipients, exception),
+          "Account invite email could not be sent",
+          exception);
     } catch (Exception exception) {
-      throw new SmtpSendException("Account invite email could not be sent", exception);
+      // Jakarta Mail can report a connection failure after the SMTP DATA command was accepted.
+      // Without per-recipient evidence that nothing was sent, retrying risks a duplicate mail.
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN,
+          "Account invite email delivery outcome is uncertain",
+          exception);
     }
+  }
+
+  static SmtpSendException.DeliveryDisposition deliveryDisposition(
+      Address[] intendedRecipients, MessagingException exception) {
+    if (exception instanceof AuthenticationFailedException) {
+      return SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT;
+    }
+    if (exception instanceof SendFailedException sendFailure
+        && allRecipientsConfirmedUnsent(intendedRecipients, sendFailure)) {
+      return SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT;
+    }
+    return SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN;
+  }
+
+  static boolean allRecipientsConfirmedUnsent(
+      Address[] intendedRecipients, SendFailedException exception) {
+    if (intendedRecipients == null
+        || intendedRecipients.length == 0
+        || hasAddresses(exception.getValidSentAddresses())) {
+      return false;
+    }
+
+    Set<String> confirmedUnsent = addressKeys(exception.getValidUnsentAddresses());
+    confirmedUnsent.addAll(addressKeys(exception.getInvalidAddresses()));
+    Set<String> intended = addressKeys(intendedRecipients);
+    return !intended.isEmpty() && confirmedUnsent.containsAll(intended);
+  }
+
+  private static boolean hasAddresses(Address[] addresses) {
+    return addresses != null && addresses.length > 0;
+  }
+
+  private static Set<String> addressKeys(Address[] addresses) {
+    Set<String> keys = new HashSet<>();
+    if (addresses == null) {
+      return keys;
+    }
+    for (Address address : addresses) {
+      if (address instanceof InternetAddress internetAddress) {
+        keys.add(internetAddress.getAddress().toLowerCase(Locale.ROOT));
+      } else if (address != null) {
+        keys.add(address.toString().toLowerCase(Locale.ROOT));
+      }
+    }
+    return keys;
   }
 
   /**
