@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
@@ -59,9 +60,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @Service
 @RequiredArgsConstructor
@@ -91,7 +95,9 @@ public class CaseHandoverService {
       String grantedTitle,
       String grantedDescription,
       String pendingTitle,
-      String pendingDescription) {}
+      String pendingDescription,
+      String optOutTitle,
+      String optOutDescription) {}
 
   /**
    * Built-in client-safe copy used until the tenant-scoped effective policy cache in
@@ -107,43 +113,57 @@ public class CaseHandoverService {
               "Neue Beratungsperson hat deinen Fall übernommen",
               "{{newAdvisor}} hat deinen Fall übernommen und führt deine Beratung ab jetzt weiter.",
               "Zugriffsanfrage einer Beratungsperson",
-              "{{newAdvisor}} bittet um Zugriff auf deinen Fall. Deine Zustimmung ist erforderlich."),
+              "{{newAdvisor}} bittet um Zugriff auf deinen Fall. Deine Zustimmung ist erforderlich.",
+              "Vorläufiger Zugriff einer Beratungsperson",
+              "{{newAdvisor}} hat vorläufig Zugriff auf deinen Fall. Du kannst diesen Zugriff ablehnen."),
           "en",
           new ClientHandoverCopy(
               "New counsellor took over your case",
               "{{newAdvisor}} has taken over your case and will continue your counselling from now on.",
               "Counsellor access request",
-              "{{newAdvisor}} requested access to your case. Your consent is required."),
+              "{{newAdvisor}} requested access to your case. Your consent is required.",
+              "Temporary counsellor access",
+              "{{newAdvisor}} currently has access to your case. You can decline this access."),
           "fr",
           new ClientHandoverCopy(
               "Un nouveau conseiller ou une nouvelle conseillère a repris votre dossier",
               "{{newAdvisor}} a repris votre dossier et poursuivra désormais votre accompagnement.",
               "Demande d’accès d’un conseiller ou d’une conseillère",
-              "{{newAdvisor}} demande l’accès à votre dossier. Votre consentement est requis."),
+              "{{newAdvisor}} demande l’accès à votre dossier. Votre consentement est requis.",
+              "Accès temporaire d’un conseiller ou d’une conseillère",
+              "{{newAdvisor}} a actuellement accès à votre dossier. Vous pouvez refuser cet accès."),
           "ru",
           new ClientHandoverCopy(
               "Новый консультант принял ваше дело",
               "{{newAdvisor}} принял(а) ваше дело и с этого момента продолжит консультирование.",
               "Запрос консультанта на доступ",
-              "{{newAdvisor}} запросил(а) доступ к вашему делу. Требуется ваше согласие."),
+              "{{newAdvisor}} запросил(а) доступ к вашему делу. Требуется ваше согласие.",
+              "Временный доступ консультанта",
+              "{{newAdvisor}} временно получил(а) доступ к вашему делу. Вы можете отказаться от этого доступа."),
           "tr",
           new ClientHandoverCopy(
               "Yeni bir danışman vakanızı devraldı",
               "{{newAdvisor}} vakanızı devraldı ve bundan sonra danışmanlığınıza devam edecek.",
               "Danışman erişim talebi",
-              "{{newAdvisor}} vakanıza erişim istedi. Onayınız gerekiyor."),
+              "{{newAdvisor}} vakanıza erişim istedi. Onayınız gerekiyor.",
+              "Geçici danışman erişimi",
+              "{{newAdvisor}} şu anda vakanıza erişebiliyor. Bu erişimi reddedebilirsiniz."),
           "uk",
           new ClientHandoverCopy(
               "Новий консультант перейняв вашу справу",
               "{{newAdvisor}} перейняв(-ла) вашу справу й відтепер продовжуватиме консультування.",
               "Запит консультанта на доступ",
-              "{{newAdvisor}} запитує доступ до вашої справи. Потрібна ваша згода."),
+              "{{newAdvisor}} запитує доступ до вашої справи. Потрібна ваша згода.",
+              "Тимчасовий доступ консультанта",
+              "{{newAdvisor}} тимчасово має доступ до вашої справи. Ви можете відмовитися від цього доступу."),
           "ti",
           new ClientHandoverCopy(
               "ሓድሽ ኣማኻሪ ጉዳይካ ተረኪቡ",
               "{{newAdvisor}} ጉዳይካ ተረኪቡ ካብ ሕጂ ንደሓር ምኽሪ ክቕጽል እዩ።",
               "ናይ ኣማኻሪ ናይ ምእታው ሕቶ",
-              "{{newAdvisor}} ናብ ጉዳይካ ክኣቱ ሓቲቱ። ፍቓድካ የድሊ።"));
+              "{{newAdvisor}} ናብ ጉዳይካ ክኣቱ ሓቲቱ። ፍቓድካ የድሊ።",
+              "ግዝያዊ ናይ ኣማኻሪ ምእታው",
+              "{{newAdvisor}} ንግዚኡ ናብ ጉዳይካ ክኣቱ ይኽእል። ነዚ ምእታው ክትነጽጎ ትኽእል።"));
 
   /**
    * Default client-facing notification templates per reason and language (de/en/tr/uk). Source:
@@ -286,6 +306,7 @@ public class CaseHandoverService {
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
+  private final @NonNull PlatformTransactionManager transactionManager;
 
   /**
    * When topics are off, a department degenerates to the agency. When they are on, an empty topic
@@ -302,18 +323,19 @@ public class CaseHandoverService {
   }
 
   public List<CaseHandoverReason> listReasons(Long tenantId) {
-    return listReasons(tenantId, "de", false);
+    return listReasons(tenantId, "de", false, false);
   }
 
   private List<CaseHandoverReason> listReasons(
-      Long tenantId, String language, boolean includeDisabled) {
+      Long tenantId, String language, boolean includeDisabled, boolean allowLegacyFallback) {
     if (tenantId != null && tenantId > 0) {
       de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies cached;
       try {
         cached = caseHandoverPolicyCacheService.getEffective(tenantId);
       } catch (RuntimeException exception) {
-        var legacy = legacyReasons(includeDisabled);
-        if (!legacy.isEmpty()) {
+        var legacy =
+            allowLegacyFallback ? legacyReasons(includeDisabled) : List.<CaseHandoverReason>of();
+        if (allowLegacyFallback && !legacy.isEmpty()) {
           log.warn(
               "Tenant {} Case Handover policy unavailable; using explicitly configured legacy policy during migration: {}",
               tenantId,
@@ -332,6 +354,10 @@ public class CaseHandoverService {
                         java.util.Comparator.nullsLast(Integer::compareTo))
                     .thenComparing(CaseHandoverReason::getCode))
             .collect(Collectors.toList());
+      }
+      if (!allowLegacyFallback) {
+        throw new ServiceUnavailableException(
+            "No enforceable tenant Case Handover policy is available");
       }
     }
     return legacyOrDefaults(includeDisabled);
@@ -358,7 +384,7 @@ public class CaseHandoverService {
 
   @Transactional(readOnly = true)
   public List<CaseHandoverReason> listReasonPolicies() {
-    return listReasons(TenantContext.getCurrentTenant(), "de", true);
+    return listReasons(TenantContext.getCurrentTenant(), "de", true, true);
   }
 
   @Transactional(readOnly = true)
@@ -541,7 +567,7 @@ public class CaseHandoverService {
       if (optOutDecision) {
         request.setStatus(Status.GRANTED);
         request.setAuditOutcome(OUTCOME_CLIENT_OPTOUT_CONFIRMED);
-        return toStatus(caseHandoverRequestRepository.save(request));
+        return toClientStatus(caseHandoverRequestRepository.save(request));
       }
       if (hasAlreadyGrantedOrTakenOver(session, request)) {
         request.setStatus(Status.DENIED);
@@ -902,7 +928,7 @@ public class CaseHandoverService {
     String normalized = reasonCode == null ? "" : reasonCode.trim().toUpperCase(Locale.ROOT);
     Long tenantId = session == null ? TenantContext.getCurrentTenant() : session.getTenantId();
     String language = session == null ? "de" : resolveSessionLanguage(session);
-    return listReasons(tenantId, language, includeDisabled).stream()
+    return listReasons(tenantId, language, includeDisabled, false).stream()
         .filter(reason -> reason.getCode().equals(normalized))
         .findFirst()
         .orElseThrow(() -> new BadRequestException("Unknown handover reason"));
@@ -1092,7 +1118,6 @@ public class CaseHandoverService {
   @Scheduled(
       fixedDelayString = "${case.handover.co-access-sweep-delay-ms:60000}",
       initialDelayString = "${case.handover.co-access-sweep-initial-delay-ms:60000}")
-  @Transactional
   public void expireCoAccessSchedule() {
     if (!scheduledTaskClaimService.tryClaim(CO_ACCESS_EXPIRY_TASK, coAccessClaimDuration)) {
       return;
@@ -1106,32 +1131,59 @@ public class CaseHandoverService {
   }
 
   /** Exact persisted expiry sweep; API reads also close the curtain at {@code expiresAt}. */
-  @Transactional
   public int expireCoAccess() {
     LocalDateTime now = LocalDateTime.now(clock);
-    List<CaseHandoverRequest> expired = new ArrayList<>();
-    expired.addAll(
-        caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
-            Status.GRANTED, AccessType.CO_ACCESS, now));
-    expired.addAll(
-        caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
-            Status.GRANTED_PENDING_CLIENT_OPTOUT, AccessType.CO_ACCESS, now));
-    List<CaseHandoverRequest> revoked = new ArrayList<>();
-    expired.forEach(
-        request -> {
-          if (!removeCoAccessRequesterFromMatrixRoom(request)) {
-            log.warn(
-                "Could not remove Case Handover requester for request {}; retrying on the next expiry sweep",
-                request.getId());
-            return;
-          }
-          request.setStatus(Status.EXPIRED);
-          request.setAuditOutcome(OUTCOME_ACCESS_EXPIRED);
-          request.setResolvedAt(now);
-          revoked.add(request);
-        });
-    caseHandoverRequestRepository.saveAll(revoked);
-    return revoked.size();
+    List<CaseHandoverRequest> expired =
+        inNewTransaction(
+            () -> {
+              List<CaseHandoverRequest> due = new ArrayList<>();
+              due.addAll(
+                  caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
+                      Status.GRANTED, AccessType.CO_ACCESS, now));
+              due.addAll(
+                  caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
+                      Status.GRANTED_PENDING_CLIENT_OPTOUT, AccessType.CO_ACCESS, now));
+              return due;
+            });
+    int revoked = 0;
+    for (CaseHandoverRequest request : expired) {
+      if (!removeCoAccessRequesterFromMatrixRoom(request)) {
+        log.warn(
+            "Could not remove Case Handover requester for request {}; retrying on the next expiry sweep",
+            request.getId());
+        continue;
+      }
+      boolean persisted =
+          inNewTransaction(
+              () -> {
+                var current = caseHandoverRequestRepository.findByIdForUpdate(request.getId());
+                if (current.isEmpty() || !isDueForExpiry(current.get(), now)) {
+                  return false;
+                }
+                current.get().setStatus(Status.EXPIRED);
+                current.get().setAuditOutcome(OUTCOME_ACCESS_EXPIRED);
+                current.get().setResolvedAt(now);
+                caseHandoverRequestRepository.save(current.get());
+                return true;
+              });
+      if (persisted) {
+        revoked++;
+      }
+    }
+    return revoked;
+  }
+
+  private <T> T inNewTransaction(java.util.function.Supplier<T> action) {
+    var transaction = new TransactionTemplate(transactionManager);
+    transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    return transaction.execute(status -> action.get());
+  }
+
+  private boolean isDueForExpiry(CaseHandoverRequest request, LocalDateTime now) {
+    return hasGrantedAccess(request.getStatus())
+        && effectiveAccessType(request) == AccessType.CO_ACCESS
+        && request.getExpiresAt() != null
+        && !request.getExpiresAt().isAfter(now);
   }
 
   private CaseHandoverStatus denyRequest(
@@ -1456,6 +1508,7 @@ public class CaseHandoverService {
     }
     String requesterName = resolveConsultantName(request.getRequesterConsultant());
     ClientHandoverCopy clientCopy = resolveClientHandoverCopy(session);
+    boolean optOut = request.getClientConsent() == CaseHandoverConsentMode.OPT_OUT;
     // The request id remains so the advice seeker can answer the consent prompt. The configured
     // reason and counsellor-written explanation stay staff-only and are never copied into the
     // advice seeker's notification payload.
@@ -1463,8 +1516,10 @@ public class CaseHandoverService {
         session.getUser().getUserId(),
         "case.handover.consent.requested",
         EventNotificationService.CATEGORY_SYSTEM,
-        clientCopy.pendingTitle(),
-        renderClientCopy(clientCopy.pendingDescription(), requesterName),
+        optOut ? clientCopy.optOutTitle() : clientCopy.pendingTitle(),
+        renderClientCopy(
+            optOut ? clientCopy.optOutDescription() : clientCopy.pendingDescription(),
+            requesterName),
         eventNotificationService.buildCaseHandoverParams(
             session,
             requesterName,

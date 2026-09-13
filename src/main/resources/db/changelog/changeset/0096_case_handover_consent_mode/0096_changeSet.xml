@@ -10,6 +10,9 @@
       <column name="client_consent_mode" type="VARCHAR(20)" defaultValue="NONE">
         <constraints nullable="false" />
       </column>
+      <column name="retired_by_0096" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false" />
+      </column>
     </addColumn>
     <addColumn tableName="case_handover_request">
       <column name="client_consent_mode" type="VARCHAR(20)" defaultValue="NONE">
@@ -25,7 +28,7 @@
       -- seeded values (0057/0059). Admin-edited policies are never overwritten, which also
       -- makes the rollback below exact: it restores precisely the seeded default.
       UPDATE case_handover_reason_policy
-      SET enabled = 0, access_allowed = 0
+      SET enabled = 0, access_allowed = 0, retired_by_0096 = 1
       WHERE code = 'OTHER_EMERGENCY'
         AND policy_authority = 'platform-admin-default-case-handover-policy'
         AND enabled = 1
@@ -36,13 +39,10 @@
       <sql>
         UPDATE case_handover_reason_policy
         SET enabled = 1, access_allowed = 1
-        WHERE code = 'OTHER_EMERGENCY'
-          AND policy_authority = 'platform-admin-default-case-handover-policy'
-          AND enabled = 0
-          AND access_allowed = 0
-          AND client_consent_required = 0;
+        WHERE retired_by_0096 = 1;
       </sql>
       <dropColumn tableName="case_handover_request" columnName="client_consent_mode" />
+      <dropColumn tableName="case_handover_reason_policy" columnName="retired_by_0096" />
       <dropColumn tableName="case_handover_reason_policy" columnName="client_consent_mode" />
     </rollback>
   </changeSet>

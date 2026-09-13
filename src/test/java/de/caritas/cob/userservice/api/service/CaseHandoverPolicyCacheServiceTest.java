@@ -29,6 +29,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.RestClientException;
 
@@ -38,6 +41,8 @@ class CaseHandoverPolicyCacheServiceTest {
   @Mock private TenantCaseHandoverPolicyCacheRepository repository;
   @Mock private TenantCaseHandoverPolicyReadClient tenantControllerApi;
   @Mock private ScheduledTaskClaimService scheduledTaskClaimService;
+  @Mock private PlatformTransactionManager transactionManager;
+  @Mock private TransactionStatus transactionStatus;
   private final Clock clock = Clock.fixed(Instant.parse("2026-08-16T10:00:00Z"), ZoneOffset.UTC);
   private CaseHandoverPolicyCacheService service;
 
@@ -45,8 +50,9 @@ class CaseHandoverPolicyCacheServiceTest {
   void setUp() {
     service =
         new CaseHandoverPolicyCacheService(
-            repository, tenantControllerApi, scheduledTaskClaimService, clock);
+            repository, tenantControllerApi, scheduledTaskClaimService, clock, transactionManager);
     lenient().when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
+    lenient().when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
   }
 
   @Test
@@ -272,9 +278,8 @@ class CaseHandoverPolicyCacheServiceTest {
   }
 
   /**
-   * The production entry points are {@code getEffective} and the scheduled sweep; {@code refresh}
-   * is only ever self-invoked from them, where its own annotation is inert. The transaction must
-   * therefore open at the proxy boundary of the entry points.
+   * Request reads keep their proxy transaction, while the scheduled sweep deliberately has no outer
+   * transaction so each tenant can run and roll back independently.
    */
   @Test
   void entryPoints_carryTheTransactionAnnotationAtTheProxyBoundary() throws Exception {
@@ -287,7 +292,7 @@ class CaseHandoverPolicyCacheServiceTest {
             CaseHandoverPolicyCacheService.class
                 .getDeclaredMethod("refreshKnownTenants")
                 .isAnnotationPresent(Transactional.class))
-        .isTrue();
+        .isFalse();
   }
 
   @Test
@@ -314,5 +319,12 @@ class CaseHandoverPolicyCacheServiceTest {
     // The second tenant must still be refreshed; an aborted sweep would leave it silently aging.
     verify(tenantControllerApi).getTenantPermissionPolicies(42L);
     verify(repository).save(healthy);
+    var definitions = ArgumentCaptor.forClass(TransactionDefinition.class);
+    verify(transactionManager, org.mockito.Mockito.times(2)).getTransaction(definitions.capture());
+    assertThat(definitions.getAllValues())
+        .allMatch(
+            definition ->
+                definition.getPropagationBehavior()
+                    == TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
 }

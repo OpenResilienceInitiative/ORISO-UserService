@@ -5,6 +5,7 @@ import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Modifying;
@@ -21,13 +22,17 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
 
   Optional<CaseHandoverRequest> findByIdAndSessionId(Long id, Long sessionId);
 
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select request from CaseHandoverRequest request where request.id = :id")
+  Optional<CaseHandoverRequest> findByIdForUpdate(@Param("id") Long id);
+
   List<CaseHandoverRequest> findBySessionId(Long sessionId);
 
   List<CaseHandoverRequest> findByRequesterConsultantId(String requesterConsultantId);
 
   List<CaseHandoverRequest> findByPreviousConsultantId(String previousConsultantId);
 
-  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @EntityGraph(attributePaths = {"session", "requesterConsultant", "previousConsultant"})
   List<CaseHandoverRequest> findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
       CaseHandoverRequest.Status status,
       CaseHandoverRequest.AccessType accessType,

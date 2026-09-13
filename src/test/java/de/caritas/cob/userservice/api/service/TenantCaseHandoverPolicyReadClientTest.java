@@ -5,6 +5,7 @@ import static org.mockito.Mockito.*;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.*;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.*;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -12,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -125,7 +127,15 @@ class TenantCaseHandoverPolicyReadClientTest {
         .andRespond(withSuccess("{\"tenantId\":40,\"policies\":{}}", MediaType.APPLICATION_JSON));
     when(identity.logout("synthetic-refresh", "synthetic-token"))
         .thenThrow(new IllegalStateException("synthetic-sensitive-reply"));
-    assertThat(client.getTenantPermissionPolicies(40L).getTenantId()).isEqualTo(40L);
+    try (var logs = LogbackCaptor.forClass(TenantCaseHandoverPolicyReadClient.class)) {
+      assertThat(client.getTenantPermissionPolicies(40L).getTenantId()).isEqualTo(40L);
+      assertThat(logs.messages(Level.WARN))
+          .anySatisfy(
+              message ->
+                  assertThat(message)
+                      .contains("Technical-user logout failed", "IllegalStateException")
+                      .doesNotContain("synthetic-sensitive-reply"));
+    }
     server.verify();
   }
 

@@ -7,12 +7,14 @@ import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantPermissionPolicies;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientResponseException;
 
 /** Authenticated provider read usable from both request and scheduled refresh contexts. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class TenantCaseHandoverPolicyReadClient {
   private final TenantAdminServiceApiControllerFactory tenantServiceFactory;
   private final IdentityAuthentication identityAuthentication;
@@ -42,8 +44,11 @@ public class TenantCaseHandoverPolicyReadClient {
       if (login != null && login.refreshToken() != null && !login.refreshToken().isBlank()) {
         try {
           identityAuthentication.logout(login.refreshToken(), login.accessToken());
-        } catch (RuntimeException ignored) {
+        } catch (RuntimeException exception) {
           // The read outcome remains authoritative; never expose identity provider replies.
+          log.warn(
+              "Technical-user logout failed after tenant policy read: {}",
+              failureSummary(exception));
         }
       }
     }

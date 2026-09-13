@@ -17,7 +17,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 /** Tenant-safe last-known-good cache for the TenantService-owned Case Handover policy. */
 @Service
@@ -29,6 +32,7 @@ public class CaseHandoverPolicyCacheService {
   private final @NonNull TenantCaseHandoverPolicyReadClient tenantPolicyReadClient;
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
+  private final @NonNull PlatformTransactionManager transactionManager;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   @Value("${case.handover.policy-refresh-claim-duration:PT1M}")
@@ -103,7 +107,6 @@ public class CaseHandoverPolicyCacheService {
   }
 
   @Scheduled(fixedDelayString = "${case.handover.policy-cache-refresh-delay-ms:300000}")
-  @Transactional
   public void refreshKnownTenants() {
     // Per-tenant isolation: one tenant's failure must not abort the sweep and leave every tenant
     // after it silently enforcing an aging snapshot.
@@ -113,7 +116,9 @@ public class CaseHandoverPolicyCacheService {
             cache -> {
               Long tenantId = cache.getTenantId();
               try {
-                refresh(tenantId);
+                var transaction = new TransactionTemplate(transactionManager);
+                transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+                transaction.executeWithoutResult(status -> refresh(tenantId));
               } catch (RuntimeException exception) {
                 log.warn(
                     "Tenant {} Case Handover policy refresh skipped in scheduled sweep: {}",
