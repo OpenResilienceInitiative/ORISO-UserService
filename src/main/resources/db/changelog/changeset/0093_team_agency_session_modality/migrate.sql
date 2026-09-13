@@ -10,8 +10,31 @@
 -- Everything else with is_team_session = 1 is a 1:1 case and gets its modality by registration
 -- type, exactly as saveSession now defaults it. SELF_HELP rows are never touched.
 --
+-- Keep the exact pre-migration value so Liquibase rollback can restore both INTERNAL_GROUP and
+-- NULL rows without guessing. The table is intentionally retained until the changeset is rolled
+-- back; INSERT IGNORE also makes recovery safe if MariaDB committed the DDL before a later
+-- statement failed.
+CREATE TABLE IF NOT EXISTS session_modality_0093_backup (
+  session_id BIGINT NOT NULL,
+  previous_conversation_type VARCHAR(32) NULL,
+  PRIMARY KEY (session_id)
+);
+
+INSERT IGNORE INTO session_modality_0093_backup (session_id, previous_conversation_type)
+SELECT session.id, session.conversation_type
+FROM session
+WHERE is_team_session = 1
+  AND (conversation_type = 'INTERNAL_GROUP' OR conversation_type IS NULL)
+  AND NOT EXISTS (SELECT 1 FROM group_chat_participant gcp
+                  WHERE gcp.chat_id = session.id)
+  AND NOT EXISTS (SELECT 1 FROM chat c
+                  WHERE c.matrix_room_id IS NOT NULL
+                    AND c.matrix_room_id = session.matrix_room_id)
+  AND session.user_id NOT LIKE 'group-chat-system%';
+
 -- Idempotent: the WHERE clause excludes every row a previous run has already corrected.
 UPDATE session
+JOIN session_modality_0093_backup backup ON backup.session_id = session.id
 SET conversation_type = CASE
                           WHEN registration_type = 'ANONYMOUS' THEN 'LIVE_CHAT'
                           ELSE 'AGENCY_COUNSELLING'
