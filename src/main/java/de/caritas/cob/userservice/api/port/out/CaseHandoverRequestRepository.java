@@ -32,7 +32,13 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
 
   List<CaseHandoverRequest> findByPreviousConsultantId(String previousConsultantId);
 
-  @EntityGraph(attributePaths = {"session", "requesterConsultant", "previousConsultant"})
+  @EntityGraph(
+      attributePaths = {
+        "session",
+        "session.consultant",
+        "requesterConsultant",
+        "previousConsultant"
+      })
   List<CaseHandoverRequest> findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
       CaseHandoverRequest.Status status,
       CaseHandoverRequest.AccessType accessType,

@@ -68,6 +68,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.TransactionStatus;
 import org.springframework.transaction.UnexpectedRollbackException;
 import org.springframework.transaction.support.TransactionSynchronization;
@@ -951,6 +952,14 @@ class CaseHandoverServiceTest {
     verify(matrixSynapseService)
         .removeUserFromRoom("!room:matrix", "@requester:matrix", "previous-token");
     verify(caseHandoverRequestRepository).save(request);
+    var definitions = ArgumentCaptor.forClass(TransactionDefinition.class);
+    verify(transactionManager, org.mockito.Mockito.times(2)).getTransaction(definitions.capture());
+    assertTrue(
+        definitions.getAllValues().stream()
+            .allMatch(
+                definition ->
+                    definition.getPropagationBehavior()
+                        == TransactionDefinition.PROPAGATION_REQUIRES_NEW));
   }
 
   @Test
