@@ -453,19 +453,7 @@ public class SessionService {
 
   /** Returns true for invite-link / live-chat style registrations stored as REGISTERED. */
   public boolean isAnonymousStyleRegistration(Session session) {
-    if (isNull(session)) {
-      return false;
-    }
-
-    if ("00000".equals(session.getPostcode())) {
-      return true;
-    }
-
-    if (nonNull(session.getUser()) && nonNull(session.getUser().getUsername())) {
-      return session.getUser().getUsername().startsWith("Anonymous-");
-    }
-
-    return false;
+    return AnonymousSessionRegistration.matches(session);
   }
 
   /**

@@ -25,8 +25,7 @@ class SessionSupervisorApiContractTest {
     assertThat(operation.get("x-internal")).isEqualTo(true);
     Map<?, ?> responses = anyMap(operation.get("responses"));
     assertThat(responses.keySet().stream().map(String::valueOf).toList())
-        .contains("200", "401", "403", "500")
-        .doesNotContain("404");
+        .contains("200", "401", "403", "404", "500");
     assertThat(operation.get("security")).isEqualTo(List.of(Map.of("Bearer", List.of())));
 
     Map<String, Object> okResponse = map(responses.get(200));

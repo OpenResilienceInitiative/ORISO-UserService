@@ -67,7 +67,7 @@ public class SessionSupervisionMarkerService {
     Set<Long> sessionIds = new LinkedHashSet<>();
     Set<String> counsellorIds = new LinkedHashSet<>();
     for (var entry : entries) {
-      if (isEligibleForSupervision(entry.getSession())) {
+      if (isEligibleForSupervision(entry)) {
         sessionIds.add(entry.getSession().getId());
         if (nonNull(entry.getConsultant()) && nonNull(entry.getConsultant().getId())) {
           counsellorIds.add(entry.getConsultant().getId());
@@ -83,7 +83,7 @@ public class SessionSupervisionMarkerService {
     var mapper = new SessionMapper();
     for (var entry : entries) {
       var session = entry.getSession();
-      if (isEligibleForSupervision(session)) {
+      if (isEligibleForSupervision(entry)) {
         var counsellorId = nonNull(entry.getConsultant()) ? entry.getConsultant().getId() : null;
         session.setSupervision(
             mapper.toSupervisionDTO(
@@ -109,7 +109,7 @@ public class SessionSupervisionMarkerService {
     if (isNull(session)
         || isNull(session.getId())
         || isNull(requester)
-        || Session.RegistrationType.ANONYMOUS.equals(session.getRegistrationType())) {
+        || AnonymousSessionRegistration.matches(session)) {
       return null;
     }
     var sessionId = session.getId();
@@ -147,10 +147,12 @@ public class SessionSupervisionMarkerService {
         row.internalDisplayName(), row.displayName(), row.username());
   }
 
-  private boolean isEligibleForSupervision(
-      de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO session) {
+  private boolean isEligibleForSupervision(ConsultantSessionResponseDTO entry) {
+    var session = entry.getSession();
+    String username = nonNull(entry.getUser()) ? entry.getUser().getUsername() : null;
     return nonNull(session)
         && nonNull(session.getId())
-        && !Session.RegistrationType.ANONYMOUS.name().equals(session.getRegistrationType());
+        && !AnonymousSessionRegistration.matches(
+            session.getRegistrationType(), session.getPostcode(), username);
   }
 }

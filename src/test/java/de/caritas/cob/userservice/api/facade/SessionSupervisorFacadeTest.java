@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -295,6 +296,38 @@ class SessionSupervisorFacadeTest {
   void addSupervisor_ShouldRejectAnonymousSessionsBeforeProvisioningMatrixAccess()
       throws Exception {
     session.setRegistrationType(Session.RegistrationType.ANONYMOUS);
+
+    assertThatThrownBy(
+            () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("Anonymous sessions");
+    verify(matrixSynapseService, never()).createRoom(any(), any(), any());
+    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+  }
+
+  @Test
+  void addSupervisor_ShouldRejectRegisteredAnonymousStylePostcodeBeforeProvisioningMatrixAccess()
+      throws Exception {
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("00000");
+
+    assertThatThrownBy(
+            () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessageContaining("Anonymous sessions");
+    verify(matrixSynapseService, never()).createRoom(any(), any(), any());
+    verify(matrixSynapseService, never()).inviteUserToRoom(any(), any(), any());
+  }
+
+  @Test
+  void addSupervisor_ShouldRejectRegisteredAnonymousStyleUserBeforeProvisioningMatrixAccess()
+      throws Exception {
+    session.setRegistrationType(Session.RegistrationType.REGISTERED);
+    session.setPostcode("12345");
+    User anonymousStyleUser = new User();
+    anonymousStyleUser.setUserId("anonymous-user-id");
+    anonymousStyleUser.setUsername("Anonymous-session-user");
+    session.setUser(anonymousStyleUser);
 
     assertThatThrownBy(
             () -> facade.addSupervisor(SESSION_ID, SUPERVISOR_ID, addedBy, null, "reason"))
@@ -650,6 +683,49 @@ class SessionSupervisorFacadeTest {
     List<SessionSupervisor> result = facade.getSupervisors(SESSION_ID);
 
     assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void getSupervisorsForConsultant_Should_allowAssignedCounsellor() {
+    when(sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(SESSION_ID))
+        .thenReturn(List.of(activeSupervisorRow(1L)));
+
+    List<SessionSupervisor> result = facade.getSupervisors(SESSION_ID, addedBy);
+
+    assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void getSupervisorsForConsultant_Should_allowActiveSupervisor() {
+    Consultant requestingSupervisor = new Consultant();
+    requestingSupervisor.setId(SUPERVISOR_ID);
+    when(sessionSupervisorRepository.findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
+            SESSION_ID, SUPERVISOR_ID))
+        .thenReturn(Optional.of(activeSupervisorRow(1L)));
+    when(sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(SESSION_ID))
+        .thenReturn(List.of(activeSupervisorRow(1L)));
+
+    List<SessionSupervisor> result = facade.getSupervisors(SESSION_ID, requestingSupervisor);
+
+    assertThat(result).hasSize(1);
+  }
+
+  @Test
+  void getSupervisorsForConsultant_Should_denyUnrelatedSameAgencyConsultant() {
+    Consultant unrelated = sameAgencyButNotAssignedConsultant();
+
+    assertThatThrownBy(() -> facade.getSupervisors(SESSION_ID, unrelated))
+        .isInstanceOf(ForbiddenException.class);
+    verify(sessionSupervisorRepository, never()).findBySessionIdAndIsActiveTrue(SESSION_ID);
+  }
+
+  @Test
+  void getSupervisorsForConsultant_Should_notLeakMissingCrossTenantSession() {
+    when(sessionRepository.findById(999L)).thenReturn(Optional.empty());
+
+    assertThatThrownBy(() -> facade.getSupervisors(999L, addedBy))
+        .isInstanceOf(NotFoundException.class);
+    verify(sessionSupervisorRepository, never()).findBySessionIdAndIsActiveTrue(999L);
   }
 
   // --- hasPermissionToManageSupervisors: uncovered final branch ---

@@ -22,7 +22,9 @@ class TeamAgencySessionModalityChangelogContractTest {
         .doesNotContain("0091_team_agency_session_modality");
     assertThat(changelog)
         .contains("id=\"0093-team-agency-session-modality\"")
+        .contains("<preConditions onFail=\"HALT\">")
         .contains("tableName=\"group_chat_participant\" columnName=\"chat_id\"")
+        .doesNotContain("onFail=\"MARK_RAN\"")
         .doesNotContain("runOnChange");
     assertThat(migration)
         .contains("conversation_type = 'INTERNAL_GROUP' OR conversation_type IS NULL")

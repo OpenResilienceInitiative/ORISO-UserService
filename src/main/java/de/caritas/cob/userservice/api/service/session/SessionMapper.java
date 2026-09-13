@@ -176,16 +176,13 @@ public class SessionMapper {
   }
 
   private String uniqueRealSideRoom(List<SessionSupervisorMarkerRow> activeSupervisors) {
-    if (isNull(activeSupervisors)) {
+    if (isNull(activeSupervisors)
+        || activeSupervisors.isEmpty()
+        || activeSupervisors.stream().anyMatch(row -> !isRealSideRoom(row))) {
       return null;
     }
     var roomIds =
         activeSupervisors.stream()
-            .filter(
-                row ->
-                    nonNull(row.sideRoomId())
-                        && !row.sideRoomId().isBlank()
-                        && !row.sideRoomId().equals(row.clientRoomId()))
             .map(SessionSupervisorMarkerRow::sideRoomId)
             .distinct()
             .limit(2)
@@ -205,7 +202,15 @@ public class SessionMapper {
                 row ->
                     supervisorConsultantId.equals(row.consultantId())
                         && sideRoomId.equals(row.sideRoomId())
-                        && !sideRoomId.equals(row.clientRoomId()));
+                        && isRealSideRoom(row));
+  }
+
+  private boolean isRealSideRoom(SessionSupervisorMarkerRow row) {
+    return nonNull(row.sideRoomId())
+        && !row.sideRoomId().isBlank()
+        && nonNull(row.clientRoomId())
+        && !row.clientRoomId().isBlank()
+        && !row.sideRoomId().equals(row.clientRoomId());
   }
 
   private SessionUserDTO convertToSessionUserDTO(Session session) {

@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.supervision.SupervisionConsent;
 import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
@@ -128,7 +129,7 @@ public class SessionSupervisorFacade {
             .findById(sessionId)
             .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
 
-    if (Session.RegistrationType.ANONYMOUS.equals(session.getRegistrationType())) {
+    if (AnonymousSessionRegistration.matches(session)) {
       throw new BadRequestException("Anonymous sessions do not support supervision");
     }
 
@@ -372,6 +373,26 @@ public class SessionSupervisorFacade {
    */
   public List<SessionSupervisor> getSupervisors(Long sessionId) {
     return sessionSupervisorRepository.findBySessionIdAndIsActiveTrue(sessionId);
+  }
+
+  /**
+   * Returns active supervisors only when the requester participates as the assigned counsellor or
+   * an active supervisor. The tenant-filtered session lookup fails closed for cross-tenant ids.
+   */
+  public List<SessionSupervisor> getSupervisors(Long sessionId, Consultant requestingConsultant) {
+    Session session =
+        sessionRepository
+            .findById(sessionId)
+            .orElseThrow(() -> new NotFoundException("Session not found: " + sessionId));
+    boolean activeSupervisor =
+        sessionSupervisorRepository
+            .findBySessionIdAndSupervisorConsultantIdAndIsActiveTrue(
+                sessionId, requestingConsultant.getId())
+            .isPresent();
+    if (!session.isAdvisedBy(requestingConsultant) && !activeSupervisor) {
+      throw new ForbiddenException("Consultant does not have access to this supervision session");
+    }
+    return getSupervisors(sessionId);
   }
 
   /**

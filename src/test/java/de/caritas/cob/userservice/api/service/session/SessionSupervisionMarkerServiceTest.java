@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -167,6 +168,23 @@ class SessionSupervisionMarkerServiceTest {
   }
 
   @Test
+  void enrich_ShouldExcludeRegisteredAnonymousStyleSessionsFromTheBatchedLookupAndMarker() {
+    var postcodeAnonymous = entry(17L);
+    postcodeAnonymous.getSession().setRegistrationType("REGISTERED");
+    postcodeAnonymous.getSession().setPostcode("00000");
+    var usernameAnonymous = entry(18L);
+    usernameAnonymous.getSession().setRegistrationType("REGISTERED");
+    usernameAnonymous.getSession().setPostcode("12345");
+    usernameAnonymous.setUser(new SessionUserDTO("u-18", "Anonymous-18", null, false, null));
+
+    service.enrich(List.of(postcodeAnonymous, usernameAnonymous), consultant("me"));
+
+    verify(sessionSupervisorRepository, never()).findActiveMarkerRowsBySessionIdIn(any());
+    assertThat(postcodeAnonymous.getSession().getSupervision()).isNull();
+    assertThat(usernameAnonymous.getSession().getSupervision()).isNull();
+  }
+
+  @Test
   void enrich_ShouldHideSideRoomWhenActiveAssignmentsDisagreeSessionWide() {
     var entry = entry(16L, "owner-16");
     when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
@@ -181,6 +199,23 @@ class SessionSupervisionMarkerServiceTest {
     service.enrich(List.of(entry), consultant("me"));
 
     assertThat(entry.getSession().getSupervision().getSupervisedByMe()).isTrue();
+    assertThat(entry.getSession().getSupervision().getSideRoomId().orElse(null)).isNull();
+  }
+
+  @Test
+  void enrich_ShouldHideSideRoomWhenAnyActiveAssignmentHasNoClientRoom() {
+    var entry = entry(19L, "me");
+    when(sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(anyCollection()))
+        .thenReturn(
+            List.of(
+                new SessionSupervisorMarkerRow(
+                    19L, "supervisor-a", "a", null, null, "!side:matrix", "!client:matrix"),
+                new SessionSupervisorMarkerRow(
+                    19L, "supervisor-b", "b", null, null, "!side:matrix", " ")));
+    when(consultantRepository.findAllByIdIn(anyList())).thenReturn(List.of());
+
+    service.enrich(List.of(entry), consultant("me"));
+
     assertThat(entry.getSession().getSupervision().getSideRoomId().orElse(null)).isNull();
   }
 
@@ -300,6 +335,16 @@ class SessionSupervisionMarkerServiceTest {
     assertThat(service.buildFor(null, consultant("me"))).isNull();
     assertThat(service.buildFor(session(null, null), consultant("me"))).isNull();
     assertThat(service.buildFor(session(5L, null), null)).isNull();
+    verify(sessionSupervisorRepository, never()).findActiveMarkerRowsBySessionIdIn(any());
+  }
+
+  @Test
+  void buildFor_Should_ReturnNull_ForRegisteredAnonymousStyleSession() {
+    var anonymousStyle = session(20L, consultant("owner"));
+    anonymousStyle.setRegistrationType(Session.RegistrationType.REGISTERED);
+    anonymousStyle.setPostcode("00000");
+
+    assertThat(service.buildFor(anonymousStyle, consultant("me"))).isNull();
     verify(sessionSupervisorRepository, never()).findActiveMarkerRowsBySessionIdIn(any());
   }
 }

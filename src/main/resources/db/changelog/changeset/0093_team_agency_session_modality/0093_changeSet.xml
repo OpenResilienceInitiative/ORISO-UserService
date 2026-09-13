@@ -14,7 +14,7 @@
        corrections must use a new append-only changeset rather than editing and rerunning this one.
        -->
   <changeSet id="0093-team-agency-session-modality" author="frank">
-    <preConditions onFail="MARK_RAN">
+    <preConditions onFail="HALT">
       <tableExists tableName="session"/>
       <tableExists tableName="group_chat_participant"/>
       <tableExists tableName="chat"/>
