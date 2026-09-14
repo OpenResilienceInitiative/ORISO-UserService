@@ -197,6 +197,23 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void listReasons_preservesLegacyClientConsentPolicyMode() {
+    var policies = tenantPolicies("Rat benötigt", 180);
+    var advice = policies.getReasons().get("COUNSELLOR_ASKED_FOR_ADVICE");
+    advice.setClientConsent(null);
+    advice
+        .getClientConsentRequired()
+        .setMode(
+            de.caritas.cob.userservice.tenantadminservice.generated.web.model.PermissionPolicyMode
+                .SUGGESTED);
+    when(caseHandoverPolicyCacheService.getEffective(7L)).thenReturn(policies);
+
+    var reason = caseHandoverService.listReasons(7L).get(0);
+
+    assertEquals("SUGGESTED", reason.getClientConsentMode());
+  }
+
+  @Test
   void listReasonsTreatsAnExplicitlyEmptyTenantPolicyAsNoAllowedReasons() {
     when(caseHandoverPolicyCacheService.getEffective(7L))
         .thenReturn(
