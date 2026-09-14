@@ -19,6 +19,11 @@ import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.controller.TeamDiscussionController;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
+import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
+import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
+import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
+import de.caritas.cob.userservice.api.config.auth.SecurityConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -46,11 +51,22 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.context.annotation.Bean;
+import org.springframework.context.annotation.Import;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.mock.web.MockServletContext;
+import org.springframework.security.core.authority.SimpleGrantedAuthority;
+import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors;
+import org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers;
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.context.support.AnnotationConfigWebApplicationContext;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
 /** US#473 / ADR-016 — Team-Besprechung lifecycle. */
 @ExtendWith(MockitoExtension.class)
@@ -131,6 +147,105 @@ class TeamDiscussionFacadeTest {
     body.setRoomId(ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq("agency-token")))
         .thenReturn(ResponseEntity.ok(body));
+  }
+
+  @Test
+  void teamDiscussionHttp_shouldRejectAskersAndForeignColleagues() throws Exception {
+    try (var context = new AnnotationConfigWebApplicationContext()) {
+      context.setServletContext(new MockServletContext());
+      context
+          .getEnvironment()
+          .getPropertySources()
+          .addFirst(
+              new MapPropertySource("test", java.util.Map.of("multitenancy.enabled", "false")));
+      context.register(TeamHttpSecurityFixture.class);
+      context.addBeanFactoryPostProcessor(
+          factory -> {
+            factory.registerSingleton(
+                "teamDiscussionController",
+                new TeamDiscussionController(facade, authenticatedUser));
+          });
+      context.refresh();
+      var http =
+          MockMvcBuilders.webAppContextSetup(context)
+              .apply(SecurityMockMvcConfigurers.springSecurity())
+              .build();
+      when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+      var path = "/users/sessions/42/team-discussion";
+      http.perform(
+              MockMvcRequestBuilders.get(path)
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("colleague")
+                          .authorities(
+                              new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))))
+          .andExpect(status().isNoContent());
+      http.perform(
+              MockMvcRequestBuilders.get(path)
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("asker")
+                          .authorities(new SimpleGrantedAuthority(AuthorityValue.USER_DEFAULT))))
+          .andExpect(status().isForbidden());
+      http.perform(
+              post(path)
+                  .cookie(new jakarta.servlet.http.Cookie("test-csrf", "matching-token"))
+                  .header("X-Test-CSRF", "matching-token")
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("asker")
+                          .authorities(new SimpleGrantedAuthority(AuthorityValue.USER_DEFAULT))))
+          .andExpect(status().isForbidden());
+      http.perform(
+              post(path)
+                  .cookie(new jakarta.servlet.http.Cookie("test-csrf", "matching-token"))
+                  .header("X-Test-CSRF", "matching-token")
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("colleague")
+                          .authorities(
+                              new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.matrixRoomId").value(ROOM_ID));
+      when(consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+              CONSULTANT_ID, AGENCY_ID))
+          .thenReturn(false);
+      http.perform(
+              MockMvcRequestBuilders.get(path)
+                  .with(
+                      SecurityMockMvcRequestPostProcessors.user("outsider")
+                          .authorities(
+                              new SimpleGrantedAuthority(AuthorityValue.CONSULTANT_DEFAULT))))
+          .andExpect(status().isForbidden());
+    }
+  }
+
+  @TestConfiguration
+  @EnableWebMvc
+  @Import({SecurityConfig.class, ApiResponseEntityExceptionHandler.class})
+  static class TeamHttpSecurityFixture {
+    @Bean
+    CsrfSecurityProperties csrfSecurityProperties() {
+      var properties = new CsrfSecurityProperties();
+      var whitelist = new CsrfSecurityProperties.Whitelist();
+      var header = new CsrfSecurityProperties.ConfigProperty();
+      header.setProperty("X-Test-CSRF");
+      whitelist.setHeader(header);
+      properties.setWhitelist(whitelist);
+      properties.setHeader(header);
+      var cookie = new CsrfSecurityProperties.ConfigProperty();
+      cookie.setProperty("test-csrf");
+      properties.setCookie(cookie);
+      return properties;
+    }
+
+    @Bean
+    IdentityConfig identityConfig() {
+      var identity = org.mockito.Mockito.mock(IdentityConfig.class);
+      when(identity.getOpenIdConnectUrl("certs")).thenReturn("https://identity.invalid/certs");
+      return identity;
+    }
+
+    @Bean
+    RoleAuthorizationAuthorityMapper authorityMapper() {
+      return org.mockito.Mockito.mock(RoleAuthorizationAuthorityMapper.class);
+    }
   }
 
   @Test

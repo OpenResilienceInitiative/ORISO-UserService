@@ -31,3 +31,8 @@ Reproduce with Java 21:
 - Other database failures and uncertain commit outcomes require recovery design; never purge a room whose committed ownership is uncertain.
 
 This is a partial implementation of US1149. Do not close the issue or claim complete team-access acceptance on these checks alone.
+
+
+## API authorization coverage follow-up
+
+The actual SecurityConfig filter chain, TeamDiscussionController and TeamDiscussionFacade are composed in an isolated test web context. GET permits an eligible colleague (204 when no discussion exists), rejects an asker (403), and rejects a foreign-agency colleague (403). POST supplies matching CSRF cookie/header values: the asker remains forbidden while the eligible colleague opens the room (200 plus room ID). Authentication is supplied through Spring Security test support; this does not prove JWT decoding or live Keycloak authentication. Repository/Matrix fixtures remain local. No productive authorization change was necessary; this is coverage of existing behavior, not a claimed red-green product repair. The nested TestConfiguration is explicitly registered only by this test.
