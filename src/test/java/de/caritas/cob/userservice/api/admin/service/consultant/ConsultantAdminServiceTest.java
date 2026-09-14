@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.List;
@@ -58,6 +59,7 @@ public class ConsultantAdminServiceTest {
   @Mock private AppointmentService appointmentService;
 
   @Mock private SessionRepository sessionRepository;
+  @Mock private SessionOwnershipService sessionOwnershipService;
 
   @Mock private CaseHandoverRequestRepository caseHandoverRequestRepository;
 
@@ -341,6 +343,7 @@ public class ConsultantAdminServiceTest {
     deletionOrder.verify(caseHandoverRequestRepository).deleteAllBySessionId(session.getId());
     deletionOrder.verify(sessionSupervisorRepository).deleteAllBySessionId(session.getId());
     deletionOrder.verify(sessionRepository).delete(session);
+    verify(sessionOwnershipService).clearOwnerFromSessions(any(), any());
     verify(deletionLifecycleService).beginConsultantDeletion(any(), any());
   }
 

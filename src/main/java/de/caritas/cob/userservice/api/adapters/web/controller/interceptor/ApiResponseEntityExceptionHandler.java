@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningExc
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import jakarta.persistence.OptimisticLockException;
 import jakarta.validation.ConstraintViolationException;
 import java.net.UnknownHostException;
 import java.util.Map;
@@ -30,6 +31,7 @@ import org.springframework.core.annotation.Order;
 import org.springframework.dao.DataAccessException;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.HttpStatusCode;
@@ -174,7 +176,11 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
    * @param request the invoking request
    * @param ex the thrown exception
    */
-  @ExceptionHandler({InvalidDataAccessApiUsageException.class})
+  @ExceptionHandler({
+    InvalidDataAccessApiUsageException.class,
+    OptimisticLockingFailureException.class,
+    OptimisticLockException.class
+  })
   protected ResponseEntity<Object> handleConflict(
       final RuntimeException ex, final WebRequest request) {
     log.warn(USER_SERVICE_API_LOG_PLACEHOLDER, HttpStatus.CONFLICT, ex.getMessage(), ex);

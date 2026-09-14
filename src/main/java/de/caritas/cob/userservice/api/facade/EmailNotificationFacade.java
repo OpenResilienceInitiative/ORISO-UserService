@@ -208,31 +208,34 @@ public class EmailNotificationFacade {
   public void sendReassignConfirmationNotification(
       ReassignmentNotificationDTO reassignmentNotification, TenantData tenantData) {
     TenantContext.setCurrentTenantData(tenantData);
-    Consultant existingConsultantById =
-        findExistingConsultantById(reassignmentNotification.getToConsultantId().toString());
-
-    if (!shouldSendReassignmentNotificationForConsultant(existingConsultantById)) {
-      log.info(
-          "Not sending email notification about reassignment because consultant has this disabled this toggle");
-      return;
-    }
-
-    var reassignmentConfirmationEmailSupplier =
-        ReassignmentConfirmationEmailSupplier.builder()
-            .receiverConsultant(existingConsultantById)
-            .senderConsultantName(reassignmentNotification.getFromConsultantName())
-            .tenantTemplateSupplier(tenantTemplateSupplier)
-            .applicationBaseUrl(applicationBaseUrl)
-            .multiTenancyEnabled(multiTenancyEnabled)
-            .build();
     try {
-      sendMailTasksToMailService(reassignmentConfirmationEmailSupplier);
-    } catch (Exception exception) {
-      log.error(
-          "EmailNotificationFacade error: Failed to send reqssign confiration notification",
-          exception);
+      Consultant existingConsultantById =
+          findExistingConsultantById(reassignmentNotification.getToConsultantId().toString());
+
+      if (!shouldSendReassignmentNotificationForConsultant(existingConsultantById)) {
+        log.info(
+            "Not sending email notification about reassignment because consultant has this disabled this toggle");
+        return;
+      }
+
+      var reassignmentConfirmationEmailSupplier =
+          ReassignmentConfirmationEmailSupplier.builder()
+              .receiverConsultant(existingConsultantById)
+              .senderConsultantName(reassignmentNotification.getFromConsultantName())
+              .tenantTemplateSupplier(tenantTemplateSupplier)
+              .applicationBaseUrl(applicationBaseUrl)
+              .multiTenancyEnabled(multiTenancyEnabled)
+              .build();
+      try {
+        sendMailTasksToMailService(reassignmentConfirmationEmailSupplier);
+      } catch (Exception exception) {
+        log.error(
+            "EmailNotificationFacade error: Failed to send reqssign confiration notification",
+            exception);
+      }
+    } finally {
+      TenantContext.clear();
     }
-    TenantContext.clear();
   }
 
   @Async

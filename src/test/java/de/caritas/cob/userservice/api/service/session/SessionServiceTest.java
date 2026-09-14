@@ -199,6 +199,7 @@ class SessionServiceTest {
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
   @Mock private SessionSupervisorRepository sessionSupervisorRepository;
   @Mock private SessionSupervisionMarkerService supervisionMarkerService;
+  @Mock private SessionOwnershipService sessionOwnershipService;
   @Mock private AgencyService agencyService;
   @Mock private ConsultantService consultantService;
   @Mock private ConsultingTypeManager consultingTypeManager;
@@ -271,7 +272,7 @@ class SessionServiceTest {
   void updateConsultantAndStatusForSession_Should_SaveSession() {
 
     sessionService.updateConsultantAndStatusForSession(SESSION, CONSULTANT, SessionStatus.NEW);
-    verify(sessionRepository, times(1)).save(SESSION);
+    verify(sessionOwnershipService).updateOwnerAndStatus(SESSION, CONSULTANT, SessionStatus.NEW);
   }
 
   @Test
@@ -780,6 +781,21 @@ class SessionServiceTest {
     assertThrows(
         ForbiddenException.class,
         () -> sessionService.fetchSessionForConsultant(sessionId, CONSULTANT_WITH_AGENCY));
+  }
+
+  @Test
+  void fetchSessionForConsultant_DoesNotExposeNonTeamMetadataToUnassignedOfferRecipient() {
+    Session session = easyRandom.nextObject(Session.class);
+    session.setConsultant(CONSULTANT_WITH_AGENCY_2);
+    session.setUser(USER_WITH_MATRIX_ID);
+    session.setTeamSession(false);
+    session.setAgencyId(
+        CONSULTANT_WITH_AGENCY.getConsultantAgencies().iterator().next().getAgencyId());
+    when(sessionRepository.findById(session.getId())).thenReturn(Optional.of(session));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> sessionService.fetchSessionForConsultant(session.getId(), CONSULTANT_WITH_AGENCY));
   }
 
   @Test

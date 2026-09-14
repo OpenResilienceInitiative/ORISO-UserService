@@ -19,6 +19,7 @@ import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
+import jakarta.persistence.Version;
 import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Arrays;
@@ -117,6 +118,17 @@ public class Session implements TenantAware {
   @JoinColumn(name = "consultant_id")
   @Fetch(FetchMode.SELECT)
   private Consultant consultant;
+
+  /** Monotonic identity-change counter used to distinguish separate ownership periods. */
+  @Builder.Default
+  @Column(name = "ownership_revision", nullable = false)
+  private long ownershipRevision = 0L;
+
+  /** Rejects stale whole-entity saves, including saves that would restore an older owner. */
+  @Version
+  @Builder.Default
+  @Column(name = "row_version", nullable = false)
+  private long rowVersion = 0L;
 
   @Column(
       name = "consulting_type",

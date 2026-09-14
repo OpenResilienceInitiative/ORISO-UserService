@@ -41,13 +41,17 @@ public class DeleteCaseHandoverRequestsForConsultantAction
     try {
       var consultantId = actionTarget.getConsultant().getId();
       List<CaseHandoverRequest> caseHandoverRequests =
-          Stream.concat(
+          Stream.of(
                   this.caseHandoverRequestRepository
                       .findByRequesterConsultantId(consultantId)
                       .stream(),
                   this.caseHandoverRequestRepository
                       .findByPreviousConsultantId(consultantId)
+                      .stream(),
+                  this.caseHandoverRequestRepository
+                      .findByInitiatorConsultantId(consultantId)
                       .stream())
+              .flatMap(stream -> stream)
               .collect(
                   Collectors.collectingAndThen(
                       Collectors.toMap(CaseHandoverRequest::getId, r -> r, (a, b) -> a),

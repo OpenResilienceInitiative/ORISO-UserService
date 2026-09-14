@@ -130,6 +130,25 @@ class EventNotificationServiceTest {
   }
 
   @Test
+  void buildCaseHandoverOfferParams_identifiesCaseRequestAndInitiatorWithoutReasonText()
+      throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverOfferParams(
+                sessionMock(), "Current Owner", 88L));
+
+    assertThat(parsed.fieldNames())
+        .toIterable()
+        .containsExactlyInAnyOrder(
+            "sessionId", "roomRef", "initiatorName", "caseHandoverRequestId");
+    assertThat(parsed.get("sessionId").asLong()).isEqualTo(100L);
+    assertThat(parsed.get("caseHandoverRequestId").asLong()).isEqualTo(88L);
+    assertThat(parsed.get("initiatorName").asText()).isEqualTo("Current Owner");
+    assertThat(parsed.has("reasonCode")).isFalse();
+    assertThat(parsed.has("explanation")).isFalse();
+  }
+
+  @Test
   void buildSessionScopedParams_carriesTheSessionReference() throws Exception {
     JsonNode parsed =
         objectMapper.readTree(eventNotificationService.buildSessionScopedParams(sessionMock()));

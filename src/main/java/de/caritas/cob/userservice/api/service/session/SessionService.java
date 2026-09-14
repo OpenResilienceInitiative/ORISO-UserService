@@ -81,6 +81,7 @@ public class SessionService {
   private final @Nullable ConsultantSessionTopicEnrichmentService sessionTopicEnrichmentService;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
   private final @NonNull SessionSupervisionMarkerService supervisionMarkerService;
+  private final @NonNull SessionOwnershipService sessionOwnershipService;
 
   @Value("${feature.topics.enabled}")
   private boolean topicsFeatureEnabled;
@@ -147,11 +148,18 @@ public class SessionService {
    * @param consultant the consultant
    * @param status the status of the session
    */
-  public void updateConsultantAndStatusForSession(
+  public SessionOwnershipService.OwnershipChange updateConsultantAndStatusForSession(
       Session session, Consultant consultant, SessionStatus status) {
-    session.setConsultant(consultant);
-    session.setStatus(status);
-    saveSession(session);
+    return sessionOwnershipService.updateOwnerAndStatus(session, consultant, status);
+  }
+
+  public boolean compensateConsultantAssignment(
+      Long sessionId,
+      SessionOwnershipService.OwnershipChange assignment,
+      Consultant previousConsultant,
+      SessionStatus previousStatus) {
+    return sessionOwnershipService.compensateOwnerChange(
+        sessionId, assignment, previousConsultant, previousStatus, nowInUtc());
   }
 
   /**

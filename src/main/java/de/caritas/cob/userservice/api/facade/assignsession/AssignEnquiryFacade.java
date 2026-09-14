@@ -1,7 +1,6 @@
 package de.caritas.cob.userservice.api.facade.assignsession;
 
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
-import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static java.util.Objects.nonNull;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
@@ -15,6 +14,7 @@ import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
@@ -137,7 +137,10 @@ public class AssignEnquiryFacade {
     sessionToConsultantVerifier.verifyPreconditionsForAssignment(
         consultantSessionDTO, skipConsultantAssignmentAndSessionInProgressChecks);
 
-    sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
+    var previousConsultant = session.getConsultant();
+    var previousStatus = session.getStatus();
+    var assignment =
+        sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
 
     // Create Matrix room and invite user
     try {
@@ -317,7 +320,7 @@ public class AssignEnquiryFacade {
                 session.getId(), user.getMatrixUserId(), consultant.getMatrixUserId()));
       }
     } catch (Exception e) {
-      rollbackSessionUpdate(session);
+      rollbackSessionUpdate(session, assignment, previousConsultant, previousStatus);
       log.error(
           "Matrix room creation failed for session: {}, rolling back assignment",
           session.getId(),
@@ -333,9 +336,15 @@ public class AssignEnquiryFacade {
         session.getUser(), consultant, TenantContext.getCurrentTenantData());
   }
 
-  private void rollbackSessionUpdate(Session session) {
+  private void rollbackSessionUpdate(
+      Session session,
+      de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange
+          assignment,
+      Consultant previousConsultant,
+      SessionStatus previousStatus) {
     if (nonNull(session)) {
-      sessionService.updateConsultantAndStatusForSession(session, null, NEW);
+      sessionService.compensateConsultantAssignment(
+          session.getId(), assignment, previousConsultant, previousStatus);
     }
   }
 

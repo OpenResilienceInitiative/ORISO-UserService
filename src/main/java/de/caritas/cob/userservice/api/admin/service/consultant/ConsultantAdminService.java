@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeletionLifecycleService;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.Collections;
@@ -53,6 +54,7 @@ public class ConsultantAdminService {
   private final @NonNull ConsultantPreDeletionService consultantPreDeletionService;
 
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull SessionOwnershipService sessionOwnershipService;
   private final @NonNull CaseHandoverRequestRepository caseHandoverRequestRepository;
   private final @NonNull SessionSupervisorRepository sessionSupervisorRepository;
 
@@ -238,13 +240,7 @@ public class ConsultantAdminService {
   }
 
   private void unassignNewOrInitialSessions(Consultant consultant) {
-    sessionRepository
-        .findByConsultantAndStatusIn(consultant, Lists.newArrayList(NEW, INITIAL))
-        .forEach(
-            session -> {
-              session.setConsultant(null);
-              sessionRepository.save(session);
-            });
+    sessionOwnershipService.clearOwnerFromSessions(consultant, Lists.newArrayList(NEW, INITIAL));
   }
 
   private void deleteSessionsInProgressOrArchived(Consultant consultant) {
