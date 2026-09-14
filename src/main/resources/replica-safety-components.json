@@ -542,7 +542,7 @@
       "kind": "scheduler",
       "owner": "deletion",
       "risk": "duplicate-side-effect",
-      "components": ["purgeOrphanedDiscussions", "retryPendingCleanup"],
+      "components": ["purgeOrphanedDiscussions"],
       "decision": "Leases the run through ScheduledTaskClaimService; purging a Matrix room is idempotent (a 404 counts as purged), failed losing-room purges retain a durable retry row, and retries refuse to purge a room referenced by a persisted discussion.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "bounded"
