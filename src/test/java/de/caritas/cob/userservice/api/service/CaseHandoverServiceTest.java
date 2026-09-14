@@ -1108,6 +1108,36 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void expireCoAccessDoesNotRemoveMembershipRequiredByANewerActiveGrant() {
+    CaseHandoverRequest expired = grantedAdviceRequest();
+    expired.setExpiresAt(LocalDateTime.of(2026, 8, 16, 10, 0));
+    expired.setMatrixMembershipAdded(true);
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    CaseHandoverRequest newerGrant = grantedAdviceRequest();
+    newerGrant.setId(101L);
+    newerGrant.setExpiresAt(LocalDateTime.of(2026, 8, 16, 11, 0));
+    newerGrant.setMatrixMembershipAdded(false);
+    when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
+            CaseHandoverRequest.Status.GRANTED,
+            CaseHandoverRequest.AccessType.CO_ACCESS,
+            LocalDateTime.of(2026, 8, 16, 10, 0)))
+        .thenReturn(List.of(expired));
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(newerGrant, expired));
+    when(caseHandoverRequestRepository.findByIdForUpdate(expired.getId()))
+        .thenReturn(Optional.of(expired));
+
+    assertEquals(1, caseHandoverService.expireCoAccess());
+
+    assertEquals(CaseHandoverRequest.Status.EXPIRED, expired.getStatus());
+    assertTrue(newerGrant.getMatrixMembershipAdded());
+    verify(caseHandoverRequestRepository).save(newerGrant);
+    verifyNoMatrixRemoval();
+  }
+
+  @Test
   void expireCoAccessKeepsStandingMembershipForLegacyAndPreProvisionedRequests() {
     CaseHandoverRequest request = grantedAdviceRequest();
     request.setMatrixMembershipAdded(null);

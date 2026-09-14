@@ -90,7 +90,28 @@ public class CaseHandoverMatrixRepairService {
             return null;
           });
     } catch (DataIntegrityViolationException duplicate) {
-      log.debug("Case Handover Matrix repair {} is already queued", action);
+      boolean reactivated =
+          Boolean.TRUE.equals(
+              inNewTransaction(
+                  () ->
+                      repository
+                          .findExistingForUpdate(action, roomId, memberId)
+                          .map(
+                              existing -> {
+                                existing.setOperatorId(operatorId);
+                                existing.setSessionId(sessionId);
+                                existing.setRequesterConsultantId(requesterConsultantId);
+                                existing.setAttemptCount(0);
+                                existing.setLastAttemptAt(null);
+                                existing.setCreateDate(LocalDateTime.now(clock));
+                                repository.saveAndFlush(existing);
+                                return true;
+                              })
+                          .orElse(false)));
+      if (!reactivated) {
+        throw duplicate;
+      }
+      log.debug("Reactivated existing Case Handover Matrix repair {}", action);
     }
   }
 
@@ -117,8 +138,7 @@ public class CaseHandoverMatrixRepairService {
   private boolean attempt(CaseHandoverMatrixRepairTask task) {
     try {
       boolean activeAccess = hasActiveAccess(task);
-      if ((task.getAction() == CaseHandoverMatrixRepairAction.JOIN && !activeAccess)
-          || (task.getAction() == CaseHandoverMatrixRepairAction.REMOVE && activeAccess)) {
+      if (task.getAction() == CaseHandoverMatrixRepairAction.REMOVE && activeAccess) {
         return true;
       }
       String loginId =
@@ -133,7 +153,7 @@ public class CaseHandoverMatrixRepairService {
         return false;
       }
       return switch (task.getAction()) {
-        case JOIN -> matrixSynapseService.joinRoom(task.getRoomId(), token);
+        case JOIN -> reconcileJoin(task, token, activeAccess);
         case REMOVE -> removeOrConfirmAbsent(task, token);
       };
     } catch (RuntimeException exception) {
@@ -143,6 +163,33 @@ public class CaseHandoverMatrixRepairService {
           exception.getClass().getSimpleName());
       return false;
     }
+  }
+
+  private boolean reconcileJoin(
+      CaseHandoverMatrixRepairTask task, String memberToken, boolean activeBeforeJoin) {
+    if (!activeBeforeJoin) {
+      return leaveOrConfirmAbsent(task, memberToken);
+    }
+    if (!matrixSynapseService.joinRoom(task.getRoomId(), memberToken)) {
+      return false;
+    }
+    // Access can expire or be revoked while the technical login/JOIN request is in flight. Never
+    // retain a membership based only on the pre-I/O check.
+    return hasActiveAccess(task) || leaveOrConfirmAbsent(task, memberToken);
+  }
+
+  private boolean leaveOrConfirmAbsent(CaseHandoverMatrixRepairTask task, String memberToken) {
+    var members = matrixSynapseService.getRoomMembers(task.getRoomId());
+    if (members.isPresent() && !members.get().contains(task.getMemberId())) {
+      return true;
+    }
+    if (matrixSynapseService.leaveRoom(task.getRoomId(), memberToken)) {
+      return true;
+    }
+    return matrixSynapseService
+        .getRoomMembers(task.getRoomId())
+        .map(current -> !current.contains(task.getMemberId()))
+        .orElse(false);
   }
 
   private boolean hasActiveAccess(CaseHandoverMatrixRepairTask task) {

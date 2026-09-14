@@ -1,7 +1,9 @@
 package de.caritas.cob.userservice.api.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -22,6 +24,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionStatus;
@@ -66,6 +69,54 @@ class CaseHandoverMatrixRepairServiceTest {
     assertThat(captor.getValue().getRequesterConsultantId()).isEqualTo("requester");
     assertThat(captor.getValue().getCreateDate())
         .isEqualTo(LocalDateTime.parse("2026-09-14T10:00:00"));
+  }
+
+  @Test
+  void enqueueRemovalReactivatesAnExhaustedDuplicateTask() {
+    var exhausted =
+        CaseHandoverMatrixRepairTask.builder()
+            .id(7L)
+            .action(CaseHandoverMatrixRepairAction.REMOVE)
+            .roomId("!room:matrix")
+            .memberId("@requester:matrix")
+            .sessionId(100L)
+            .requesterConsultantId("old-requester")
+            .operatorId("@old-operator:matrix")
+            .attemptCount(100)
+            .lastAttemptAt(LocalDateTime.parse("2026-09-14T09:00:00"))
+            .createDate(LocalDateTime.parse("2026-09-14T08:00:00"))
+            .build();
+    org.mockito.Mockito.doThrow(new DataIntegrityViolationException("duplicate"))
+        .doReturn(exhausted)
+        .when(repository)
+        .saveAndFlush(any(CaseHandoverMatrixRepairTask.class));
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.REMOVE, "!room:matrix", "@requester:matrix"))
+        .thenReturn(Optional.of(exhausted));
+    service.enqueueRemoval(
+        "!room:matrix", "@requester:matrix", "@new-operator:matrix", 123L, "requester");
+
+    assertThat(exhausted.getAttemptCount()).isZero();
+    assertThat(exhausted.getLastAttemptAt()).isNull();
+    assertThat(exhausted.getSessionId()).isEqualTo(123L);
+    assertThat(exhausted.getRequesterConsultantId()).isEqualTo("requester");
+    assertThat(exhausted.getOperatorId()).isEqualTo("@new-operator:matrix");
+  }
+
+  @Test
+  void enqueueRemovalRethrowsAnUnrelatedIntegrityViolation() {
+    doThrow(new DataIntegrityViolationException("not the repair uniqueness constraint"))
+        .when(repository)
+        .saveAndFlush(any(CaseHandoverMatrixRepairTask.class));
+    when(repository.findExistingForUpdate(
+            CaseHandoverMatrixRepairAction.REMOVE, "!room:matrix", "@requester:matrix"))
+        .thenReturn(Optional.empty());
+
+    assertThatThrownBy(
+            () ->
+                service.enqueueRemoval(
+                    "!room:matrix", "@requester:matrix", "@operator:matrix", 123L, "requester"))
+        .isInstanceOf(DataIntegrityViolationException.class);
   }
 
   @Test
@@ -144,6 +195,35 @@ class CaseHandoverMatrixRepairServiceTest {
 
     verify(matrixSynapseService, org.mockito.Mockito.never())
         .removeUserFromRoom(any(), any(), any());
+    verify(repository).delete(task);
+  }
+
+  @Test
+  void joinRepairRemovesMembershipWhenAccessExpiresDuringJoin() {
+    var task =
+        CaseHandoverMatrixRepairTask.builder()
+            .id(11L)
+            .action(CaseHandoverMatrixRepairAction.JOIN)
+            .roomId("!room:matrix")
+            .memberId("@requester:matrix")
+            .sessionId(123L)
+            .requesterConsultantId("requester")
+            .build();
+    var active = CaseHandoverRequest.builder().status(CaseHandoverRequest.Status.GRANTED).build();
+    when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(handoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(java.util.List.of(active), java.util.List.of());
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("fresh-token");
+    when(matrixSynapseService.joinRoom("!room:matrix", "fresh-token")).thenReturn(true);
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(java.util.List.of("@requester:matrix")));
+    when(matrixSynapseService.leaveRoom("!room:matrix", "fresh-token")).thenReturn(true);
+
+    service.process(11L);
+
+    verify(matrixSynapseService).leaveRoom("!room:matrix", "fresh-token");
     verify(repository).delete(task);
   }
 }

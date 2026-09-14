@@ -1584,6 +1584,9 @@ public class CaseHandoverService {
       }
       String roomId = accessSession.getMatrixRoomId();
       String requesterId = requester.getMatrixUserId();
+      if (transferMembershipOwnershipToAnotherActiveGrant(request)) {
+        return true;
+      }
       var membersBefore = matrixSynapseService.getRoomMembers(roomId);
       if (membersBefore.isEmpty()) {
         return false;
@@ -1604,12 +1607,14 @@ public class CaseHandoverService {
         return false;
       }
       if (matrixSynapseService.removeUserFromRoom(roomId, requesterId, operatorToken)) {
-        return true;
+        return restoreIfAnotherGrantBecameActive(request, roomId, requesterId);
       }
-      return matrixSynapseService
-          .getRoomMembers(roomId)
-          .map(members -> !members.contains(requesterId))
-          .orElse(false);
+      boolean absent =
+          matrixSynapseService
+              .getRoomMembers(roomId)
+              .map(members -> !members.contains(requesterId))
+              .orElse(false);
+      return absent && restoreIfAnotherGrantBecameActive(request, roomId, requesterId);
     } catch (RuntimeException exception) {
       log.warn(
           "Could not reconcile Matrix access for Case Handover request {} ({})",
@@ -1617,6 +1622,54 @@ public class CaseHandoverService {
           exception.getClass().getSimpleName());
       return false;
     }
+  }
+
+  private Optional<CaseHandoverRequest> findAnotherActiveGrant(CaseHandoverRequest request) {
+    LocalDateTime now = LocalDateTime.now(clock);
+    Long requestId = request.getId();
+    return caseHandoverRequestRepository
+        .findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            request.getSession().getId(), request.getRequesterConsultant().getId())
+        .stream()
+        .filter(candidate -> requestId == null || !requestId.equals(candidate.getId()))
+        .filter(
+            candidate ->
+                hasGrantedAccess(candidate.getStatus())
+                    && (candidate.getExpiresAt() == null || candidate.getExpiresAt().isAfter(now)))
+        .findFirst();
+  }
+
+  private boolean transferMembershipOwnershipToAnotherActiveGrant(CaseHandoverRequest request) {
+    return findAnotherActiveGrant(request)
+        .map(
+            activeGrant -> {
+              if (!Boolean.TRUE.equals(activeGrant.getMatrixMembershipAdded())) {
+                activeGrant.setMatrixMembershipAdded(true);
+                caseHandoverRequestRepository.save(activeGrant);
+              }
+              return true;
+            })
+        .orElse(false);
+  }
+
+  private boolean restoreIfAnotherGrantBecameActive(
+      CaseHandoverRequest request, String roomId, String requesterId) {
+    Optional<CaseHandoverRequest> activeGrant = findAnotherActiveGrant(request);
+    if (activeGrant.isEmpty()) {
+      return true;
+    }
+    String requesterToken = matrixSynapseService.loginAsUserAccessToken(requesterId);
+    if (!isBlank(requesterToken) && matrixSynapseService.joinRoom(roomId, requesterToken)) {
+      activeGrant.get().setMatrixMembershipAdded(true);
+      caseHandoverRequestRepository.save(activeGrant.get());
+      return true;
+    }
+    matrixRepairService.enqueueJoin(
+        roomId,
+        requesterId,
+        request.getSession().getId(),
+        request.getRequesterConsultant().getId());
+    return false;
   }
 
   /** Restores a handover-created membership if declining consent later rolls the database back. */
@@ -1646,9 +1699,8 @@ public class CaseHandoverService {
               String token = matrixSynapseService.loginAsUserAccessToken(requesterId);
               if (isBlank(token) || !matrixSynapseService.joinRoom(roomId, token)) {
                 log.error(
-                    "Rolled-back Case Handover decline could not restore {} in Matrix room {}",
-                    requesterId,
-                    roomId);
+                    "Rolled-back Case Handover decline could not restore Matrix membership for session {}",
+                    session.getId());
                 matrixRepairService.enqueueJoin(
                     roomId, requesterId, session.getId(), requester.getId());
               }
@@ -1837,9 +1889,8 @@ public class CaseHandoverService {
             try {
               if (!matrixSynapseService.removeUserFromRoom(roomId, requesterId, operatorToken)) {
                 log.error(
-                    "Rolled-back case handover left {} in Matrix room {}; durable repair queued",
-                    requesterId,
-                    roomId);
+                    "Rolled-back Case Handover left Matrix membership for session {}; durable repair queued",
+                    sessionId);
                 matrixRepairService.enqueueRemoval(
                     roomId, requesterId, operatorId, sessionId, requesterConsultantId);
               }
