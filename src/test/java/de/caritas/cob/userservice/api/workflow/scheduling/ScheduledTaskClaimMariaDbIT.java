@@ -198,7 +198,8 @@ class ScheduledTaskClaimMariaDbIT {
 
     @Bean
     Clock clock() {
-      return Clock.systemUTC();
+      return Clock.offset(
+          Clock.tick(Clock.systemUTC(), Duration.ofNanos(1000)), Duration.ofNanos(123));
     }
   }
 }

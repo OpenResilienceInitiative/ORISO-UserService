@@ -27,7 +27,7 @@ public class ScheduledTaskClaimWriter {
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public Optional<LocalDateTime> claimUntil(String taskName, Duration claimDuration) {
-    LocalDateTime now = LocalDateTime.now(clock);
+    LocalDateTime now = LocalDateTime.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     var existingClaim = claimRepository.findByTaskNameForUpdate(taskName);
     if (existingClaim.isPresent()) {
       var claim = existingClaim.get();
@@ -35,7 +35,8 @@ public class ScheduledTaskClaimWriter {
         return Optional.empty();
       }
       claim.setClaimedAt(now);
-      claim.setClaimedUntil(now.plus(claimDuration));
+      claim.setClaimedUntil(
+          now.plus(claimDuration).truncatedTo(java.time.temporal.ChronoUnit.MICROS));
       claimRepository.saveAndFlush(claim);
       return Optional.of(claim.getClaimedUntil());
     }
@@ -44,9 +45,9 @@ public class ScheduledTaskClaimWriter {
         ScheduledTaskClaim.builder()
             .taskName(taskName)
             .claimedAt(now)
-            .claimedUntil(now.plus(claimDuration))
+            .claimedUntil(now.plus(claimDuration).truncatedTo(java.time.temporal.ChronoUnit.MICROS))
             .build());
-    return Optional.of(now.plus(claimDuration));
+    return Optional.of(now.plus(claimDuration).truncatedTo(java.time.temporal.ChronoUnit.MICROS));
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
@@ -67,7 +68,7 @@ public class ScheduledTaskClaimWriter {
 
   @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
   public boolean hasActiveClaim(String taskName) {
-    LocalDateTime now = LocalDateTime.now(clock);
+    LocalDateTime now = LocalDateTime.now(clock).truncatedTo(java.time.temporal.ChronoUnit.MICROS);
     return claimRepository
         .findById(taskName)
         .map(ScheduledTaskClaim::getClaimedUntil)

@@ -75,6 +75,7 @@ class TeamDiscussionConcurrencyIT {
     session.setAgencyId(7L);
     session.setTenantId(3L);
     session.setRegistrationType(RegistrationType.REGISTERED);
+    session.setEnquiryMessageDate(java.time.LocalDateTime.now());
     session.setStatus(SessionStatus.NEW);
     when(sessions.findById(42001L)).thenReturn(Optional.of(session));
     var agencyCredentials = new AgencyMatrixCredentialsDTO();
