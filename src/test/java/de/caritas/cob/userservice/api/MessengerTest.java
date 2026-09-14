@@ -125,7 +125,10 @@ class MessengerTest {
         .countPendingEnquiriesAheadOf(
             any(), any(), any(), any(), any(), minUpdateDate.capture(), any());
     /* Sessions store UTC, so the cutoff must sit five minutes below UTC now — not below the
-    server's local clock, which on a non-UTC host would be hours away and empty the queue. */
+    server's local clock, which on a non-UTC host would be hours away and empty the queue.
+    Note this assertion only bites where the two differ: on a host already running UTC it holds
+    either way. SessionRepositoryQueueCountIT proves the behaviour against a real database and is
+    the guard that does not depend on the host's zone. */
     assertThat(minUpdateDate.getValue())
         .isCloseTo(nowInUtc().minusMinutes(5), within(1, ChronoUnit.MINUTES));
   }
