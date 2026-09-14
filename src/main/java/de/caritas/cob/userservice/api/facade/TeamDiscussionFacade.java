@@ -14,18 +14,22 @@ import de.caritas.cob.userservice.api.model.TeamDiscussionParticipant;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
-import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
+import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * US#473 / ADR-016: the Team-Besprechung — a team-only Matrix side room attached to one open
@@ -47,10 +51,11 @@ public class TeamDiscussionFacade {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull TeamDiscussionRepository teamDiscussionRepository;
-  private final @NonNull TeamDiscussionParticipantRepository participantRepository;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull TeamDiscussionFeatureGate featureGate;
+  private final @NonNull TeamDiscussionCreationWriter creationWriter;
+  private final @NonNull TeamDiscussionParticipantWriter participantWriter;
 
   /** Read model returned to the controller. */
   public record TeamDiscussionView(
@@ -69,29 +74,46 @@ public class TeamDiscussionFacade {
     Optional<TeamDiscussion> existing = teamDiscussionRepository.findBySessionId(sessionId);
     if (existing.isPresent()) {
       TeamDiscussion discussion = reconcileOnAccess(existing.get(), session);
-      joinConsultantBestEffort(discussion, session, consultant);
+      joinConsultant(discussion, session, consultant);
       return toView(discussion);
     }
 
     requireOpenEnquiry(session);
 
     String roomId = createDiscussionRoom(session);
-    TeamDiscussion discussion =
-        teamDiscussionRepository.save(
-            TeamDiscussion.builder()
-                .sessionId(session.getId())
-                .matrixRoomId(roomId)
-                .status(TeamDiscussion.Status.OPEN)
-                .createDate(LocalDateTime.now())
-                .createdByConsultantId(consultant.getId())
-                .tenantId(session.getTenantId())
-                .build());
+    TeamDiscussion proposed =
+        TeamDiscussion.builder()
+            .sessionId(session.getId())
+            .matrixRoomId(roomId)
+            .status(TeamDiscussion.Status.OPEN)
+            .createDate(LocalDateTime.now())
+            .createdByConsultantId(consultant.getId())
+            .tenantId(session.getTenantId())
+            .build();
+    TeamDiscussion discussion;
+    try {
+      discussion = creationWriter.create(proposed);
+    } catch (DataIntegrityViolationException conflict) {
+      // The unique session constraint chooses one shared room across service replicas.
+      // The failed insert has rolled back before this fresh read begins.
+      discussion = creationWriter.findCommitted(sessionId).orElseThrow(() -> conflict);
+      if (!roomId.equals(discussion.getMatrixRoomId())) {
+        // No caller has joined our uncommitted room, so it cannot contain team messages.
+        var outcome = matrixSynapseService.purgeRoomOrConfirmGone(roomId);
+        if (outcome == MatrixSynapseService.RoomPurgeOutcome.FAILED) {
+          log.error(
+              "Unused team discussion room {} for session {} needs cleanup", roomId, sessionId);
+          throw new ResponseStatusException(
+              HttpStatus.BAD_GATEWAY, "Team discussion cleanup failed");
+        }
+      }
+    }
     // Create/accept race: re-read the assignment state after committing the row — if the case
     // was accepted while we were creating the room, archive immediately instead of leaving an
     // OPEN discussion on an assigned case.
     Session freshSession = sessionRepository.findById(sessionId).orElse(session);
     discussion = reconcileOnAccess(discussion, freshSession);
-    joinConsultantBestEffort(discussion, session, consultant);
+    joinConsultant(discussion, session, consultant);
     return toView(discussion);
   }
 
@@ -218,14 +240,13 @@ public class TeamDiscussionFacade {
   }
 
   /**
-   * Invite + join the consultant and record them as participant. Best-effort: an already-joined
-   * consultant or a transient Matrix error must not break opening the panel.
+   * Join the caller before reporting a usable discussion. Failed membership remains retryable; only
+   * a confirmed join records participation.
    */
-  private void joinConsultantBestEffort(
-      TeamDiscussion discussion, Session session, Consultant consultant) {
+  private void joinConsultant(TeamDiscussion discussion, Session session, Consultant consultant) {
     try {
       if (consultant.getMatrixUserId() == null || consultant.getMatrixUserId().isBlank()) {
-        return;
+        throw new InternalServerErrorException("Consultant Matrix identity is not available");
       }
       String agencyToken = loginAgencyOperator(session);
       try {
@@ -239,8 +260,10 @@ public class TeamDiscussionFacade {
       }
       String consultantToken =
           matrixSynapseService.loginAsUserAccessToken(consultant.getMatrixUserId());
-      if (consultantToken != null) {
-        matrixSynapseService.joinRoom(discussion.getMatrixRoomId(), consultantToken);
+      if (consultantToken == null
+          || consultantToken.isBlank()
+          || !matrixSynapseService.joinRoom(discussion.getMatrixRoomId(), consultantToken)) {
+        throw new InternalServerErrorException("Could not join the team discussion");
       }
     } catch (Exception ex) {
       log.warn(
@@ -248,21 +271,29 @@ public class TeamDiscussionFacade {
           consultant.getId(),
           discussion.getMatrixRoomId(),
           ex.getMessage());
+      throw new ResponseStatusException(
+          HttpStatus.BAD_GATEWAY, "Could not join the team discussion");
     }
     recordParticipant(discussion, consultant.getId());
   }
 
   private void recordParticipant(TeamDiscussion discussion, String consultantId) {
-    if (participantRepository.existsByTeamDiscussionIdAndConsultantId(
-        discussion.getId(), consultantId)) {
+    if (participantWriter.isRecorded(discussion.getId(), consultantId)) {
       return;
     }
-    participantRepository.save(
-        TeamDiscussionParticipant.builder()
-            .teamDiscussionId(discussion.getId())
-            .consultantId(consultantId)
-            .joinDate(LocalDateTime.now())
-            .build());
+    try {
+      participantWriter.record(
+          TeamDiscussionParticipant.builder()
+              .teamDiscussionId(discussion.getId())
+              .consultantId(consultantId)
+              .joinDate(LocalDateTime.now())
+              .build());
+    } catch (DataIntegrityViolationException conflict) {
+      // Another tab may have completed the same join while this request was in Matrix.
+      if (!participantWriter.isRecorded(discussion.getId(), consultantId)) {
+        throw conflict;
+      }
+    }
   }
 
   /**

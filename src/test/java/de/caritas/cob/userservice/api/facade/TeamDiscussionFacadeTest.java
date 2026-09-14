@@ -11,11 +11,17 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.controller.TeamDiscussionController;
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -28,18 +34,23 @@ import de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantReposito
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
+import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
+import org.springframework.web.server.ResponseStatusException;
 
 /** US#473 / ADR-016 — Team-Besprechung lifecycle. */
 @ExtendWith(MockitoExtension.class)
@@ -51,7 +62,7 @@ class TeamDiscussionFacadeTest {
   private static final String CONSULTANT_ID = "consultant-1";
   private static final String ROOM_ID = "!discussion:oriso";
 
-  @InjectMocks private TeamDiscussionFacade facade;
+  private TeamDiscussionFacade facade;
 
   @Mock private SessionRepository sessionRepository;
   @Mock private ConsultantRepository consultantRepository;
@@ -61,12 +72,24 @@ class TeamDiscussionFacadeTest {
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private TeamDiscussionFeatureGate featureGate;
+  @Mock private AuthenticatedUser authenticatedUser;
 
   private Session session;
   private Consultant consultant;
 
   @BeforeEach
   void setUp() throws Exception {
+    facade =
+        new TeamDiscussionFacade(
+            sessionRepository,
+            consultantRepository,
+            consultantAgencyRepository,
+            teamDiscussionRepository,
+            matrixSynapseService,
+            matrixCredentialClient,
+            featureGate,
+            new TeamDiscussionCreationWriter(teamDiscussionRepository),
+            new TeamDiscussionParticipantWriter(participantRepository));
     session = new Session();
     session.setId(SESSION_ID);
     session.setAgencyId(AGENCY_ID);
@@ -84,7 +107,7 @@ class TeamDiscussionFacadeTest {
             CONSULTANT_ID, AGENCY_ID))
         .thenReturn(true);
     when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.empty());
-    when(teamDiscussionRepository.save(any(TeamDiscussion.class)))
+    when(teamDiscussionRepository.saveAndFlush(any(TeamDiscussion.class)))
         .thenAnswer(
             invocation -> {
               TeamDiscussion d = invocation.getArgument(0);
@@ -100,11 +123,119 @@ class TeamDiscussionFacadeTest {
     when(matrixSynapseService.loginUser("agency7", "secret")).thenReturn("agency-token");
     when(matrixSynapseService.loginAsUserAccessToken("@consultant1:oriso"))
         .thenReturn("consultant-token");
+    when(matrixSynapseService.joinRoom(ROOM_ID, "consultant-token")).thenReturn(true);
+    when(matrixSynapseService.purgeRoomOrConfirmGone(ROOM_ID))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.PURGED);
 
     var body = new MatrixCreateRoomResponseDTO();
     body.setRoomId(ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq("agency-token")))
         .thenReturn(ResponseEntity.ok(body));
+  }
+
+  @Test
+  void openingDiscussion_shouldUseTheSameRoomWhenAColleagueCreatesItConcurrently() {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    var winningDiscussion =
+        TeamDiscussion.builder()
+            .id(100L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId("!colleague-room:oriso")
+            .status(TeamDiscussion.Status.OPEN)
+            .tenantId(3L)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(Optional.empty(), Optional.of(winningDiscussion));
+    when(teamDiscussionRepository.saveAndFlush(any(TeamDiscussion.class)))
+        .thenThrow(new DataIntegrityViolationException("Concurrent session room insert"));
+    when(matrixSynapseService.joinRoom("!colleague-room:oriso", "consultant-token"))
+        .thenReturn(true);
+
+    var opened = controller.getOrCreate(SESSION_ID).getBody();
+    var reopened = controller.get(SESSION_ID).getBody();
+
+    assertThat(opened.matrixRoomId()).isEqualTo("!colleague-room:oriso");
+    assertThat(reopened.matrixRoomId()).isEqualTo(opened.matrixRoomId());
+  }
+
+  @Test
+  void openingDiscussion_shouldReportFailedCleanupInsteadOfSuccess() {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    var winningDiscussion =
+        TeamDiscussion.builder()
+            .id(100L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId("!colleague-room:oriso")
+            .status(TeamDiscussion.Status.OPEN)
+            .tenantId(3L)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(Optional.empty(), Optional.of(winningDiscussion));
+    when(teamDiscussionRepository.saveAndFlush(any(TeamDiscussion.class)))
+        .thenThrow(new DataIntegrityViolationException("Concurrent session room insert"));
+    when(matrixSynapseService.joinRoom("!colleague-room:oriso", "consultant-token"))
+        .thenReturn(true);
+
+    when(matrixSynapseService.purgeRoomOrConfirmGone(ROOM_ID))
+        .thenReturn(MatrixSynapseService.RoomPurgeOutcome.FAILED);
+    assertThatThrownBy(() -> controller.getOrCreate(SESSION_ID))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(
+            ex ->
+                assertThat(((ResponseStatusException) ex).getStatusCode())
+                    .isEqualTo(HttpStatus.BAD_GATEWAY));
+    assertThat(controller.get(SESSION_ID).getBody().matrixRoomId())
+        .isEqualTo("!colleague-room:oriso");
+  }
+
+  @Test
+  void openingDiscussion_shouldTolerateAnotherTabRecordingTheSameParticipant() {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    when(participantRepository.existsByTeamDiscussionIdAndConsultantId(99L, CONSULTANT_ID))
+        .thenReturn(false, true);
+    when(participantRepository.saveAndFlush(any()))
+        .thenThrow(new DataIntegrityViolationException("Concurrent participant insert"));
+
+    assertThat(controller.getOrCreate(SESSION_ID).getBody().matrixRoomId()).isEqualTo(ROOM_ID);
+    assertThat(controller.getOrCreate(SESSION_ID).getBody().matrixRoomId()).isEqualTo(ROOM_ID);
+  }
+
+  @Test
+  void openingDiscussion_shouldReportFailedJoinAndAllowRetry() throws Exception {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    when(matrixSynapseService.joinRoom(ROOM_ID, "consultant-token")).thenReturn(false, true);
+
+    var http =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+    http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
+        .andExpect(status().isBadGateway());
+    http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.matrixRoomId").value(ROOM_ID));
   }
 
   @Test
@@ -117,7 +248,7 @@ class TeamDiscussionFacadeTest {
     verify(matrixSynapseService).createRoom(anyString(), anyString(), eq("agency-token"));
     verify(matrixSynapseService).inviteUserToRoom(ROOM_ID, "@consultant1:oriso", "agency-token");
     verify(matrixSynapseService).joinRoom(ROOM_ID, "consultant-token");
-    verify(participantRepository).save(any());
+    verify(participantRepository).saveAndFlush(any());
   }
 
   @Test
