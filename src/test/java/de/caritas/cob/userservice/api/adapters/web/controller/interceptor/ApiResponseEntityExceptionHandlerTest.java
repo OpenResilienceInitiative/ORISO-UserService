@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller.interceptor;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 
@@ -18,15 +19,19 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import jakarta.persistence.OptimisticLockException;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import org.hibernate.exception.ConstraintViolationException;
 import org.junit.jupiter.api.Test;
 import org.springframework.dao.InvalidDataAccessApiUsageException;
+import org.springframework.dao.OptimisticLockingFailureException;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpInputMessage;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.context.request.WebRequest;
 
 class ApiResponseEntityExceptionHandlerTest {
@@ -201,13 +206,35 @@ class ApiResponseEntityExceptionHandlerTest {
   }
 
   @Test
-  void mappedExceptionHandlers_returnExpectedHttpStatus() {
+  void mappedExceptionHandlers_returnExpectedHttpStatus() throws Exception {
     // Business reason: each domain exception type must map to the documented status code.
     assertEquals(
         HttpStatus.CONFLICT,
         handler
             .handleConflict(new InvalidDataAccessApiUsageException("c"), request)
             .getStatusCode());
+    assertEquals(
+        HttpStatus.CONFLICT,
+        handler
+            .handleConflict(new OptimisticLockingFailureException("stale"), request)
+            .getStatusCode());
+    assertEquals(
+        HttpStatus.CONFLICT,
+        handler.handleConflict(new OptimisticLockException("stale"), request).getStatusCode());
+    assertTrue(
+        Arrays.asList(
+                ApiResponseEntityExceptionHandler.class
+                    .getDeclaredMethod("handleConflict", RuntimeException.class, WebRequest.class)
+                    .getAnnotation(ExceptionHandler.class)
+                    .value())
+            .contains(OptimisticLockingFailureException.class));
+    assertTrue(
+        Arrays.asList(
+                ApiResponseEntityExceptionHandler.class
+                    .getDeclaredMethod("handleConflict", RuntimeException.class, WebRequest.class)
+                    .getAnnotation(ExceptionHandler.class)
+                    .value())
+            .contains(OptimisticLockException.class));
     assertEquals(
         HttpStatus.CONFLICT,
         handler.handleCustomConflict(new ConflictException("c"), request).getStatusCode());

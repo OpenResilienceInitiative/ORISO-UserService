@@ -294,6 +294,11 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.GET, "/users/sessions/room", "/service/users/sessions/room")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}")
+                .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(HttpMethod.GET, "/users/sessions/askers")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT)
                 .requestMatchers(
@@ -320,6 +325,10 @@ public class SecurityConfig {
                     "/service/users/case-handover/candidates",
                     "/users/case-handover/batch",
                     "/service/users/case-handover/batch",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/offers",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/offers",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
                     "/users/chat-series/**",
                     "/service/users/chat-series/**",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",

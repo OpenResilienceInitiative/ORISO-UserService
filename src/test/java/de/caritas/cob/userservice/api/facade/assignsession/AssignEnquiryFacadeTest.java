@@ -14,6 +14,7 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.isNull;
 import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
@@ -41,6 +42,7 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.session.SessionOwnershipService.OwnershipChange;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -89,6 +91,11 @@ class AssignEnquiryFacadeTest {
 
   @BeforeEach
   public void setup() throws MatrixCreateRoomException {
+    lenient()
+        .when(
+            sessionService.updateConsultantAndStatusForSession(
+                any(Session.class), any(Consultant.class), any(SessionStatus.class)))
+        .thenReturn(new OwnershipChange(1L, "assigned", 1L));
     // ADR-002 §2: the display name comes from the resolver, never from the real name.
     lenient()
         .when(consultantDisplayNameResolver.resolveMatrixDisplayName(any(Consultant.class)))
@@ -318,7 +325,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW));
   }
 
   @Test
@@ -336,7 +345,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW));
   }
 
   // ---------------------------------------------------------------------------
@@ -407,7 +418,9 @@ class AssignEnquiryFacadeTest {
         InternalServerErrorException.class,
         () -> assignEnquiryFacade.assignRegisteredEnquiry(session, consultant));
 
-    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+    verify(sessionService)
+        .compensateConsultantAssignment(
+            eq(session.getId()), any(OwnershipChange.class), isNull(), eq(NEW));
   }
 
   // ---------------------------------------------------------------------------

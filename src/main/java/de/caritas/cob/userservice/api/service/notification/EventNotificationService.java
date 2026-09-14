@@ -434,6 +434,17 @@ public class EventNotificationService {
     return serializeParams(params);
   }
 
+  /** Redacted recipient-offer metadata. Free-text reason and explanation stay out of events. */
+  public String buildCaseHandoverOfferParams(
+      Session session, String initiatorName, Long caseHandoverRequestId) {
+    Map<String, Object> params = baseParams(session);
+    putIfPresent(params, "initiatorName", initiatorName);
+    if (caseHandoverRequestId != null) {
+      params.put("caseHandoverRequestId", caseHandoverRequestId);
+    }
+    return serializeParams(params);
+  }
+
   private String serializeParams(Map<String, Object> params) {
     if (params == null || params.isEmpty()) {
       return null;

@@ -16,6 +16,7 @@ import jakarta.validation.constraints.NotEmpty;
 import jakarta.validation.constraints.NotNull;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -66,6 +67,15 @@ public class CaseHandoverController {
     return ResponseEntity.ok(caseHandoverService.getStatus(sessionId));
   }
 
+  @GetMapping({
+    "/users/sessions/{sessionId}/case-handover/{requestId}",
+    "/service/users/sessions/{sessionId}/case-handover/{requestId}"
+  })
+  public ResponseEntity<CaseHandoverStatus> getRequestStatus(
+      @PathVariable Long sessionId, @PathVariable Long requestId) {
+    return ResponseEntity.ok(caseHandoverService.getRequestStatus(sessionId, requestId));
+  }
+
   @GetMapping({"/users/case-handover/candidates", "/service/users/case-handover/candidates"})
   public ResponseEntity<ConsultantSessionListResponseDTO> searchCandidates(
       @RequestParam(name = "query", defaultValue = "") String query,
@@ -83,8 +93,42 @@ public class CaseHandoverController {
       @PathVariable Long sessionId, @Valid @RequestBody CaseHandoverRequestDTO request) {
     CaseHandoverStatus status =
         caseHandoverService.requestAccess(
-            sessionId, request.getReasonCode(), request.getExplanation());
+            sessionId,
+            request.getReasonCode(),
+            request.getExplanation(),
+            request.getExpectedOwnershipRevision(),
+            request.getOperationId());
     return ResponseEntity.status(HttpStatus.CREATED).body(status);
+  }
+
+  @PostMapping({
+    "/users/sessions/{sessionId}/case-handover/offers",
+    "/service/users/sessions/{sessionId}/case-handover/offers"
+  })
+  public ResponseEntity<CaseHandoverStatus> createOffer(
+      @PathVariable Long sessionId, @Valid @RequestBody CaseHandoverOfferDTO offer) {
+    return ResponseEntity.status(HttpStatus.CREATED)
+        .body(
+            caseHandoverService.createOffer(
+                sessionId,
+                offer.getTargetConsultantId(),
+                offer.getReasonCode(),
+                offer.getExplanation(),
+                offer.getExpectedOwnershipRevision(),
+                offer.getOperationId()));
+  }
+
+  @PostMapping({
+    "/users/sessions/{sessionId}/case-handover/{requestId}/recipient-decision",
+    "/service/users/sessions/{sessionId}/case-handover/{requestId}/recipient-decision"
+  })
+  public ResponseEntity<CaseHandoverStatus> decideRecipientOffer(
+      @PathVariable Long sessionId,
+      @PathVariable Long requestId,
+      @Valid @RequestBody RecipientDecisionDTO decision) {
+    return ResponseEntity.ok(
+        caseHandoverService.resolveRecipientDecision(
+            sessionId, requestId, Boolean.TRUE.equals(decision.getApproved())));
   }
 
   @PostMapping({
@@ -104,18 +148,26 @@ public class CaseHandoverController {
   public ResponseEntity<List<CaseHandoverBatchResultDTO>> requestBatchAccess(
       @Valid @RequestBody CaseHandoverBatchRequestDTO request) {
     List<CaseHandoverBatchResultDTO> results = new ArrayList<>();
-    request.getSessionIds().stream()
-        .distinct()
+    request.getOperations().stream()
         .forEach(
-            sessionId -> {
+            operation -> {
               try {
                 results.add(
                     CaseHandoverBatchResultDTO.success(
-                        sessionId,
+                        operation.getSessionId(),
+                        operation.getOperationId(),
                         caseHandoverService.requestAccess(
-                            sessionId, request.getReasonCode(), request.getExplanation())));
+                            operation.getSessionId(),
+                            request.getReasonCode(),
+                            request.getExplanation(),
+                            operation.getExpectedOwnershipRevision(),
+                            operation.getOperationId())));
               } catch (RuntimeException exception) {
-                results.add(CaseHandoverBatchResultDTO.failure(sessionId, exception.getMessage()));
+                results.add(
+                    CaseHandoverBatchResultDTO.failure(
+                        operation.getSessionId(),
+                        operation.getOperationId(),
+                        exception.getMessage()));
               }
             });
     return ResponseEntity.status(HttpStatus.CREATED).body(results);
@@ -135,6 +187,12 @@ public class CaseHandoverController {
     @NotBlank private String reasonCode;
     @NotBlank private String explanation;
 
+    @NotNull
+    @Min(0)
+    private Long expectedOwnershipRevision;
+
+    @NotNull private UUID operationId;
+
     public String getReasonCode() {
       return reasonCode;
     }
@@ -150,17 +208,149 @@ public class CaseHandoverController {
     public void setExplanation(String explanation) {
       this.explanation = explanation;
     }
-  }
 
-  public static class CaseHandoverBatchRequestDTO extends CaseHandoverRequestDTO {
-    @NotEmpty private List<Long> sessionIds;
-
-    public List<Long> getSessionIds() {
-      return sessionIds;
+    public Long getExpectedOwnershipRevision() {
+      return expectedOwnershipRevision;
     }
 
-    public void setSessionIds(List<Long> sessionIds) {
-      this.sessionIds = sessionIds;
+    public void setExpectedOwnershipRevision(Long expectedOwnershipRevision) {
+      this.expectedOwnershipRevision = expectedOwnershipRevision;
+    }
+
+    public UUID getOperationId() {
+      return operationId;
+    }
+
+    public void setOperationId(UUID operationId) {
+      this.operationId = operationId;
+    }
+  }
+
+  public static class CaseHandoverOfferDTO {
+    @NotBlank private String targetConsultantId;
+    @NotBlank private String reasonCode;
+    private String explanation;
+
+    @NotNull
+    @Min(0)
+    private Long expectedOwnershipRevision;
+
+    @NotNull private UUID operationId;
+
+    public String getTargetConsultantId() {
+      return targetConsultantId;
+    }
+
+    public void setTargetConsultantId(String targetConsultantId) {
+      this.targetConsultantId = targetConsultantId;
+    }
+
+    public String getReasonCode() {
+      return reasonCode;
+    }
+
+    public void setReasonCode(String reasonCode) {
+      this.reasonCode = reasonCode;
+    }
+
+    public String getExplanation() {
+      return explanation;
+    }
+
+    public void setExplanation(String explanation) {
+      this.explanation = explanation;
+    }
+
+    public Long getExpectedOwnershipRevision() {
+      return expectedOwnershipRevision;
+    }
+
+    public void setExpectedOwnershipRevision(Long expectedOwnershipRevision) {
+      this.expectedOwnershipRevision = expectedOwnershipRevision;
+    }
+
+    public UUID getOperationId() {
+      return operationId;
+    }
+
+    public void setOperationId(UUID operationId) {
+      this.operationId = operationId;
+    }
+  }
+
+  public static class CaseHandoverBatchRequestDTO {
+    @NotBlank private String reasonCode;
+    @NotBlank private String explanation;
+    @NotEmpty @Valid private List<@NotNull CaseHandoverBatchOperationDTO> operations;
+
+    public String getReasonCode() {
+      return reasonCode;
+    }
+
+    public void setReasonCode(String reasonCode) {
+      this.reasonCode = reasonCode;
+    }
+
+    public String getExplanation() {
+      return explanation;
+    }
+
+    public void setExplanation(String explanation) {
+      this.explanation = explanation;
+    }
+
+    public List<CaseHandoverBatchOperationDTO> getOperations() {
+      return operations;
+    }
+
+    public void setOperations(List<CaseHandoverBatchOperationDTO> operations) {
+      this.operations = operations;
+    }
+  }
+
+  public static class CaseHandoverBatchOperationDTO {
+    @NotNull private Long sessionId;
+
+    @NotNull
+    @Min(0)
+    private Long expectedOwnershipRevision;
+
+    @NotNull private UUID operationId;
+
+    public Long getSessionId() {
+      return sessionId;
+    }
+
+    public void setSessionId(Long sessionId) {
+      this.sessionId = sessionId;
+    }
+
+    public Long getExpectedOwnershipRevision() {
+      return expectedOwnershipRevision;
+    }
+
+    public void setExpectedOwnershipRevision(Long expectedOwnershipRevision) {
+      this.expectedOwnershipRevision = expectedOwnershipRevision;
+    }
+
+    public UUID getOperationId() {
+      return operationId;
+    }
+
+    public void setOperationId(UUID operationId) {
+      this.operationId = operationId;
+    }
+  }
+
+  public static class RecipientDecisionDTO {
+    @NotNull private Boolean approved;
+
+    public Boolean getApproved() {
+      return approved;
+    }
+
+    public void setApproved(Boolean approved) {
+      this.approved = approved;
     }
   }
 
@@ -178,24 +368,32 @@ public class CaseHandoverController {
 
   public static class CaseHandoverBatchResultDTO {
     public final Long sessionId;
+    public final UUID operationId;
     public final boolean success;
     public final CaseHandoverStatus status;
     public final String error;
 
     private CaseHandoverBatchResultDTO(
-        Long sessionId, boolean success, CaseHandoverStatus status, String error) {
+        Long sessionId,
+        UUID operationId,
+        boolean success,
+        CaseHandoverStatus status,
+        String error) {
       this.sessionId = sessionId;
+      this.operationId = operationId;
       this.success = success;
       this.status = status;
       this.error = error;
     }
 
-    public static CaseHandoverBatchResultDTO success(Long sessionId, CaseHandoverStatus status) {
-      return new CaseHandoverBatchResultDTO(sessionId, true, status, null);
+    public static CaseHandoverBatchResultDTO success(
+        Long sessionId, UUID operationId, CaseHandoverStatus status) {
+      return new CaseHandoverBatchResultDTO(sessionId, operationId, true, status, null);
     }
 
-    public static CaseHandoverBatchResultDTO failure(Long sessionId, String error) {
-      return new CaseHandoverBatchResultDTO(sessionId, false, null, error);
+    public static CaseHandoverBatchResultDTO failure(
+        Long sessionId, UUID operationId, String error) {
+      return new CaseHandoverBatchResultDTO(sessionId, operationId, false, null, error);
     }
   }
 

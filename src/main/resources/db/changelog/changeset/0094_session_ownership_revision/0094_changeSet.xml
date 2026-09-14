@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="0094-session-ownership-revision" author="frank">
+    <preConditions onFail="HALT">
+      <tableExists tableName="session"/>
+      <not>
+        <columnExists tableName="session" columnName="ownership_revision"/>
+      </not>
+      <not>
+        <columnExists tableName="session" columnName="row_version"/>
+      </not>
+    </preConditions>
+    <sqlFile
+      path="db/changelog/changeset/0094_session_ownership_revision/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true"
+      endDelimiter=";" encoding="UTF-8"/>
+    <rollback>
+      <sqlFile
+        path="db/changelog/changeset/0094_session_ownership_revision/rollback.sql"
+        relativeToChangelogFile="false" splitStatements="true" stripComments="true"
+        endDelimiter=";" encoding="UTF-8"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

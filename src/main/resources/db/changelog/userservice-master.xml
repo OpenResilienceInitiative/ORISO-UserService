@@ -173,6 +173,10 @@
     file="db/changelog/changeset/0092_id_reservation_release_task/0092_changeSet.xml" />
   <include
     file="db/changelog/changeset/0093_team_agency_session_modality/0093_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0094_session_ownership_revision/0094_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0095_case_handover_period_operations/0095_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->

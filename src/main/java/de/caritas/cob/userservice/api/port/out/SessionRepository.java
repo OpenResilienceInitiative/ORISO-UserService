@@ -48,6 +48,13 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    */
   List<Session> findByConsultantAndStatusIn(Consultant consultant, List<SessionStatus> statuses);
 
+  @Query(
+      "SELECT session.id FROM Session session "
+          + "WHERE session.consultant = :consultant AND session.status IN :statuses "
+          + "ORDER BY session.id")
+  List<Long> findIdsByConsultantAndStatusInOrderById(
+      @Param("consultant") Consultant consultant, @Param("statuses") List<SessionStatus> statuses);
+
   /**
    * Find a {@link Session} list by a consultant and a session status ordered by update date desc.
    *
