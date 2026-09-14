@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.conversation.provider;
 
 import static de.caritas.cob.userservice.api.conversation.model.ConversationListType.ANONYMOUS_ENQUIRY;
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.model.Session.RegistrationType.ANONYMOUS;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTING_TYPE_ID_OFFENDER;
 import static java.util.Collections.singletonList;
@@ -15,6 +16,7 @@ import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import com.google.api.client.util.Lists;
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
@@ -133,12 +135,61 @@ class AnonymousEnquiryConversationListProviderIT {
     }
   }
 
+  /**
+   * The counsellor's side of ORISO-Frontend#1404.
+   *
+   * <p>A live-chat enquiry has no goodbye: closing the tab leaves it NEW forever, so the queue
+   * decides who is still there by the last sign of life instead. What the asker sees as "people
+   * ahead" and what the counsellor sees as cards have to agree about that, or one guest who
+   * reloaded a few times fills the counsellor's queue with copies of themselves.
+   *
+   * <p>Fixtures are written in UTC because that is what the application writes ({@code nowInUtc}).
+   * A cutoff taken from the server's local clock is hours away from them on a non-UTC host, which
+   * at a five-minute window empties the queue entirely — this test says so.
+   */
+  @Test
+  void buildConversations_Should_onlyShowGuestsSeenWithinTheConfiguredWindow() {
+    saveWaitingSession(nowInUtc().minusMinutes(60));
+    saveWaitingSession(nowInUtc().minusMinutes(1));
+    PageableListRequest request = PageableListRequest.builder().count(10).offset(0).build();
+
+    ConsultantSessionListResponseDTO responseDTO =
+        this.anonymousEnquiryConversationListProvider.buildConversations(request);
+
+    assertThat(responseDTO.getTotal(), is(1));
+    assertThat(responseDTO.getSessions(), hasSize(1));
+  }
+
   @Test
   void providedType_Should_return_anonymousEnquiry() {
     ConversationListType conversationListType =
         this.anonymousEnquiryConversationListProvider.providedType();
 
     assertThat(conversationListType, is(ANONYMOUS_ENQUIRY));
+  }
+
+  /** One waiting live-chat enquiry whose last sign of life was at {@code lastSeen}. */
+  private void saveWaitingSession(LocalDateTime lastSeen) {
+    User user = this.userRepository.findAll().iterator().next();
+    user.setDataPrivacyConfirmation(nowInUtc());
+    this.userRepository.save(user);
+
+    var session = new Session();
+    session.setUser(user);
+    session.setRegistrationType(ANONYMOUS);
+    session.setConsultant(null);
+    session.setPostcode("12345");
+    session.setLanguageCode(LanguageCode.de);
+    session.setConsultingTypeId(CONSULTING_TYPE_ID_OFFENDER);
+    session.setStatus(SessionStatus.NEW);
+    session.setMainTopicId(11L);
+    session.setSessionTopics(Lists.newArrayList());
+    session.setIsConsultantDirectlySet(false);
+    session.setTeamSession(false);
+    session.setCreateDate(lastSeen);
+    session.setEnquiryMessageDate(lastSeen);
+    session.setUpdateDate(lastSeen);
+    this.sessionRepository.save(session);
   }
 
   private void saveAnonymousSessions(int amount) {
