@@ -1984,7 +1984,7 @@ public class CaseHandoverService {
         return;
       }
       if (raw instanceof Map<?, ?> policy) {
-Object value = policy.get("value");
+        Object value = policy.get("value");
         Object mode = policy.get("mode");
         if (value == null || mode == null) {
           throw new BadRequestException("Handover client consent requires value and mode");
