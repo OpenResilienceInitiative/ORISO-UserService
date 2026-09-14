@@ -6,10 +6,13 @@ import de.caritas.cob.userservice.api.helper.MatrixIds;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import java.util.List;
+import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -63,6 +66,7 @@ public class AgencyLateJoinerMembershipService {
   private final @NonNull AgencyMatrixCredentialClient matrixCredentialClient;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
+  private final @NonNull TeamDiscussionRepository teamDiscussionRepository;
 
   /**
    * Joins a counsellor who was just assigned to an agency into the Matrix rooms of that agency's
@@ -109,29 +113,39 @@ public class AgencyLateJoinerMembershipService {
   }
 
   /**
-   * Revokes the membership a counsellor holds in the open enquiry rooms of an agency they were just
-   * detached from. Without this the counsellor keeps syncing enquiries of an agency they no longer
-   * belong to — the exact stale access the at-creation fan-out would otherwise create.
+   * Revokes the membership a counsellor holds in the open enquiry and joined team-discussion rooms
+   * of an agency they were just detached from. Without this the counsellor keeps syncing rooms of
+   * an agency they no longer belong to — the exact stale access the at-creation fan-out would
+   * otherwise create.
    *
    * <p>A counsellor without a Matrix account never joined anything, so there is nothing to revoke
    * and no account is provisioned here.
    *
-   * <p>The scope is the same open enquiries the join side covers, and that symmetry is enforced by
-   * Matrix rather than chosen for tidiness: {@code AssignEnquiryFacade} removes the agency service
-   * account from the room the moment an enquiry is accepted, so its token can no longer kick anyone
-   * out of an accepted case. Rooms of accepted cases therefore need the assigned counsellor's own
-   * token and are handled by the case-handover/team-session paths, not here.
+   * <p>Main-room scope is the same open enquiries the join side covers. In addition, all open
+   * team-discussion rooms that record this counsellor as a participant are revoked. Accepted main
+   * rooms remain outside this path: {@code AssignEnquiryFacade} removes the agency service account
+   * when an enquiry is accepted, so its token can no longer kick anyone out of an accepted case.
+   * Those rooms need the assigned counsellor's own token and are handled by the
+   * case-handover/team-session paths.
    *
    * @param consultant the detached counsellor
    * @param agencyId the agency they were detached from
-   * @return number of enquiry rooms the counsellor was removed from
+   * @return number of main enquiry and team-discussion rooms the counsellor was removed from
    */
-  public int removeConsultantFromOpenEnquiryRooms(Consultant consultant, Long agencyId) {
+  public int removeConsultantFromAgencyRooms(Consultant consultant, Long agencyId) {
     if (consultant == null || isBlank(consultant.getMatrixUserId())) {
       return 0;
     }
 
-    var roomIds = openEnquiryRoomIds(consultant, agencyId);
+    var roomIds =
+        Stream.concat(
+                openEnquiryRoomIds(consultant, agencyId).stream(),
+                teamDiscussionRepository
+                    .findRoomIdsForParticipantInAgency(
+                        consultant.getId(), agencyId, TeamDiscussion.Status.OPEN)
+                    .stream())
+            .distinct()
+            .toList();
     if (roomIds.isEmpty()) {
       return 0;
     }
@@ -159,7 +173,7 @@ public class AgencyLateJoinerMembershipService {
     }
 
     log.info(
-        "Removed consultant {} from {} of {} open enquiry rooms of agency {}",
+        "Removed consultant {} from {} of {} open enquiry and team rooms of agency {}",
         consultant.getId(),
         removed,
         roomIds.size(),

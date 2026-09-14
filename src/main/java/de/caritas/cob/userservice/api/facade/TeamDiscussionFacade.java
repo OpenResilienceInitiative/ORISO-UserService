@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentials
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter;
+import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionRoomCleanupService;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.UUID;
@@ -56,6 +57,7 @@ public class TeamDiscussionFacade {
   private final @NonNull TeamDiscussionFeatureGate featureGate;
   private final @NonNull TeamDiscussionCreationWriter creationWriter;
   private final @NonNull TeamDiscussionParticipantWriter participantWriter;
+  private final @NonNull TeamDiscussionRoomCleanupService roomCleanupService;
 
   /** Read model returned to the controller. */
   public record TeamDiscussionView(
@@ -101,6 +103,7 @@ public class TeamDiscussionFacade {
         // No caller has joined our uncommitted room, so it cannot contain team messages.
         var outcome = matrixSynapseService.purgeRoomOrConfirmGone(roomId);
         if (outcome == MatrixSynapseService.RoomPurgeOutcome.FAILED) {
+          roomCleanupService.recordFailedCleanup(sessionId, roomId);
           log.error(
               "Unused team discussion room {} for session {} needs cleanup", roomId, sessionId);
           throw new ResponseStatusException(

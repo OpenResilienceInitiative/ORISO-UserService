@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentials
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter;
+import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionRoomCleanupService;
 import java.util.Optional;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -125,7 +126,8 @@ class TeamDiscussionConcurrencyIT {
             credentials,
             gate,
             writer,
-            participantWriter);
+            participantWriter,
+            mock(TeamDiscussionRoomCleanupService.class));
     var alice = controller(facade, "alice");
     var bob = controller(facade, samePerson ? "alice" : "bob");
     try (var executor = Executors.newFixedThreadPool(2)) {

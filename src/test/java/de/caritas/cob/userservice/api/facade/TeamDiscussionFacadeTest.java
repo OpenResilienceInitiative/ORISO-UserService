@@ -42,6 +42,7 @@ import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentials
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionCreationWriter;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionFeatureGate;
 import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter;
+import de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionRoomCleanupService;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -87,6 +88,7 @@ class TeamDiscussionFacadeTest {
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private TeamDiscussionFeatureGate featureGate;
+  @Mock private TeamDiscussionRoomCleanupService roomCleanupService;
   @Mock private AuthenticatedUser authenticatedUser;
 
   private Session session;
@@ -104,7 +106,8 @@ class TeamDiscussionFacadeTest {
             matrixCredentialClient,
             featureGate,
             new TeamDiscussionCreationWriter(teamDiscussionRepository),
-            new TeamDiscussionParticipantWriter(participantRepository));
+            new TeamDiscussionParticipantWriter(participantRepository),
+            roomCleanupService);
     session = new Session();
     session.setId(SESSION_ID);
     session.setAgencyId(AGENCY_ID);
@@ -299,6 +302,7 @@ class TeamDiscussionFacadeTest {
             ex ->
                 assertThat(((ResponseStatusException) ex).getStatusCode())
                     .isEqualTo(HttpStatus.BAD_GATEWAY));
+    verify(roomCleanupService).recordFailedCleanup(SESSION_ID, ROOM_ID);
     assertThat(controller.get(SESSION_ID).getBody().matrixRoomId())
         .isEqualTo("!colleague-room:oriso");
   }

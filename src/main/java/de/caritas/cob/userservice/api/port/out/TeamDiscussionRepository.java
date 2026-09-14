@@ -13,6 +13,17 @@ public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, 
 
   Optional<TeamDiscussion> findByMatrixRoomId(String matrixRoomId);
 
+  /** Open team rooms this consultant actually joined, restricted to one agency. */
+  @Query(
+      "select distinct td.matrixRoomId from TeamDiscussion td, Session s,"
+          + " TeamDiscussionParticipant p where td.sessionId = s.id"
+          + " and p.teamDiscussionId = td.id and p.consultantId = :consultantId"
+          + " and s.agencyId = :agencyId and td.status = :status")
+  List<String> findRoomIdsForParticipantInAgency(
+      @org.springframework.data.repository.query.Param("consultantId") String consultantId,
+      @org.springframework.data.repository.query.Param("agencyId") Long agencyId,
+      @org.springframework.data.repository.query.Param("status") TeamDiscussion.Status status);
+
   /**
    * Discussions whose session no longer exists (#1118). The schema has no foreign key from {@code
    * team_discussion} to {@code session}, so nothing else reveals these rows.
