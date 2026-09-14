@@ -257,6 +257,74 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void updateReasonPolicies_appliesTypedConsentValueAndModeFromAdminPayload() {
+    when(caseHandoverPolicyCacheService.updateEffective(eq(7L), any()))
+        .thenAnswer(invocation -> invocation.getArgument(1));
+    TenantContext.setCurrentTenant(7L);
+    try {
+      caseHandoverService.updateReasonPolicies(
+          List.of(
+              CaseHandoverService.CaseHandoverReason.builder()
+                  .code("COUNSELLOR_ASKED_FOR_ADVICE")
+                  .label("Rat benötigt")
+                  .enabled(true)
+                  .accessAllowed(true)
+                  .clientConsent(CaseHandoverConsentMode.OPT_OUT)
+                  .clientConsentMode("SUGGESTED")
+                  .clientConsentRequired(false)
+                  .maxAccessDurationMinutes(180)
+                  .build()));
+
+      ArgumentCaptor<
+              de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                  .CaseHandoverPolicies>
+          written =
+              ArgumentCaptor.forClass(
+                  de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                      .CaseHandoverPolicies.class);
+      verify(caseHandoverPolicyCacheService).updateEffective(eq(7L), written.capture());
+      var advice = written.getValue().getReasons().get("COUNSELLOR_ASKED_FOR_ADVICE");
+      assertEquals(
+          de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverConsentValue
+              .OPT_OUT,
+          advice.getClientConsent().getValue());
+      assertEquals(
+          de.caritas.cob.userservice.tenantadminservice.generated.web.model.PermissionPolicyMode
+              .SUGGESTED,
+          advice.getClientConsent().getMode());
+      assertEquals(
+          de.caritas.cob.userservice.tenantadminservice.generated.web.model.PermissionPolicyMode
+              .SUGGESTED,
+          advice.getClientConsentRequired().getMode());
+      assertEquals(Boolean.FALSE, advice.getClientConsentRequired().getValue());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void updateReasonPolicies_rejectsUnknownPolicyMode() {
+    TenantContext.setCurrentTenant(7L);
+    try {
+      assertThrows(
+          BadRequestException.class,
+          () ->
+              caseHandoverService.updateReasonPolicies(
+                  List.of(
+                      CaseHandoverService.CaseHandoverReason.builder()
+                          .code("COUNSELLOR_ASKED_FOR_ADVICE")
+                          .label("Rat benötigt")
+                          .enabled(true)
+                          .accessAllowed(true)
+                          .clientConsent(CaseHandoverConsentMode.OPT_IN)
+                          .clientConsentMode("LOCKED")
+                          .build())));
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
   void listReasons_doesNotHideInvalidTenantPolicyBehindTheLegacyFallback() {
     when(caseHandoverPolicyCacheService.getEffective(7L))
         .thenReturn(tenantPolicies("Rat benötigt", 10));

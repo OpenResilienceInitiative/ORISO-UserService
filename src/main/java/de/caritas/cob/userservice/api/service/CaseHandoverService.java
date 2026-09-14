@@ -458,6 +458,11 @@ public class CaseHandoverService {
     consentPolicy.setValue(
         de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverConsentValue
             .valueOf(consent.name()));
+    if (requested.getClientConsentMode() != null) {
+      var mode = parsePermissionPolicyMode(requested.getClientConsentMode());
+      consentPolicy.setMode(mode);
+      policy.getClientConsentRequired().setMode(mode);
+    }
     policy.getClientConsentRequired().setValue(consent == CaseHandoverConsentMode.OPT_IN);
     if (requested.getApprovalRoles() != null) {
       validateSupportedApprovalRoles(requested.getApprovalRoles());
@@ -475,6 +480,17 @@ public class CaseHandoverService {
           .getMaxAccessDurationMinutes()
           .setValue(
               validateMaxAccessDuration(ADVICE_NEEDED, requested.getMaxAccessDurationMinutes()));
+    }
+  }
+
+  private static de.caritas.cob.userservice.tenantadminservice.generated.web.model
+          .PermissionPolicyMode
+      parsePermissionPolicyMode(String mode) {
+    try {
+      return de.caritas.cob.userservice.tenantadminservice.generated.web.model.PermissionPolicyMode
+          .valueOf(mode.trim().toUpperCase(Locale.ROOT));
+    } catch (IllegalArgumentException exception) {
+      throw new BadRequestException("Unsupported handover policy mode: " + mode);
     }
   }
 
@@ -1080,10 +1096,15 @@ public class CaseHandoverService {
         ADVICE_NEEDED.equals(code) && policy.getMaxAccessDurationMinutes() != null
             ? validateMaxAccessDuration(code, policy.getMaxAccessDurationMinutes().getValue())
             : null;
+    String clientConsentMode =
+        policy.getClientConsent() != null && policy.getClientConsent().getMode() != null
+            ? policy.getClientConsent().getMode().getValue()
+            : null;
     return CaseHandoverReason.builder()
         .code(code)
         .label(localizedValue(labels, language, code))
         .clientConsent(clientConsent)
+        .clientConsentMode(clientConsentMode)
         .clientConsentRequired(clientConsent == CaseHandoverConsentMode.OPT_IN)
         .accessAllowed(booleanValue(policy.getAccessAllowed(), false))
         .enabled(booleanValue(policy.getEnabled(), false))
@@ -1928,7 +1949,21 @@ public class CaseHandoverService {
   public static class CaseHandoverReason {
     private String code;
     private String label;
+
+    /**
+     * Wire-compatible with both consumers: the Frontend reads and writes the bare {@code
+     * CaseHandoverConsentMode} string, the Admin writes the typed TenantService policy object
+     * {@code {"value": "OPT_IN", "mode": "SUGGESTED"}} (Admin PR #772). Both shapes are accepted;
+     * the response keeps emitting the string so the Frontend contract is unchanged.
+     */
+    @lombok.Setter(AccessLevel.NONE)
     private CaseHandoverConsentMode clientConsent;
+
+    /**
+     * {@code ENFORCED} or {@code SUGGESTED}; only present when the caller sent the policy object.
+     */
+    private String clientConsentMode;
+
     private boolean clientConsentRequired;
     private Boolean accessAllowed;
     private boolean enabled;
@@ -1937,6 +1972,34 @@ public class CaseHandoverService {
     private Set<String> approvalRoles;
     private Map<String, String> clientNotificationTemplates;
     private Integer maxAccessDurationMinutes;
+
+    public void setClientConsent(CaseHandoverConsentMode clientConsent) {
+      this.clientConsent = clientConsent;
+    }
+
+    @com.fasterxml.jackson.annotation.JsonSetter("clientConsent")
+    public void setClientConsentFromJson(Object raw) {
+      if (raw == null) {
+        this.clientConsent = null;
+        return;
+      }
+      if (raw instanceof Map<?, ?> policy) {
+        Object value = policy.get("value");
+        this.clientConsent = value == null ? null : parseConsentMode(value.toString());
+        Object mode = policy.get("mode");
+        this.clientConsentMode = mode == null ? null : mode.toString();
+        return;
+      }
+      this.clientConsent = parseConsentMode(raw.toString());
+    }
+
+    private static CaseHandoverConsentMode parseConsentMode(String value) {
+      try {
+        return CaseHandoverConsentMode.valueOf(value.trim().toUpperCase(Locale.ROOT));
+      } catch (IllegalArgumentException exception) {
+        throw new BadRequestException("Unsupported handover client consent: " + value);
+      }
+    }
   }
 
   @Data
