@@ -173,6 +173,18 @@
     file="db/changelog/changeset/0092_id_reservation_release_task/0092_changeSet.xml" />
   <include
     file="db/changelog/changeset/0093_team_agency_session_modality/0093_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0094_case_handover_co_access/0094_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0095_tenant_case_handover_policy_cache/0095_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0096_case_handover_consent_mode/0096_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0097_case_handover_matrix_membership/0097_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0098_case_handover_matrix_repair/0098_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0099_case_handover_matrix_repair_generation/0099_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
