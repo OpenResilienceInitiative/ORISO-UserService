@@ -174,6 +174,7 @@
   <include
     file="db/changelog/changeset/0093_team_agency_session_modality/0093_changeSet.xml" />
 
+  <include file="db/changelog/changeset/0091_matrix_call_binding/0091_changeSet.xml"/>
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
   <include
