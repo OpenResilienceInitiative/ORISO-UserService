@@ -141,6 +141,7 @@ class TeamDiscussionConcurrencyIT {
       assertThat(rooms.get(aliceRoom))
           .containsExactlyInAnyOrderElementsOf(
               samePerson ? Set.of("alice-token") : Set.of("alice-token", "bob-token"));
+      assertThat(participants.count()).isEqualTo(samePerson ? 1 : 2);
     }
   }
 

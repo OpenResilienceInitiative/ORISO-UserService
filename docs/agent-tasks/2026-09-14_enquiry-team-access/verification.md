@@ -13,8 +13,8 @@ Database writes and conflict reads use separate transactions; external Matrix ca
 ## Evidence
 
 - Controller regressions failed before fixes for false-positive join success, concurrent creation, failed cleanup reporting and concurrent participant insertion.
-- Actual MockMvc controller/advice test observes HTTP 502 for a failed join, then 200 with the existing room on retry.
-- H2 integration exercises concurrent opening through controller responses and the external Matrix boundary. It checks one shared surviving room and the expected memberships.
+- Actual MockMvc controller/advice test registers both production advice classes and observes HTTP 502 for a failed join, then 200 with the existing room on retry.
+- H2 integration exercises concurrent opening through controller responses and the external Matrix boundary. It checks one shared surviving room, the expected Matrix memberships and one persisted participant for two same-person requests. The entity declares the same composite participant uniqueness as migration `0070`.
 - Cleanup-task tests cover durable recording, retained failed retries, successful deletion, Matrix exceptions and the guard against purging a persisted winner. The migration contract proves the append-only `0100` table is included by the master changelog.
 - Agency-membership tests cover revocation of a joined team-discussion room through the same after-commit removal path as the main enquiry rooms.
 - Final related suite: 93 tests passed, including H2 parallel opening by different people and by the same person. The final full unit suite passed all 4,470 tests; package and formatting gates passed as well.
@@ -22,7 +22,7 @@ Database writes and conflict reads use separate transactions; external Matrix ca
 Reproduce with Java 21:
 
 ```sh
-./mvnw -Dtest='TeamDiscussion*Test,TeamDiscussion*IT,AgencyLateJoinerMembershipServiceTest,AgencyMembershipSyncListenerTest' test
+./mvnw -Dtest='TeamDiscussion*Test,TeamDiscussion*IT,AgencyLateJoinerMembershipServiceTest,AgencyMembershipSyncListenerTest,TeamDiscussionCleanupMigrationContractTest' test
 ./mvnw -B package -Dskip.unit-tests=true
 ./mvnw -B spotless:check
 ```

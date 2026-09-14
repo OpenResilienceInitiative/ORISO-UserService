@@ -18,6 +18,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateRoomResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.controller.TeamDiscussionController;
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiDefaultResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
@@ -346,7 +347,9 @@ class TeamDiscussionFacadeTest {
 
     var http =
         MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .setControllerAdvice(
+                new ApiResponseEntityExceptionHandler(),
+                new ApiDefaultResponseEntityExceptionHandler())
             .build();
     http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
         .andExpect(status().isBadGateway());
@@ -373,7 +376,9 @@ class TeamDiscussionFacadeTest {
 
     var http =
         MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .setControllerAdvice(
+                new ApiResponseEntityExceptionHandler(),
+                new ApiDefaultResponseEntityExceptionHandler())
             .build();
 
     http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
@@ -398,7 +403,9 @@ class TeamDiscussionFacadeTest {
 
     var http =
         MockMvcBuilders.standaloneSetup(controller)
-            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .setControllerAdvice(
+                new ApiResponseEntityExceptionHandler(),
+                new ApiDefaultResponseEntityExceptionHandler())
             .build();
 
     http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
