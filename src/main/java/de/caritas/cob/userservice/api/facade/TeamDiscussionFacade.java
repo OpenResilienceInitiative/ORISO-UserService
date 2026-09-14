@@ -104,7 +104,7 @@ public class TeamDiscussionFacade {
           log.error(
               "Unused team discussion room {} for session {} needs cleanup", roomId, sessionId);
           throw new ResponseStatusException(
-              HttpStatus.BAD_GATEWAY, "Team discussion cleanup failed");
+              HttpStatus.BAD_GATEWAY, "Team discussion cleanup failed", conflict);
         }
       }
     }
@@ -272,7 +272,7 @@ public class TeamDiscussionFacade {
           discussion.getMatrixRoomId(),
           ex.getMessage());
       throw new ResponseStatusException(
-          HttpStatus.BAD_GATEWAY, "Could not join the team discussion");
+          HttpStatus.BAD_GATEWAY, "Could not join the team discussion", ex);
     }
     recordParticipant(discussion, consultant.getId());
   }
