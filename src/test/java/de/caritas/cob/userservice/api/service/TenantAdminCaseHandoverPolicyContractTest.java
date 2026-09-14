@@ -32,6 +32,7 @@ class TenantAdminCaseHandoverPolicyContractTest {
     assertThat(reasonRequired).doesNotContain("clientConsent");
     var legacyConsent = (Map<String, Object>) reasonProperties.get("clientConsentRequired");
     assertThat(legacyConsent).containsEntry("deprecated", true);
-    assertThat(legacyConsent).containsEntry("$ref", "#/components/schemas/BooleanPermissionPolicy");
+    assertThat((List<Map<String, Object>>) legacyConsent.get("allOf"))
+        .containsExactly(Map.of("$ref", "#/components/schemas/BooleanPermissionPolicy"));
   }
 }

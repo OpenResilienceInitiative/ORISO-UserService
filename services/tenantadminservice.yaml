@@ -940,7 +940,42 @@ paths:
                 $ref: '#/components/schemas/TenantPermissionPolicies'
         '403':
           description: Caller cannot access this tenant
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+      security:
+        - Bearer: []
+    put:
+      tags:
+        - tenant-controller
+      operationId: updateTenantPermissionPolicies
+      summary: Updates tenant permission-policy overrides
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/TenantPermissionPolicies'
+      responses:
+        '200':
+          description: Updated resolved tenant policies
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TenantPermissionPolicies'
+        '400':
+          description: Invalid policy override
+        '401':
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        '403':
+          description: Caller cannot update this tenant
+      security:
+        - Bearer: []
 components:
+  securitySchemes:
+    Bearer:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
   schemas:
     TranslationApiKeysDTO:
       type: object
@@ -1703,7 +1738,8 @@ components:
           $ref: '#/components/schemas/ConsentPermissionPolicy'
           description: Canonical typed consent policy. Optional while legacy clients migrate from clientConsentRequired.
         clientConsentRequired:
-          $ref: '#/components/schemas/BooleanPermissionPolicy'
+          allOf:
+            - $ref: '#/components/schemas/BooleanPermissionPolicy'
           deprecated: true
           description: Transitional mirror. OPT_IN maps to true; OPT_OUT and NONE map to false.
         approvalRoles:

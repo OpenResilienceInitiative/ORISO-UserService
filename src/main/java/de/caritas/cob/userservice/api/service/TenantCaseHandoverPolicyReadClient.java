@@ -24,6 +24,24 @@ public class TenantCaseHandoverPolicyReadClient {
   public TenantPermissionPolicies getTenantPermissionPolicies(Long tenantId) {
     if (tenantId == null || tenantId <= 0)
       throw new IllegalArgumentException("Invalid policy tenant");
+    return withTechnicalSession(
+        api -> api.getTenantPermissionPolicies(tenantId), "tenant policy read");
+  }
+
+  public TenantPermissionPolicies updateTenantPermissionPolicies(
+      Long tenantId, TenantPermissionPolicies policies) {
+    if (tenantId == null || tenantId <= 0)
+      throw new IllegalArgumentException("Invalid policy tenant");
+    return withTechnicalSession(
+        api -> api.updateTenantPermissionPolicies(tenantId, policies), "tenant policy update");
+  }
+
+  private TenantPermissionPolicies withTechnicalSession(
+      java.util.function.Function<
+              de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi,
+              TenantPermissionPolicies>
+          operation,
+      String operationName) {
     IdentityLogin login = null;
     try {
       var technical = identityClientConfig.getTechnicalUser();
@@ -36,10 +54,10 @@ public class TenantCaseHandoverPolicyReadClient {
           .forEach(
               (name, values) ->
                   values.forEach(value -> api.getApiClient().addDefaultHeader(name, value)));
-      return api.getTenantPermissionPolicies(tenantId);
+      return operation.apply(api);
     } catch (RuntimeException exception) {
       // Neither downstream response bodies nor identity credentials may enter fallback logs.
-      throw new IllegalStateException("Tenant policy read failed: " + failureSummary(exception));
+      throw new IllegalStateException(operationName + " failed: " + failureSummary(exception));
     } finally {
       if (login != null && login.refreshToken() != null && !login.refreshToken().isBlank()) {
         try {

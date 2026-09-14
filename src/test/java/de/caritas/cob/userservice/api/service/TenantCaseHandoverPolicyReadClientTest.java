@@ -13,6 +13,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantPermissionPolicies;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -79,6 +81,27 @@ class TenantCaseHandoverPolicyReadClientTest {
         .isFalse();
     verify(identity).logout("synthetic-refresh", "synthetic-token");
     verifyNoInteractions(requestUser);
+    server.verify();
+  }
+
+  @Test
+  void generatedClientWritesResolvedPoliciesWithTechnicalHeaders() {
+    server
+        .expect(requestTo("https://tenant.example.org/tenantadmin/40/permission-policies"))
+        .andExpect(method(HttpMethod.PUT))
+        .andExpect(header("Authorization", "Bearer synthetic-token"))
+        .andRespond(
+            withSuccess(
+                "{\"tenantId\":40,\"policies\":{},\"caseHandoverPolicies\":{\"reasons\":{}}}",
+                MediaType.APPLICATION_JSON));
+    var request =
+        new TenantPermissionPolicies()
+            .tenantId(40L)
+            .policies(java.util.Map.of())
+            .caseHandoverPolicies(new CaseHandoverPolicies().reasons(java.util.Map.of()));
+
+    assertThat(client.updateTenantPermissionPolicies(40L, request).getTenantId()).isEqualTo(40L);
+    verify(identity).logout("synthetic-refresh", "synthetic-token");
     server.verify();
   }
 

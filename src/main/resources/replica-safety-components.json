@@ -515,6 +515,17 @@
       "status": "bounded"
     },
     {
+      "id": "case-handover-matrix-repair",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverMatrixRepairScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-matrix",
+      "risk": "correctness",
+      "components": ["retryPendingRepairs"],
+      "decision": "A shared lease serializes retries; the durable task survives the rolled-back handover transaction, Matrix operations are idempotent, and successful reconciliation deletes the task.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "bounded"
+    },
+    {
       "id": "event-notification-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/notificationretention/scheduler/EventNotificationRetentionScheduler.java",
       "kind": "scheduler",

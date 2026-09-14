@@ -44,6 +44,7 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverConsentValue;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -88,6 +89,7 @@ class CaseHandoverServiceTest {
   @Mock private UserAccountService userAccountService;
   @Mock private EventNotificationService eventNotificationService;
   @Mock private MatrixSynapseService matrixSynapseService;
+  @Mock private CaseHandoverMatrixRepairService matrixRepairService;
   @Mock private MatrixSessionSystemMessageService matrixSessionSystemMessageService;
   @Mock private SessionSupervisorFacade sessionSupervisorFacade;
   @Mock private ScheduledTaskClaimService scheduledTaskClaimService;
@@ -144,6 +146,7 @@ class CaseHandoverServiceTest {
         .thenReturn(List.of());
     when(caseHandoverRequestRepository.save(any(CaseHandoverRequest.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(matrixSynapseService.getRoomMembers(anyString())).thenReturn(Optional.of(List.of()));
     when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
     when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
   }
@@ -191,6 +194,66 @@ class CaseHandoverServiceTest {
 
     assertEquals(CaseHandoverConsentMode.OPT_OUT, reason.getClientConsent());
     assertFalse(reason.isClientConsentRequired());
+  }
+
+  @Test
+  void listReasonsTreatsAnExplicitlyEmptyTenantPolicyAsNoAllowedReasons() {
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(
+            new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .CaseHandoverPolicies()
+                .reasons(Map.of()));
+
+    assertTrue(caseHandoverService.listReasons(7L).isEmpty());
+    verify(caseHandoverReasonPolicyRepository, never())
+        .findByEnabledTrueOrderByDisplayOrderAscCodeAsc();
+  }
+
+  @Test
+  void requestAccessUsesTenantContextForLegacySessionsWithoutTenantId() {
+    session.setTenantId(null);
+    TenantContext.setCurrentTenant(7L);
+    try {
+      caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Cover");
+    } finally {
+      TenantContext.clear();
+    }
+
+    verify(caseHandoverPolicyCacheService, atLeastOnce()).getEffective(7L);
+  }
+
+  @Test
+  void listReasonsRejectsApprovalRolesWithoutAnImplementedWorkflow() {
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(
+            tenantPolicies(
+                "Rat benötigt", 180, CaseHandoverConsentValue.OPT_IN, Set.of("SUPERVISOR")));
+
+    assertThrows(ServiceUnavailableException.class, () -> caseHandoverService.listReasons(7L));
+  }
+
+  @Test
+  void updateReasonPoliciesWritesThroughToTenantServiceOwnedPolicy() {
+    when(caseHandoverPolicyCacheService.updateEffective(eq(7L), any()))
+        .thenAnswer(invocation -> invocation.getArgument(1));
+    TenantContext.setCurrentTenant(7L);
+    try {
+      var updated =
+          caseHandoverService.updateReasonPolicies(
+              List.of(
+                  CaseHandoverService.CaseHandoverReason.builder()
+                      .code("COUNSELLOR_IS_ILL")
+                      .label("Ausfall aktualisiert")
+                      .enabled(true)
+                      .accessAllowed(true)
+                      .clientConsent(CaseHandoverConsentMode.NONE)
+                      .build()));
+
+      assertEquals("Ausfall aktualisiert", updated.get(3).getLabel());
+      verify(caseHandoverPolicyCacheService).updateEffective(eq(7L), any());
+    } finally {
+      TenantContext.clear();
+    }
   }
 
   @Test
@@ -302,6 +365,7 @@ class CaseHandoverServiceTest {
             .policyAuthority("tenant-service-resolved")
             .auditOutcome("ACCESS_GRANTED_PENDING_CLIENT_OPTOUT")
             .createdAt(LocalDateTime.of(2026, 8, 16, 10, 0))
+            .matrixMembershipAdded(true)
             .tenantId(7L)
             .build();
     when(caseHandoverRequestRepository.findByIdAndSessionId(103L, 123L))
@@ -313,6 +377,29 @@ class CaseHandoverServiceTest {
     assertNull(status.getReasonCode());
     assertNull(status.getReasonLabel());
     assertNull(status.getPolicyAuthority());
+  }
+
+  @Test
+  void resolveClientConsent_acceptsLegacyPendingStatusCreatedBeforeConsentModeMigration() {
+    var request =
+        CaseHandoverRequest.builder()
+            .id(104L)
+            .session(session)
+            .requesterConsultant(requester)
+            .previousConsultant(previous)
+            .reasonCode("COUNSELLOR_ASKED_FOR_ADVICE")
+            .status(CaseHandoverRequest.Status.PENDING)
+            .clientConsent(CaseHandoverConsentMode.OPT_IN)
+            .createdAt(LocalDateTime.of(2026, 8, 16, 10, 0))
+            .tenantId(7L)
+            .build();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(104L, 123L))
+        .thenReturn(Optional.of(request));
+
+    var status = caseHandoverService.resolveClientConsent(123L, 104L, false);
+
+    assertEquals("CLIENT_CONSENT_DECLINED", status.getStatus());
+    verify(caseHandoverRequestRepository).save(request);
   }
 
   @Test
@@ -333,6 +420,7 @@ class CaseHandoverServiceTest {
             .policyAuthority("tenant-service-resolved")
             .auditOutcome("ACCESS_GRANTED_PENDING_CLIENT_OPTOUT")
             .createdAt(LocalDateTime.of(2026, 8, 16, 10, 0))
+            .matrixMembershipAdded(true)
             .tenantId(7L)
             .build();
     when(caseHandoverRequestRepository.findByIdAndSessionId(101L, 123L))
@@ -671,6 +759,27 @@ class CaseHandoverServiceTest {
     verify(matrixSynapseService, never()).leaveRoom(anyString(), anyString());
   }
 
+  @Test
+  void requestAccess_failsWhenExistingMatrixMembershipCannotBeVerified() {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("requester-token");
+    when(matrixSynapseService.getRoomMembers("!room:matrix")).thenReturn(Optional.empty());
+
+    assertThrows(
+        ServiceUnavailableException.class,
+        () ->
+            caseHandoverService.requestAccess(
+                123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable."));
+
+    verify(matrixSynapseService, never()).joinRoom(anyString(), anyString());
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
   /**
    * The Matrix join happens inside the granting transaction. When that transaction rolls back after
    * the join, the membership must be compensated - otherwise the requester keeps reading chat
@@ -699,6 +808,10 @@ class CaseHandoverServiceTest {
       assertFalse(registered.isEmpty());
       verify(matrixSynapseService, never())
           .removeUserFromRoom(anyString(), anyString(), anyString());
+      verify(caseHandoverRequestRepository)
+          .save(
+              org.mockito.ArgumentMatchers.argThat(
+                  request -> Boolean.TRUE.equals(request.getMatrixMembershipAdded())));
 
       registered.forEach(
           synchronization ->
@@ -709,6 +822,37 @@ class CaseHandoverServiceTest {
 
     verify(matrixSynapseService)
         .removeUserFromRoom("!room:matrix", "@requester:matrix", "previous-token");
+  }
+
+  @Test
+  void requestAccess_queuesDurableRepairWhenRollbackRemovalFails() {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("requester-token");
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(List.of("@previous:matrix")));
+    when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
+    when(matrixSynapseService.removeUserFromRoom(
+            "!room:matrix", "@requester:matrix", "previous-token"))
+        .thenReturn(false);
+
+    TransactionSynchronizationManager.initSynchronization();
+    try {
+      caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Unavailable");
+      TransactionSynchronizationManager.getSynchronizations()
+          .forEach(
+              synchronization ->
+                  synchronization.afterCompletion(TransactionSynchronization.STATUS_ROLLED_BACK));
+    } finally {
+      TransactionSynchronizationManager.clearSynchronization();
+    }
+
+    verify(matrixRepairService)
+        .enqueueRemoval("!room:matrix", "@requester:matrix", "@previous:matrix", 123L, "requester");
   }
 
   /** A commit must never trigger the rollback compensation. */
@@ -927,6 +1071,7 @@ class CaseHandoverServiceTest {
   void expireCoAccess_persistsAuditStateUsingInjectedClock() {
     CaseHandoverRequest request = grantedAdviceRequest();
     request.setExpiresAt(LocalDateTime.of(2026, 8, 16, 10, 0));
+    request.setMatrixMembershipAdded(true);
     session.setMatrixRoomId("!room:matrix");
     requester.setMatrixUserId("@requester:matrix");
     previous.setMatrixUserId("@previous:matrix");
@@ -963,6 +1108,29 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void expireCoAccessKeepsStandingMembershipForLegacyAndPreProvisionedRequests() {
+    CaseHandoverRequest request = grantedAdviceRequest();
+    request.setMatrixMembershipAdded(null);
+    request.setExpiresAt(LocalDateTime.of(2026, 8, 16, 10, 0));
+    when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
+            CaseHandoverRequest.Status.GRANTED,
+            CaseHandoverRequest.AccessType.CO_ACCESS,
+            LocalDateTime.of(2026, 8, 16, 10, 0)))
+        .thenReturn(List.of(request));
+    when(caseHandoverRequestRepository.findByIdForUpdate(request.getId()))
+        .thenReturn(Optional.of(request));
+
+    assertEquals(1, caseHandoverService.expireCoAccess());
+
+    assertEquals(CaseHandoverRequest.Status.EXPIRED, request.getStatus());
+    verifyNoMatrixRemoval();
+  }
+
+  private void verifyNoMatrixRemoval() {
+    verify(matrixSynapseService, never()).removeUserFromRoom(anyString(), anyString(), anyString());
+  }
+
+  @Test
   void expireCoAccess_keepsTheLeaseGrantedWhenMatrixRemovalCannotBeConfirmed() {
     CaseHandoverRequest request = grantedAdviceRequest();
     session.setMatrixRoomId("!room:matrix");
@@ -982,6 +1150,24 @@ class CaseHandoverServiceTest {
 
     assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
     verify(caseHandoverRequestRepository, never()).save(request);
+  }
+
+  @Test
+  void expireCoAccess_doesNotRemoveWhenMembershipLookupIsUnknown() {
+    CaseHandoverRequest request = grantedAdviceRequest();
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    when(matrixSynapseService.getRoomMembers("!room:matrix")).thenReturn(Optional.empty());
+    when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
+            CaseHandoverRequest.Status.GRANTED,
+            CaseHandoverRequest.AccessType.CO_ACCESS,
+            LocalDateTime.of(2026, 8, 16, 10, 0)))
+        .thenReturn(List.of(request));
+
+    assertEquals(0, caseHandoverService.expireCoAccess());
+
+    assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
+    verify(matrixSynapseService, never()).removeUserFromRoom(anyString(), anyString(), anyString());
   }
 
   @Test
@@ -1653,6 +1839,7 @@ class CaseHandoverServiceTest {
         .auditOutcome("ACCESS_GRANTED")
         .createdAt(LocalDateTime.of(2026, 8, 16, 7, 0))
         .resolvedAt(LocalDateTime.of(2026, 8, 16, 7, 0))
+        .matrixMembershipAdded(true)
         .tenantId(7L)
         .build();
   }

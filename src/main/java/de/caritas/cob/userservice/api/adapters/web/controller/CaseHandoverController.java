@@ -23,6 +23,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -46,6 +47,15 @@ public class CaseHandoverController {
   })
   public ResponseEntity<List<CaseHandoverReason>> listReasonPolicies() {
     return ResponseEntity.ok(caseHandoverService.listReasonPolicies());
+  }
+
+  @PutMapping({
+    "/users/case-handover/reason-policies",
+    "/service/users/case-handover/reason-policies"
+  })
+  public ResponseEntity<List<CaseHandoverReason>> updateReasonPolicies(
+      @Valid @RequestBody List<CaseHandoverReason> policies) {
+    return ResponseEntity.ok(caseHandoverService.updateReasonPolicies(policies));
   }
 
   @GetMapping({

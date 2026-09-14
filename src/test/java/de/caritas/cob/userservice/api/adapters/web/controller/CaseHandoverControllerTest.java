@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
@@ -32,7 +31,6 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
-import org.springframework.http.MediaType;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
@@ -76,13 +74,17 @@ class CaseHandoverControllerTest {
   }
 
   @Test
-  void reasonPolicies_putIsNotExposedBecauseTenantServiceOwnsWrites() throws Exception {
-    mockMvc
-        .perform(
-            put("/service/users/case-handover/reason-policies")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("[]"))
-        .andExpect(status().isMethodNotAllowed());
+  void updateReasonPolicies_happyPath_returnsUpdatedPolicies() {
+    var input = List.of(CaseHandoverReason.builder().code("P2").label("Policy 2").build());
+    var output =
+        List.of(CaseHandoverReason.builder().code("P2").label("Policy 2").enabled(true).build());
+    when(caseHandoverService.updateReasonPolicies(input)).thenReturn(output);
+
+    var response = controller.updateReasonPolicies(input);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(output, response.getBody());
+    verify(caseHandoverService).updateReasonPolicies(input);
   }
 
   @Test

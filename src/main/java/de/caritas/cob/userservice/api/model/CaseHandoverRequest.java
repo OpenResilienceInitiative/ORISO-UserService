@@ -113,6 +113,10 @@ public class CaseHandoverRequest implements TenantAware {
   @Column(name = "expires_at")
   private LocalDateTime expiresAt;
 
+  /** True only when this handover, rather than department provisioning, added Matrix membership. */
+  @Column(name = "matrix_membership_added")
+  private Boolean matrixMembershipAdded;
+
   @Column(name = "tenant_id")
   private Long tenantId;
 

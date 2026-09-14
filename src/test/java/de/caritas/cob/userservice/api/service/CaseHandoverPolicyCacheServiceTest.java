@@ -161,7 +161,7 @@ class CaseHandoverPolicyCacheServiceTest {
         .thenThrow(new RestClientException("TenantService unavailable"));
 
     assertThatThrownBy(() -> service.refresh(42L))
-        .isInstanceOf(RestClientException.class)
+        .isInstanceOf(ServiceUnavailableException.class)
         .hasMessageContaining("unavailable");
   }
 
@@ -176,8 +176,8 @@ class CaseHandoverPolicyCacheServiceTest {
                 .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of())));
 
     assertThatThrownBy(() -> service.refresh(42L))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("matching");
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("unavailable");
     verify(repository, never()).save(any());
   }
 
@@ -243,7 +243,33 @@ class CaseHandoverPolicyCacheServiceTest {
   }
 
   @Test
-  void refresh_rethrowsTheUpstreamFailureWhenTheSnapshotItselfIsUnreadable() {
+  void updateEffectivePreservesUnrelatedTenantPoliciesAndStoresResolvedResponse() {
+    var generalPolicy =
+        new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                .BooleanPermissionPolicy(null)
+            .value(true)
+            .mode(
+                de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .PermissionPolicyMode.ENFORCED);
+    var current =
+        new TenantPermissionPolicies()
+            .tenantId(42L)
+            .policies(Map.of("somePolicy", generalPolicy))
+            .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of()));
+    var requested = new CaseHandoverPolicies().reasons(Map.of());
+    when(tenantControllerApi.getTenantPermissionPolicies(42L)).thenReturn(current);
+    when(tenantControllerApi.updateTenantPermissionPolicies(42L, current)).thenReturn(current);
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+
+    assertThat(service.updateEffective(42L, requested).getReasons()).isEmpty();
+
+    assertThat(current.getPolicies()).containsKey("somePolicy");
+    assertThat(current.getCaseHandoverPolicies()).isSameAs(requested);
+    verify(repository).save(any(TenantCaseHandoverPolicyCache.class));
+  }
+
+  @Test
+  void refresh_returnsRetryableFailureWhenTheSnapshotItselfIsUnreadable() {
     var cache =
         TenantCaseHandoverPolicyCache.builder()
             .tenantId(42L)
@@ -254,11 +280,9 @@ class CaseHandoverPolicyCacheServiceTest {
     when(tenantControllerApi.getTenantPermissionPolicies(42L))
         .thenThrow(new RestClientException("TenantService unavailable"));
 
-    // The real cause must survive. Raising "Cached Case Handover policy is invalid" from inside
-    // the fallback would hide the outage and defeat the last-known-good contract.
     assertThatThrownBy(() -> service.refresh(42L))
-        .isInstanceOf(RestClientException.class)
-        .hasMessageContaining("unavailable");
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessage("Tenant Case Handover policy is unavailable");
   }
 
   @Test
@@ -277,17 +301,14 @@ class CaseHandoverPolicyCacheServiceTest {
     assertThat(service.getEffective(42L)).isSameAs(policies);
   }
 
-  /**
-   * Request reads keep their proxy transaction, while the scheduled sweep deliberately has no outer
-   * transaction so each tenant can run and roll back independently.
-   */
+  /** Provider calls stay outside proxy transactions; short database work uses REQUIRES_NEW. */
   @Test
   void entryPoints_carryTheTransactionAnnotationAtTheProxyBoundary() throws Exception {
     assertThat(
             CaseHandoverPolicyCacheService.class
                 .getMethod("getEffective", Long.class)
                 .isAnnotationPresent(Transactional.class))
-        .isTrue();
+        .isFalse();
     assertThat(
             CaseHandoverPolicyCacheService.class
                 .getDeclaredMethod("refreshKnownTenants")
@@ -320,7 +341,7 @@ class CaseHandoverPolicyCacheServiceTest {
     verify(tenantControllerApi).getTenantPermissionPolicies(42L);
     verify(repository).save(healthy);
     var definitions = ArgumentCaptor.forClass(TransactionDefinition.class);
-    verify(transactionManager, org.mockito.Mockito.times(2)).getTransaction(definitions.capture());
+    verify(transactionManager, org.mockito.Mockito.times(4)).getTransaction(definitions.capture());
     assertThat(definitions.getAllValues())
         .allMatch(
             definition ->

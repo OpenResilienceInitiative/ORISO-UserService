@@ -20,7 +20,11 @@ public interface CaseHandoverRequestRepository extends JpaRepository<CaseHandove
   List<CaseHandoverRequest> findBySessionIdAndStatusOrderByCreatedAtDesc(
       Long sessionId, CaseHandoverRequest.Status status);
 
-  Optional<CaseHandoverRequest> findByIdAndSessionId(Long id, Long sessionId);
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query(
+      "select request from CaseHandoverRequest request where request.id = :id and request.session.id = :sessionId")
+  Optional<CaseHandoverRequest> findByIdAndSessionId(
+      @Param("id") Long id, @Param("sessionId") Long sessionId);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("select request from CaseHandoverRequest request where request.id = :id")

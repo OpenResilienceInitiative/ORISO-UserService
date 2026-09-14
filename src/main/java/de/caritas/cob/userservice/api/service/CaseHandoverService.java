@@ -303,6 +303,7 @@ public class CaseHandoverService {
   private final @NonNull UserAccountService userAccountService;
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull MatrixSynapseService matrixSynapseService;
+  private final @NonNull CaseHandoverMatrixRepairService matrixRepairService;
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
@@ -344,7 +345,7 @@ public class CaseHandoverService {
         }
         throw exception;
       }
-      if (cached != null && cached.getReasons() != null && !cached.getReasons().isEmpty()) {
+      if (cached != null && cached.getReasons() != null) {
         return cached.getReasons().values().stream()
             .map(policy -> toReason(policy, language))
             .filter(reason -> includeDisabled || reason.isEnabled())
@@ -385,6 +386,95 @@ public class CaseHandoverService {
   @Transactional(readOnly = true)
   public List<CaseHandoverReason> listReasonPolicies() {
     return listReasons(TenantContext.getCurrentTenant(), "de", true, true);
+  }
+
+  /** Compatibility bridge until ORISO-Admin writes tenant-owned policy settings directly. */
+  public List<CaseHandoverReason> updateReasonPolicies(List<CaseHandoverReason> requestedReasons) {
+    if (requestedReasons == null || requestedReasons.isEmpty()) {
+      throw new BadRequestException("At least one handover reason policy is required");
+    }
+    Long tenantId = TenantContext.getCurrentTenant();
+    if (tenantId == null || tenantId <= 0) {
+      throw new BadRequestException("A tenant is required to update handover policies");
+    }
+
+    var current = caseHandoverPolicyCacheService.getEffective(tenantId);
+    Map<
+            String,
+            de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                .CaseHandoverReasonPolicy>
+        policies = new java.util.LinkedHashMap<>(current.getReasons());
+    for (CaseHandoverReason requested : requestedReasons) {
+      String code = normalizeReasonCode(requested.getCode());
+      var policy = policies.get(code);
+      if (policy == null) {
+        throw new BadRequestException("Unknown handover reason");
+      }
+      applyPolicyUpdate(policy, requested);
+    }
+
+    var effective =
+        caseHandoverPolicyCacheService.updateEffective(
+            tenantId,
+            new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .CaseHandoverPolicies()
+                .reasons(policies));
+    return effective.getReasons().values().stream()
+        .map(policy -> toReason(policy, "de"))
+        .sorted(
+            java.util.Comparator.comparing(
+                    CaseHandoverReason::getDisplayOrder,
+                    java.util.Comparator.nullsLast(Integer::compareTo))
+                .thenComparing(CaseHandoverReason::getCode))
+        .toList();
+  }
+
+  private void applyPolicyUpdate(
+      de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverReasonPolicy
+          policy,
+      CaseHandoverReason requested) {
+    if (requested.getLabel() != null && !requested.getLabel().isBlank()) {
+      var labels = new java.util.LinkedHashMap<>(valueOf(policy.getLabels()));
+      labels.put("de", requested.getLabel().trim());
+      policy.getLabels().setValue(labels);
+    }
+    policy.getEnabled().setValue(requested.isEnabled());
+    policy.getAccessAllowed().setValue(isAccessAllowed(requested));
+    CaseHandoverConsentMode consent =
+        requested.getClientConsent() != null
+            ? requested.getClientConsent()
+            : (requested.isClientConsentRequired()
+                ? CaseHandoverConsentMode.OPT_IN
+                : CaseHandoverConsentMode.NONE);
+    var consentPolicy = policy.getClientConsent();
+    if (consentPolicy == null) {
+      consentPolicy =
+          new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                  .ConsentPermissionPolicy(policy.getClientConsentRequired().getInherited())
+              .mode(policy.getClientConsentRequired().getMode());
+      policy.setClientConsent(consentPolicy);
+    }
+    consentPolicy.setValue(
+        de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverConsentValue
+            .valueOf(consent.name()));
+    policy.getClientConsentRequired().setValue(consent == CaseHandoverConsentMode.OPT_IN);
+    if (requested.getApprovalRoles() != null) {
+      validateSupportedApprovalRoles(requested.getApprovalRoles());
+      policy.getApprovalRoles().setValue(Set.copyOf(requested.getApprovalRoles()));
+    }
+    if (requested.getClientNotificationTemplates() != null) {
+      policy
+          .getClientNotificationTemplates()
+          .setValue(Map.copyOf(requested.getClientNotificationTemplates()));
+    }
+    if (ADVICE_NEEDED.equals(normalizeReasonCode(requested.getCode()))
+        && requested.getMaxAccessDurationMinutes() != null
+        && policy.getMaxAccessDurationMinutes() != null) {
+      policy
+          .getMaxAccessDurationMinutes()
+          .setValue(
+              validateMaxAccessDuration(ADVICE_NEEDED, requested.getMaxAccessDurationMinutes()));
+    }
   }
 
   @Transactional(readOnly = true)
@@ -522,21 +612,23 @@ public class CaseHandoverService {
             .tenantId(session.getTenantId())
             .build();
 
-    CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
-
+    CaseHandoverRequest saved;
     if (hasGrantedAccess(status)) {
-      ensureRequesterJoinedMatrixRoom(session, requester, session.getConsultant());
+      request.setMatrixMembershipAdded(
+          ensureRequesterJoinedMatrixRoom(session, requester, session.getConsultant()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
         session.setConsultant(requester);
         session.setUpdateDate(now);
         sessionRepository.save(session);
         attachStandingSupervisorAfterCommit(session.getId(), requester);
       }
+      saved = caseHandoverRequestRepository.save(request);
       notifyGranted(saved);
       if (status == Status.GRANTED_PENDING_CLIENT_OPTOUT) {
         notifyPendingConsent(saved);
       }
     } else {
+      saved = caseHandoverRequestRepository.save(request);
       notifyPendingConsent(saved);
     }
 
@@ -557,7 +649,10 @@ public class CaseHandoverService {
     }
 
     boolean optOutDecision = request.getStatus() == Status.GRANTED_PENDING_CLIENT_OPTOUT;
-    if (request.getStatus() != Status.PENDING_CLIENT_CONSENT && !optOutDecision) {
+    boolean optInDecision =
+        request.getStatus() == Status.PENDING_CLIENT_CONSENT
+            || request.getStatus() == Status.PENDING;
+    if (!optInDecision && !optOutDecision) {
       return toClientStatus(request);
     }
 
@@ -592,8 +687,9 @@ public class CaseHandoverService {
         request.setMaxAccessDurationMinutes(null);
         request.setExpiresAt(null);
       }
-      ensureRequesterJoinedMatrixRoom(
-          session, request.getRequesterConsultant(), request.getPreviousConsultant());
+      request.setMatrixMembershipAdded(
+          ensureRequesterJoinedMatrixRoom(
+              session, request.getRequesterConsultant(), request.getPreviousConsultant()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
         session.setConsultant(request.getRequesterConsultant());
         session.setUpdateDate(now);
@@ -609,6 +705,7 @@ public class CaseHandoverService {
       if (!removeCoAccessRequesterFromMatrixRoom(request)) {
         throw new InternalServerErrorException("Could not revoke declined Case Handover access");
       }
+      registerMatrixRemovalRollbackCompensation(request);
       request.setStatus(Status.CLIENT_CONSENT_DECLINED);
       request.setAuditOutcome(OUTCOME_CLIENT_CONSENT_DECLINED);
     } else if (optOutDecision) {
@@ -926,7 +1023,13 @@ public class CaseHandoverService {
   private CaseHandoverReason findReason(
       Session session, String reasonCode, boolean includeDisabled) {
     String normalized = reasonCode == null ? "" : reasonCode.trim().toUpperCase(Locale.ROOT);
-    Long tenantId = session == null ? TenantContext.getCurrentTenant() : session.getTenantId();
+    Long tenantId = session == null ? null : session.getTenantId();
+    if (tenantId == null || tenantId <= 0) {
+      tenantId = TenantContext.getCurrentTenant();
+    }
+    if (tenantId == null || tenantId <= 0) {
+      throw new ServiceUnavailableException("No tenant is available for Case Handover policy");
+    }
     String language = session == null ? "de" : resolveSessionLanguage(session);
     return listReasons(tenantId, language, includeDisabled, false).stream()
         .filter(reason -> reason.getCode().equals(normalized))
@@ -970,6 +1073,7 @@ public class CaseHandoverService {
         policy.getApprovalRoles() == null || policy.getApprovalRoles().getValue() == null
             ? Set.of()
             : Set.copyOf(policy.getApprovalRoles().getValue());
+    validateSupportedApprovalRoles(approvalRoles);
     CaseHandoverConsentMode clientConsent = clientConsent(policy, approvalRoles);
     Integer duration =
         ADVICE_NEEDED.equals(code) && policy.getMaxAccessDurationMinutes() != null
@@ -1008,6 +1112,15 @@ public class CaseHandoverService {
             || approvalRoles.contains("CLIENT")
         ? CaseHandoverConsentMode.OPT_IN
         : CaseHandoverConsentMode.NONE;
+  }
+
+  private void validateSupportedApprovalRoles(Set<String> approvalRoles) {
+    var unsupported =
+        approvalRoles.stream().filter(role -> !"CLIENT".equals(role)).sorted().toList();
+    if (!unsupported.isEmpty()) {
+      throw new ServiceUnavailableException(
+          "Tenant Case Handover policy requires unsupported approval roles");
+    }
   }
 
   private Map<String, String> valueOf(
@@ -1242,11 +1355,12 @@ public class CaseHandoverService {
 
   private CaseHandoverStatus toClientStatus(CaseHandoverRequest request) {
     AccessType accessType = effectiveAccessType(request);
+    boolean expired = isExpired(request);
     return CaseHandoverStatus.builder()
         .requestId(request.getId())
         .sessionId(request.getSession().getId())
-        .status(request.getStatus().name())
-        .canViewContent(request.getStatus() == Status.GRANTED)
+        .status(expired ? Status.EXPIRED.name() : request.getStatus().name())
+        .canViewContent(request.getStatus() == Status.GRANTED && !expired)
         .clientConsent(
             request.getClientConsent() != null
                 ? request.getClientConsent()
@@ -1379,8 +1493,13 @@ public class CaseHandoverService {
         return Optional.empty();
       }
       String language = resolveSessionLanguage(requestSession);
-      String template =
-          templates.containsKey(language) ? templates.get(language) : templates.get("de");
+      String template = templates.get(language);
+      if (template == null) {
+        template = templates.get("de");
+      }
+      if (template == null) {
+        template = templates.get("en");
+      }
       return Optional.ofNullable(template).filter(text -> !text.isBlank());
     } catch (RuntimeException exception) {
       log.warn(
@@ -1451,6 +1570,9 @@ public class CaseHandoverService {
   }
 
   private boolean removeCoAccessRequesterFromMatrixRoom(CaseHandoverRequest request) {
+    if (!Boolean.TRUE.equals(request.getMatrixMembershipAdded())) {
+      return true;
+    }
     try {
       Session accessSession = request.getSession();
       Consultant requester = request.getRequesterConsultant();
@@ -1463,7 +1585,10 @@ public class CaseHandoverService {
       String roomId = accessSession.getMatrixRoomId();
       String requesterId = requester.getMatrixUserId();
       var membersBefore = matrixSynapseService.getRoomMembers(roomId);
-      if (membersBefore.isPresent() && !membersBefore.get().contains(requesterId)) {
+      if (membersBefore.isEmpty()) {
+        return false;
+      }
+      if (!membersBefore.get().contains(requesterId)) {
         return true;
       }
       Consultant operator =
@@ -1487,11 +1612,55 @@ public class CaseHandoverService {
           .orElse(false);
     } catch (RuntimeException exception) {
       log.warn(
-          "Could not reconcile Matrix access for Case Handover request {}",
+          "Could not reconcile Matrix access for Case Handover request {} ({})",
           request.getId(),
-          exception);
+          exception.getClass().getSimpleName());
       return false;
     }
+  }
+
+  /** Restores a handover-created membership if declining consent later rolls the database back. */
+  private void registerMatrixRemovalRollbackCompensation(CaseHandoverRequest request) {
+    if (!Boolean.TRUE.equals(request.getMatrixMembershipAdded())
+        || !TransactionSynchronizationManager.isSynchronizationActive()) {
+      return;
+    }
+    Session session = request.getSession();
+    Consultant requester = request.getRequesterConsultant();
+    if (session == null
+        || requester == null
+        || isBlank(session.getMatrixRoomId())
+        || isBlank(requester.getMatrixUserId())) {
+      return;
+    }
+    String roomId = session.getMatrixRoomId();
+    String requesterId = requester.getMatrixUserId();
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCompletion(int status) {
+            if (status != TransactionSynchronization.STATUS_ROLLED_BACK) {
+              return;
+            }
+            try {
+              String token = matrixSynapseService.loginAsUserAccessToken(requesterId);
+              if (isBlank(token) || !matrixSynapseService.joinRoom(roomId, token)) {
+                log.error(
+                    "Rolled-back Case Handover decline could not restore {} in Matrix room {}",
+                    requesterId,
+                    roomId);
+                matrixRepairService.enqueueJoin(
+                    roomId, requesterId, session.getId(), requester.getId());
+              }
+            } catch (RuntimeException exception) {
+              log.error(
+                  "Rolled-back Case Handover decline could not restore Matrix membership ({})",
+                  exception.getClass().getSimpleName());
+              matrixRepairService.enqueueJoin(
+                  roomId, requesterId, session.getId(), requester.getId());
+            }
+          }
+        });
   }
 
   private String resolveSessionLanguage(Session session) {
@@ -1568,10 +1737,10 @@ public class CaseHandoverService {
         : null;
   }
 
-  private void ensureRequesterJoinedMatrixRoom(
+  private boolean ensureRequesterJoinedMatrixRoom(
       Session session, Consultant requester, Consultant previousConsultant) {
     if (session == null || isBlank(session.getMatrixRoomId())) {
-      return;
+      return false;
     }
     if (requester == null || isBlank(requester.getMatrixUserId())) {
       throw new InternalServerErrorException(
@@ -1612,11 +1781,12 @@ public class CaseHandoverService {
           "Failed to create requester Matrix token for case handover");
     }
 
-    boolean wasMemberBefore =
-        matrixSynapseService
-            .getRoomMembers(roomId)
-            .map(members -> members.contains(requester.getMatrixUserId()))
-            .orElse(false);
+    var membersBefore = matrixSynapseService.getRoomMembers(roomId);
+    if (membersBefore.isEmpty()) {
+      throw new ServiceUnavailableException(
+          "Case Handover Matrix membership could not be verified");
+    }
+    boolean wasMemberBefore = membersBefore.get().contains(requester.getMatrixUserId());
 
     boolean joined = matrixSynapseService.joinRoom(roomId, requesterToken);
     if (!joined) {
@@ -1624,12 +1794,19 @@ public class CaseHandoverService {
           "Failed to join case handover requester to Matrix room");
     }
     registerMatrixJoinRollbackCompensation(
-        roomId, requester.getMatrixUserId(), previousConsultantToken, wasMemberBefore);
+        roomId,
+        requester.getMatrixUserId(),
+        session.getId(),
+        requester.getId(),
+        previousConsultant.getMatrixUserId(),
+        previousConsultantToken,
+        wasMemberBefore);
 
     // The previous counsellor deliberately keeps their membership. ADR-002's reveal lifecycle has
     // a takeover re-hide the original counsellor while they stay a member, so they can reclaim the
     // case when they return — and under Megolm a counsellor removed here could never be given the
     // history back. Hiding the conversation is the application curtain's job, not Matrix's.
+    return !wasMemberBefore;
   }
 
   /**
@@ -1640,7 +1817,13 @@ public class CaseHandoverService {
    * room member (ADR-002 department membership) is never kicked out of their own room.
    */
   private void registerMatrixJoinRollbackCompensation(
-      String roomId, String requesterId, String operatorToken, boolean wasMemberBefore) {
+      String roomId,
+      String requesterId,
+      Long sessionId,
+      String requesterConsultantId,
+      String operatorId,
+      String operatorToken,
+      boolean wasMemberBefore) {
     if (wasMemberBefore || !TransactionSynchronizationManager.isSynchronizationActive()) {
       return;
     }
@@ -1654,16 +1837,18 @@ public class CaseHandoverService {
             try {
               if (!matrixSynapseService.removeUserFromRoom(roomId, requesterId, operatorToken)) {
                 log.error(
-                    "Rolled-back case handover left {} in Matrix room {}; the expiry sweep or manual removal must reconcile it",
+                    "Rolled-back case handover left {} in Matrix room {}; durable repair queued",
                     requesterId,
                     roomId);
+                matrixRepairService.enqueueRemoval(
+                    roomId, requesterId, operatorId, sessionId, requesterConsultantId);
               }
             } catch (RuntimeException exception) {
               log.error(
-                  "Rolled-back case handover left {} in Matrix room {}; the expiry sweep or manual removal must reconcile it",
-                  requesterId,
-                  roomId,
-                  exception);
+                  "Rolled-back Case Handover Matrix cleanup failed; durable repair queued ({})",
+                  exception.getClass().getSimpleName());
+              matrixRepairService.enqueueRemoval(
+                  roomId, requesterId, operatorId, sessionId, requesterConsultantId);
             }
           }
         });
