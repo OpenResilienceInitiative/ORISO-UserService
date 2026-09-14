@@ -1984,10 +1984,13 @@ public class CaseHandoverService {
         return;
       }
       if (raw instanceof Map<?, ?> policy) {
-        Object value = policy.get("value");
-        this.clientConsent = value == null ? null : parseConsentMode(value.toString());
+Object value = policy.get("value");
         Object mode = policy.get("mode");
-        this.clientConsentMode = mode == null ? null : mode.toString();
+        if (value == null || mode == null) {
+          throw new BadRequestException("Handover client consent requires value and mode");
+        }
+        this.clientConsent = parseConsentMode(value.toString());
+        this.clientConsentMode = mode.toString();
         return;
       }
       this.clientConsent = parseConsentMode(raw.toString());
