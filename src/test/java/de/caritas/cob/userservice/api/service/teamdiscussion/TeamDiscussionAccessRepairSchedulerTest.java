@@ -18,7 +18,7 @@ import org.junit.jupiter.api.Test;
 
 class TeamDiscussionAccessRepairSchedulerTest {
   @Test
-  void retriesFailedRemovalAndClearsItsRecordOnlyAfterMatrixConfirms() {
+  void retainsParticipationAfterRemovalSoConcurrentReassignmentCanBeReconciled() {
     var discussions = mock(TeamDiscussionRepository.class);
     var participants = mock(TeamDiscussionParticipantRepository.class);
     var sessions = mock(SessionRepository.class);
@@ -26,6 +26,7 @@ class TeamDiscussionAccessRepairSchedulerTest {
     var agencies = mock(ConsultantAgencyRepository.class);
     var facade = mock(TeamDiscussionFacade.class);
     var membership = mock(AgencyLateJoinerMembershipService.class);
+    var writer = mock(TeamDiscussionParticipantWriter.class);
     var claims = mock(ScheduledTaskClaimService.class);
     var lease =
         new ScheduledTaskClaimService.ClaimLease(
@@ -50,9 +51,23 @@ class TeamDiscussionAccessRepairSchedulerTest {
     var consultant = new Consultant();
     consultant.setId("removed");
     consultant.setMatrixUserId("@removed:test");
-    when(discussions.findPendingArchiveRepairs(Session.SessionStatus.NEW))
+    when(discussions.findPendingArchiveRepairs(eq(Session.SessionStatus.NEW), anyLong(), any()))
         .thenReturn(List.of(discussion));
-    when(participants.findParticipantsWithoutAgencyAccess()).thenReturn(List.of(participant));
+    when(participants.findAccessRepairs(anyLong(), any())).thenReturn(List.of(participant));
+    doAnswer(
+            invocation -> {
+              participant.setAccessRepairRequired(invocation.getArgument(1));
+              return null;
+            })
+        .when(writer)
+        .setAccessRepairRequired(eq(3L), anyBoolean());
+    when(participants.findById(3L)).thenReturn(Optional.of(participant));
+    when(claims.runIfHeld(eq(lease), any()))
+        .thenAnswer(
+            invocation -> {
+              invocation.<Runnable>getArgument(1).run();
+              return true;
+            });
     when(discussions.findById(1L)).thenReturn(Optional.of(discussion));
     when(sessions.findById(2L)).thenReturn(Optional.of(session));
     when(consultants.findById("removed")).thenReturn(Optional.of(consultant));
@@ -60,14 +75,39 @@ class TeamDiscussionAccessRepairSchedulerTest {
         .thenReturn(false, true);
     var scheduler =
         new TeamDiscussionAccessRepairScheduler(
-            discussions, participants, sessions, consultants, agencies, facade, membership, claims);
+            discussions,
+            participants,
+            sessions,
+            consultants,
+            agencies,
+            facade,
+            membership,
+            claims,
+            writer);
 
     scheduler.reconcileAccess();
     verify(participants, never()).deleteById(any());
     scheduler.reconcileAccess();
-    verify(participants).deleteById(3L);
-    verify(facade, times(2)).archiveDiscussionIfPresent(session);
-    verify(claims, times(2)).release(lease);
+    verify(participants, never()).deleteById(any());
+    // Reassignment after a removal must restore the existing room, even after scheduler restart.
+    when(agencies.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull("removed", 4L))
+        .thenReturn(true);
+    var restarted =
+        new TeamDiscussionAccessRepairScheduler(
+            discussions,
+            participants,
+            sessions,
+            consultants,
+            agencies,
+            facade,
+            membership,
+            claims,
+            writer);
+    restarted.reconcileAccess();
+    verify(facade).restoreExistingDiscussionMembership(1L, "removed");
+    verify(facade, times(3)).archiveDiscussionIfPresent(session);
+    verify(claims, times(3)).release(lease);
+    verify(claims, atLeastOnce()).runIfHeld(eq(lease), any());
     assertThat(TenantContext.getCurrentTenant()).isNull();
   }
 }

@@ -49,7 +49,42 @@ class AgencyLateJoinerMembershipServiceTest {
   @Mock private AgencySilentMembershipService agencySilentMembershipService;
   @Mock private TeamDiscussionRepository teamDiscussionRepository;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter
+      participantWriter;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository
+      consultantAgencyRepository;
+
+  @Mock private de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService claims;
+
   @InjectMocks private AgencyLateJoinerMembershipService underTest;
+
+  private void guardedTeamRoom(String roomId) {
+    when(teamDiscussionRepository.findByMatrixRoomId(roomId))
+        .thenReturn(Optional.of(TeamDiscussion.builder().matrixRoomId(roomId).build()));
+    var lease =
+        new de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease(
+            AgencyLateJoinerMembershipService.TEAM_ACCESS_REPAIR_TASK,
+            java.time.LocalDateTime.now().plusMinutes(2));
+    when(claims.tryClaimLease(anyString(), any())).thenReturn(Optional.of(lease));
+    when(claims.runIfHeld(eq(lease), any()))
+        .thenAnswer(
+            invocation -> {
+              invocation.<Runnable>getArgument(1).run();
+              return true;
+            });
+  }
+
+  @Test
+  void recordedRevocationRemainsPendingWhenMatrixIdentityIsMissing() {
+    var consultant = lateJoiner();
+    consultant.setMatrixUserId(null);
+    assertEquals(
+        false, underTest.removeConsultantFromTeamRoom(consultant, AGENCY_ID, "!team:test"));
+    verifyNoInteractions(sessionRoomGateway, matrixCredentialClient);
+  }
 
   private Consultant lateJoiner() {
     var consultant = new Consultant();
@@ -239,9 +274,22 @@ class AgencyLateJoinerMembershipServiceTest {
             consultant.getId(), AGENCY_ID, TeamDiscussion.Status.OPEN))
         .thenReturn(List.of("!team:oriso.org"));
     agencyServiceAccountAvailable();
+    guardedTeamRoom("!team:oriso.org");
+    var marked = new java.util.concurrent.atomic.AtomicBoolean();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              marked.set(true);
+              return null;
+            })
+        .when(participantWriter)
+        .markAgencyRevocation(consultant.getId(), AGENCY_ID);
     when(sessionRoomGateway.removeUserFromRoom(
             "!team:oriso.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
-        .thenReturn(true);
+        .thenAnswer(
+            invocation -> {
+              assertEquals(true, marked.get(), "Repair marker must commit before the kick");
+              return true;
+            });
 
     assertEquals(1, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
 
@@ -251,6 +299,7 @@ class AgencyLateJoinerMembershipServiceTest {
 
   @Test
   void removeConsultantFromAgencyRooms_alsoRevokesArchivedTeamRooms() {
+    guardedTeamRoom("!archive:oriso.org");
     var consultant = lateJoiner();
     openEnquiries();
     when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(

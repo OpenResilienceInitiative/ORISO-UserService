@@ -49,6 +49,16 @@ public class ScheduledTaskClaimWriter {
     return Optional.of(now.plus(claimDuration));
   }
 
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public boolean runIfHeld(ScheduledTaskClaimService.ClaimLease lease, Runnable operation) {
+    var claim = claimRepository.findByTaskNameForUpdate(lease.taskName());
+    if (claim.isEmpty()
+        || !claim.get().getClaimedUntil().equals(lease.claimedUntil())
+        || !claim.get().getClaimedUntil().isAfter(LocalDateTime.now(clock))) return false;
+    operation.run();
+    return true;
+  }
+
   /** Deletes only the exact lease version acquired by this execution. */
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public boolean release(String taskName, LocalDateTime claimedUntil) {

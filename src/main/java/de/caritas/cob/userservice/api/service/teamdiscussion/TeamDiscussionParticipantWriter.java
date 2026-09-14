@@ -19,6 +19,16 @@ public class TeamDiscussionParticipantWriter {
     participants.saveAndFlush(participant);
   }
 
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void setAccessRepairRequired(Long participantId, boolean required) {
+    participants.updateAccessRepairRequired(participantId, required);
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void markAgencyRevocation(String consultantId, Long agencyId) {
+    participants.markAgencyRevocation(consultantId, agencyId);
+  }
+
   @Transactional(propagation = Propagation.REQUIRES_NEW, readOnly = true)
   public boolean isRecorded(Long discussionId, String consultantId) {
     return participants.existsByTeamDiscussionIdAndConsultantId(discussionId, consultantId);

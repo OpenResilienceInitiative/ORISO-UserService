@@ -1,11 +1,14 @@
 package de.caritas.cob.userservice.api.port.out;
 
+import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, Long> {
 
@@ -14,11 +17,10 @@ public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, 
   Optional<TeamDiscussion> findByMatrixRoomId(String matrixRoomId);
 
   @Query(
-      "select td from TeamDiscussion td, Session s where td.sessionId = s.id"
-          + " and (td.readOnlyApplied = false and (s.consultant is not null or s.status <> :newStatus))")
+      "select td from TeamDiscussion td, Session s where td.sessionId = s.id and td.id > :afterId"
+          + " and (td.readOnlyApplied = false and (s.consultant is not null or s.status <> :newStatus)) order by td.id")
   List<TeamDiscussion> findPendingArchiveRepairs(
-      @org.springframework.data.repository.query.Param("newStatus")
-          de.caritas.cob.userservice.api.model.Session.SessionStatus newStatus);
+      @Param("newStatus") SessionStatus newStatus, @Param("afterId") long afterId, Pageable page);
 
   /** Open team rooms this consultant actually joined, restricted to one agency. */
   @Query(
@@ -27,9 +29,9 @@ public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, 
           + " and p.teamDiscussionId = td.id and p.consultantId = :consultantId"
           + " and s.agencyId = :agencyId and td.status = :status")
   List<String> findRoomIdsForParticipantInAgency(
-      @org.springframework.data.repository.query.Param("consultantId") String consultantId,
-      @org.springframework.data.repository.query.Param("agencyId") Long agencyId,
-      @org.springframework.data.repository.query.Param("status") TeamDiscussion.Status status);
+      @Param("consultantId") String consultantId,
+      @Param("agencyId") Long agencyId,
+      @Param("status") TeamDiscussion.Status status);
 
   /**
    * Discussions whose session no longer exists (#1118). The schema has no foreign key from {@code

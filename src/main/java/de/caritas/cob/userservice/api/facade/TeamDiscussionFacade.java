@@ -120,6 +120,16 @@ public class TeamDiscussionFacade {
     return toView(discussion);
   }
 
+  /** Repairs access only to an existing room; never creates a replacement. */
+  public void restoreExistingDiscussionMembership(Long discussionId, String consultantId) {
+    var discussion = teamDiscussionRepository.findById(discussionId).orElse(null);
+    if (discussion == null) return;
+    var session = loadSession(discussion.getSessionId());
+    featureGate.requireEnabled(session.getTenantId());
+    var consultant = requireEligibleConsultant(session, consultantId);
+    joinConsultant(reconcileOnAccess(discussion, session), session, consultant);
+  }
+
   /** Returns the discussion if one exists — also ARCHIVED ones (read-only archive access). */
   public Optional<TeamDiscussionView> getDiscussion(Long sessionId, String consultantId) {
     Session session = loadSession(sessionId);
@@ -207,7 +217,8 @@ public class TeamDiscussionFacade {
     boolean openEnquiry =
         session.getStatus() == SessionStatus.NEW
             && session.getRegistrationType() == RegistrationType.REGISTERED
-            && session.getConsultant() == null;
+            && session.getConsultant() == null
+            && session.getEnquiryMessageDate() != null;
     if (!openEnquiry) {
       throw new BadRequestException(
           "A team discussion can only be started on an open, unassigned registered enquiry"

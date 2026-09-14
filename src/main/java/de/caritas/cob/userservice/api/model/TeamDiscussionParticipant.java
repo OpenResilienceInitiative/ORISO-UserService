@@ -45,6 +45,10 @@ public class TeamDiscussionParticipant {
   @Column(name = "consultant_id", nullable = false, length = 36)
   private String consultantId;
 
+  /** Committed before a removal; retained until eligible access is restored. */
+  @Column(name = "access_repair_required", nullable = false)
+  private boolean accessRepairRequired;
+
   @Column(name = "join_date", nullable = false)
   private LocalDateTime joinDate;
 }

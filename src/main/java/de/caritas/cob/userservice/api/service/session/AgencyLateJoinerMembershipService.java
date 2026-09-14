@@ -7,11 +7,14 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.TeamDiscussion;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
+import java.time.Duration;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -67,6 +70,15 @@ public class AgencyLateJoinerMembershipService {
   private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull AgencySilentMembershipService agencySilentMembershipService;
   private final @NonNull TeamDiscussionRepository teamDiscussionRepository;
+  private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
+  private final @NonNull de.caritas.cob.userservice.api.service.teamdiscussion
+          .TeamDiscussionParticipantWriter
+      participantWriter;
+  private final @NonNull de.caritas.cob.userservice.api.workflow.scheduling
+          .ScheduledTaskClaimService
+      claims;
+
+  public static final String TEAM_ACCESS_REPAIR_TASK = "team-discussion-access-repair";
 
   /**
    * Joins a counsellor who was just assigned to an agency into the Matrix rooms of that agency's
@@ -161,8 +173,10 @@ public class AgencyLateJoinerMembershipService {
     int removed = 0;
     for (String roomId : roomIds) {
       try {
-        if (sessionRoomGateway.removeUserFromRoom(
-            roomId, consultant.getMatrixUserId(), agencyToken)) {
+        if (teamDiscussionRepository.findByMatrixRoomId(roomId).isPresent()
+            ? removeTeamMemberWithLease(consultant, agencyId, roomId, agencyToken)
+            : sessionRoomGateway.removeUserFromRoom(
+                roomId, consultant.getMatrixUserId(), agencyToken)) {
           removed++;
         }
       } catch (RuntimeException ex) {
@@ -184,9 +198,30 @@ public class AgencyLateJoinerMembershipService {
     return removed;
   }
 
+  private boolean removeTeamMemberWithLease(
+      Consultant consultant, Long agencyId, String roomId, String token) {
+    var lease = claims.tryClaimLease(TEAM_ACCESS_REPAIR_TASK, Duration.ofMinutes(2));
+    if (lease.isEmpty()) return false; // Persisted agency eligibility drives the scheduler retry.
+    var removed = new AtomicBoolean();
+    try {
+      claims.runIfHeld(
+          lease.get(),
+          () -> {
+            if (consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+                consultant.getId(), agencyId)) return;
+            participantWriter.markAgencyRevocation(consultant.getId(), agencyId);
+            removed.set(
+                sessionRoomGateway.removeUserFromRoom(roomId, consultant.getMatrixUserId(), token));
+          });
+      return removed.get();
+    } finally {
+      claims.release(lease.get());
+    }
+  }
+
   /** Retry a recorded team-room revocation using its agency operator. */
   public boolean removeConsultantFromTeamRoom(Consultant consultant, Long agencyId, String roomId) {
-    if (consultant == null || isBlank(consultant.getMatrixUserId())) return true;
+    if (consultant == null || isBlank(consultant.getMatrixUserId())) return false;
     var token = resolveAgencyToken(agencyId);
     return !isBlank(token)
         && sessionRoomGateway.removeUserFromRoom(roomId, consultant.getMatrixUserId(), token);

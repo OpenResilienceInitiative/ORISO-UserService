@@ -114,6 +114,7 @@ class TeamDiscussionFacadeTest {
     session.setAgencyId(AGENCY_ID);
     session.setStatus(SessionStatus.NEW);
     session.setRegistrationType(RegistrationType.REGISTERED);
+    session.setEnquiryMessageDate(java.time.LocalDateTime.now());
     session.setTenantId(3L);
 
     consultant = new Consultant();
@@ -150,6 +151,20 @@ class TeamDiscussionFacadeTest {
     body.setRoomId(ROOM_ID);
     when(matrixSynapseService.createRoom(anyString(), anyString(), eq("agency-token")))
         .thenReturn(ResponseEntity.ok(body));
+  }
+
+  @Test
+  void unsentRegisteredDraftCannotStartATeamDiscussion() throws Exception {
+    session.setEnquiryMessageDate(null);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    var http =
+        MockMvcBuilders.standaloneSetup(new TeamDiscussionController(facade, authenticatedUser))
+            .setControllerAdvice(
+                new ApiResponseEntityExceptionHandler(),
+                new ApiDefaultResponseEntityExceptionHandler())
+            .build();
+    http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
+        .andExpect(status().isBadRequest());
   }
 
   @Test

@@ -38,6 +38,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({
   ScheduledTaskClaimService.class,
   ScheduledTaskClaimWriter.class,
+  de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter.class,
   ScheduledTaskClaimMariaDbIT.ClockConfiguration.class
 })
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
@@ -48,6 +49,13 @@ class ScheduledTaskClaimMariaDbIT {
 
   @Autowired private ScheduledTaskClaimService claimService;
   @Autowired private ScheduledTaskClaimRepository claimRepository;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.TeamDiscussionParticipantRepository participants;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter
+      participantWriter;
 
   @DynamicPropertySource
   private static void databaseProperties(DynamicPropertyRegistry registry) {
@@ -84,6 +92,72 @@ class ScheduledTaskClaimMariaDbIT {
     var renewedClaim = claimRepository.findById(TASK_NAME).orElseThrow();
     assertThat(renewedClaim.getClaimedAt()).isAfter(firstClaimedAt);
     assertThat(renewedClaim.getClaimedUntil()).isAfter(renewedClaim.getClaimedAt());
+  }
+
+  @Test
+  void expiredLeaseCannotBeTakenOverDuringItsLockedOperation() throws Exception {
+    var lease = claimService.tryClaimLease(TASK_NAME, Duration.ofSeconds(1)).orElseThrow();
+    var entered = new CountDownLatch(1);
+    var finish = new CountDownLatch(1);
+    var executor = Executors.newFixedThreadPool(2);
+    try {
+      var running =
+          executor.submit(
+              () ->
+                  claimService.runIfHeld(
+                      lease,
+                      () -> {
+                        entered.countDown();
+                        await(finish);
+                      }));
+      assertThat(entered.await(5, TimeUnit.SECONDS)).isTrue();
+      Thread.sleep(1100);
+      var contender = executor.submit(() -> claimService.tryClaim(TASK_NAME, CLAIM_DURATION));
+      org.junit.jupiter.api.Assertions.assertThrows(
+          java.util.concurrent.TimeoutException.class,
+          () -> contender.get(200, TimeUnit.MILLISECONDS));
+      finish.countDown();
+      assertThat(running.get(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(contender.get(5, TimeUnit.SECONDS)).isTrue();
+      assertThat(
+              claimService.runIfHeld(
+                  lease,
+                  () -> {
+                    throw new AssertionError(
+                        "The replaced lease must not perform another side effect");
+                  }))
+          .isFalse();
+    } finally {
+      finish.countDown();
+      executor.shutdownNow();
+    }
+  }
+
+  @Test
+  void membershipRepairMarkerSurvivesFailureOfTheLockedOperation() {
+    var participant =
+        participants.saveAndFlush(
+            de.caritas.cob.userservice.api.model.TeamDiscussionParticipant.builder()
+                .teamDiscussionId(999991L)
+                .consultantId("lease-repair-proof")
+                .joinDate(LocalDateTime.now())
+                .build());
+    try {
+      var lease = claimService.tryClaimLease(TASK_NAME, CLAIM_DURATION).orElseThrow();
+      org.junit.jupiter.api.Assertions.assertThrows(
+          IllegalStateException.class,
+          () ->
+              claimService.runIfHeld(
+                  lease,
+                  () -> {
+                    participantWriter.setAccessRepairRequired(participant.getId(), true);
+                    throw new IllegalStateException("External removal result is unknown");
+                  }));
+      assertThat(participants.findById(participant.getId()).orElseThrow().isAccessRepairRequired())
+          .isTrue();
+    } finally {
+      participants.deleteById(participant.getId());
+    }
   }
 
   private List<Boolean> runTwoConcurrentClaims() throws Exception {

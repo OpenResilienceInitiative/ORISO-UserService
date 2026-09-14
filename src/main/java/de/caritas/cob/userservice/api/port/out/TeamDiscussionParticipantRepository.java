@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.TeamDiscussionParticipant;
 import java.util.List;
+import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.JpaRepository;
 import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
@@ -17,11 +18,24 @@ public interface TeamDiscussionParticipantRepository
   /** Persisted participation retains a revocation retry until Matrix confirms removal. */
   @Query(
       "select p from TeamDiscussionParticipant p, TeamDiscussion td, Session s"
-          + " where p.teamDiscussionId = td.id and td.sessionId = s.id"
-          + " and not exists (select ca.id from ConsultantAgency ca"
+          + " where p.id > :afterId and p.teamDiscussionId = td.id and td.sessionId = s.id"
+          + " and (p.accessRepairRequired = true or not exists (select ca.id from ConsultantAgency ca"
           + " where ca.consultant.id = p.consultantId and ca.agencyId = s.agencyId"
-          + " and ca.deleteDate is null)")
-  List<TeamDiscussionParticipant> findParticipantsWithoutAgencyAccess();
+          + " and ca.deleteDate is null)) order by p.id")
+  List<TeamDiscussionParticipant> findAccessRepairs(@Param("afterId") long afterId, Pageable page);
+
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "update TeamDiscussionParticipant p set p.accessRepairRequired = :required where p.id = :id")
+  int updateAccessRepairRequired(@Param("id") Long id, @Param("required") boolean required);
+
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "update TeamDiscussionParticipant p set p.accessRepairRequired = true"
+          + " where p.consultantId = :consultantId and p.teamDiscussionId in"
+          + " (select td.id from TeamDiscussion td, Session s where td.sessionId = s.id and s.agencyId = :agencyId)")
+  int markAgencyRevocation(
+      @Param("consultantId") String consultantId, @Param("agencyId") Long agencyId);
 
   /**
    * Removes every participant record of one discussion (#1116). The table has no foreign key to
