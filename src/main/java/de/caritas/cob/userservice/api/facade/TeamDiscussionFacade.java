@@ -244,11 +244,11 @@ public class TeamDiscussionFacade {
    * a confirmed join records participation.
    */
   private void joinConsultant(TeamDiscussion discussion, Session session, Consultant consultant) {
+    if (consultant.getMatrixUserId() == null || consultant.getMatrixUserId().isBlank()) {
+      throw new InternalServerErrorException("Consultant Matrix identity is not available");
+    }
+    String agencyToken = loginAgencyOperator(session);
     try {
-      if (consultant.getMatrixUserId() == null || consultant.getMatrixUserId().isBlank()) {
-        throw new InternalServerErrorException("Consultant Matrix identity is not available");
-      }
-      String agencyToken = loginAgencyOperator(session);
       try {
         matrixSynapseService.inviteUserToRoom(
             discussion.getMatrixRoomId(), consultant.getMatrixUserId(), agencyToken);

@@ -4,7 +4,7 @@ Refs https://github.com/OpenResilienceInitiative/ORISO-UserService/issues/1149.
 
 ## Behavior
 
-A team room is reported usable only after the caller joins. Failed joins produce a retryable HTTP 502; room ownership persists. Concurrent room creation returns the already committed winner and removes only the current request's unused loser. Participant registration tolerates a confirmed concurrent insertion for the same caller.
+A team room is reported usable only after the caller joins. Failed joins produce a retryable HTTP 502; room ownership persists. Missing local Matrix identity or agency credentials remain internal configuration errors (HTTP 500). Concurrent room creation returns the already committed winner and removes only the current request's unused loser. Participant registration tolerates a confirmed concurrent insertion for the same caller.
 
 Database writes and conflict reads use separate transactions; external Matrix calls are outside those writer transactions. Existing agency eligibility and archive behavior remain the authority.
 
@@ -13,7 +13,7 @@ Database writes and conflict reads use separate transactions; external Matrix ca
 - Controller regressions failed before fixes for false-positive join success, concurrent creation, failed cleanup reporting and concurrent participant insertion.
 - Actual MockMvc controller/advice test observes HTTP 502 for a failed join, then 200 with the existing room on retry.
 - H2 integration exercises concurrent opening through controller responses and the external Matrix boundary. It checks one shared surviving room and the expected memberships.
-- Final related suite: 83 tests passed, including H2 parallel opening by different people and by the same person. Final package and formatting gates passed. An earlier full unit run passed 4,380 tests before the participant-race change; that historical total is not a full-suite claim for the final source.
+- Final related suite: 86 tests passed, including H2 parallel opening by different people and by the same person. Final package and formatting gates passed. An earlier full unit run passed 4,380 tests before the participant-race change; that historical total is not a full-suite claim for the final source.
 
 Reproduce with Java 21:
 

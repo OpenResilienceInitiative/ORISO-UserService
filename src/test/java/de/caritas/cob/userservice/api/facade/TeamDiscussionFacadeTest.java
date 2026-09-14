@@ -352,6 +352,56 @@ class TeamDiscussionFacadeTest {
   }
 
   @Test
+  void openingDiscussion_shouldReportMissingConsultantMatrixIdentityAsInternalError()
+      throws Exception {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    consultant.setMatrixUserId(null);
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+
+    var http =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+
+    http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
+        .andExpect(status().isInternalServerError());
+  }
+
+  @Test
+  void openingDiscussion_shouldReportMissingAgencyMatrixCredentialsAsInternalError()
+      throws Exception {
+    var controller = new TeamDiscussionController(facade, authenticatedUser);
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT_ID);
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID))
+        .thenReturn(
+            Optional.of(
+                TeamDiscussion.builder()
+                    .id(99L)
+                    .sessionId(SESSION_ID)
+                    .matrixRoomId(ROOM_ID)
+                    .status(TeamDiscussion.Status.OPEN)
+                    .build()));
+    when(matrixCredentialClient.fetchMatrixCredentials(AGENCY_ID)).thenReturn(Optional.empty());
+
+    var http =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+
+    http.perform(post("/users/sessions/{id}/team-discussion", SESSION_ID))
+        .andExpect(status().isInternalServerError());
+  }
+
+  @Test
   void getOrCreateDiscussion_shouldCreateRoomWithAgencyOperatorAndRecordParticipant()
       throws Exception {
     var view = facade.getOrCreateDiscussion(SESSION_ID, CONSULTANT_ID);
