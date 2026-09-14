@@ -51,7 +51,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.boot.test.context.TestConfiguration;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Import;
 import org.springframework.core.env.MapPropertySource;
@@ -216,7 +215,6 @@ class TeamDiscussionFacadeTest {
     }
   }
 
-  @TestConfiguration
   @EnableWebMvc
   @Import({SecurityConfig.class, ApiResponseEntityExceptionHandler.class})
   static class TeamHttpSecurityFixture {
