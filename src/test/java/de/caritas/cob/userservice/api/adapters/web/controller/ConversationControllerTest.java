@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiry
 import de.caritas.cob.userservice.api.conversation.facade.FinishAnonymousConversationFacade;
 import de.caritas.cob.userservice.api.conversation.model.ConversationListType;
 import de.caritas.cob.userservice.api.conversation.service.ConversationListResolver;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicConsultantRoutingService;
@@ -146,5 +148,34 @@ class ConversationControllerTest {
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(enquiry, response.getBody());
     verify(topicConsultantRoutingService, never()).findAvailableConsultantIds(any());
+  }
+
+  @Test
+  void getAnonymousEnquiryDetails_keepsTheQueueEntryAlive() {
+    // Business reason: this poll is the only sign of life a waiting live-chat guest gives. Without
+    // it the entry ages out of the queue after live.chat.queue.activePeriodMinutes (#1404).
+    Map<String, Object> sessionMap = Map.of("status", "NEW");
+    when(messenger.findSession(101L)).thenReturn(Optional.of(sessionMap));
+    when(authenticatedUser.getUserId()).thenReturn("asker-3");
+    when(mapper.adviceSeekerIdOf(sessionMap)).thenReturn("asker-3");
+    when(mapper.createDateOf(sessionMap)).thenReturn(LocalDateTime.now());
+
+    controller.getAnonymousEnquiryDetails(101L);
+
+    verify(messenger).touchLiveChatQueueHeartbeat(101L);
+  }
+
+  @Test
+  void getAnonymousEnquiryDetails_doesNotKeepTheQueueEntryAliveForSomebodyElse() {
+    // Business reason: the heartbeat must sit behind the ownership check, so a foreign caller can
+    // neither read the enquiry nor hold its queue entry open.
+    Map<String, Object> sessionMap = Map.of("status", "NEW");
+    when(messenger.findSession(102L)).thenReturn(Optional.of(sessionMap));
+    when(authenticatedUser.getUserId()).thenReturn("somebody-else");
+    when(mapper.adviceSeekerIdOf(sessionMap)).thenReturn("asker-3");
+
+    assertThrows(ForbiddenException.class, () -> controller.getAnonymousEnquiryDetails(102L));
+
+    verify(messenger, never()).touchLiveChatQueueHeartbeat(any());
   }
 }
