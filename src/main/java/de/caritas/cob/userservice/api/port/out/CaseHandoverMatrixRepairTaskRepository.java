@@ -32,4 +32,8 @@ public interface CaseHandoverMatrixRepairTaskRepository
       @Param("action") de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairAction action,
       @Param("roomId") String roomId,
       @Param("memberId") String memberId);
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT task FROM CaseHandoverMatrixRepairTask task WHERE task.id = :id")
+  Optional<CaseHandoverMatrixRepairTask> findByIdForUpdate(@Param("id") Long id);
 }

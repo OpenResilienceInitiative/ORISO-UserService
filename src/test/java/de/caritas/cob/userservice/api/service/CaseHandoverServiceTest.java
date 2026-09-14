@@ -1123,9 +1123,17 @@ class CaseHandoverServiceTest {
             CaseHandoverRequest.AccessType.CO_ACCESS,
             LocalDateTime.of(2026, 8, 16, 10, 0)))
         .thenReturn(List.of(expired));
-    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
-            123L, "requester"))
-        .thenReturn(List.of(newerGrant, expired));
+    when(caseHandoverRequestRepository.findActiveGrantExcluding(
+            eq(123L),
+            eq("requester"),
+            eq(expired.getId()),
+            eq(
+                List.of(
+                    CaseHandoverRequest.Status.GRANTED,
+                    CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT)),
+            eq(LocalDateTime.of(2026, 8, 16, 10, 0)),
+            any()))
+        .thenReturn(List.of(newerGrant));
     when(caseHandoverRequestRepository.findByIdForUpdate(expired.getId()))
         .thenReturn(Optional.of(expired));
 
@@ -1134,6 +1142,19 @@ class CaseHandoverServiceTest {
     assertEquals(CaseHandoverRequest.Status.EXPIRED, expired.getStatus());
     assertTrue(newerGrant.getMatrixMembershipAdded());
     verify(caseHandoverRequestRepository).save(newerGrant);
+    var page = ArgumentCaptor.forClass(org.springframework.data.domain.Pageable.class);
+    verify(caseHandoverRequestRepository)
+        .findActiveGrantExcluding(
+            eq(123L),
+            eq("requester"),
+            eq(expired.getId()),
+            eq(
+                List.of(
+                    CaseHandoverRequest.Status.GRANTED,
+                    CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT)),
+            eq(LocalDateTime.of(2026, 8, 16, 10, 0)),
+            page.capture());
+    assertEquals(1, page.getValue().getPageSize());
     verifyNoMatrixRemoval();
   }
 

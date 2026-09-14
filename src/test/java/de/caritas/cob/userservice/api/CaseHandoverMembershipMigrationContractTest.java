@@ -47,6 +47,19 @@ class CaseHandoverMembershipMigrationContractTest {
         .contains("requester_consultant_id");
   }
 
+  @Test
+  void repairTaskGenerationIsAddedByAnAppendOnlyMigration() throws IOException {
+    String changelog =
+        resource(
+            "/db/changelog/changeset/0099_case_handover_matrix_repair_generation/0099_changeSet.xml");
+
+    assertThat(changelog)
+        .contains("0099_case_handover_matrix_repair_generation")
+        .contains("generation")
+        .contains("defaultValueNumeric=\"0\"")
+        .contains("<rollback>");
+  }
+
   private String resource(String path) throws IOException {
     try (var stream = getClass().getResourceAsStream(path)) {
       assertThat(stream).as("resource %s", path).isNotNull();

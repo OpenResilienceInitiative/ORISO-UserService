@@ -58,6 +58,7 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -1626,16 +1627,15 @@ public class CaseHandoverService {
 
   private Optional<CaseHandoverRequest> findAnotherActiveGrant(CaseHandoverRequest request) {
     LocalDateTime now = LocalDateTime.now(clock);
-    Long requestId = request.getId();
     return caseHandoverRequestRepository
-        .findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
-            request.getSession().getId(), request.getRequesterConsultant().getId())
+        .findActiveGrantExcluding(
+            request.getSession().getId(),
+            request.getRequesterConsultant().getId(),
+            request.getId(),
+            List.of(Status.GRANTED, Status.GRANTED_PENDING_CLIENT_OPTOUT),
+            now,
+            PageRequest.of(0, 1))
         .stream()
-        .filter(candidate -> requestId == null || !requestId.equals(candidate.getId()))
-        .filter(
-            candidate ->
-                hasGrantedAccess(candidate.getStatus())
-                    && (candidate.getExpiresAt() == null || candidate.getExpiresAt().isAfter(now)))
         .findFirst();
   }
 

@@ -60,6 +60,11 @@ public class CaseHandoverMatrixRepairTask {
   @Builder.Default
   private int attemptCount = 0;
 
+  /** Monotonic enqueue generation protecting a reactivated task from an older worker result. */
+  @Column(name = "generation", nullable = false)
+  @Builder.Default
+  private long generation = 0;
+
   @Column(name = "last_attempt_at", columnDefinition = "datetime(6)")
   private LocalDateTime lastAttemptAt;
 

@@ -104,6 +104,7 @@ public class CaseHandoverMatrixRepairService {
                                 existing.setAttemptCount(0);
                                 existing.setLastAttemptAt(null);
                                 existing.setCreateDate(LocalDateTime.now(clock));
+                                existing.setGeneration(existing.getGeneration() + 1);
                                 repository.saveAndFlush(existing);
                                 return true;
                               })
@@ -131,8 +132,9 @@ public class CaseHandoverMatrixRepairService {
     if (task.isEmpty()) {
       return;
     }
+    long generation = task.get().getGeneration();
     boolean repaired = attempt(task.get());
-    recordResult(taskId, repaired);
+    recordResult(taskId, generation, repaired);
   }
 
   private boolean attempt(CaseHandoverMatrixRepairTask task) {
@@ -216,11 +218,12 @@ public class CaseHandoverMatrixRepairService {
         .orElse(false);
   }
 
-  public void recordResult(Long taskId, boolean repaired) {
+  public void recordResult(Long taskId, long generation, boolean repaired) {
     inNewTransaction(
         () -> {
           repository
-              .findById(taskId)
+              .findByIdForUpdate(taskId)
+              .filter(task -> task.getGeneration() == generation)
               .ifPresent(
                   task -> {
                     if (repaired) {

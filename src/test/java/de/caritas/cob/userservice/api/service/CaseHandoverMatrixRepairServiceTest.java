@@ -83,6 +83,7 @@ class CaseHandoverMatrixRepairServiceTest {
             .requesterConsultantId("old-requester")
             .operatorId("@old-operator:matrix")
             .attemptCount(100)
+            .generation(4)
             .lastAttemptAt(LocalDateTime.parse("2026-09-14T09:00:00"))
             .createDate(LocalDateTime.parse("2026-09-14T08:00:00"))
             .build();
@@ -97,6 +98,7 @@ class CaseHandoverMatrixRepairServiceTest {
         "!room:matrix", "@requester:matrix", "@new-operator:matrix", 123L, "requester");
 
     assertThat(exhausted.getAttemptCount()).isZero();
+    assertThat(exhausted.getGeneration()).isEqualTo(5);
     assertThat(exhausted.getLastAttemptAt()).isNull();
     assertThat(exhausted.getSessionId()).isEqualTo(123L);
     assertThat(exhausted.getRequesterConsultantId()).isEqualTo("requester");
@@ -132,6 +134,7 @@ class CaseHandoverMatrixRepairServiceTest {
             .operatorId("@operator:matrix")
             .build();
     when(repository.findById(9L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(9L)).thenReturn(Optional.of(task));
     when(matrixSynapseService.loginAsUserAccessToken("@operator:matrix")).thenReturn("fresh-token");
     when(matrixSynapseService.removeUserFromRoom(
             "!room:matrix", "@requester:matrix", "fresh-token"))
@@ -154,6 +157,7 @@ class CaseHandoverMatrixRepairServiceTest {
             .requesterConsultantId("requester")
             .build();
     when(repository.findById(9L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(9L)).thenReturn(Optional.of(task));
     when(handoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
             123L, "requester"))
         .thenReturn(
@@ -185,6 +189,7 @@ class CaseHandoverMatrixRepairServiceTest {
             .operatorId("@operator:matrix")
             .build();
     when(repository.findById(10L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(10L)).thenReturn(Optional.of(task));
     when(handoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
             123L, "requester"))
         .thenReturn(
@@ -211,6 +216,7 @@ class CaseHandoverMatrixRepairServiceTest {
             .build();
     var active = CaseHandoverRequest.builder().status(CaseHandoverRequest.Status.GRANTED).build();
     when(repository.findById(11L)).thenReturn(Optional.of(task));
+    when(repository.findByIdForUpdate(11L)).thenReturn(Optional.of(task));
     when(handoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
             123L, "requester"))
         .thenReturn(java.util.List.of(active), java.util.List.of());
@@ -225,5 +231,17 @@ class CaseHandoverMatrixRepairServiceTest {
 
     verify(matrixSynapseService).leaveRoom("!room:matrix", "fresh-token");
     verify(repository).delete(task);
+  }
+
+  @Test
+  void staleWorkerResultCannotDeleteAReactivatedGeneration() {
+    var reactivated =
+        CaseHandoverMatrixRepairTask.builder().id(12L).generation(2).attemptCount(0).build();
+    when(repository.findByIdForUpdate(12L)).thenReturn(Optional.of(reactivated));
+
+    service.recordResult(12L, 1, true);
+
+    verify(repository, org.mockito.Mockito.never()).delete(any());
+    verify(repository, org.mockito.Mockito.never()).save(any());
   }
 }

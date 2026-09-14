@@ -183,6 +183,8 @@
     file="db/changelog/changeset/0097_case_handover_matrix_membership/0097_changeSet.xml" />
   <include
     file="db/changelog/changeset/0098_case_handover_matrix_repair/0098_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0099_case_handover_matrix_repair_generation/0099_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
