@@ -37,6 +37,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -61,6 +63,7 @@ import org.springframework.web.client.RestClientException;
 @Slf4j
 public class CreateConsultantSaga {
 
+  private final ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
   private static final String CREATE_CONSULTANT = "createConsultant";
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
@@ -216,6 +219,8 @@ public class CreateConsultantSaga {
     de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.PlainCredentials plainCreds =
         de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
 
+    RecoveryPolicySnapshot snapshot =
+        chatRecoveryEnrollmentPolicyService.forNewConsultant(consultantCreationInput.getTenantId());
     String keycloakUserId = createKeycloakUser(consultantCreationInput);
 
     String password = consultantCreationInput.getPassword();
@@ -269,7 +274,8 @@ public class CreateConsultantSaga {
     }
 
     var consultant =
-        createConsultantInMariaDBOrRollback(consultantCreationInput, keycloakUserId, matrixUserId);
+        createConsultantInMariaDBOrRollback(
+            consultantCreationInput, keycloakUserId, matrixUserId, snapshot);
 
     assignAgenciesOrRollback(consultant, consultantCreationInput.getAgencyIds());
     return consultant;
@@ -342,8 +348,15 @@ public class CreateConsultantSaga {
   }
 
   private Consultant createConsultantInMariaDBOrRollback(
-      ConsultantCreationInput consultantCreationInput, String keycloakUserId, String matrixUserId) {
+      ConsultantCreationInput consultantCreationInput,
+      String keycloakUserId,
+      String matrixUserId,
+      RecoveryPolicySnapshot snapshot) {
+    var existing = consultantService.getConsultant(keycloakUserId);
+    if (existing.isPresent()) return existing.get();
     Consultant consultant = buildConsultant(consultantCreationInput, keycloakUserId, matrixUserId);
+    consultant.setChatRecoveryMode(snapshot.mode());
+    consultant.setChatRecoveryPolicyRevision(snapshot.revision());
     try {
       return consultantService.saveConsultant(consultant);
     } catch (Exception e) {

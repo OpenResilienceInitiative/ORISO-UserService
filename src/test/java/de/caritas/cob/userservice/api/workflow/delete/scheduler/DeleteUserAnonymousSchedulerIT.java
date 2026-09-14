@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixCreateUserResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
@@ -31,6 +32,7 @@ import de.caritas.cob.userservice.api.testConfig.ApiControllerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.KeycloakTestConfig;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionWorkflowError;
@@ -83,6 +85,8 @@ class DeleteUserAnonymousSchedulerIT {
 
   @MockitoBean MatrixSynapseService matrixSynapseService;
 
+  @MockitoBean TenantService tenantService;
+
   @MockitoBean WorkflowErrorMailService workflowErrorMailService;
 
   @MockitoSpyBean UserAgencyRepository userAgencyRepository;
@@ -92,6 +96,8 @@ class DeleteUserAnonymousSchedulerIT {
   @BeforeEach
   public void setup() throws MatrixCreateUserException {
     deleteSchedulerClaim();
+    when(tenantService.getSingleTenancyTenantDataFresh())
+        .thenReturn(ChatRecoveryPolicyFixtures.tenant());
     var matrixUserResponse = new MatrixCreateUserResponseDTO();
     matrixUserResponse.setUserId("@anonymous:matrix.test");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))

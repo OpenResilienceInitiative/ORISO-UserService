@@ -30,6 +30,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -55,6 +57,24 @@ import org.springframework.http.ResponseEntity;
 
 @ExtendWith(MockitoExtension.class)
 class CreateUserFacadeMatrixUserTest {
+  @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
+
+  @org.junit.jupiter.api.BeforeEach
+  void recoveryPolicyFixture() {
+    org.mockito.Mockito.lenient()
+        .when(chatRecoveryEnrollmentPolicyService.forNewAsker(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
+    org.mockito.Mockito.lenient()
+        .when(
+            chatRecoveryEnrollmentPolicyService.forNewConsultant(
+                org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
+    org.mockito.Mockito.lenient()
+        .when(
+            chatRecoveryEnrollmentPolicyService.forExistingIdentity(
+                org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new RecoveryPolicySnapshot("RECOVERY_KEY", 0));
+  }
 
   @InjectMocks private CreateUserFacade createUserFacade;
 
@@ -101,7 +121,8 @@ class CreateUserFacadeMatrixUserTest {
     var createdUser =
         new User(
             USER_ID, null, USER_DTO_KREUZBUND.getUsername(), USER_DTO_KREUZBUND.getEmail(), false);
-    when(userService.createUser(anyString(), any(), anyString(), anyString(), anyBoolean(), any()))
+    when(userService.createUser(
+            anyString(), any(), anyString(), anyString(), anyBoolean(), any(), any()))
         .thenReturn(createdUser);
     when(userService.saveUser(any(User.class))).thenAnswer(invocation -> invocation.getArgument(0));
 

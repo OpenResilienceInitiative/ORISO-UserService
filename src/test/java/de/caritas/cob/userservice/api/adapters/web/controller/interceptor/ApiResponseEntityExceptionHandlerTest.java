@@ -35,6 +35,17 @@ class ApiResponseEntityExceptionHandlerTest {
   private final WebRequest request = mock(WebRequest.class);
 
   @Test
+  void unavailableRecoveryPolicyReturnsRetryableStatusAndReason() {
+    var response =
+        handler.handleCustomBadRequest(
+            new CustomValidationHttpStatusException(
+                HttpStatusExceptionReason.CHAT_RECOVERY_POLICY_UNAVAILABLE, HttpStatus.BAD_GATEWAY),
+            request);
+    assertEquals(HttpStatus.BAD_GATEWAY, response.getStatusCode());
+    assertEquals("CHAT_RECOVERY_POLICY_UNAVAILABLE", response.getHeaders().getFirst("X-Reason"));
+  }
+
+  @Test
   void handleCustomBadRequest_badRequestException_returnsBadRequest() {
     // Business reason: clients must receive the semantic validation reason, not a silent failure.
     var response = handler.handleCustomBadRequest(new BadRequestException("bad"), request);

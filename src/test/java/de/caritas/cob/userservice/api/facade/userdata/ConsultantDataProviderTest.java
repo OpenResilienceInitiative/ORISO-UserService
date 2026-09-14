@@ -57,11 +57,15 @@ public class ConsultantDataProviderTest {
   @Test
   public void retrieveData_Should_ReturnMinimalProfile_When_NoAgenciesFound() {
     Consultant consultant = easyRandom.nextObject(Consultant.class);
+    consultant.setChatRecoveryMode("LOGIN_PASSWORD");
+    consultant.setChatRecoveryPolicyRevision(7L);
     consultant.setConsultantAgencies(new HashSet<>());
     when(agencyService.getAgencies(any())).thenReturn(List.of());
 
     var result = underTest.retrieveData(consultant);
 
+    assertEquals("LOGIN_PASSWORD", result.getChatRecoveryMode());
+    assertEquals(7L, result.getChatRecoveryPolicyRevision());
     assertNotNull(result);
     assertEquals(consultant.getId(), result.getUserId());
     assertTrue(result.getAgencies().isEmpty());
