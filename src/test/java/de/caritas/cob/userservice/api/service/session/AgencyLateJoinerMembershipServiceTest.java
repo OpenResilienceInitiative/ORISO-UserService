@@ -250,6 +250,24 @@ class AgencyLateJoinerMembershipServiceTest {
   }
 
   @Test
+  void removeConsultantFromAgencyRooms_alsoRevokesArchivedTeamRooms() {
+    var consultant = lateJoiner();
+    openEnquiries();
+    when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(
+            consultant.getId(), AGENCY_ID, TeamDiscussion.Status.ARCHIVED))
+        .thenReturn(List.of("!archive:oriso.org"));
+    when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(
+            consultant.getId(), AGENCY_ID, TeamDiscussion.Status.OPEN))
+        .thenReturn(List.of());
+    agencyServiceAccountAvailable();
+    when(sessionRoomGateway.removeUserFromRoom(
+            "!archive:oriso.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
+        .thenReturn(true);
+
+    assertEquals(1, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
+  }
+
+  @Test
   @DisplayName("a counsellor without a Matrix account has nothing to revoke")
   void removeConsultantFromAgencyRooms_skipsConsultantWithoutMatrixAccount() {
     var consultant = lateJoiner();

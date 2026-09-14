@@ -557,6 +557,22 @@
       "decision": "Leases the run through ScheduledTaskClaimService. Each expired discussion is purged from Synapse before its row and participants are deleted in one transaction, so a second replica or a retried run finds either the whole discussion or nothing; a room Synapse no longer knows is treated as already purged.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "bounded"
+    },
+    {
+      "id": "team-discussion-access-repair",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/teamdiscussion/TeamDiscussionAccessRepairScheduler.java",
+      "kind": "scheduler",
+      "owner": "team-discussion",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "reconcileAccess"
+      ],
+      "decision": "Uses a database lease and persisted archive/participant rows to retry Matrix read-only enforcement and revoked agency access. Successful removals delete their retry footprint; failed operations remain queryable.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
     }
   ]
 }

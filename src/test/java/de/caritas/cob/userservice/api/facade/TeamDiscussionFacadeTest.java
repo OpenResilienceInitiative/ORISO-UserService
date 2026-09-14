@@ -518,6 +518,7 @@ class TeamDiscussionFacadeTest {
             .sessionId(SESSION_ID)
             .matrixRoomId(ROOM_ID)
             .status(TeamDiscussion.Status.ARCHIVED)
+            .readOnlyApplied(true)
             .archiveDate(LocalDateTime.now().minusDays(1))
             .build();
     when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
@@ -590,6 +591,25 @@ class TeamDiscussionFacadeTest {
 
     assertThat(discussion.getStatus()).isEqualTo(TeamDiscussion.Status.ARCHIVED);
     assertThat(discussion.isReadOnlyApplied()).isFalse();
+  }
+
+  @Test
+  void archiveDiscussionIfPresent_shouldRetryFailedLockWithoutAConsultantReopening() {
+    var discussion =
+        TeamDiscussion.builder()
+            .id(99L)
+            .sessionId(SESSION_ID)
+            .matrixRoomId(ROOM_ID)
+            .status(TeamDiscussion.Status.OPEN)
+            .build();
+    when(teamDiscussionRepository.findBySessionId(SESSION_ID)).thenReturn(Optional.of(discussion));
+    when(matrixSynapseService.setRoomEventsDefaultPowerLevel(anyString(), anyInt(), anyString()))
+        .thenReturn(false, true);
+
+    facade.archiveDiscussionIfPresent(session);
+    facade.archiveDiscussionIfPresent(session);
+
+    assertThat(discussion.isReadOnlyApplied()).isTrue();
   }
 
   @Test

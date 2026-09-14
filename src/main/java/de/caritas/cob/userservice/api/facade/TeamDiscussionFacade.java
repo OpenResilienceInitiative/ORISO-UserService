@@ -166,8 +166,11 @@ public class TeamDiscussionFacade {
       }
       Optional<TeamDiscussion> discussionOpt =
           teamDiscussionRepository.findBySessionId(session.getId());
-      if (discussionOpt.isEmpty()
-          || discussionOpt.get().getStatus() == TeamDiscussion.Status.ARCHIVED) {
+      if (discussionOpt.isEmpty()) {
+        return;
+      }
+      if (discussionOpt.get().getStatus() == TeamDiscussion.Status.ARCHIVED) {
+        reconcileOnAccess(discussionOpt.get(), session);
         return;
       }
       archiveDiscussion(session, discussionOpt.get());

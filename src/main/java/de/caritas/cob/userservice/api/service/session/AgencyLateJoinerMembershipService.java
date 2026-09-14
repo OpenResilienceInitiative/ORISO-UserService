@@ -140,10 +140,13 @@ public class AgencyLateJoinerMembershipService {
     var roomIds =
         Stream.concat(
                 openEnquiryRoomIds(consultant, agencyId).stream(),
-                teamDiscussionRepository
-                    .findRoomIdsForParticipantInAgency(
-                        consultant.getId(), agencyId, TeamDiscussion.Status.OPEN)
-                    .stream())
+                Stream.of(TeamDiscussion.Status.OPEN, TeamDiscussion.Status.ARCHIVED)
+                    .flatMap(
+                        status ->
+                            teamDiscussionRepository
+                                .findRoomIdsForParticipantInAgency(
+                                    consultant.getId(), agencyId, status)
+                                .stream()))
             .distinct()
             .toList();
     if (roomIds.isEmpty()) {
@@ -179,6 +182,14 @@ public class AgencyLateJoinerMembershipService {
         roomIds.size(),
         agencyId);
     return removed;
+  }
+
+  /** Retry a recorded team-room revocation using its agency operator. */
+  public boolean removeConsultantFromTeamRoom(Consultant consultant, Long agencyId, String roomId) {
+    if (consultant == null || isBlank(consultant.getMatrixUserId())) return true;
+    var token = resolveAgencyToken(agencyId);
+    return !isBlank(token)
+        && sessionRoomGateway.removeUserFromRoom(roomId, consultant.getMatrixUserId(), token);
   }
 
   private List<String> openEnquiryRoomIds(Consultant consultant, Long agencyId) {

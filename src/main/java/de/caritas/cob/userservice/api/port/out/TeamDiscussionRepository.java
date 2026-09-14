@@ -13,6 +13,13 @@ public interface TeamDiscussionRepository extends JpaRepository<TeamDiscussion, 
 
   Optional<TeamDiscussion> findByMatrixRoomId(String matrixRoomId);
 
+  @Query(
+      "select td from TeamDiscussion td, Session s where td.sessionId = s.id"
+          + " and (td.readOnlyApplied = false and (s.consultant is not null or s.status <> :newStatus))")
+  List<TeamDiscussion> findPendingArchiveRepairs(
+      @org.springframework.data.repository.query.Param("newStatus")
+          de.caritas.cob.userservice.api.model.Session.SessionStatus newStatus);
+
   /** Open team rooms this consultant actually joined, restricted to one agency. */
   @Query(
       "select distinct td.matrixRoomId from TeamDiscussion td, Session s,"
