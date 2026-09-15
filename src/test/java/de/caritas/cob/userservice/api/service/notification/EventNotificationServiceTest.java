@@ -1854,4 +1854,88 @@ class EventNotificationServiceTest {
 
     verify(eventNotificationRepository, never()).save(any());
   }
+
+  // ---------------------------------------------------------------------------
+  // #1377 slice 7 — unread total with exclusions, bulk read by event type
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void countUnread_withoutExclusions_usesPlainCount() {
+    when(eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull("user-1"))
+        .thenReturn(9L);
+
+    assertThat(eventNotificationService.countUnread("user-1", java.util.Set.of())).isEqualTo(9L);
+    assertThat(eventNotificationService.countUnread("user-1", null)).isEqualTo(9L);
+    verify(eventNotificationRepository, never())
+        .countByRecipientUserIdAndReadDateIsNullAndEventTypeNotIn(any(), any());
+  }
+
+  @Test
+  void countUnread_withExclusions_trimsAndDedupesBeforeQuerying() {
+    when(eventNotificationRepository.countByRecipientUserIdAndReadDateIsNullAndEventTypeNotIn(
+            "user-1", new java.util.TreeSet<>(java.util.Set.of("call.missed", "supervisor.added"))))
+        .thenReturn(4L);
+
+    long count =
+        eventNotificationService.countUnread(
+            "user-1", java.util.Set.of(" call.missed ", "supervisor.added", "", "call.missed"));
+
+    assertThat(count).isEqualTo(4L);
+  }
+
+  @Test
+  void getFeed_withExclusions_echoesThemAndUsesTheExcludingCount() {
+    when(eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDescIdDesc(any(), any()))
+        .thenReturn(List.of());
+    when(eventNotificationRepository.countByRecipientUserIdAndReadDateIsNullAndEventTypeNotIn(
+            any(), any()))
+        .thenReturn(2L);
+
+    var result =
+        eventNotificationService.getFeed("user-1", 0, 50, java.util.Set.of("supervisor.added"));
+
+    assertThat(result.getUnreadCount()).isEqualTo(2L);
+    assertThat(result.getExcludedEventTypes()).containsExactly("supervisor.added");
+    verify(eventNotificationRepository, never()).countByRecipientUserIdAndReadDateIsNull(any());
+  }
+
+  @Test
+  void getFeed_withoutExclusions_echoesAnEmptyList() {
+    when(eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDescIdDesc(any(), any()))
+        .thenReturn(List.of());
+    when(eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(any())).thenReturn(1L);
+
+    var result = eventNotificationService.getFeed("user-1", 0, 50);
+
+    assertThat(result.getUnreadCount()).isEqualTo(1L);
+    assertThat(result.getExcludedEventTypes()).isEmpty();
+  }
+
+  @Test
+  void markAsReadByEventTypes_marksEveryUnreadRowOfThoseTypes() {
+    var first = EventNotification.builder().id(1L).recipientUserId("user-1").build();
+    var second = EventNotification.builder().id(2L).recipientUserId("user-1").build();
+    when(eventNotificationRepository.findByRecipientUserIdAndReadDateIsNullAndEventTypeIn(
+            "user-1", new java.util.TreeSet<>(java.util.Set.of("supervisor.added"))))
+        .thenReturn(List.of(first, second));
+
+    int updated =
+        eventNotificationService.markAsReadByEventTypes(
+            "user-1", java.util.Set.of("supervisor.added"));
+
+    assertThat(updated).isEqualTo(2);
+    assertThat(first.getReadDate()).isNotNull();
+    assertThat(second.getReadDate()).isNotNull();
+    verify(eventNotificationRepository).saveAll(List.of(first, second));
+  }
+
+  @Test
+  void markAsReadByEventTypes_emptyTypes_touchesNothing() {
+    assertThat(eventNotificationService.markAsReadByEventTypes("user-1", java.util.Set.of()))
+        .isZero();
+    assertThat(eventNotificationService.markAsReadByEventTypes("user-1", null)).isZero();
+    verify(eventNotificationRepository, never())
+        .findByRecipientUserIdAndReadDateIsNullAndEventTypeIn(any(), any());
+    verify(eventNotificationRepository, never()).saveAll(any());
+  }
 }
