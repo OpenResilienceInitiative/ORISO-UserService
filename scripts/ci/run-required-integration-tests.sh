@@ -13,6 +13,7 @@ maven_wrapper="${ORISO_MAVEN_WRAPPER:-./mvnw}"
 # would have removed the test from required CI entirely instead of moving it.
 mariadb_owned_tests=(
   DatabaseChangelogDriftIT
+  ConsultantPictureDatabaseIT
   AdminStatisticsRepositoryMariaDbIT
   ProvisioningCompensationMariaDbIT
   ScheduledTaskClaimMariaDbIT

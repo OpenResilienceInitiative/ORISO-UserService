@@ -53,6 +53,15 @@ import org.springframework.web.servlet.mvc.method.annotation.ResponseEntityExcep
 @Order(Ordered.HIGHEST_PRECEDENCE)
 public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHandler {
 
+  @ExceptionHandler(de.caritas.cob.userservice.api.picture.PictureException.class)
+  public ResponseEntity<Object> handlePicture(
+      de.caritas.cob.userservice.api.picture.PictureException ex, WebRequest request) {
+    var headers = new HttpHeaders();
+    headers.setCacheControl("no-store");
+    return handleExceptionInternal(
+        ex, Map.of("reason", ex.getMessage()), headers, ex.getStatus(), request);
+  }
+
   private static final String BAD_REQUEST = "Bad Request: ";
   private static final String USER_SERVICE_API_LOG_PLACEHOLDER = "UserService API: {}: {}";
 

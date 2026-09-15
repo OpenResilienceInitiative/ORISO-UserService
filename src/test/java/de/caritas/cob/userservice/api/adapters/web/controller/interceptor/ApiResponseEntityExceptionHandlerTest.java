@@ -202,6 +202,24 @@ class ApiResponseEntityExceptionHandlerTest {
 
   @Test
   void mappedExceptionHandlers_returnExpectedHttpStatus() {
+    var pictureStatuses =
+        java.util.Map.of(
+            de.caritas.cob.userservice.api.picture.PictureException.tooLarge(),
+                HttpStatus.PAYLOAD_TOO_LARGE,
+            de.caritas.cob.userservice.api.picture.PictureException.unsupported(),
+                HttpStatus.UNSUPPORTED_MEDIA_TYPE,
+            de.caritas.cob.userservice.api.picture.PictureException.invalid(),
+                HttpStatus.BAD_REQUEST,
+            de.caritas.cob.userservice.api.picture.PictureException.rejected(),
+                HttpStatus.UNPROCESSABLE_ENTITY,
+            de.caritas.cob.userservice.api.picture.PictureException.unavailable(),
+                HttpStatus.SERVICE_UNAVAILABLE);
+    pictureStatuses.forEach(
+        (error, expectedStatus) -> {
+          var result = handler.handlePicture(error, request);
+          assertEquals(expectedStatus, result.getStatusCode());
+          assertEquals(java.util.Map.of("reason", error.getMessage()), result.getBody());
+        });
     // Business reason: each domain exception type must map to the documented status code.
     assertEquals(
         HttpStatus.CONFLICT,

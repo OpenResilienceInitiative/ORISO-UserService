@@ -107,12 +107,40 @@ public class SecurityConfig {
     }
     enableTenantFilterIfMultitenancyEnabled(http);
 
+    http.addFilterAfter(
+        new de.caritas.cob.userservice.api.picture.PictureRequestFilter(),
+        org.springframework.security.web.access.intercept.AuthorizationFilter.class);
+
     http.sessionManagement(
         session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
     http.authorizeHttpRequests(
         authorize ->
             authorize
+                // Private consultant-owned pictures: keep child routes above all useradmin
+                // catch-alls.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/consultants/{consultantId}/picture",
+                    "/service/useradmin/consultants/{consultantId}/picture")
+                .hasAnyAuthority(
+                    CONSULTANT_DEFAULT,
+                    USER_ADMIN,
+                    CONSULTANT_UPDATE,
+                    TENANT_ADMIN,
+                    SINGLE_TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN,
+                    TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/consultants/{consultantId}/picture",
+                    "/service/useradmin/consultants/{consultantId}/picture")
+                .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.DELETE,
+                    "/useradmin/consultants/{consultantId}/picture",
+                    "/service/useradmin/consultants/{consultantId}/picture")
+                .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     "/users/docs",
                     "/users/docs/**",
