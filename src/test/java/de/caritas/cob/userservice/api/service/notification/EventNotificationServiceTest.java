@@ -1933,6 +1933,11 @@ class EventNotificationServiceTest {
     assertThat(eventNotificationService.markAsReadByEventTypes("user-1", java.util.Set.of()))
         .isZero();
     assertThat(eventNotificationService.markAsReadByEventTypes("user-1", null)).isZero();
+    // A non-empty set that normalises to nothing (blank/null entries) is a no-op too.
+    assertThat(
+            eventNotificationService.markAsReadByEventTypes(
+                "user-1", new java.util.HashSet<>(java.util.Arrays.asList(null, "  "))))
+        .isZero();
     verify(eventNotificationRepository, never()).markReadByEventTypes(any(), any(), any());
   }
 }
