@@ -20,6 +20,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
@@ -642,8 +643,22 @@ public class EventNotificationService {
 
   @Transactional(readOnly = true)
   public NotificationFeedResponse getFeed(String recipientUserId, int page, int perPage) {
+    return getFeed(recipientUserId, page, perPage, Set.of());
+  }
+
+  /**
+   * Feed page plus the unread total. With {@code excludeEventTypes} the total leaves those event
+   * types out (#1377 display filter, slice 7): the client hides some kinds and the rail badge must
+   * be exact rather than "server total minus what happens to be loaded". The rows of the page are
+   * never filtered — the client applies its own filter to them — and the response echoes the
+   * excluded types so a client can tell an exact total from one an older server ignored.
+   */
+  @Transactional(readOnly = true)
+  public NotificationFeedResponse getFeed(
+      String recipientUserId, int page, int perPage, Set<String> excludeEventTypes) {
     int safePage = Math.max(0, page);
     int safePerPage = Math.max(1, Math.min(perPage, 100));
+    Set<String> excluded = normaliseEventTypes(excludeEventTypes);
 
     var pageable = PageRequest.of(safePage, safePerPage);
     List<NotificationItem> items =
@@ -653,14 +668,51 @@ public class EventNotificationService {
             .map(this::toItem)
             .collect(Collectors.toList());
 
-    long unreadCount =
-        eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(recipientUserId);
     return NotificationFeedResponse.builder()
         .items(items)
-        .unreadCount(unreadCount)
+        .unreadCount(countUnread(recipientUserId, excluded))
+        .excludedEventTypes(List.copyOf(excluded))
         .page(safePage)
         .perPage(safePerPage)
         .build();
+  }
+
+  /** Unread total, optionally without the given event types (#1377 slice 7). */
+  @Transactional(readOnly = true)
+  public long countUnread(String recipientUserId, Set<String> excludeEventTypes) {
+    Set<String> excluded = normaliseEventTypes(excludeEventTypes);
+    if (excluded.isEmpty()) {
+      return eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(recipientUserId);
+    }
+    return eventNotificationRepository.countByRecipientUserIdAndReadDateIsNullAndEventTypeNotIn(
+        recipientUserId, excluded);
+  }
+
+  /**
+   * Marks every unread row of the given event types read, loaded or not (#1377 slice 7: the
+   * client's "hidden ⇒ read" rule no longer stops at the pages it has loaded).
+   *
+   * @return number of rows marked read
+   */
+  @Transactional
+  public int markAsReadByEventTypes(String recipientUserId, Set<String> eventTypes) {
+    Set<String> types = normaliseEventTypes(eventTypes);
+    if (types.isEmpty()) {
+      return 0;
+    }
+    return eventNotificationRepository.markReadByEventTypes(
+        recipientUserId, types, LocalDateTime.now());
+  }
+
+  /** Trimmed, non-blank, de-duplicated; {@code null} reads as empty. */
+  private static Set<String> normaliseEventTypes(Set<String> eventTypes) {
+    if (eventTypes == null || eventTypes.isEmpty()) {
+      return Set.of();
+    }
+    return eventTypes.stream()
+        .filter(type -> type != null && !type.isBlank())
+        .map(String::trim)
+        .collect(Collectors.toCollection(java.util.TreeSet::new));
   }
 
   @Transactional
@@ -1136,6 +1188,29 @@ public class EventNotificationService {
     private final long unreadCount;
     private final int page;
     private final int perPage;
+
+    /**
+     * Event types left out of {@link #unreadCount} (#1377 slice 7). Empty when the total covers
+     * everything; a client that asked for exclusions and gets an empty list back is talking to a
+     * server that does not support them.
+     */
+    private final List<String> excludedEventTypes;
+  }
+
+  /** #1377 slice 7: the unread total without hidden kinds. */
+  @Getter
+  @Builder
+  public static class UnreadCountResponse {
+    private final long unreadCount;
+    private final List<String> excludedEventTypes;
+  }
+
+  /** #1377 slice 7: how many rows a bulk read touched. */
+  @Getter
+  @Builder
+  public static class MarkReadResponse {
+    private final int updated;
+    private final List<String> eventTypes;
   }
 
   @Getter

@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.EventNotification;
 import java.time.LocalDateTime;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.domain.Pageable;
@@ -17,6 +18,30 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
       String recipientUserId, Pageable pageable);
 
   long countByRecipientUserIdAndReadDateIsNull(String recipientUserId);
+
+  /**
+   * Unread total without the given event types (#1377 display filter, slice 7): the client hides
+   * some kinds and wants a badge that is exact instead of an upper bound derived from loaded pages.
+   */
+  long countByRecipientUserIdAndReadDateIsNullAndEventTypeNotIn(
+      String recipientUserId, Collection<String> eventTypes);
+
+  /**
+   * Marks every unread row of the given event types read in one statement (#1377 auto-read across
+   * unloaded pages). A bulk update on purpose: the backlog is bounded by retention age, not by row
+   * count, so loading the entities would scale memory and transaction time with the backlog.
+   *
+   * @return number of rows marked read
+   */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "update EventNotification e set e.readDate = :now "
+          + "where e.recipientUserId = :recipientUserId and e.readDate is null "
+          + "and e.eventType in :eventTypes")
+  int markReadByEventTypes(
+      @Param("recipientUserId") String recipientUserId,
+      @Param("eventTypes") Collection<String> eventTypes,
+      @Param("now") LocalDateTime now);
 
   Optional<EventNotification> findByIdAndRecipientUserId(Long id, String recipientUserId);
 
