@@ -1,8 +1,8 @@
 # Invite Links API — for the Frontend Developer
 
-> Backend branch: `backend-of-invite-link` (off `Rebuild`)
 > Service: `ORISO-UserService`
 > Status of redesign: agency removed from invite links — topic is the core identifier.
+> Runtime contract: `AgencyInviteLinkController.RedeemResponseDTO` on `pre-dev`.
 
 This document is the **contract**. You can build the UI against it without reading any backend
 code. If something here disagrees with what the backend does, that's a backend bug — file an
@@ -146,25 +146,30 @@ date math.
   "refreshToken": "eyJhbGciOi...",
   "expiresIn": 3600,
   "refreshExpiresIn": 1800,
-  "rcUserId": "rcUser-9012",
-  "rcToken": "rc-token-...",
-  "rcGroupId": "rc-group-..."
+  "tenantId": 12,
+  "agencyId": null,
+  "consultingTypeId": 3,
+  "topicId": 17
 }
 ```
 
-This is the **same shape** `CreateAnonymousEnquiryResponseDTO` already returns from
-`POST /conversations/askers/anonymous/new`. The visitor is now a logged-in anonymous user with a
-live-chat session ready — drop them straight into the chat UI; no second registration call.
+The authentication and session fields are the same subset returned by
+`CreateAnonymousEnquiryResponseDTO` from `POST /conversations/askers/anonymous/new`; the remaining
+fields describe the redeemed invite route. The endpoint does not return Matrix identifiers or
+Matrix access tokens. The visitor is now an authenticated anonymous ORISO user with a counselling
+session. The frontend must initialize Matrix through its normal host-owned Matrix bootstrap before
+opening the chat; no second registration call is required.
 
 **Errors:**
 
 | Code | Reason |
 |---|---|
-| 400 | link already used / expired / never had a topic |
+| 400 | link inactive / expired / missing required routing metadata |
 | 404 | token doesn't exist |
 
-The token lookup uses a pessimistic lock; double-clicks and parallel calls cannot redeem the same
-link twice.
+The token lookup uses a pessimistic lock, but a successful redeem deliberately leaves the link
+`ACTIVE`. Published links are reusable until expiry so multiple visitors can enter through the
+same link. A `LIVE_CHAT` request creates a new anonymous session for each successful redeem.
 
 ---
 
