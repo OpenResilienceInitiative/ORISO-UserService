@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -18,12 +20,14 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.availability.ConsultantActivityRegistry;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -54,7 +58,8 @@ class MessengerTest {
 
   @BeforeEach
   void setUp() {
-    ReflectionTestUtils.setField(messenger, "liveChatQueueActivePeriodMinutes", 30L);
+    ReflectionTestUtils.setField(messenger, "liveChatQueueActivePeriodMinutes", 5L);
+    ReflectionTestUtils.setField(messenger, "liveChatQueueHeartbeatThrottleSeconds", 30L);
     ReflectionTestUtils.setField(messenger, "consultantAvailabilityActiveWindowMs", 120000L);
   }
 
@@ -107,6 +112,52 @@ class MessengerTest {
 
     assertThat(result).isEqualTo(5L);
     verify(diagnosticMetrics).recordQueueDepth(5L);
+  }
+
+  @Test
+  void countPendingEnquiriesAheadOf_Should_CutOffInUtc_When_ParamsValid() {
+    LocalDateTime before = LocalDateTime.now();
+    ArgumentCaptor<LocalDateTime> minUpdateDate = ArgumentCaptor.forClass(LocalDateTime.class);
+
+    messenger.countPendingEnquiriesAheadOf(10L, 2, 3L, before);
+
+    verify(sessionRepository)
+        .countPendingEnquiriesAheadOf(
+            any(), any(), any(), any(), any(), minUpdateDate.capture(), any());
+    /* Sessions store UTC, so the cutoff must sit five minutes below UTC now — not below the
+    server's local clock, which on a non-UTC host would be hours away and empty the queue.
+    Note this assertion only bites where the two differ: on a host already running UTC it holds
+    either way. SessionRepositoryQueueCountIT proves the behaviour against a real database and is
+    the guard that does not depend on the host's zone. */
+    assertThat(minUpdateDate.getValue())
+        .isCloseTo(nowInUtc().minusMinutes(5), within(1, ChronoUnit.MINUTES));
+  }
+
+  // ── touchLiveChatQueueHeartbeat ───────────────────────────────────────────
+
+  @Test
+  void touchLiveChatQueueHeartbeat_Should_DoNothing_When_SessionIdIsNull() {
+    messenger.touchLiveChatQueueHeartbeat(null);
+
+    org.mockito.Mockito.verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
+  void touchLiveChatQueueHeartbeat_Should_UseOneUtcInstantAndConfiguredThrottle() {
+    ReflectionTestUtils.setField(messenger, "liveChatQueueHeartbeatThrottleSeconds", 45L);
+    var now = ArgumentCaptor.forClass(LocalDateTime.class);
+    var cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
+
+    messenger.touchLiveChatQueueHeartbeat(1L);
+
+    verify(sessionRepository)
+        .touchLiveChatQueueHeartbeat(
+            org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq(Session.SessionStatus.NEW),
+            now.capture(), cutoff.capture());
+    assertThat(now.getValue()).isCloseTo(nowInUtc(), within(1, ChronoUnit.SECONDS));
+    assertThat(cutoff.getValue()).isEqualTo(now.getValue().minusSeconds(45));
+    org.mockito.Mockito.verifyNoMoreInteractions(sessionRepository);
   }
 
   // ── markAsDirectConsultant ────────────────────────────────────────────────
