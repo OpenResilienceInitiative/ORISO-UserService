@@ -63,6 +63,7 @@ class ApplicationSettingsServiceTest {
   void setUp() {
     apiClient = new RecordingApiClient();
     controllerApi = new StubApplicationsettingsControllerApi(apiClient);
+    controllerApi.requiredAuthorizationHeaderValue = TECHNICAL_AUTH_VALUE;
     securityHeaderSupplier = createSecurityHeaderSupplier();
     tenantHeaderSupplier = createTenantHeaderSupplier();
     identityAuthentication = new StubIdentityAuthentication(TECHNICAL_TOKEN);
@@ -255,6 +256,22 @@ class ApplicationSettingsServiceTest {
                     assertThat(event.getFormattedMessage()).contains("technical user");
                   });
         });
+  }
+
+  // CodeRabbit r4016166354: the success stub above only proves the technical Authorization
+  // header is *sent*, not that the provider's "super admin only" policy is exercised. This
+  // pins the case where the provider rejects the technical identity itself (e.g. missing
+  // tenantId=0 claim, per #1160) rather than a generic transport failure.
+  @Test
+  void getGlobalSmtpCredentials_providerRejectsTechnicalIdentity_returnsEmpty() {
+    controllerApi.smtpResult =
+        new ApplicationSettingsSmtpCredentialsDTO()
+            .globalSmtpUsername("user")
+            .globalSmtpPassword("pass");
+    controllerApi.requiredAuthorizationHeaderValue = "Bearer some-other-authorized-token";
+
+    assertThat(applicationSettingsService.getGlobalSmtpCredentials()).isEmpty();
+    assertThat(controllerApi.smtpCallCount.get()).isEqualTo(1);
   }
 
   // SMTP credential lookup is best-effort and must not break admin tooling on 4xx/5xx.
@@ -573,11 +590,19 @@ class ApplicationSettingsServiceTest {
     ApplicationSettingsSmtpCredentialsDTO smtpResult;
     RuntimeException settingsException;
     RuntimeException smtpException;
+
+    // Simulates the ConsultingTypeService's own "super admin only" authorization check: when
+    // set, getGlobalSmtpCredentials() rejects (403) unless the technical Authorization header
+    // actually sent matches, instead of returning smtpResult unconditionally.
+    String requiredAuthorizationHeaderValue;
+
     final AtomicInteger settingsCallCount = new AtomicInteger();
     final AtomicInteger smtpCallCount = new AtomicInteger();
+    private final RecordingApiClient recordingApiClient;
 
-    StubApplicationsettingsControllerApi(ApiClient apiClient) {
+    StubApplicationsettingsControllerApi(RecordingApiClient apiClient) {
       super(apiClient);
+      this.recordingApiClient = apiClient;
     }
 
     void reset() {
@@ -585,6 +610,7 @@ class ApplicationSettingsServiceTest {
       smtpResult = null;
       settingsException = null;
       smtpException = null;
+      requiredAuthorizationHeaderValue = null;
       settingsCallCount.set(0);
       smtpCallCount.set(0);
     }
@@ -603,6 +629,11 @@ class ApplicationSettingsServiceTest {
       smtpCallCount.incrementAndGet();
       if (smtpException != null) {
         throw smtpException;
+      }
+      if (requiredAuthorizationHeaderValue != null
+          && !requiredAuthorizationHeaderValue.equals(
+              recordingApiClient.recordedHeaders.get(AUTH_HEADER))) {
+        throw HttpClientErrorException.create(HttpStatus.FORBIDDEN, "Forbidden", null, null, null);
       }
       return smtpResult;
     }
