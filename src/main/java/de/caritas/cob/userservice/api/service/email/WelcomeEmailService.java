@@ -68,7 +68,8 @@ public class WelcomeEmailService {
       return;
     }
 
-    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(applicationBaseUrl, null));
+    Map<String, String> values =
+        new LinkedHashMap<>(emailBrand.valuesForTenant(applicationBaseUrl, user.getTenantId()));
     values.put("username", plainUsername);
     values.put("loginUrl", values.get("appUrl"));
 

@@ -52,6 +52,9 @@ public class BrandedEmailLayoutRenderer {
   private final EmailContentSanitizer sanitizer;
 
   private final String htmlSkeleton;
+  private final String invitationSkeleton;
+  private final String invitationLogoCell;
+  private final String invitationCta;
   private final String textSkeleton;
   private final String headerLogo;
   private final String headerWordmark;
@@ -62,6 +65,9 @@ public class BrandedEmailLayoutRenderer {
   public BrandedEmailLayoutRenderer(@NonNull EmailContentSanitizer sanitizer) {
     this.sanitizer = sanitizer;
     this.htmlSkeleton = loadResource("branded-email.html");
+    this.invitationSkeleton = loadResource("invitation-email.html");
+    this.invitationLogoCell = loadResource("invitation-logo-cell.html");
+    this.invitationCta = loadResource("invitation-cta.html");
     this.textSkeleton = loadResource("branded-email.txt");
     this.headerLogo = loadResource("header-logo.html");
     this.headerWordmark = loadResource("header-wordmark.html");
@@ -72,6 +78,16 @@ public class BrandedEmailLayoutRenderer {
 
   /** Renders the branded HTML part and its plain-text alternative. */
   public BrandedEmail render(EmailBranding branding, BrandedEmailRequest request) {
+    return render(branding, request, false);
+  }
+
+  /** Modern invitation frame; authored content, localization and MIME semantics stay shared. */
+  public BrandedEmail renderInvitation(EmailBranding branding, BrandedEmailRequest request) {
+    return render(branding, request, true);
+  }
+
+  private BrandedEmail render(
+      EmailBranding branding, BrandedEmailRequest request, boolean invitation) {
     EmailBranding effectiveBranding = branding == null ? EmailBranding.neutral() : branding;
     Labels labels = Labels.forLanguage(request == null ? null : request.language());
     String subject = request == null || isBlank(request.subject()) ? "" : request.subject().trim();
@@ -89,7 +105,8 @@ public class BrandedEmailLayoutRenderer {
 
     return new BrandedEmail(
         subject,
-        renderHtml(effectiveBranding, labels, subject, contentHtml, actionUrl, actionLabel),
+        renderHtml(
+            effectiveBranding, labels, subject, contentHtml, actionUrl, actionLabel, invitation),
         renderText(effectiveBranding, labels, subject, contentText, actionUrl, actionLabel));
   }
 
@@ -99,7 +116,8 @@ public class BrandedEmailLayoutRenderer {
       String subject,
       String contentHtml,
       String actionUrl,
-      String actionLabel) {
+      String actionLabel,
+      boolean invitation) {
     String linkColor = branding.linkColor();
     String header =
         branding.hasLogo()
@@ -116,7 +134,7 @@ public class BrandedEmailLayoutRenderer {
         actionUrl == null
             ? ""
             : fill(
-                ctaHtml,
+                invitation ? invitationCta : ctaHtml,
                 Map.of(
                     "ACCENT_COLOR", branding.accentColor(),
                     "ACCENT_TEXT_COLOR", branding.accentTextColor(),
@@ -134,12 +152,23 @@ public class BrandedEmailLayoutRenderer {
     values.put("ACCENT_COLOR", branding.accentColor());
     values.put("LINK_COLOR", linkColor);
     values.put("HEADER", header);
+    values.put(
+        "LOGO_CELL",
+        branding.hasLogo()
+            ? fill(
+                invitationLogoCell,
+                Map.of(
+                    "LOGO_URL",
+                    escape(branding.logoUrl()),
+                    "BRAND_NAME",
+                    escape(branding.brandName())))
+            : "");
     values.put("CONTENT", contentHtml);
     values.put("CTA", cta);
     values.put("BRAND_NAME", escape(branding.brandName()));
     values.put("FOOTER_LINKS", footerLinksHtml(branding, labels, linkColor));
     values.put("FOOTER_NOTE", escape(labels.footerNote()));
-    return fill(htmlSkeleton, values);
+    return fill(invitation ? invitationSkeleton : htmlSkeleton, values);
   }
 
   private String renderText(

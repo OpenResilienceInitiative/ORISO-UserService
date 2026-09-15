@@ -27,6 +27,112 @@ class BrandedEmailLayoutRendererTest {
         "https://nord.oriso.org/datenschutz");
   }
 
+  @Test
+  void invitationFrameMatchesCatalogueDesignAndPreservesSafeAuthoredContent() throws Exception {
+    var mail =
+        renderer.renderInvitation(
+            tenantBranding(),
+            new BrandedEmailRequest(
+                "Authored subject",
+                "<strong>Hello</strong><script>bad()</script><p>{{BRAND_NAME}}</p>",
+                ACCEPT_URL,
+                null,
+                "en"));
+    var actual = org.jsoup.Jsoup.parse(mail.html());
+    String catalogueHtml;
+    try (var input =
+        new org.springframework.core.io.ClassPathResource("emails/en/einladung-fachkraft.html")
+            .getInputStream()) {
+      catalogueHtml = new String(input.readAllBytes(), java.nio.charset.StandardCharsets.UTF_8);
+    }
+    var catalogue = org.jsoup.Jsoup.parse(catalogueHtml);
+    assertStyleMatches(actual.body(), catalogue.body(), "background-color");
+    assertStyleMatches(
+        actual.selectFirst(".wrap"), catalogue.selectFirst(".wrap"), "width", "max-width");
+    assertStyleMatches(actual.selectFirst(".edge"), catalogue.selectFirst(".edge"), "padding");
+    assertStyleMatches(
+        actual.selectFirst(".oriso-invitation-card"),
+        catalogue.selectFirst("table[style*=border-radius:24px]"),
+        "border-radius",
+        "border",
+        "background-color");
+    assertStyleMatches(
+        actual.selectFirst("h1"),
+        catalogue.selectFirst("h1"),
+        "font-family",
+        "font-size",
+        "line-height",
+        "font-weight");
+    assertStyleMatches(
+        actual.selectFirst(".btn a"),
+        catalogue.selectFirst(".btn a"),
+        "border-radius",
+        "padding",
+        "font-size",
+        "line-height");
+    assertThat(actual.selectFirst(".oriso-invitation-header img").attr("width")).isEqualTo("36");
+    assertThat(actual.selectFirst(".oriso-invitation-header").text())
+        .contains("Beratungsstelle Nord");
+    assertThat(actual.selectFirst(".oriso-invitation-card strong").text()).isEqualTo("Hello");
+    assertThat(actual.selectFirst(".btn table").attr("style")).contains("border-collapse:separate");
+    assertThat(actual.selectFirst(".btn a").attr("href")).isEqualTo(ACCEPT_URL);
+    assertThat(actual.selectFirst(".btn a").text()).isEqualTo("Accept invitation");
+    assertThat(mail.html()).doesNotContain("<script", "bad()").contains("{{BRAND_NAME}}");
+    assertThat(mail.plainText())
+        .contains("Hello", "{{BRAND_NAME}}", "Accept invitation", ACCEPT_URL);
+    assertThat(mail.subject()).isEqualTo("Authored subject");
+  }
+
+  @Test
+  void invitationDoesNotRenderBlankOrUnsafeActionLinks() {
+    for (String action :
+        new String[] {null, "", " ", "javascript:alert(1)", "data:text/html,unsafe", "/relative"}) {
+      var mail =
+          renderer.renderInvitation(
+              EmailBranding.neutral(),
+              new BrandedEmailRequest("Invitation", "Safe body", action, null, "en"));
+      assertThat(org.jsoup.Jsoup.parse(mail.html()).select("a")).as("action %s", action).isEmpty();
+      assertThat(mail.plainText()).contains("Safe body").doesNotContain("Accept invitation");
+    }
+  }
+
+  @Test
+  void invitationKeepsLocalizedLabelsAndContrastGuard() {
+    var lightBrand = new EmailBranding("Nord", null, "#ffffff", null, null);
+    for (String language : new String[] {"en", "en-US", "de", "de-DE", "fr"}) {
+      var mail =
+          renderer.renderInvitation(
+              lightBrand, new BrandedEmailRequest("Subject", "Body", ACCEPT_URL, null, language));
+      var action = org.jsoup.Jsoup.parse(mail.html()).selectFirst(".btn a");
+      assertThat(action.text())
+          .isEqualTo(language.startsWith("en") ? "Accept invitation" : "Einladung annehmen");
+      assertThat(action.attr("style")).contains("color:" + lightBrand.accentTextColor());
+    }
+  }
+
+  private static void assertStyleMatches(
+      org.jsoup.nodes.Element actual, org.jsoup.nodes.Element catalogue, String... properties) {
+    assertThat(actual).isNotNull();
+    assertThat(catalogue).isNotNull();
+    var actualStyles = cssProperties(actual.attr("style"));
+    var catalogueStyles = cssProperties(catalogue.attr("style"));
+    for (String property : properties) {
+      assertThat(actualStyles.get(property))
+          .as(property)
+          .isNotNull()
+          .isEqualTo(catalogueStyles.get(property));
+    }
+  }
+
+  private static java.util.Map<String, String> cssProperties(String style) {
+    var result = new java.util.HashMap<String, String>();
+    for (String entry : style.split(";")) {
+      var pair = entry.split(":", 2);
+      if (pair.length == 2) result.put(pair[0].trim(), pair[1].trim());
+    }
+    return result;
+  }
+
   // --- structure / client compatibility -------------------------------------------------
 
   @Test

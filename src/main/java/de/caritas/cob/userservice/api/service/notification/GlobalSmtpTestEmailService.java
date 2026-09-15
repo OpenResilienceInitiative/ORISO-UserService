@@ -98,6 +98,8 @@ public class GlobalSmtpTestEmailService {
   private OrisoEmailRenderer.RenderedEmail renderSmtpTest(GlobalSmtpTestEmailDTO dto) {
     Map<String, String> values =
         new LinkedHashMap<>(emailBrand.values(appBaseUrl, dto.getEmailThemeColor()));
+    // The diagnostic's CTA opens administration; footer links retain the application base.
+    values.put("appUrl", appBaseUrl.replaceAll("/+$", "") + "/admin");
     values.put("smtpHost", dto.getHost() + ":" + dto.getPort());
     values.put("smtpFrom", dto.getFrom());
     values.put("sentAt", OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));

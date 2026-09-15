@@ -5,6 +5,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.service.email.layout.EmailContentSanitizer;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
@@ -100,6 +101,37 @@ public class OrisoEmailRenderer {
     String text = substitute(read(templateId, tone, "txt"), values, false);
     String subject = substitute(subjectOf(templateId, tone), values, false);
     return new RenderedEmail(subject, html, text);
+  }
+
+  /** Renders authored operational content in the catalogue's generic message layout. */
+  public RenderedEmail renderMessage(
+      Tone tone, Map<String, String> brandValues, String subject, String authorBody) {
+    var sanitizer = new EmailContentSanitizer();
+    var values = new LinkedHashMap<>(brandValues);
+    values.put("messageSubject", subject);
+    values.put("messagePreview", subject);
+    values.put("messageHeadline", subject);
+    values.put("loginUrl", values.get("appUrl"));
+    String bodyHtml = sanitizer.toContentHtml(authorBody, values.get("primaryColor"));
+    values.put("messageBody", sanitizer.toPlainText(bodyHtml));
+    var rendered = render("mitteilung", tone, values);
+    // Only this fixed template's body token may contain markup, and only after the
+    // existing allowlist sanitizer. Substitute in one pass: authored {{tokens}}
+    // remain literal rather than being evaluated as branding/template variables.
+    var decorated = withOccasionOnUnsubscribeLink("mitteilung", values);
+    String source = withLogoCell(read("mitteilung", tone, "html"), decorated);
+    Matcher matcher = PLACEHOLDER.matcher(source);
+    StringBuilder html = new StringBuilder();
+    while (matcher.find()) {
+      String key = matcher.group(1);
+      String replacement =
+          key.equals("messageBody")
+              ? bodyHtml
+              : decorated.containsKey(key) ? escapeHtml(decorated.get(key)) : matcher.group();
+      matcher.appendReplacement(html, Matcher.quoteReplacement(replacement));
+    }
+    matcher.appendTail(html);
+    return new RenderedEmail(subject, html.toString(), rendered.text());
   }
 
   /**

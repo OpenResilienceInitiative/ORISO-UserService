@@ -47,14 +47,15 @@ class InviteMailDispatchServiceTest {
 
   private InviteMailDispatchService service(String smtpUser, String smtpPassword) {
     return new InviteMailDispatchService(
-        restTemplate,
-        applicationSettingsService,
+        new de.caritas.cob.userservice.api.service.email.GlobalSmtpSettingsResolver(
+            restTemplate,
+            applicationSettingsService,
+            "http://consultingtypeservice:8080/service",
+            smtpUser,
+            smtpPassword),
         inviteMailTransport,
         emailBrandingResolver,
-        renderer,
-        "http://consultingtypeservice:8080/service",
-        smtpUser,
-        smtpPassword);
+        renderer);
   }
 
   private Map<String, Object> completeSettingsPayload() {
@@ -366,14 +367,11 @@ class InviteMailDispatchServiceTest {
   void send_Should_nameTheMissingProperty_When_ConsultingTypeServiceUrlNotConfigured() {
     var serviceWithoutUrl =
         new InviteMailDispatchService(
-            restTemplate,
-            applicationSettingsService,
+            new de.caritas.cob.userservice.api.service.email.GlobalSmtpSettingsResolver(
+                restTemplate, applicationSettingsService, "", "u", "p"),
             inviteMailTransport,
             emailBrandingResolver,
-            renderer,
-            "",
-            "u",
-            "p");
+            renderer);
 
     assertThatThrownBy(() -> serviceWithoutUrl.send("to@example.org", "s", "b"))
         .isInstanceOf(SmtpSendException.class)
