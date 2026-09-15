@@ -36,6 +36,8 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.ConsultantImportService.ImportRecord;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -61,6 +63,24 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class CreateConsultantSagaTest {
+  @org.mockito.Mock private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
+
+  @org.junit.jupiter.api.BeforeEach
+  void recoveryPolicyFixture() {
+    org.mockito.Mockito.lenient()
+        .when(chatRecoveryEnrollmentPolicyService.forNewAsker(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
+    org.mockito.Mockito.lenient()
+        .when(
+            chatRecoveryEnrollmentPolicyService.forNewConsultant(
+                org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
+    org.mockito.Mockito.lenient()
+        .when(
+            chatRecoveryEnrollmentPolicyService.forExistingIdentity(
+                org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new RecoveryPolicySnapshot("RECOVERY_KEY", 0));
+  }
 
   private static final String KEYCLOAK_USER_ID = "keycloak-user-id";
   private static final String VALID_USERNAME = "validUsername";
@@ -106,11 +126,36 @@ class CreateConsultantSagaTest {
   }
 
   @Test
+  void unavailableRecoveryPolicyStopsBeforeIdentityCreation() {
+    org.mockito.Mockito.doThrow(
+            new de.caritas.cob.userservice.api.exception.httpresponses
+                .CustomValidationHttpStatusException(
+                de.caritas.cob.userservice.api.exception.httpresponses.customheader
+                    .HttpStatusExceptionReason.CHAT_RECOVERY_POLICY_UNAVAILABLE,
+                org.springframework.http.HttpStatus.BAD_GATEWAY))
+        .when(chatRecoveryEnrollmentPolicyService)
+        .forNewConsultant(any());
+    assertThrows(
+        de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException
+            .class,
+        () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
+    verify(identityClient, never()).createUser(any(), any(), any());
+    verify(consultantService, never()).saveConsultant(any());
+  }
+
+  @Test
   void createNewConsultant_Should_returnResponse_When_happyPath() throws Exception {
     stubHappyPath();
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
 
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "LOGIN_PASSWORD", captured.getValue().getChatRecoveryMode());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        3L, captured.getValue().getChatRecoveryPolicyRevision());
     assertThat(response, notNullValue());
     assertThat(response.getEmbedded(), notNullValue());
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
@@ -301,6 +346,9 @@ class CreateConsultantSagaTest {
             importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
 
     assertThat(consultant, notNullValue());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "LOGIN_PASSWORD", consultant.getChatRecoveryMode());
+    org.junit.jupiter.api.Assertions.assertEquals(3L, consultant.getChatRecoveryPolicyRevision());
     verify(identityPasswordUpdater).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
   }
 

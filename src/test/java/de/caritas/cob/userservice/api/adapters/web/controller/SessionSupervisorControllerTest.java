@@ -175,7 +175,9 @@ class SessionSupervisorControllerTest {
     // Business reason: supervisor list response must preserve all DTO fields for frontend
     // rendering.
     var first = supervisor(30L, "sup-3", "added-by-3", "Display Three", "Full Three", user("u-3"));
-    when(sessionSupervisorFacade.getSupervisors(77L)).thenReturn(List.of(first));
+    var current = consultant("current-1", "Current");
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(sessionSupervisorFacade.getSupervisors(77L, current)).thenReturn(List.of(first));
 
     var response = controller.getSupervisors(77L);
 
@@ -186,21 +188,60 @@ class SessionSupervisorControllerTest {
     assertEquals(77L, dto.getSessionId());
     assertEquals("sup-3", dto.getSupervisorConsultantId());
     assertEquals("Display Three", dto.getSupervisorUsername());
+    assertEquals("rc-sup-3", dto.getSupervisorMatrixUserId());
     assertEquals("added-by-3", dto.getAddedByConsultantId());
     assertEquals("room-77", dto.getMatrixRoomId());
     assertEquals("note-30", dto.getNotes());
   }
 
   @Test
+  void getSupervisors_supervisorWithoutMatrixAccount_leavesMatrixUserIdNull() {
+    var first = supervisor(31L, "sup-4", "added-by-4", "Display Four", "Full Four", user("u-4"));
+    first.getSupervisorConsultant().setMatrixUserId(null);
+    var current = consultant("current-1", "Current");
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(sessionSupervisorFacade.getSupervisors(79L, current)).thenReturn(List.of(first));
+
+    var response = controller.getSupervisors(79L);
+
+    assertNull(response.getBody().get(0).getSupervisorMatrixUserId());
+  }
+
+  @Test
+  void getSupervisors_blankMatrixAccount_leavesMatrixUserIdNull() {
+    var first = supervisor(32L, "sup-5", "added-by-5", "Display Five", "Full Five", user("u-5"));
+    first.getSupervisorConsultant().setMatrixUserId("  ");
+    var current = consultant("current-1", "Current");
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(sessionSupervisorFacade.getSupervisors(80L, current)).thenReturn(List.of(first));
+
+    var response = controller.getSupervisors(80L);
+
+    assertNull(response.getBody().get(0).getSupervisorMatrixUserId());
+  }
+
+  @Test
   void getSupervisors_emptyList_returnsEmptyArrayNotNull() {
     // Business reason: frontend expects stable empty arrays instead of null for list endpoints.
-    when(sessionSupervisorFacade.getSupervisors(78L)).thenReturn(List.of());
+    var current = consultant("current-1", "Current");
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(sessionSupervisorFacade.getSupervisors(78L, current)).thenReturn(List.of());
 
     var response = controller.getSupervisors(78L);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());
     assertEquals(0, response.getBody().size());
+  }
+
+  @Test
+  void getSupervisors_returnsForbidden_whenConsultantCannotBeResolved() {
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(null);
+
+    var response = controller.getSupervisors(81L);
+
+    assertEquals(HttpStatus.FORBIDDEN, response.getStatusCode());
+    verify(sessionSupervisorFacade, never()).getSupervisors(any(), any());
   }
 
   @Test

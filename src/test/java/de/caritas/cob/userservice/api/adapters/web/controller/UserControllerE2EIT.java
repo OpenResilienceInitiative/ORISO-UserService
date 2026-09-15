@@ -152,6 +152,15 @@ import org.springframework.web.util.UriTemplateHandler;
     })
 @Transactional
 class UserControllerE2EIT {
+  @org.junit.jupiter.api.BeforeEach
+  void recoveryPolicyFixture() {
+    org.mockito.Mockito.when(
+            tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
+        .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
+  }
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.tenant.TenantService tenantService;
 
   private static final EasyRandom easyRandom = new EasyRandom();
   private static final String CSRF_HEADER = "X-CSRF-Token";
@@ -159,6 +168,8 @@ class UserControllerE2EIT {
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
   @Autowired private MockMvc mockMvc;
+
+  @Autowired private jakarta.persistence.EntityManager entityManager;
 
   @Autowired private ObjectMapper objectMapper;
 
@@ -237,6 +248,7 @@ class UserControllerE2EIT {
 
   @AfterEach
   void reset() {
+    de.caritas.cob.userservice.api.tenant.TenantContext.clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
       userRepository.save(user);
@@ -292,11 +304,93 @@ class UserControllerE2EIT {
     when(agencyServiceApiControllerFactory.createControllerApi())
         .thenReturn(
             new TestAgencyControllerApi(
-                new de.caritas.cob.userservice.agencyserivce.generated.ApiClient()));
+                new de.caritas.cob.userservice.agencyserivce.generated.ApiClient()) {
+              @Override
+              public java.util.List<
+                      de.caritas.cob.userservice.agencyserivce.generated.web.model
+                          .AgencyResponseDTO>
+                  getAgenciesByIds(java.util.List<Long> ids) {
+                var agencies = super.getAgenciesByIds(ids);
+                agencies.forEach(agency -> agency.setTenantId(1L));
+                return agencies;
+              }
+            });
 
     when(consultingTypeServiceApiControllerFactory.createControllerApi())
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void getUserDataReturnsUserLegacyRecoveryPolicy() throws Exception {
+    givenABearerToken();
+    givenNewUserWithRecoveryPolicy(null, null);
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("chatRecoveryMode", is("RECOVERY_KEY")))
+        .andExpect(jsonPath("chatRecoveryPolicyRevision", is(0)));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void getUserDataReturnsUserStoredRecoveryPolicy() throws Exception {
+    givenABearerToken();
+    givenNewUserWithRecoveryPolicy("LOGIN_PASSWORD", 7L);
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("chatRecoveryMode", is("LOGIN_PASSWORD")))
+        .andExpect(jsonPath("chatRecoveryPolicyRevision", is(7)));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void getUserDataReturnsConsultantLegacyRecoveryPolicy() throws Exception {
+    givenABearerToken();
+    givenNewConsultantWithRecoveryPolicy(null, null);
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("chatRecoveryMode", is("RECOVERY_KEY")))
+        .andExpect(jsonPath("chatRecoveryPolicyRevision", is(0)));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void getUserDataReturnsConsultantStoredRecoveryPolicy() throws Exception {
+    givenABearerToken();
+    givenNewConsultantWithRecoveryPolicy("LOGIN_PASSWORD", 7L);
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("chatRecoveryMode", is("LOGIN_PASSWORD")))
+        .andExpect(jsonPath("chatRecoveryPolicyRevision", is(7)));
   }
 
   @Test
@@ -1652,6 +1746,7 @@ class UserControllerE2EIT {
   }
 
   private void givenAUserDTO(String consultantId) {
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(1L);
     userDTO = easyRandom.nextObject(UserDTO.class);
     userDTO.setUsername(RandomStringUtils.randomAlphabetic(5, 30));
     userDTO.setAge("17");
@@ -1812,6 +1907,61 @@ class UserControllerE2EIT {
     var tokenManager = mock(TokenManager.class);
     when(tokenManager.getAccessTokenString()).thenReturn(RandomStringUtils.randomAlphanumeric(255));
     when(keycloak.tokenManager()).thenReturn(tokenManager);
+  }
+
+  private void givenNewUserWithRecoveryPolicy(String mode, Long revision) {
+    givenAValidUser();
+    user =
+        User.builder()
+            .userId(java.util.UUID.randomUUID().toString())
+            .username("recovery-asker-fixture")
+            .email("recovery-asker@example.test")
+            .tenantId(user.getTenantId())
+            .encourage2fa(false)
+            .magicLinkLoginEnabled(false)
+            .languageCode(LanguageCode.de)
+            .chatRecoveryMode(mode)
+            .chatRecoveryPolicyRevision(revision)
+            .build();
+    entityManager.persist(user);
+    entityManager.flush();
+    entityManager.clear();
+    user = userRepository.findById(user.getUserId()).orElseThrow();
+    assertThat(user.getChatRecoveryMode()).isEqualTo(mode);
+    assertThat(user.getChatRecoveryPolicyRevision()).isEqualTo(revision);
+    when(authenticatedUser.getUserId()).thenReturn(user.getUserId());
+    when(authenticatedUser.getUsername()).thenReturn(user.getUsername());
+    entityManager.clear();
+  }
+
+  private void givenNewConsultantWithRecoveryPolicy(String mode, Long revision) {
+    givenAValidConsultant();
+    consultant =
+        Consultant.builder()
+            .id(java.util.UUID.randomUUID().toString())
+            .username("recovery-consultant-fixture")
+            .email("recovery-consultant@example.test")
+            .firstName("Recovery")
+            .lastName("Fixture")
+            .notifyEnquiriesRepeating(false)
+            .notifyNewChatMessageFromAdviceSeeker(false)
+            .walkThroughEnabled(false)
+            .tenantId(consultant.getTenantId())
+            .encourage2fa(false)
+            .magicLinkLoginEnabled(false)
+            .languageCode(LanguageCode.de)
+            .chatRecoveryMode(mode)
+            .chatRecoveryPolicyRevision(revision)
+            .build();
+    entityManager.persist(consultant);
+    entityManager.flush();
+    entityManager.clear();
+    consultant = consultantRepository.findById(consultant.getId()).orElseThrow();
+    assertThat(consultant.getChatRecoveryMode()).isEqualTo(mode);
+    assertThat(consultant.getChatRecoveryPolicyRevision()).isEqualTo(revision);
+    when(authenticatedUser.getUserId()).thenReturn(consultant.getId());
+    when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
+    entityManager.clear();
   }
 
   private void givenAValidConsultant() {

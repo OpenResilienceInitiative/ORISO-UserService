@@ -1587,6 +1587,42 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/supervisors:
+    get:
+      tags:
+        - session-supervisor-controller
+      summary: 'Returns all active supervisors of a session. [Authorization: Role: consultant]'
+      operationId: getSessionSupervisors
+      # The endpoint is implemented by the dedicated handwritten SessionSupervisorController.
+      # Do not add its mapping to the generated UsersApi implemented by UserController as well.
+      x-internal: true
+      parameters:
+        - name: sessionId
+          in: path
+          description: Session id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/SessionSupervisorResponseDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        404:
+          description: NOT FOUND - a session with such an ID does not exist
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /users/2fa/email:
     put:
       tags:
@@ -2120,6 +2156,11 @@ components:
           type: string
           example: "@asker:matrix.example"
           description: Matrix user ID of the asker
+        consultantMatrixUserId:
+          type: string
+          nullable: true
+          example: "@consultant:matrix.example"
+          description: Matrix user id of the assigned consultant (null when no consultant is assigned)
         e2eLastMessage:
           $ref: '#/components/schemas/LastMessageDTO'
         lastMessage:
@@ -2163,6 +2204,108 @@ components:
             true when Gate 2 applies to this session and no consent pointer is recorded, i.e. the
             client must show the consent gate instead of the composer. Internal rooms (no
             help-seeker) always report false. Additive - older clients can ignore it.
+        supervision:
+          $ref: '#/components/schemas/SessionSupervisionDTO'
+
+    SessionSupervisionDTO:
+      type: object
+      description: >-
+        ADR-008 supervision marker for consultant-facing session lists. Filled for the requesting
+        consultant only; absent on advice-seeker responses. Additive - older clients can ignore it.
+      required:
+        - supervisedByMe
+        - supervisorConsultantIds
+        - supervisorDisplayNames
+      properties:
+        supervisedByMe:
+          type: boolean
+          example: true
+          description: >-
+            true when the requesting consultant is an active SessionSupervisor of this session,
+            i.e. the entry is in their list because they supervise it, not because they counsel it.
+        supervisorConsultantIds:
+          type: array
+          items:
+            type: string
+          example: ["926b9777-4eef-443d-925a-4aa534797bd7"]
+          description: Keycloak ids of all active supervisors of this session (empty when none).
+        supervisorDisplayNames:
+          type: array
+          items:
+            type: string
+          example: ["Supervisor Sam"]
+          description: >-
+            Internal display names of the active supervisors, same order as
+            supervisorConsultantIds (internal display name, else public display name, else
+            username). Never a real name.
+        counsellorDisplayName:
+          type: string
+          nullable: true
+          example: "Counsellor Chris"
+          description: >-
+            Internal display name of the session's assigned (responsible) consultant, resolved by
+            the same #996 rule as supervisorDisplayNames (internal display name, else public display
+            name, else username). Never a real name. Absent when the session has no consultant yet
+            (enquiry not taken). Lets a supervisor's panel title the case by its counsellor without
+            a second lookup.
+        sideRoomId:
+          type: string
+          nullable: true
+          example: "!supervision-side-room:matrix.example.org"
+          description: >-
+            Matrix room id of the private ADR-008 supervision back-channel. Returned only when the
+            requesting consultant is the session's assigned counsellor or an active supervisor.
+            Never contains the help-seeker room id; null for unrelated team-list viewers, legacy
+            rows that stored the client room, missing rooms, or inconsistent active assignments.
+
+    SessionSupervisorResponseDTO:
+      type: object
+      description: An active supervision assignment for a session.
+      required:
+        - id
+        - sessionId
+        - supervisorConsultantId
+        - supervisorUsername
+        - addedByConsultantId
+        - addedDate
+      properties:
+        id:
+          type: integer
+          format: int64
+        sessionId:
+          type: integer
+          format: int64
+        supervisorConsultantId:
+          type: string
+          description: Keycloak id of the supervising consultant.
+        supervisorUsername:
+          type: string
+        supervisorMatrixUserId:
+          type: string
+          nullable: true
+          description: Matrix user id of the supervisor; null when no Matrix id is available.
+        addedByConsultantId:
+          type: string
+          description: Keycloak id of the consultant who created the assignment.
+        addedDate:
+          type: string
+          format: date-time
+        matrixRoomId:
+          type: string
+          nullable: true
+        notes:
+          type: string
+          nullable: true
+          description: Human-readable supervision notes decoded from the stored payload.
+        reasonCode:
+          type: string
+          nullable: true
+        justification:
+          type: string
+          nullable: true
+        consent:
+          type: string
+          nullable: true
 
     SessionConsentDTO:
       type: object
@@ -2333,6 +2476,8 @@ components:
           pattern: "^[a-zA-Z0-9]{1,8}$"
           maxLength: 8
           example: '12345678'
+        supervision:
+          $ref: '#/components/schemas/SessionSupervisionDTO'
 
     UserChatDTO:
       type: object
@@ -2594,6 +2739,14 @@ components:
     UserDataResponseDTO:
       type: object
       properties:
+        chatRecoveryMode:
+          type: string
+          enum: [RECOVERY_KEY, LOGIN_PASSWORD]
+          readOnly: true
+        chatRecoveryPolicyRevision:
+          type: integer
+          format: int64
+          readOnly: true
         userId:
           type: string
           example: ajsd89-sdf9-sadk-as8j-asdf8jo

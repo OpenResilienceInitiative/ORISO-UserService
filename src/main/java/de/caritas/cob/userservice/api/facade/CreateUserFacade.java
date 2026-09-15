@@ -28,6 +28,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
+import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
@@ -60,6 +62,7 @@ import org.springframework.web.client.RestClientException;
 @RequiredArgsConstructor
 @Slf4j
 public class CreateUserFacade {
+  private final ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
   private final @NonNull UserVerifier userVerifier;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
@@ -111,6 +114,8 @@ public class CreateUserFacade {
       userVerifier.checkIfUsernameIsAvailable(userDTO);
       agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
 
+      RecoveryPolicySnapshot snapshot =
+          chatRecoveryEnrollmentPolicyService.forNewAsker(TenantContext.getCurrentTenant());
       CreatedIdentity response = identityClient.createUser(userDTO);
       String identityUserId = CreatedIdentity.requireUserId(response);
       provisioningAttempt = provisioningCompensator.begin(ProvisioningWorkflow.REGISTERED_USER);
@@ -122,7 +127,7 @@ public class CreateUserFacade {
           identityUserId,
           () -> deleteDatabaseUser(identityUserId, provisionedUser.get()));
 
-      User user = updateIdentityAndCreateAccount(identityUserId, userDTO, UserRole.USER);
+      User user = updateIdentityAndCreateAccount(identityUserId, userDTO, UserRole.USER, snapshot);
       provisionedUser.set(user);
       User savedUser = userService.saveUser(user);
       if (savedUser != null) {
@@ -287,6 +292,17 @@ public class CreateUserFacade {
    * @return {@link User}
    */
   public User updateIdentityAndCreateAccount(String userId, UserDTO userDTO, UserRole role) {
+    return updateIdentityAndCreateAccount(
+        userId,
+        userDTO,
+        role,
+        shouldClearPrivacyConfirmations(role, userDTO)
+            ? chatRecoveryEnrollmentPolicyService.forNewAsker(TenantContext.getCurrentTenant())
+            : chatRecoveryEnrollmentPolicyService.forExistingIdentity(userId));
+  }
+
+  private User updateIdentityAndCreateAccount(
+      String userId, UserDTO userDTO, UserRole role, RecoveryPolicySnapshot snapshot) {
 
     try {
       updateKeycloakRoleAndPassword(userId, userDTO, role);
@@ -311,7 +327,8 @@ public class CreateUserFacade {
             userDTO.getUsername(),
             returnDummyEmailIfNoneGiven(userDTO, userId),
             isTrue(extendedConsultingTypeResponseDTO.getLanguageFormal()),
-            language);
+            language,
+            snapshot);
 
     if (shouldClearPrivacyConfirmations(role, userDTO) && nonNull(user)) {
       user.setTermsAndConditionsConfirmation(null);

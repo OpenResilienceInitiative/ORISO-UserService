@@ -40,6 +40,42 @@ public class ConsultantDisplayNameResolver {
   }
 
   /**
+   * The name a <em>colleague</em> sees on internal surfaces (team lists, the ADR-008 supervision
+   * marker, internal group chats): the #996 rule {@code internalDisplayName ?? displayName}, with
+   * the same usability check as {@link #resolveMatrixDisplayName(Consultant)} and the same username
+   * fallback. Never the real name. Advice-seeker surfaces must not call this.
+   *
+   * @param internalDisplayName the internal display name (nullable)
+   * @param publicDisplayName the public display name (nullable)
+   * @param username the (encoded) username, the last resort
+   * @return the display name for internal surfaces
+   */
+  public String resolveInternalDisplayName(
+      String internalDisplayName, String publicDisplayName, String username) {
+    if (isUsable(internalDisplayName)) {
+      return internalDisplayName;
+    }
+    if (isUsable(publicDisplayName)) {
+      return publicDisplayName;
+    }
+    return usernameTranscoder.decodeUsername(username);
+  }
+
+  /**
+   * Entity overload of {@link #resolveInternalDisplayName(String, String, String)}.
+   *
+   * @param consultant the colleague (nullable)
+   * @return the display name for internal surfaces, or null when the consultant is null
+   */
+  public String resolveInternalDisplayName(Consultant consultant) {
+    if (consultant == null) {
+      return null;
+    }
+    return resolveInternalDisplayName(
+        consultant.getInternalDisplayName(), consultant.getDisplayName(), consultant.getUsername());
+  }
+
+  /**
    * An encoded value would render as noise rather than as a pseudonym, so it is treated as absent
    * and the username is used instead. Mirrors the check the notification service applies before
    * putting a counsellor's name in front of a client.
