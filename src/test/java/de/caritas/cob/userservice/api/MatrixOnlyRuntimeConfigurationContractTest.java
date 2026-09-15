@@ -5,7 +5,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
+import org.yaml.snakeyaml.Yaml;
 
 class MatrixOnlyRuntimeConfigurationContractTest {
 
@@ -43,9 +46,20 @@ class MatrixOnlyRuntimeConfigurationContractTest {
     // action, and this workflow is the only caller that turns it on. Asserting the
     // action *can* scan is therefore not enough - dropping this single line would
     // publish unscanned images to GHCR with every test still green.
-    assertThat(mainWorkflow)
-        .as("ci-main.yml must opt in to the pre-publish vulnerability scan")
-        .contains("scan_before_push: true");
+    Map<?, ?> workflow = new Yaml().load(mainWorkflow);
+    Map<?, ?> jobs = (Map<?, ?>) workflow.get("jobs");
+    Map<?, ?> publish = (Map<?, ?>) jobs.get("publish");
+    List<?> steps = (List<?>) publish.get("steps");
+    var imageSteps =
+        steps.stream()
+            .map(step -> (Map<?, ?>) step)
+            .filter(step -> "./.github/actions/docker-build-push".equals(step.get("uses")))
+            .toList();
+    assertThat(imageSteps).hasSize(1);
+    Map<?, ?> inputs = (Map<?, ?>) imageSteps.getFirst().get("with");
+    assertThat(inputs.get("scan_before_push"))
+        .as("the publish job's image action must enable the vulnerability scan")
+        .isEqualTo(true);
 
     assertThat(mainWorkflow)
         .contains("id-token: write")

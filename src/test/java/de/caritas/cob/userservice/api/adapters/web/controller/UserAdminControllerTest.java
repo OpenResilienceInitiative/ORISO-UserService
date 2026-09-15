@@ -110,32 +110,32 @@ class UserAdminControllerTest {
   void updateAgencyAdmin_emailIsLowercased_beforeDelegation() {
     // Business reason: updates must keep canonical e-mail format for stable identity lookups.
     var dto = new UpdateAgencyAdminDTO();
-    dto.setEmail("AGENCY@EXAMPLE.ORG");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     when(adminUserFacade.updateAgencyAdmin(eq("admin-1"), any()))
         .thenReturn(new AdminResponseDTO());
 
-    var response = controller.updateAgencyAdmin("admin-1", dto);
+    var response = withTurkishDefaultLocale(() -> controller.updateAgencyAdmin("admin-1", dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var captor = ArgumentCaptor.forClass(UpdateAgencyAdminDTO.class);
     verify(adminUserFacade).updateAgencyAdmin(eq("admin-1"), captor.capture());
-    assertEquals("agency@example.org", captor.getValue().getEmail());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
   }
 
   @Test
   void updateTenantAdmin_emailIsLowercased_beforeDelegation() {
     // Business reason: tenant-admin updates should preserve consistent e-mail matching semantics.
     var dto = new UpdateTenantAdminDTO();
-    dto.setEmail("TENANT@EXAMPLE.ORG");
+    dto.setEmail("IDENTITY@EXAMPLE.ORG");
     when(adminUserFacade.updateTenantAdmin(eq("admin-2"), any()))
         .thenReturn(new AdminResponseDTO());
 
-    var response = controller.updateTenantAdmin("admin-2", dto);
+    var response = withTurkishDefaultLocale(() -> controller.updateTenantAdmin("admin-2", dto));
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     var captor = ArgumentCaptor.forClass(UpdateTenantAdminDTO.class);
     verify(adminUserFacade).updateTenantAdmin(eq("admin-2"), captor.capture());
-    assertEquals("tenant@example.org", captor.getValue().getEmail());
+    assertEquals("identity@example.org", captor.getValue().getEmail());
   }
 
   @Test
