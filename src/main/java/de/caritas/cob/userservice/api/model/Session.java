@@ -119,15 +119,26 @@ public class Session implements TenantAware {
   @Fetch(FetchMode.SELECT)
   private Consultant consultant;
 
-  /** Monotonic identity-change counter used to distinguish separate ownership periods. */
+  /**
+   * Monotonic identity-change counter used to distinguish separate ownership periods.
+   *
+   * <p>The {@code default 0} is not decoration: changeset 0094 gives the real column one, and the
+   * integration schema Hibernate generates has to match it. Without the default every seeded {@code
+   * INSERT INTO session} in UserServiceDatabase.sql — which names no ownership column — violates
+   * NOT NULL, the application context fails to start, and every context-booting IT errors out for a
+   * reason that has nothing to do with the test.
+   */
   @Builder.Default
-  @Column(name = "ownership_revision", nullable = false)
+  @Column(
+      name = "ownership_revision",
+      nullable = false,
+      columnDefinition = "bigint not null default 0")
   private long ownershipRevision = 0L;
 
   /** Rejects stale whole-entity saves, including saves that would restore an older owner. */
   @Version
   @Builder.Default
-  @Column(name = "row_version", nullable = false)
+  @Column(name = "row_version", nullable = false, columnDefinition = "bigint not null default 0")
   private long rowVersion = 0L;
 
   @Column(
