@@ -130,7 +130,7 @@ class MessengerTest {
     either way. SessionRepositoryQueueCountIT proves the behaviour against a real database and is
     the guard that does not depend on the host's zone. */
     assertThat(minUpdateDate.getValue())
-        .isCloseTo(nowInUtc().minusMinutes(5), within(1, ChronoUnit.MINUTES));
+        .isCloseTo(nowInUtc().minusMinutes(5), within(2, ChronoUnit.SECONDS));
   }
 
   // ── touchLiveChatQueueHeartbeat ───────────────────────────────────────────
