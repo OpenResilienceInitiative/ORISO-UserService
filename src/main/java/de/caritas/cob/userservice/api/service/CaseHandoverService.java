@@ -474,12 +474,23 @@ public class CaseHandoverService {
           .setValue(Map.copyOf(requested.getClientNotificationTemplates()));
     }
     if (ADVICE_NEEDED.equals(normalizeReasonCode(requested.getCode()))
-        && requested.getMaxAccessDurationMinutes() != null
-        && policy.getMaxAccessDurationMinutes() != null) {
-      policy
-          .getMaxAccessDurationMinutes()
-          .setValue(
-              validateMaxAccessDuration(ADVICE_NEEDED, requested.getMaxAccessDurationMinutes()));
+        && requested.getMaxAccessDurationMinutes() != null) {
+      var durationPolicy = policy.getMaxAccessDurationMinutes();
+      if (durationPolicy == null) {
+        // A tenant seeded before the duration policy existed carries no object here, and
+        // TenantService's resolver hands back null rather than a default. Skipping the write in
+        // that case is what made the field read 180 forever; create the tenant-local policy
+        // instead, at the platform default mode for this field.
+        durationPolicy =
+            new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .IntegerPermissionPolicy(null)
+                .mode(
+                    de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                        .PermissionPolicyMode.SUGGESTED);
+        policy.setMaxAccessDurationMinutes(durationPolicy);
+      }
+      durationPolicy.setValue(
+          validateMaxAccessDuration(ADVICE_NEEDED, requested.getMaxAccessDurationMinutes()));
     }
   }
 
