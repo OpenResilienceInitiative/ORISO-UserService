@@ -1963,9 +1963,25 @@ public class CaseHandoverService {
     private CaseHandoverConsentMode clientConsent;
 
     /**
-     * {@code ENFORCED} or {@code SUGGESTED}; only present when the caller sent the policy object.
+     * {@code ENFORCED} or {@code SUGGESTED}. Emitted on every tenant-backed response, so the Admin
+     * echoes the previous value back on the next PUT.
      */
+    @lombok.Setter(AccessLevel.NONE)
     private String clientConsentMode;
+
+    /**
+     * The Admin re-sends the list it last read, so a stale {@code clientConsentMode} travels next
+     * to the freshly chosen {@code clientConsent} object — and, being the later field, would
+     * otherwise overwrite it. The typed object is the caller's intent; the loose string is only a
+     * fallback for callers that do not send one.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @lombok.Getter(AccessLevel.NONE)
+    @lombok.Setter(AccessLevel.NONE)
+    @lombok.EqualsAndHashCode.Exclude
+    @lombok.ToString.Exclude
+    @Builder.Default
+    private boolean consentModeFromPolicyObject = false;
 
     private boolean clientConsentRequired;
     private Boolean accessAllowed;
@@ -1978,6 +1994,13 @@ public class CaseHandoverService {
 
     public void setClientConsent(CaseHandoverConsentMode clientConsent) {
       this.clientConsent = clientConsent;
+    }
+
+    public void setClientConsentMode(String clientConsentMode) {
+      if (consentModeFromPolicyObject) {
+        return;
+      }
+      this.clientConsentMode = clientConsentMode;
     }
 
     @com.fasterxml.jackson.annotation.JsonSetter("clientConsent")
@@ -1994,6 +2017,7 @@ public class CaseHandoverService {
         }
         this.clientConsent = parseConsentMode(value.toString());
         this.clientConsentMode = mode.toString();
+        this.consentModeFromPolicyObject = true;
         return;
       }
       this.clientConsent = parseConsentMode(raw.toString());
