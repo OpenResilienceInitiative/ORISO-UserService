@@ -168,22 +168,9 @@ public class Messenger implements Messaging {
     if (sessionId == null) {
       return;
     }
-    sessionRepository
-        .findById(sessionId)
-        .filter(session -> SessionStatus.NEW.equals(session.getStatus()))
-        .filter(session -> isNull(session.getConsultant()))
-        .filter(this::isHeartbeatDue)
-        .ifPresent(
-            session -> {
-              session.setUpdateDate(nowInUtc());
-              sessionRepository.save(session);
-            });
-  }
-
-  private boolean isHeartbeatDue(Session session) {
-    var lastSeen = session.getUpdateDate();
-    return isNull(lastSeen)
-        || lastSeen.isBefore(nowInUtc().minusSeconds(liveChatQueueHeartbeatThrottleSeconds));
+    var now = nowInUtc();
+    sessionRepository.touchLiveChatQueueHeartbeat(
+        sessionId, SessionStatus.NEW, now, now.minusSeconds(liveChatQueueHeartbeatThrottleSeconds));
   }
 
   @Override

@@ -139,59 +139,25 @@ class MessengerTest {
   void touchLiveChatQueueHeartbeat_Should_DoNothing_When_SessionIdIsNull() {
     messenger.touchLiveChatQueueHeartbeat(null);
 
-    verify(sessionRepository, never()).findById(any());
-    verify(sessionRepository, never()).save(any());
+    org.mockito.Mockito.verifyNoInteractions(sessionRepository);
   }
 
   @Test
-  void touchLiveChatQueueHeartbeat_Should_RefreshUpdateDate_When_SessionIsWaitingAndStale() {
-    Session session = waitingSession(nowInUtc().minusMinutes(2));
-    when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
+  void touchLiveChatQueueHeartbeat_Should_UseOneUtcInstantAndConfiguredThrottle() {
+    ReflectionTestUtils.setField(messenger, "liveChatQueueHeartbeatThrottleSeconds", 45L);
+    var now = ArgumentCaptor.forClass(LocalDateTime.class);
+    var cutoff = ArgumentCaptor.forClass(LocalDateTime.class);
 
     messenger.touchLiveChatQueueHeartbeat(1L);
 
-    verify(sessionRepository).save(session);
-    assertThat(session.getUpdateDate()).isCloseTo(nowInUtc(), within(1, ChronoUnit.MINUTES));
-  }
-
-  @Test
-  void touchLiveChatQueueHeartbeat_Should_NotWrite_When_HeartbeatIsThrottled() {
-    Session session = waitingSession(nowInUtc().minusSeconds(5));
-    when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
-
-    messenger.touchLiveChatQueueHeartbeat(1L);
-
-    verify(sessionRepository, never()).save(any());
-  }
-
-  @Test
-  void touchLiveChatQueueHeartbeat_Should_NotWrite_When_SessionIsNoLongerWaiting() {
-    Session session = waitingSession(nowInUtc().minusMinutes(2));
-    session.setStatus(Session.SessionStatus.IN_PROGRESS);
-    when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
-
-    messenger.touchLiveChatQueueHeartbeat(1L);
-
-    verify(sessionRepository, never()).save(any());
-  }
-
-  @Test
-  void touchLiveChatQueueHeartbeat_Should_NotWrite_When_SessionAlreadyHasAConsultant() {
-    Session session = waitingSession(nowInUtc().minusMinutes(2));
-    session.setConsultant(new Consultant());
-    when(sessionRepository.findById(1L)).thenReturn(Optional.of(session));
-
-    messenger.touchLiveChatQueueHeartbeat(1L);
-
-    verify(sessionRepository, never()).save(any());
-  }
-
-  private Session waitingSession(LocalDateTime lastSeen) {
-    Session session = new Session();
-    session.setId(1L);
-    session.setStatus(Session.SessionStatus.NEW);
-    session.setUpdateDate(lastSeen);
-    return session;
+    verify(sessionRepository)
+        .touchLiveChatQueueHeartbeat(
+            org.mockito.ArgumentMatchers.eq(1L),
+                org.mockito.ArgumentMatchers.eq(Session.SessionStatus.NEW),
+            now.capture(), cutoff.capture());
+    assertThat(now.getValue()).isCloseTo(nowInUtc(), within(1, ChronoUnit.SECONDS));
+    assertThat(cutoff.getValue()).isEqualTo(now.getValue().minusSeconds(45));
+    org.mockito.Mockito.verifyNoMoreInteractions(sessionRepository);
   }
 
   // ── markAsDirectConsultant ────────────────────────────────────────────────

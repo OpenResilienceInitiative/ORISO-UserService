@@ -13,9 +13,11 @@ import java.util.Set;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
 import org.springframework.data.repository.query.Param;
+import org.springframework.transaction.annotation.Transactional;
 
 public interface SessionRepository extends CrudRepository<Session, Long> {
 
@@ -29,6 +31,30 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query("SELECT session FROM Session session WHERE session.id = :sessionId")
   Optional<Session> findByIdForUpdate(@Param("sessionId") Long sessionId);
+
+  /**
+   * Refresh only the timestamp of a still-waiting enquiry whose heartbeat is due.
+   *
+   * <p>The database checks eligibility and writes under the same row lock used by assignment.
+   * Updating only updateDate prevents a stale heartbeat from overwriting a consultant or status.
+   *
+   * @return one if refreshed, otherwise zero (missing, assigned, no longer waiting, or throttled)
+   */
+  @Transactional
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      """
+      UPDATE Session session SET session.updateDate = :now
+      WHERE session.id = :sessionId
+        AND session.status = :waitingStatus
+        AND session.consultant IS NULL
+        AND (session.updateDate IS NULL OR session.updateDate < :cutoff)
+      """)
+  int touchLiveChatQueueHeartbeat(
+      @Param("sessionId") Long sessionId,
+      @Param("waitingStatus") SessionStatus waitingStatus,
+      @Param("now") LocalDateTime now,
+      @Param("cutoff") LocalDateTime cutoff);
 
   /**
    * Find a {@link Session} by a consultant id and a session status.

@@ -196,7 +196,7 @@ class AnonymousEnquiryConversationListProviderIT {
     List<Session> sessions =
         new EasyRandom().objects(Session.class, amount + 4).collect(Collectors.toList());
     User user = this.userRepository.findAll().iterator().next();
-    user.setDataPrivacyConfirmation(LocalDateTime.now());
+    user.setDataPrivacyConfirmation(nowInUtc());
     this.userRepository.save(user);
     var sessionIndex = new AtomicInteger();
     var baseDate = LocalDateTime.of(2026, 1, 1, 12, 0);
@@ -215,7 +215,7 @@ class AnonymousEnquiryConversationListProviderIT {
           session.setSessionTopics(Lists.newArrayList());
           session.setCreateDate(orderedDate);
           session.setEnquiryMessageDate(orderedDate);
-          session.setUpdateDate(LocalDateTime.now());
+          session.setUpdateDate(nowInUtc());
         });
     sessions.get(0).setStatus(SessionStatus.INITIAL);
     sessions.get(1).setStatus(SessionStatus.IN_PROGRESS);
