@@ -4,8 +4,10 @@ import java.io.*;
 import java.util.Set;
 import javax.imageio.ImageIO;
 import javax.imageio.stream.MemoryCacheImageInputStream;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
+@Slf4j
 @Component
 public class PictureIntake {
   public static final int MAX_BYTES = 5 * 1024 * 1024;
@@ -53,6 +55,12 @@ public class PictureIntake {
         }
       }
     } catch (IOException | IllegalArgumentException ex) {
+      // Exception text and causes can contain private input or decoder diagnostics.
+      PictureDiagnostics.withoutRequestContext(
+          () ->
+              log.debug(
+                  "Picture intake rejected: category={}",
+                  ex instanceof IOException ? "IO_FAILURE" : "INVALID_ARGUMENT"));
       throw PictureException.invalid();
     }
   }

@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import java.io.IOException;
 import java.util.List;
 import java.util.Map;
 import org.hibernate.exception.ConstraintViolationException;
@@ -33,6 +34,52 @@ class ApiResponseEntityExceptionHandlerTest {
 
   private final ApiResponseEntityExceptionHandler handler = new ApiResponseEntityExceptionHandler();
   private final WebRequest request = mock(WebRequest.class);
+
+  @Test
+  void pictureFailuresLogOnlyFixedServerStatusAndReason() {
+    var logger =
+        (ch.qos.logback.classic.Logger)
+            org.slf4j.LoggerFactory.getLogger(ApiResponseEntityExceptionHandler.class);
+    var previousLevel = logger.getLevel();
+    boolean previousAdditive = logger.isAdditive();
+    logger.setLevel(ch.qos.logback.classic.Level.TRACE);
+    logger.setAdditive(false);
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(
+            ApiResponseEntityExceptionHandler.class)) {
+      var errors =
+          List.of(
+              de.caritas.cob.userservice.api.picture.PictureException.tooLarge(),
+              de.caritas.cob.userservice.api.picture.PictureException.unsupported(),
+              de.caritas.cob.userservice.api.picture.PictureException.invalid(),
+              de.caritas.cob.userservice.api.picture.PictureException.rejected(),
+              de.caritas.cob.userservice.api.picture.PictureException.unavailable());
+      for (var error : errors) {
+        error.initCause(new IOException("synthetic-private-cause"));
+        error.addSuppressed(new IOException("synthetic-private-suppressed"));
+        var response = handler.handlePicture(error, request);
+        assertEquals(error.getStatus(), response.getStatusCode());
+        assertEquals(Map.of("reason", error.getMessage()), response.getBody());
+        assertEquals("no-store", response.getHeaders().getCacheControl());
+      }
+      org.assertj.core.api.Assertions.assertThat(logs.events())
+          .singleElement()
+          .satisfies(
+              event -> {
+                assertEquals(ch.qos.logback.classic.Level.ERROR, event.getLevel());
+                assertEquals(
+                    "Picture request failed: status=503, reason=PICTURE_SCAN_UNAVAILABLE",
+                    event.getFormattedMessage());
+                org.assertj.core.api.Assertions.assertThat(event.getArgumentArray())
+                    .containsExactly(503, "PICTURE_SCAN_UNAVAILABLE");
+                assertNull(event.getThrowableProxy());
+              });
+      org.mockito.Mockito.verifyNoInteractions(request);
+    } finally {
+      logger.setLevel(previousLevel);
+      logger.setAdditive(previousAdditive);
+    }
+  }
 
   @Test
   void unavailableRecoveryPolicyReturnsRetryableStatusAndReason() {

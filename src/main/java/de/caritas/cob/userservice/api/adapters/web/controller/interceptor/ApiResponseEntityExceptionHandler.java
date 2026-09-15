@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.customheader.Custo
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.exception.identity.IdentityProvisioningException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
+import de.caritas.cob.userservice.api.picture.PictureDiagnostics;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
 import jakarta.validation.ConstraintViolationException;
@@ -56,6 +57,15 @@ public class ApiResponseEntityExceptionHandler extends ResponseEntityExceptionHa
   @ExceptionHandler(de.caritas.cob.userservice.api.picture.PictureException.class)
   public ResponseEntity<Object> handlePicture(
       de.caritas.cob.userservice.api.picture.PictureException ex, WebRequest request) {
+    if (ex.getStatus().is5xxServerError()) {
+      // PictureException exposes only fixed codes; never attach causes or request details.
+      PictureDiagnostics.withoutRequestContext(
+          () ->
+              log.error(
+                  "Picture request failed: status={}, reason={}",
+                  ex.getStatus().value(),
+                  ex.getMessage()));
+    }
     var headers = new HttpHeaders();
     headers.setCacheControl("no-store");
     return handleExceptionInternal(

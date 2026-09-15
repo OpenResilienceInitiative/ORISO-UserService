@@ -10,6 +10,46 @@ import org.junit.jupiter.api.Test;
 class PictureIntakeTest {
   final PictureIntake intake = new PictureIntake();
 
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(booleans = {true, false})
+  void readFailuresLogOnlyFixedCategoryAndKeepOpaqueClientError(boolean ioFailure) {
+    var logger =
+        (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(PictureIntake.class);
+    var previousLevel = logger.getLevel();
+    boolean previousAdditive = logger.isAdditive();
+    logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+    logger.setAdditive(false);
+    var body =
+        new ByteArrayInputStream(new byte[0]) {
+          @Override
+          public byte[] readNBytes(int length) throws IOException {
+            if (ioFailure) throw new IOException("synthetic-private-input");
+            throw new IllegalArgumentException("synthetic-private-input");
+          }
+        };
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(PictureIntake.class)) {
+      assertThatThrownBy(() -> intake.read(body, "image/png"))
+          .isInstanceOf(PictureException.class)
+          .hasMessage("PICTURE_INVALID_IMAGE")
+          .hasNoCause();
+      assertThat(logs.events())
+          .singleElement()
+          .satisfies(
+              event -> {
+                assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.DEBUG);
+                String category = ioFailure ? "IO_FAILURE" : "INVALID_ARGUMENT";
+                assertThat(event.getFormattedMessage())
+                    .isEqualTo("Picture intake rejected: category=" + category);
+                assertThat(event.getArgumentArray()).containsExactly(category);
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+    } finally {
+      logger.setLevel(previousLevel);
+      logger.setAdditive(previousAdditive);
+    }
+  }
+
   static byte[] png(int width, int height) throws IOException {
     var output = new ByteArrayOutputStream();
     ImageIO.write(new BufferedImage(width, height, BufferedImage.TYPE_INT_RGB), "png", output);
@@ -36,9 +76,9 @@ class PictureIntakeTest {
 
   @Test
   void boundsActualStreamIndependentlyOfDeclaredLength() {
-    var stream = new ByteArrayInputStream(new byte[PictureIntake.MAX_BYTES + 1]);
+    var stream = new ByteArrayInputStream(new byte[PictureIntake.MAX_BYTES + 1024]);
     assertThatThrownBy(() -> intake.read(stream, "image/png")).hasMessage("PICTURE_TOO_LARGE");
-    assertThat(stream.available()).isZero();
+    assertThat(stream.available()).isEqualTo(1023);
   }
 
   @Test

@@ -55,31 +55,85 @@ class ClamAvPictureScannerTest {
 
   @Test
   void blockedWriteHasATotalDeadline() throws Exception {
-    try (var server = new ServerSocket(0, 1, InetAddress.getLoopbackAddress());
-        var executor = Executors.newSingleThreadExecutor()) {
-      var accepted =
+    assertDeadlineWhilePeerStaysOpen(false);
+  }
+
+  @Test
+  void withheldEofCannotExtendTotalDeadline() throws Exception {
+    assertDeadlineWhilePeerStaysOpen(true);
+  }
+
+  private void assertDeadlineWhilePeerStaysOpen(boolean sendDelayedVerdict) throws Exception {
+    var releasePeer = new CountDownLatch(1);
+    var connected = new CountDownLatch(1);
+    var executor = Executors.newFixedThreadPool(2);
+    var peerSocket = new java.util.concurrent.atomic.AtomicReference<Socket>();
+    try (var server = new ServerSocket()) {
+      server.setReceiveBufferSize(1024);
+      server.bind(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0));
+      server.setSoTimeout(5000);
+      var peer =
           executor.submit(
               () -> {
                 try (var socket = server.accept()) {
-                  socket.setReceiveBufferSize(1024);
-                  Thread.sleep(400);
+                  peerSocket.set(socket);
+                  connected.countDown();
+                  if (sendDelayedVerdict) {
+                    var input = new DataInputStream(socket.getInputStream());
+                    assertThat(input.readNBytes(10))
+                        .isEqualTo("zINSTREAM\0".getBytes(StandardCharsets.US_ASCII));
+                    int size;
+                    while ((size = input.readInt()) != 0) input.readNBytes(size);
+                    // Deliberate protocol pacing: the later EOF read must share the original
+                    // budget.
+                    if (!releasePeer.await(1500, TimeUnit.MILLISECONDS)) {
+                      socket
+                          .getOutputStream()
+                          .write("stream: OK\0".getBytes(StandardCharsets.US_ASCII));
+                      socket.getOutputStream().flush();
+                    }
+                  }
+                  // Neither a missing upload acknowledgement nor missing EOF may be rescued by peer
+                  // close.
+                  assertThat(releasePeer.await(10, TimeUnit.SECONDS)).isTrue();
                 }
                 return null;
               });
       var properties = new PictureScannerProperties();
       properties.setEnabled(true);
       properties.setPort(server.getLocalPort());
-      properties.setTimeoutMillis(150);
+      properties.setTimeoutMillis(sendDelayedVerdict ? 2000 : 150);
       var scanner = new ClamAvPictureScanner(properties);
-      long started = System.nanoTime();
       try {
-        assertThatThrownBy(() -> scanner.scan(new byte[PictureIntake.MAX_BYTES]))
-            .hasMessage("PICTURE_SCAN_UNAVAILABLE");
+        var result =
+            executor.submit(
+                () ->
+                    catchThrowable(
+                        () ->
+                            scanner.scan(
+                                new byte[sendDelayedVerdict ? 1 : PictureIntake.MAX_BYTES])));
+        assertThat(connected.await(2, TimeUnit.SECONDS)).isTrue();
+        assertThatCode(
+                () ->
+                    assertThat(result.get(sendDelayedVerdict ? 3000 : 1500, TimeUnit.MILLISECONDS))
+                        .isInstanceOf(PictureException.class)
+                        .hasMessage("PICTURE_SCAN_UNAVAILABLE"))
+            .doesNotThrowAnyException();
+        assertThat(peer.isDone())
+            .as("peer must remain open until after the deadline assertion")
+            .isFalse();
+        assertThat(peerSocket.get().isClosed()).isFalse();
       } finally {
+        releasePeer.countDown();
+        var socket = peerSocket.get();
+        if (socket != null) socket.close();
         scanner.close();
       }
-      assertThat(TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)).isLessThan(1500);
-      accepted.get(2, TimeUnit.SECONDS);
+      peer.get(3, TimeUnit.SECONDS);
+    } finally {
+      releasePeer.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
     }
   }
 

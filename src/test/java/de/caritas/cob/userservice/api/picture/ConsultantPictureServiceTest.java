@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.*;
 import static org.mockito.Mockito.*;
 
 import java.io.*;
+import java.util.concurrent.*;
 import org.junit.jupiter.api.Test;
 
 class ConsultantPictureServiceTest {
@@ -77,6 +78,80 @@ class ConsultantPictureServiceTest {
     } finally {
       javax.imageio.ImageIO.setCacheDirectory(previousDirectory);
       javax.imageio.ImageIO.setUseCache(previousUseCache);
+    }
+  }
+
+  @Test
+  void twoBlockedScansRefuseThirdUploadAndBothPermitsRecover() throws Exception {
+    byte[] bytes = PictureIntakeTest.png(2, 2);
+    assertBothSlotsAvailableAndThirdRefused(bytes);
+    assertBothSlotsAvailableAndThirdRefused(bytes);
+    verify(store, times(4)).replace("id", bytes, "image/png");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"intake", "scan", "store"})
+  void failuresReleaseBothPermits(String stage) throws Exception {
+    byte[] bytes = PictureIntakeTest.png(2, 2);
+    byte[] input = stage.equals("intake") ? new byte[0] : bytes;
+    if (stage.equals("scan")) doThrow(PictureException.unavailable()).when(scanner).scan(any());
+    if (stage.equals("store"))
+      doThrow(new IllegalStateException("synthetic storage failure"))
+          .when(store)
+          .replace(anyString(), any(), anyString());
+    // Two failures expose leaks of either slot, followed by two simultaneous successful uploads.
+    for (int attempt = 0; attempt < 2; attempt++) {
+      assertThatThrownBy(() -> service.put("id", new ByteArrayInputStream(input), "image/png"))
+          .hasMessage(
+              stage.equals("intake")
+                  ? "PICTURE_INVALID_IMAGE"
+                  : stage.equals("scan")
+                      ? "PICTURE_SCAN_UNAVAILABLE"
+                      : "synthetic storage failure");
+    }
+    reset(scanner, store);
+    assertBothSlotsAvailableAndThirdRefused(bytes);
+    verify(store, times(2)).replace("id", bytes, "image/png");
+  }
+
+  private void assertBothSlotsAvailableAndThirdRefused(byte[] bytes) throws Exception {
+    var scanning = new CountDownLatch(2);
+    var release = new CountDownLatch(1);
+    var executor = Executors.newFixedThreadPool(2);
+    doAnswer(
+            invocation -> {
+              scanning.countDown();
+              if (!release.await(5, TimeUnit.SECONDS))
+                throw new AssertionError("scanner was not released");
+              return null;
+            })
+        .when(scanner)
+        .scan(any());
+    try {
+      var first =
+          executor.submit(() -> service.put("id", new ByteArrayInputStream(bytes), "image/png"));
+      var second =
+          executor.submit(() -> service.put("id", new ByteArrayInputStream(bytes), "image/png"));
+      assertThat(scanning.await(2, TimeUnit.SECONDS))
+          .as("both upload slots reach scanner")
+          .isTrue();
+      var refusedBody = mock(InputStream.class);
+      assertThatThrownBy(() -> service.put("id", refusedBody, "image/png"))
+          .isInstanceOfSatisfying(
+              PictureException.class,
+              error -> {
+                assertThat(error.getStatus())
+                    .isEqualTo(org.springframework.http.HttpStatus.SERVICE_UNAVAILABLE);
+                assertThat(error).hasMessage("PICTURE_SCAN_UNAVAILABLE");
+              });
+      verifyNoInteractions(refusedBody);
+      release.countDown();
+      first.get(2, TimeUnit.SECONDS);
+      second.get(2, TimeUnit.SECONDS);
+    } finally {
+      release.countDown();
+      executor.shutdownNow();
+      assertThat(executor.awaitTermination(5, TimeUnit.SECONDS)).isTrue();
     }
   }
 }
