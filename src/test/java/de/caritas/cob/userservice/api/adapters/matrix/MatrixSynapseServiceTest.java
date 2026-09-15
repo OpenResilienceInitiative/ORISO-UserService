@@ -231,6 +231,23 @@ class MatrixSynapseServiceTest {
     assertThat(matrixSynapseService().purgeRoom(MATRIX_ROOM_ID)).isTrue();
   }
 
+  /** #1118: a room Synapse no longer knows is already in the state every caller wants. */
+  @Test
+  void purgeRoomShouldReturnTrueWhenSynapseNoLongerKnowsTheRoom() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com")),
+            eq(HttpMethod.DELETE),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null));
+
+    assertThat(matrixSynapseService().purgeRoom(MATRIX_ROOM_ID)).isTrue();
+  }
+
   @Test
   void purgeRoomShouldReturnFalseWhenSynapseReturnsServiceUnavailable() {
     stubAdminLogin();
@@ -244,6 +261,43 @@ class MatrixSynapseServiceTest {
         .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE));
 
     assertThat(matrixSynapseService().purgeRoom(MATRIX_ROOM_ID)).isFalse();
+  }
+
+  /** #1116: a room Synapse no longer knows must be distinguishable from a failed purge. */
+  @Test
+  void purgeRoomOrConfirmGoneShouldReportAlreadyGoneWhenSynapseReturnsNotFound() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com")),
+            eq(HttpMethod.DELETE),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null));
+
+    assertThat(matrixSynapseService().purgeRoomOrConfirmGone(MATRIX_ROOM_ID))
+        .isEqualTo(MatrixSynapseService.RoomPurgeOutcome.ALREADY_GONE);
+    assertThat(matrixSynapseService().purgeRoom(MATRIX_ROOM_ID))
+        .as("the boolean form treats a missing room as purged (#1118)")
+        .isTrue();
+  }
+
+  @Test
+  void purgeRoomOrConfirmGoneShouldReportFailedWhenSynapseReturnsServiceUnavailable() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            eq(
+                URI.create(
+                    "https://matrix.example.com/_synapse/admin/v2/rooms/%21room%3Amatrix.example.com")),
+            eq(HttpMethod.DELETE),
+            any(HttpEntity.class),
+            eq(String.class)))
+        .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE));
+
+    assertThat(matrixSynapseService().purgeRoomOrConfirmGone(MATRIX_ROOM_ID))
+        .isEqualTo(MatrixSynapseService.RoomPurgeOutcome.FAILED);
   }
 
   private void stubAdminLogin() {

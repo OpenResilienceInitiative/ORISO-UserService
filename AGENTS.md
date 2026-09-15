@@ -22,7 +22,7 @@ CI (GitHub Actions): `./mvnw -B test` then `./mvnw -B package -DskipTests` on Ja
 
 ## Context
 
-- Integration branch: `pre-dev` when used for ORISO feature work.
+- Integration branch: `dev` when used for ORISO feature work.
 - Skim `.understand-anything/` before non-trivial changes; verify graph freshness.
 - Do not invent DTOs/OpenAPI — read existing controllers and generated clients.
 - Controller/facade/saga changes follow `docs/api-error-contract.md` — never
@@ -47,7 +47,7 @@ delivery rules"). Summary:
   requested reviewers is not open for review.
 - **"Pre-Dev is free" means the server, not the branch.** Deploying images,
   mutating config or data and running E2E on the Pre-Dev server needs no
-  approval; the `pre-dev` *branch* is review-gated like any shared branch.
+  approval; the `dev` *branch* is review-gated like any shared branch.
 - **Restore what you borrowed.** Record image reference *and* `imagePullPolicy`
   before swapping anything on Pre-Dev, put both back before reporting done, and
   say so in the report.

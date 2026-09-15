@@ -37,7 +37,7 @@ import org.hibernate.annotations.Filter;
 import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.JdbcTypeCode;
 import org.hibernate.annotations.ParamDef;
-import org.hibernate.annotations.Where;
+import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.search.annotations.Analyzer;
 import org.hibernate.search.annotations.AnalyzerDef;
 import org.hibernate.search.annotations.Field;
@@ -211,7 +211,7 @@ public class Consultant implements TenantAware, NotificationsAware {
 
   @OneToMany(mappedBy = "consultant")
   @IndexedEmbedded
-  @Where(clause = "delete_date IS NULL")
+  @SQLRestriction("delete_date IS NULL")
   private Set<ConsultantAgency> consultantAgencies;
 
   @OneToMany(mappedBy = "consultant")

@@ -46,6 +46,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -852,6 +853,41 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoMoreInteractions(consultantAgencyService);
+  }
+
+  @Test
+  void getLanguages_Should_ReturnOkForAnonymousCaller_WhenPathIsServicePrefixed() throws Exception {
+    when(consultantAgencyService.getLanguageCodesOfAgency(1L)).thenReturn(Set.of("de"));
+
+    mvc.perform(
+            get("/service/users/consultants/languages")
+                .param("agencyId", "1")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.languages[0]").value("de"));
+
+    verify(consultantAgencyService).getLanguageCodesOfAgency(1L);
+  }
+
+  @Test
+  void getLanguages_Should_ReturnOkForAnonymousCaller_WhenPathIsUnprefixed() throws Exception {
+    when(consultantAgencyService.getLanguageCodesOfAgency(1L)).thenReturn(Set.of("de"));
+
+    mvc.perform(
+            get("/users/consultants/languages")
+                .param("agencyId", "1")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.languages[0]").value("de"));
+
+    verify(consultantAgencyService).getLanguageCodesOfAgency(1L);
+  }
+
+  @Test
+  void getSessionForId_Should_StillRejectAnonymousCaller_WhenPathIsServicePrefixed()
+      throws Exception {
+    mvc.perform(get("/service/users/sessions/room/1").accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isUnauthorized());
   }
 
   @Test

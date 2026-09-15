@@ -9,6 +9,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
+import de.caritas.cob.userservice.api.config.ConsultantActivityInterceptor;
+import de.caritas.cob.userservice.api.config.CustomWebMvcConfigurer;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
@@ -25,10 +27,14 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.http.converter.HttpMessageConverter;
+import org.springframework.http.converter.json.JacksonJsonHttpMessageConverter;
 import org.springframework.mock.web.MockHttpServletRequest;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
+import tools.jackson.databind.JsonNode;
 
 @ExtendWith(MockitoExtension.class)
 class ConsultantDtoMapperTest {
@@ -36,6 +42,8 @@ class ConsultantDtoMapperTest {
   @Mock private IdentityManaging identityManager;
   @Mock private ConsultantTopicRepository consultantTopicRepository;
   @Mock private TopicService topicService;
+
+  @Mock private ObjectProvider<ConsultantActivityInterceptor> objectProvider;
 
   @BeforeEach
   void setupRequestContext() {
@@ -324,6 +332,68 @@ class ConsultantDtoMapperTest {
     assertThat(result.getFirstName()).isNull();
     assertThat(result.getLastName()).isNull();
     assertThat(result.getIsSupervisor()).isFalse();
+  }
+
+  @Test
+  void consultantResponseDtoOf_Should_MapAbsence_When_ConsultantIsAbsent() {
+    ConsultantDtoMapper consultantDtoMapper = givenAMapper();
+    Consultant consultant =
+        Consultant.builder()
+            .id("consultantId")
+            .matrixUserId("rcId")
+            .username("username")
+            .firstName("Firstname")
+            .lastName("Lastname")
+            .email("mail@example.com")
+            .absent(true)
+            .absenceMessage("I am out of office")
+            .build();
+
+    var result = consultantDtoMapper.consultantResponseDtoOf(consultant, List.of(), false);
+
+    var json = serialize(result);
+    assertThat(json.path("absent").asBoolean()).isTrue();
+    assertThat(json.path("absenceMessage").asString()).isEqualTo("I am out of office");
+  }
+
+  @Test
+  void consultantResponseDtoOf_Should_NotExposeAbsenceMessage_When_ConsultantIsNotAbsent() {
+    ConsultantDtoMapper consultantDtoMapper = givenAMapper();
+    Consultant consultant =
+        Consultant.builder()
+            .id("consultantId")
+            .matrixUserId("rcId")
+            .username("username")
+            .firstName("Firstname")
+            .lastName("Lastname")
+            .email("mail@example.com")
+            .absent(false)
+            .absenceMessage("I am out of office")
+            .build();
+
+    var result = consultantDtoMapper.consultantResponseDtoOf(consultant, List.of(), false);
+
+    // isNull() rather than "the old text is gone": this fails both if the
+    // message were swapped for another counsellor's and if the property
+    // vanished from the payload altogether.
+    var json = serialize(result);
+    assertThat(json.path("absent").asBoolean()).isFalse();
+    assertThat(json.path("absenceMessage").isNull()).isTrue();
+  }
+
+  /**
+   * Serialises through the very converter the app answers HTTP with, rather than a bare mapper.
+   * {@link CustomWebMvcConfigurer} registers a JsonNullable serialiser on it, so a mapper built
+   * here by hand would render an optional property differently from the response the browser
+   * receives — exactly the mismatch this assertion exists to catch.
+   */
+  private JsonNode serialize(Object dto) {
+    List<HttpMessageConverter<?>> converters =
+        new ArrayList<>(List.of(new JacksonJsonHttpMessageConverter()));
+    new CustomWebMvcConfigurer(objectProvider).extendMessageConverters(converters);
+    var mapper = ((JacksonJsonHttpMessageConverter) converters.get(0)).getMapper();
+
+    return mapper.readTree(mapper.writeValueAsString(dto));
   }
 
   @Test

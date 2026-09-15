@@ -14,4 +14,10 @@ class DependencySecurityContractTest {
     assertThat(Files.readString(Path.of("pom.xml")))
         .contains("<httpcore5.version>5.4.3</httpcore5.version>");
   }
+
+  @Test
+  void tomcatMustStayOnTheFixedEmbeddedRelease() throws IOException {
+    assertThat(Files.readString(Path.of("pom.xml")))
+        .contains("<tomcat.version>11.0.25</tomcat.version>");
+  }
 }

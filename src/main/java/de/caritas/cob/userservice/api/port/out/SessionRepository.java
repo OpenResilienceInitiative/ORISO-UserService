@@ -101,8 +101,13 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * Find metadata-only case handover candidates in the requester's agencies. These sessions are
    * already owned by another consultant and are therefore not part of the normal "my sessions"
    * list.
+   *
+   * <p>Team sessions are included: the silent-membership handover model is team-session based, so
+   * excluding them hid exactly the cases the feature exists for (#202). Agency is only the coarse
+   * half of the scope — {@code CaseHandoverService} narrows the result to the requester's
+   * departments (agency × topic) before anything is returned.
    */
-  List<Session> findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
+  List<Session> findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
       List<Long> agencyIds, Consultant consultant, List<SessionStatus> statuses);
 
   /**
@@ -279,10 +284,9 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
    * clears that field for anonymous registrations on purpose, so the in-chat consent gate fires
    * (ADR-018 §9, #927). Requiring it here made those two deliberate decisions cancel each other
    * out: every anonymous live-chat enquiry was invisible to every consultant, the asker clicked and
-   * nothing happened. Consent is taken at entry from the platform-level live-chat privacy notice —
-   * at that point no agency is bound yet, so there is no agency declaration to show — and {@link
-   * de.caritas.cob.userservice.api.facade.assignsession.AnonymousEnquiryConsentGuard} still blocks
-   * the <b>assignment</b> server-side, which is where special-category data starts flowing.
+   * nothing happened. Consent and missing-policy disclosure belong to the client entry flow. They
+   * must not hide an enquiry or block its assignment: the counselling centre is only confirmed by
+   * that assignment, so enforcing consent here would recreate the same cycle.
    */
   @Query(
       "SELECT s FROM Session s "

@@ -17,6 +17,7 @@ import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
@@ -25,8 +26,10 @@ import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
 import de.caritas.cob.userservice.api.model.CaseHandoverRequest;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantTopic;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.SessionTopic;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverReasonPolicyRepository;
 import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
@@ -38,6 +41,7 @@ import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageS
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -53,6 +57,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.transaction.UnexpectedRollbackException;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
 
@@ -522,9 +527,8 @@ class CaseHandoverServiceTest {
 
   @Test
   void searchCandidates_returnsMetadataOnlySameAgencyMatches() {
-    when(sessionRepository
-            .findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
-                List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
+    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
         .thenReturn(List.of(session));
 
     var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
@@ -545,9 +549,8 @@ class CaseHandoverServiceTest {
     // display name stays a valid search term as well.
     previous.setDisplayName("Anna B.");
     previous.setInternalDisplayName("Standort Nord Team 7");
-    when(sessionRepository
-            .findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
-                List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
+    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
         .thenReturn(List.of(session));
 
     var internalNameResponse = caseHandoverService.searchCandidates("standort nord", 0, 15, false);
@@ -566,9 +569,8 @@ class CaseHandoverServiceTest {
     asker.setUsername(usernameTranscoder.encodeUsername("codexasker1782348153159"));
     previous.setUsername(usernameTranscoder.encodeUsername("codexcounselor20260625023940"));
     previous.setDisplayName(usernameTranscoder.encodeUsername("Codex Counselor"));
-    when(sessionRepository
-            .findByAgencyIdInAndConsultantNotAndStatusInAndTeamSessionFalseOrderByUpdateDateDesc(
-                List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
+    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
         .thenReturn(List.of(session));
 
     var askerResponse = caseHandoverService.searchCandidates("codexasker", 0, 15, false);
@@ -751,6 +753,202 @@ class CaseHandoverServiceTest {
     assertEquals(CaseHandoverRequest.Status.DENIED, request.getStatus());
     assertEquals("ALREADY_ANSWERED", request.getAuditOutcome());
     verify(sessionRepository, never()).save(session);
+  }
+
+  // --- #202: scope handover candidate search to the requester's departments (agency x topic) ---
+
+  private void givenRequesterTopics(Long... topicIds) {
+    Set<ConsultantTopic> topics = new HashSet<>();
+    for (Long topicId : topicIds) {
+      ConsultantTopic topic = new ConsultantTopic();
+      topic.setConsultant(requester);
+      topic.setTopicId(topicId);
+      topics.add(topic);
+    }
+    requester.setConsultantTopics(topics);
+  }
+
+  private Session candidateSession(long id, long agencyId, Long mainTopicId, boolean teamSession) {
+    Session candidate = new Session();
+    candidate.setId(id);
+    candidate.setAgencyId(agencyId);
+    candidate.setConsultant(previous);
+    candidate.setUser(asker);
+    candidate.setStatus(SessionStatus.IN_PROGRESS);
+    candidate.setRegistrationType(Session.RegistrationType.REGISTERED);
+    candidate.setTenantId(7L);
+    candidate.setPostcode("12345");
+    candidate.setLanguageCode(LanguageCode.de);
+    candidate.setMainTopicId(mainTopicId);
+    candidate.setTeamSession(teamSession);
+    candidate.setCreateDate(LocalDateTime.now());
+    candidate.setUpdateDate(LocalDateTime.now());
+    return candidate;
+  }
+
+  private void givenCandidates(Session... candidates) {
+    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+            List.of(10L), requester, List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE)))
+        .thenReturn(List.of(candidates));
+  }
+
+  @Test
+  void searchCandidates_includesTeamSessions() {
+    // The silent-membership handover model is team-session based, so the old TeamSessionFalse
+    // restriction hid exactly the cases the feature exists for (#202).
+    givenRequesterTopics(5L);
+    givenCandidates(candidateSession(201L, 10L, 5L, true));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(1, response.getTotal());
+    assertEquals(201L, response.getSessions().get(0).getSession().getId());
+  }
+
+  @Test
+  void searchCandidates_returnsSessionsOfTheRequesterDepartment() {
+    givenRequesterTopics(5L);
+    givenCandidates(candidateSession(202L, 10L, 5L, false));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(1, response.getTotal());
+    assertEquals(202L, response.getSessions().get(0).getSession().getId());
+  }
+
+  @Test
+  void searchCandidates_excludesSameAgencySessionsOfAnotherDepartment() {
+    // Same agency, different topic: a different department, so out of scope even though the
+    // repository query returns it.
+    givenRequesterTopics(5L);
+    givenCandidates(candidateSession(203L, 10L, 99L, false));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(0, response.getTotal());
+    assertTrue(response.getSessions().isEmpty());
+  }
+
+  @Test
+  void searchCandidates_excludesSessionsWithoutTopicWhenRequesterHasDepartments() {
+    givenRequesterTopics(5L);
+    givenCandidates(candidateSession(204L, 10L, null, false));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(0, response.getTotal());
+  }
+
+  @Test
+  void searchCandidates_unionsAcrossAllRequesterDepartments() {
+    givenRequesterTopics(5L, 6L);
+    givenCandidates(
+        candidateSession(205L, 10L, 5L, false),
+        candidateSession(206L, 10L, 6L, true),
+        candidateSession(207L, 10L, 99L, false));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(2, response.getTotal());
+    assertEquals(
+        List.of(205L, 206L),
+        response.getSessions().stream().map(dto -> dto.getSession().getId()).toList());
+  }
+
+  @Test
+  void searchCandidates_matchesOnAnySessionTopicNotOnlyTheMainTopic() {
+    // A session carrying several topics belongs to a department per topic, so it stays reachable
+    // from any of them.
+    givenRequesterTopics(6L);
+    Session multiTopic = candidateSession(208L, 10L, 5L, false);
+    SessionTopic secondary = new SessionTopic();
+    secondary.setSession(multiTopic);
+    secondary.setTopicId(6L);
+    multiTopic.setSessionTopics(List.of(secondary));
+    givenCandidates(multiTopic);
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(1, response.getTotal());
+    assertEquals(208L, response.getSessions().get(0).getSession().getId());
+  }
+
+  @Test
+  void searchCandidates_keepsAgencyWideViewWhenRequesterHasNoTopics() {
+    // Deployments without topics (feature.topics.enabled=false) have no department dimension, so
+    // the scope degenerates to the agency rather than emptying the feature.
+    requester.setConsultantTopics(new HashSet<>());
+    givenCandidates(
+        candidateSession(209L, 10L, null, false), candidateSession(210L, 10L, 5L, true));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(2, response.getTotal());
+  }
+
+  @Test
+  void searchCandidates_returnsNothingWhenTopicsEnabledAndRequesterHasNoTopics() {
+    ReflectionTestUtils.setField(caseHandoverService, "topicsEnabled", true);
+    requester.setConsultantTopics(new HashSet<>());
+    givenCandidates(candidateSession(211L, 10L, 5L, true));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(0, response.getTotal());
+  }
+
+  @Test
+  void searchCandidates_excludesOtherAgencyEvenWhenRepositoryReturnsIt() {
+    givenRequesterTopics(5L);
+    givenCandidates(candidateSession(212L, 99L, 5L, true));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(0, response.getTotal());
+  }
+
+  @Test
+  void searchCandidates_unionsDepartmentsAcrossAgencies() {
+    ConsultantAgency firstAgency = requester.getConsultantAgencies().iterator().next();
+    firstAgency.setId(1L);
+    ConsultantAgency secondAgency = new ConsultantAgency();
+    secondAgency.setId(2L);
+    secondAgency.setAgencyId(20L);
+    secondAgency.setConsultant(requester);
+    requester.setConsultantAgencies(Set.of(firstAgency, secondAgency));
+    givenRequesterTopics(5L, 6L);
+    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+            any(), eq(requester), eq(List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE))))
+        .thenReturn(
+            List.of(
+                candidateSession(213L, 10L, 5L, false),
+                candidateSession(214L, 20L, 6L, true),
+                candidateSession(215L, 20L, 99L, false)));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(2, response.getTotal());
+    assertEquals(
+        List.of(213L, 214L),
+        response.getSessions().stream().map(dto -> dto.getSession().getId()).toList());
+  }
+
+  @Test
+  void requestAccess_forbidsASessionOutsideTheRequesterDepartment() {
+    givenRequesterTopics(5L);
+    session.setMainTopicId(99L);
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Cover."));
+  }
+
+  @Test
+  void getStatus_forbidsASessionOutsideTheRequesterDepartment() {
+    givenRequesterTopics(5L);
+    session.setMainTopicId(99L);
+
+    assertThrows(ForbiddenException.class, () -> caseHandoverService.getStatus(123L));
   }
 
   private Consultant consultant(String id, String displayName) {

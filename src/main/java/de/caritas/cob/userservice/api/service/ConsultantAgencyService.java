@@ -90,6 +90,26 @@ public class ConsultantAgencyService {
   }
 
   /**
+   * Whether the given consultant is currently assigned to the given agency.
+   *
+   * <p>Membership, not authority, is what scopes an agency roster to the people already in it. The
+   * caller is the one that has to check: this method answers the question, {@link
+   * #getConsultantsOfAgency} deliberately does not ask it, so internal callers that legitimately
+   * read any agency keep working.
+   *
+   * @param consultantId the consultant's id, which is also their Keycloak user id
+   * @param agencyId agency ID
+   * @return true when an undeleted assignment exists
+   */
+  public boolean isConsultantAssignedToAgency(String consultantId, Long agencyId) {
+    if (isNull(consultantId) || isNull(agencyId)) {
+      return false;
+    }
+    return consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
+        consultantId, agencyId);
+  }
+
+  /**
    * Returns an alphabetically sorted list of {@link ConsultantResponseDTO} depending on the
    * provided agencyId.
    *
