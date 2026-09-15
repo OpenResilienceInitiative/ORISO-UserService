@@ -1099,7 +1099,10 @@ public class CaseHandoverService {
     String clientConsentMode =
         policy.getClientConsent() != null && policy.getClientConsent().getMode() != null
             ? policy.getClientConsent().getMode().getValue()
-            : null;
+            : policy.getClientConsentRequired() != null
+                    && policy.getClientConsentRequired().getMode() != null
+                ? policy.getClientConsentRequired().getMode().getValue()
+                : null;
     return CaseHandoverReason.builder()
         .code(code)
         .label(localizedValue(labels, language, code))

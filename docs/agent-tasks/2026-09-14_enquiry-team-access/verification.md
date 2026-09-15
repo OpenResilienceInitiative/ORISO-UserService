@@ -39,3 +39,15 @@ This is a partial implementation of US1149. Do not close the issue or claim comp
 ## API authorization coverage follow-up
 
 The actual SecurityConfig filter chain, TeamDiscussionController and TeamDiscussionFacade are composed in an isolated test web context. GET permits an eligible colleague (204 when no discussion exists), rejects an asker (403), and rejects a foreign-agency colleague (403). POST supplies matching CSRF cookie/header values: the asker remains forbidden while the eligible colleague opens the room (200 plus room ID). Authentication is supplied through Spring Security test support; this does not prove JWT decoding or live Keycloak authentication. Repository/Matrix fixtures remain local. No productive authorization change was necessary; this is coverage of existing behavior, not a claimed red-green product repair. The nested fixture has no component stereotype and is explicitly registered only by this test. AppConfig uses a broad component scan that otherwise discovers even TestConfiguration classes. A mixed facade/ActuatorControllerIT run reproduced the IdentityConfig binding failure before removal of that stereotype and passed afterward (21 tests).
+
+## 15 September — integrate current dev for Dev testing
+
+Merged `origin/dev` at `8c48407d` into `anfragev2` without conflicts. No manual production changes were necessary. The registered enquiry first-message visibility gate remains in SessionService; the incoming five-minute queue/heartbeat behavior applies to the anonymous enquiry queue. Incoming notification feed exclusions/bulk-read APIs and agency-admin data resolution are preserved. Dev introduced no competing migration; append-only migrations 0100 and 0101 remain unchanged.
+
+Local Java 21 validation of the merged tree:
+
+- 360 targeted tests passed, zero failures, errors or skips: team discussion concurrency/access/cleanup, agency membership changes, registered and anonymous enquiry visibility, queue heartbeat/count, event notification service/controller, agency-admin data and case handover.
+- `./mvnw -B package -Dskip.unit-tests=true spotless:check` passed. The package step intentionally reused the completed test evidence and did not rerun tests.
+- `git diff --check` passed.
+
+This integration does not prove current Dev runtime behavior. Full CI, real MariaDB lease/migration checks and browser acceptance remain delivery checks; no remote branch, PR or deployment was changed by this integration step. No new red-green test was needed because this was a clean integration of existing implementations and tests, with no new behavior authored.

@@ -62,20 +62,20 @@ class EventNotificationControllerTest {
             .perPage(50)
             .unreadCount(0)
             .build();
-    when(eventNotificationService.getFeed("u-1", 0, 50)).thenReturn(feed);
+    when(eventNotificationService.getFeed("u-1", 0, 50, Set.of())).thenReturn(feed);
 
-    var response = controllerWithMirror.getFeed(0, 50);
+    var response = controllerWithMirror.getFeed(0, 50, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(0, response.getBody().getPage());
-    verify(eventNotificationService).getFeed("u-1", 0, 50);
+    verify(eventNotificationService).getFeed("u-1", 0, 50, Set.of());
   }
 
   @Test
   void getFeed_customPagePerPage_delegatesWithGivenValues() {
     // Business reason: consumers need deterministic pagination for infinite-scroll behavior.
     when(authenticatedUser.getUserId()).thenReturn("u-1");
-    when(eventNotificationService.getFeed("u-1", 3, 15))
+    when(eventNotificationService.getFeed("u-1", 3, 15, Set.of()))
         .thenReturn(
             EventNotificationService.NotificationFeedResponse.builder()
                 .items(List.of())
@@ -84,16 +84,17 @@ class EventNotificationControllerTest {
                 .unreadCount(0)
                 .build());
 
-    var response = controllerWithMirror.getFeed(3, 15);
+    var response = controllerWithMirror.getFeed(3, 15, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(eventNotificationService).getFeed("u-1", 3, 15);
+    verify(eventNotificationService).getFeed("u-1", 3, 15, Set.of());
   }
 
   @Test
   void getFeed_parameterAnnotations_includeExpectedMinConstraints() throws Exception {
     // Business reason: min constraints guard against invalid paging values reaching service layer.
-    Method method = EventNotificationController.class.getMethod("getFeed", int.class, int.class);
+    Method method =
+        EventNotificationController.class.getMethod("getFeed", int.class, int.class, String.class);
     Min pageMin = (Min) method.getParameters()[0].getAnnotations()[1];
     Min perPageMin = (Min) method.getParameters()[1].getAnnotations()[1];
     assertEquals(0, pageMin.value());
@@ -334,5 +335,94 @@ class EventNotificationControllerTest {
             EventNotificationController.MessageEventRequestDTO.class);
     assertEquals(
         true, endpoint.getParameters()[0].isAnnotationPresent(jakarta.validation.Valid.class));
+  }
+
+  // ---------------------------------------------------------------------------
+  // #1377 slice 7 — exclusions and bulk read by event type
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void getFeed_withExcludeEventTypes_passesParsedSetToService() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    when(eventNotificationService.getFeed("u-1", 0, 50, Set.of("supervisor.added", "call.missed")))
+        .thenReturn(
+            EventNotificationService.NotificationFeedResponse.builder()
+                .items(List.of())
+                .page(0)
+                .perPage(50)
+                .unreadCount(3)
+                .excludedEventTypes(List.of("call.missed", "supervisor.added"))
+                .build());
+
+    var response = controllerWithMirror.getFeed(0, 50, " supervisor.added, call.missed ,,");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(3, response.getBody().getUnreadCount());
+    assertEquals(
+        List.of("call.missed", "supervisor.added"), response.getBody().getExcludedEventTypes());
+  }
+
+  @Test
+  void getFeed_withTooManyExcludeEventTypes_returnsBadRequest() {
+    String tooMany =
+        java.util.stream.IntStream.rangeClosed(1, EventNotificationController.MAX_EVENT_TYPES + 1)
+            .mapToObj(i -> "type." + i)
+            .reduce((a, b) -> a + "," + b)
+            .orElseThrow();
+
+    var response = controllerWithMirror.getFeed(0, 50, tooMany);
+
+    assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    verify(eventNotificationService, never())
+        .getFeed(any(), any(Integer.class), any(Integer.class), any());
+  }
+
+  @Test
+  void getUnreadCount_delegatesWithExclusionsAndEchoesThem() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    when(eventNotificationService.countUnread("u-1", Set.of("call.missed"))).thenReturn(7L);
+
+    var response = controllerWithMirror.getUnreadCount("call.missed");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(7L, response.getBody().getUnreadCount());
+    assertEquals(List.of("call.missed"), response.getBody().getExcludedEventTypes());
+  }
+
+  @Test
+  void getUnreadCount_overlongEventType_returnsBadRequest() {
+    var response =
+        controllerWithMirror.getUnreadCount(
+            "x".repeat(EventNotificationController.MAX_EVENT_TYPE_LENGTH + 1));
+
+    assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    verify(eventNotificationService, never()).countUnread(any(), any());
+  }
+
+  @Test
+  void markAsReadByEventTypes_delegatesAndReportsCount() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    when(eventNotificationService.markAsReadByEventTypes(
+            "u-1", Set.of("supervisor.added", "supervisor.removed")))
+        .thenReturn(12);
+
+    var response =
+        controllerWithMirror.markAsReadByEventTypes("supervisor.added,supervisor.removed");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(12, response.getBody().getUpdated());
+    assertEquals(
+        List.of("supervisor.added", "supervisor.removed"), response.getBody().getEventTypes());
+  }
+
+  @Test
+  void markAsReadByEventTypes_emptyList_isBadRequestNotReadAll() {
+    // Business reason: a missing list must never degrade into "mark everything read".
+    assertEquals(
+        HttpStatus.BAD_REQUEST, controllerWithMirror.markAsReadByEventTypes(null).getStatusCode());
+    assertEquals(
+        HttpStatus.BAD_REQUEST, controllerWithMirror.markAsReadByEventTypes(" , ").getStatusCode());
+    verify(eventNotificationService, never()).markAsReadByEventTypes(any(), any());
+    verify(eventNotificationService, never()).markAllAsRead(any());
   }
 }
