@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.userdata.AgencyAdminDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
@@ -80,9 +81,48 @@ class UserAccountControllerDelegateTest {
   @Mock private AskerDataProvider askerDataProvider;
   @Mock private VideoChatConfig videoChatConfig;
   @Mock private KeycloakUserDataProvider keycloakUserDataProvider;
+  @Mock private AgencyAdminDataProvider agencyAdminDataProvider;
   @Mock private UsernameTranscoder usernameTranscoder;
 
   @InjectMocks private UserAccountControllerDelegate delegate;
+
+  @Test
+  void getUserDataShouldResolveAssignedAgenciesForRestrictedAgencyAdmin() {
+    var roles = Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue(), UserRole.USER_ADMIN.getValue());
+    var partialUserData = new UserDataResponseDTO();
+    var fullUserData = new UserDataResponseDTO();
+    when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(agencyAdminDataProvider.retrieveData()).thenReturn(partialUserData);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
+    when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(fullUserData);
+
+    var response = delegate.getUserData();
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    assertThat(response.getBody()).isSameAs(fullUserData);
+    verify(keycloakUserDataProvider, never()).retrieveAuthenticatedUserData();
+  }
+
+  @Test
+  void getUserDataShouldKeepTenantAdminOnKeycloakDataEvenWithAgencyAdminRole() {
+    var roles =
+        Set.of(UserRole.TENANT_ADMIN.getValue(), UserRole.RESTRICTED_AGENCY_ADMIN.getValue());
+    var partialUserData = new UserDataResponseDTO();
+    var fullUserData = new UserDataResponseDTO();
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
+    when(userDtoMapper.userDataOf(eq(partialUserData), isNull(), anyBoolean(), anyBoolean()))
+        .thenReturn(fullUserData);
+
+    var response = delegate.getUserData();
+
+    assertThat(response.getBody()).isSameAs(fullUserData);
+    verify(agencyAdminDataProvider, never()).retrieveData();
+  }
 
   @Test
   void getUserDataShouldPreserveOtpAvailabilityWhenOtpLookupFails() {
@@ -337,15 +377,16 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
-  void getUserData_agencyAdminPath_returnsKeycloakUserData() {
-    // Agency admins load profile data from Keycloak rather than consultant tables.
+  void getUserData_agencyAdminPath_returnsKeycloakUserDataWithAssignedAgencies() {
+    // Agency admins load profile data from Keycloak plus their admin_agency assignments
+    // (ORISO-UserService#1101), never from consultant tables.
     var roles = Set.of(UserRole.AGENCY_ADMIN.getValue());
     var partialUserData = new UserDataResponseDTO();
     var fullUserData = new UserDataResponseDTO();
     when(authenticatedUser.isConsultant()).thenReturn(false);
     when(authenticatedUser.isAgencySuperAdmin()).thenReturn(true);
     when(authenticatedUser.getRoles()).thenReturn(roles);
-    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
+    when(agencyAdminDataProvider.retrieveData()).thenReturn(partialUserData);
     when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(false);
     when(videoChatConfig.getE2eEncryptionEnabled()).thenReturn(false);
     when(identityPolicy.isConsultantDisplayNameAllowed()).thenReturn(false);
@@ -356,7 +397,8 @@ class UserAccountControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(fullUserData);
-    verify(keycloakUserDataProvider).retrieveAuthenticatedUserData();
+    verify(agencyAdminDataProvider).retrieveData();
+    verify(keycloakUserDataProvider, never()).retrieveAuthenticatedUserData();
   }
 
   @Test

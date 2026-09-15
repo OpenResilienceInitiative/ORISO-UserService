@@ -401,6 +401,10 @@ class UserControllerIT {
 
   @MockitoBean
   @SuppressWarnings("unused")
+  private AgencyAdminDataProvider agencyAdminDataProvider;
+
+  @MockitoBean
+  @SuppressWarnings("unused")
   private VideoChatConfig videoChatConfig;
 
   @MockitoBean private AdminUserFacade adminUserFacade;
@@ -1286,10 +1290,10 @@ class UserControllerIT {
   }
 
   @Test
-  void getUserData_ForAgencySuperAdmin_Should_ReturnUserDataFromKeycloak() throws Exception {
+  void getUserData_ForAgencySuperAdmin_Should_ReturnUserDataWithAssignedAgencies()
+      throws Exception {
     when(authenticatedUser.isAgencySuperAdmin()).thenReturn(true);
-    when(keycloakUserDataProvider.retrieveAuthenticatedUserData())
-        .thenReturn(new UserDataResponseDTO());
+    when(agencyAdminDataProvider.retrieveData()).thenReturn(new UserDataResponseDTO());
 
     mvc.perform(
             get(PATH_USER_DATA)
@@ -1299,10 +1303,10 @@ class UserControllerIT {
   }
 
   @Test
-  void getUserData_ForRestrictedAgencyAdmin_Should_ReturnUserDataFromKeycloak() throws Exception {
+  void getUserData_ForRestrictedAgencyAdmin_Should_ReturnUserDataWithAssignedAgencies()
+      throws Exception {
     when(authenticatedUser.isRestrictedAgencyAdmin()).thenReturn(true);
-    when(keycloakUserDataProvider.retrieveAuthenticatedUserData())
-        .thenReturn(new UserDataResponseDTO());
+    when(agencyAdminDataProvider.retrieveData()).thenReturn(new UserDataResponseDTO());
 
     mvc.perform(
             get(PATH_USER_DATA)
