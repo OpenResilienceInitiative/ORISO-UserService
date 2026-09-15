@@ -1912,21 +1912,20 @@ class EventNotificationServiceTest {
   }
 
   @Test
-  void markAsReadByEventTypes_marksEveryUnreadRowOfThoseTypes() {
-    var first = EventNotification.builder().id(1L).recipientUserId("user-1").build();
-    var second = EventNotification.builder().id(2L).recipientUserId("user-1").build();
-    when(eventNotificationRepository.findByRecipientUserIdAndReadDateIsNullAndEventTypeIn(
-            "user-1", new java.util.TreeSet<>(java.util.Set.of("supervisor.added"))))
-        .thenReturn(List.of(first, second));
+  void markAsReadByEventTypes_runsOneBulkUpdateAndReportsItsCount() {
+    when(eventNotificationRepository.markReadByEventTypes(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(
+                new java.util.TreeSet<>(java.util.Set.of("supervisor.added"))),
+            any(LocalDateTime.class)))
+        .thenReturn(2);
 
     int updated =
         eventNotificationService.markAsReadByEventTypes(
-            "user-1", java.util.Set.of("supervisor.added"));
+            "user-1", java.util.Set.of(" supervisor.added ", "supervisor.added"));
 
     assertThat(updated).isEqualTo(2);
-    assertThat(first.getReadDate()).isNotNull();
-    assertThat(second.getReadDate()).isNotNull();
-    verify(eventNotificationRepository).saveAll(List.of(first, second));
+    verify(eventNotificationRepository, never()).saveAll(any());
   }
 
   @Test
@@ -1934,8 +1933,6 @@ class EventNotificationServiceTest {
     assertThat(eventNotificationService.markAsReadByEventTypes("user-1", java.util.Set.of()))
         .isZero();
     assertThat(eventNotificationService.markAsReadByEventTypes("user-1", null)).isZero();
-    verify(eventNotificationRepository, never())
-        .findByRecipientUserIdAndReadDateIsNullAndEventTypeIn(any(), any());
-    verify(eventNotificationRepository, never()).saveAll(any());
+    verify(eventNotificationRepository, never()).markReadByEventTypes(any(), any(), any());
   }
 }

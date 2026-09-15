@@ -26,9 +26,22 @@ public interface EventNotificationRepository extends JpaRepository<EventNotifica
   long countByRecipientUserIdAndReadDateIsNullAndEventTypeNotIn(
       String recipientUserId, Collection<String> eventTypes);
 
-  /** Unread rows of the given event types (#1377 auto-read across unloaded pages). */
-  List<EventNotification> findByRecipientUserIdAndReadDateIsNullAndEventTypeIn(
-      String recipientUserId, Collection<String> eventTypes);
+  /**
+   * Marks every unread row of the given event types read in one statement (#1377 auto-read across
+   * unloaded pages). A bulk update on purpose: the backlog is bounded by retention age, not by row
+   * count, so loading the entities would scale memory and transaction time with the backlog.
+   *
+   * @return number of rows marked read
+   */
+  @Modifying(flushAutomatically = true, clearAutomatically = true)
+  @Query(
+      "update EventNotification e set e.readDate = :now "
+          + "where e.recipientUserId = :recipientUserId and e.readDate is null "
+          + "and e.eventType in :eventTypes")
+  int markReadByEventTypes(
+      @Param("recipientUserId") String recipientUserId,
+      @Param("eventTypes") Collection<String> eventTypes,
+      @Param("now") LocalDateTime now);
 
   Optional<EventNotification> findByIdAndRecipientUserId(Long id, String recipientUserId);
 

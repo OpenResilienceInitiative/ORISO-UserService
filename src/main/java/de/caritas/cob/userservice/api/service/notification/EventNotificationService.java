@@ -688,16 +688,8 @@ public class EventNotificationService {
     if (types.isEmpty()) {
       return 0;
     }
-    var unread =
-        eventNotificationRepository.findByRecipientUserIdAndReadDateIsNullAndEventTypeIn(
-            recipientUserId, types);
-    if (unread.isEmpty()) {
-      return 0;
-    }
-    var now = LocalDateTime.now();
-    unread.forEach(item -> item.setReadDate(now));
-    eventNotificationRepository.saveAll(unread);
-    return unread.size();
+    return eventNotificationRepository.markReadByEventTypes(
+        recipientUserId, types, LocalDateTime.now());
   }
 
   /** Trimmed, non-blank, de-duplicated; {@code null} reads as empty. */
