@@ -5,7 +5,11 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.ApplicationSettingsApiControllerFactory;
+import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
+import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
@@ -45,11 +49,14 @@ class ApplicationSettingsServiceTest {
   private static final String AUTH_VALUE = "Bearer keycloak-token";
   private static final String TENANT_HEADER = "tenantId";
   private static final String TENANT_VALUE = "7";
+  private static final String TECHNICAL_TOKEN = "technical-user-token";
+  private static final String TECHNICAL_AUTH_VALUE = "Bearer " + TECHNICAL_TOKEN;
 
   private StubApplicationsettingsControllerApi controllerApi;
   private RecordingApiClient apiClient;
   private SecurityHeaderSupplier securityHeaderSupplier;
   private TenantHeaderSupplier tenantHeaderSupplier;
+  private StubIdentityAuthentication identityAuthentication;
   private ApplicationSettingsService applicationSettingsService;
 
   @BeforeEach
@@ -58,11 +65,14 @@ class ApplicationSettingsServiceTest {
     controllerApi = new StubApplicationsettingsControllerApi(apiClient);
     securityHeaderSupplier = createSecurityHeaderSupplier();
     tenantHeaderSupplier = createTenantHeaderSupplier();
+    identityAuthentication = new StubIdentityAuthentication(TECHNICAL_TOKEN);
     applicationSettingsService =
         new ApplicationSettingsService(
             new StubApplicationSettingsApiControllerFactory(controllerApi),
             securityHeaderSupplier,
-            tenantHeaderSupplier);
+            tenantHeaderSupplier,
+            createTechnicalIdentityClientConfig(),
+            identityAuthentication);
   }
 
   // Feature toggles and multitenancy config are loaded from application settings service.
@@ -162,9 +172,12 @@ class ApplicationSettingsServiceTest {
     assertThat(applicationSettingsService.getGlobalSmtpCredentials()).isEmpty();
   }
 
-  // SMTP credentials endpoint is super-admin protected and needs Keycloak auth headers.
+  // #1160: the guarded credentials endpoint is platform-scoped. The lookup must carry the
+  // TECHNICAL service identity, never the token of whoever clicked — otherwise a tenant admin
+  // gets 403 where a platform admin succeeds, and the same invite either works or does not
+  // depending on the role of the caller.
   @Test
-  void getGlobalSmtpCredentials_happyPath_usesKeycloakAndCsrfHeaders() {
+  void getGlobalSmtpCredentials_happyPath_usesTechnicalUserTokenNotCallerToken() {
     controllerApi.smtpResult =
         new ApplicationSettingsSmtpCredentialsDTO()
             .globalSmtpUsername("user")
@@ -175,12 +188,73 @@ class ApplicationSettingsServiceTest {
         new ApplicationSettingsService(
             new StubApplicationSettingsApiControllerFactory(controllerApi),
             keycloakSupplier,
-            tenantHeaderSupplier);
+            tenantHeaderSupplier,
+            createTechnicalIdentityClientConfig(),
+            new StubIdentityAuthentication(TECHNICAL_TOKEN));
 
     applicationSettingsService.getGlobalSmtpCredentials();
 
-    assertThat(keycloakSupplier.keycloakHeaderCalls.get()).isEqualTo(1);
-    assertThat(apiClient.recordedHeaders).containsEntry(AUTH_HEADER, AUTH_VALUE);
+    assertThat(apiClient.recordedHeaders).containsEntry(AUTH_HEADER, TECHNICAL_AUTH_VALUE);
+    assertThat(apiClient.recordedHeaders.get(AUTH_HEADER)).isNotEqualTo(AUTH_VALUE);
+    assertThat(keycloakSupplier.technicalKeycloakHeaderCalls.get()).isEqualTo(1);
+    assertThat(keycloakSupplier.keycloakHeaderCalls.get()).isZero();
+  }
+
+  // #1160: the technical user is logged in with its configured credentials for every lookup.
+  @Test
+  void getGlobalSmtpCredentials_happyPath_logsInTechnicalUser() {
+    controllerApi.smtpResult =
+        new ApplicationSettingsSmtpCredentialsDTO()
+            .globalSmtpUsername("user")
+            .globalSmtpPassword("pass");
+
+    applicationSettingsService.getGlobalSmtpCredentials();
+
+    assertThat(identityAuthentication.loginCount.get()).isEqualTo(1);
+    assertThat(identityAuthentication.lastUsername).isEqualTo("technical-user");
+  }
+
+  // #1160: no silent fallback to the caller's token — that fallback is exactly what made the
+  // outcome role-dependent. A failed technical login degrades to "no credentials".
+  @Test
+  void getGlobalSmtpCredentials_technicalLoginFails_returnsEmptyAndDoesNotCallEndpoint() {
+    controllerApi.smtpResult =
+        new ApplicationSettingsSmtpCredentialsDTO()
+            .globalSmtpUsername("user")
+            .globalSmtpPassword("pass");
+    identityAuthentication.failure = new IllegalStateException("technical login rejected");
+
+    assertThat(applicationSettingsService.getGlobalSmtpCredentials()).isEmpty();
+    assertThat(controllerApi.smtpCallCount.get()).isZero();
+    assertThat(apiClient.recordedHeaders).doesNotContainEntry(AUTH_HEADER, AUTH_VALUE);
+  }
+
+  // #1160: an unconfigured technical user is a configuration state, reported at WARN.
+  @Test
+  void getGlobalSmtpCredentials_technicalUserNotConfigured_returnsEmptyAndLogsWarn() {
+    withCapturedLogs(
+        appender -> {
+          controllerApi.smtpResult =
+              new ApplicationSettingsSmtpCredentialsDTO()
+                  .globalSmtpUsername("user")
+                  .globalSmtpPassword("pass");
+          applicationSettingsService =
+              new ApplicationSettingsService(
+                  new StubApplicationSettingsApiControllerFactory(controllerApi),
+                  securityHeaderSupplier,
+                  tenantHeaderSupplier,
+                  createIdentityClientConfig(new TechnicalUserConfig()),
+                  identityAuthentication);
+
+          assertThat(applicationSettingsService.getGlobalSmtpCredentials()).isEmpty();
+          assertThat(controllerApi.smtpCallCount.get()).isZero();
+          assertThat(appender.list)
+              .anySatisfy(
+                  event -> {
+                    assertThat(event.getLevel()).isEqualTo(ch.qos.logback.classic.Level.WARN);
+                    assertThat(event.getFormattedMessage()).contains("technical user");
+                  });
+        });
   }
 
   // SMTP credential lookup is best-effort and must not break admin tooling on 4xx/5xx.
@@ -373,6 +447,53 @@ class ApplicationSettingsServiceTest {
     return user;
   }
 
+  private static IdentityClientConfig createTechnicalIdentityClientConfig() {
+    TechnicalUserConfig technicalUser = new TechnicalUserConfig();
+    technicalUser.setUsername("technical-user");
+    technicalUser.setPassword("technical-password");
+    return createIdentityClientConfig(technicalUser);
+  }
+
+  private static IdentityClientConfig createIdentityClientConfig(
+      TechnicalUserConfig technicalUser) {
+    IdentityClientConfig identityClientConfig =
+        org.mockito.Mockito.mock(IdentityClientConfig.class);
+    org.mockito.Mockito.when(identityClientConfig.getTechnicalUser()).thenReturn(technicalUser);
+    return identityClientConfig;
+  }
+
+  static final class StubIdentityAuthentication implements IdentityAuthentication {
+
+    private final String accessToken;
+    final AtomicInteger loginCount = new AtomicInteger();
+    String lastUsername;
+    RuntimeException failure;
+
+    StubIdentityAuthentication(String accessToken) {
+      this.accessToken = accessToken;
+    }
+
+    @Override
+    public IdentityLogin login(String username, String password) {
+      loginCount.incrementAndGet();
+      lastUsername = username;
+      if (failure != null) {
+        throw failure;
+      }
+      return new IdentityLogin(accessToken, 300, 300, "refresh");
+    }
+
+    @Override
+    public boolean logout(String refreshToken) {
+      return true;
+    }
+
+    @Override
+    public boolean verifyPasswordIgnoringSecondFactor(String username, String password) {
+      return true;
+    }
+  }
+
   private static TenantHeaderSupplier createTenantHeaderSupplier() {
     TenantHeaderSupplier supplier =
         new TenantHeaderSupplier(new HttpHeadersResolver()) {
@@ -408,7 +529,9 @@ class ApplicationSettingsServiceTest {
       return new ApplicationSettingsService(
           new StubApplicationSettingsApiControllerFactory(stubApplicationsettingsControllerApi),
           trackingSecurityHeaderSupplier,
-          tenantHeaderSupplier);
+          tenantHeaderSupplier,
+          createTechnicalIdentityClientConfig(),
+          new StubIdentityAuthentication(TECHNICAL_TOKEN));
     }
 
     @Bean
@@ -504,6 +627,7 @@ class ApplicationSettingsServiceTest {
 
     final AtomicInteger csrfOnlyHeaderCalls = new AtomicInteger();
     final AtomicInteger keycloakHeaderCalls = new AtomicInteger();
+    final AtomicInteger technicalKeycloakHeaderCalls = new AtomicInteger();
 
     TrackingSecurityHeaderSupplier(AuthenticatedUser authenticatedUser) {
       super(authenticatedUser);
@@ -514,6 +638,7 @@ class ApplicationSettingsServiceTest {
     void reset() {
       csrfOnlyHeaderCalls.set(0);
       keycloakHeaderCalls.set(0);
+      technicalKeycloakHeaderCalls.set(0);
     }
 
     @Override
@@ -528,6 +653,14 @@ class ApplicationSettingsServiceTest {
     public HttpHeaders getKeycloakAndCsrfHttpHeaders() {
       keycloakHeaderCalls.incrementAndGet();
       HttpHeaders headers = super.getKeycloakAndCsrfHttpHeaders();
+      headers.add(TENANT_HEADER, TENANT_VALUE);
+      return headers;
+    }
+
+    @Override
+    public HttpHeaders getKeycloakAndCsrfHttpHeaders(String accessToken) {
+      technicalKeycloakHeaderCalls.incrementAndGet();
+      HttpHeaders headers = super.getKeycloakAndCsrfHttpHeaders(accessToken);
       headers.add(TENANT_HEADER, TENANT_VALUE);
       return headers;
     }
