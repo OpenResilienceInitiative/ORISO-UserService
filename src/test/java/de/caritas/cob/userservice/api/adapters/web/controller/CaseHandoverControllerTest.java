@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
@@ -19,6 +20,7 @@ import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandov
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverReason;
+import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverRecipient;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Max;
@@ -54,6 +56,25 @@ class CaseHandoverControllerTest {
   @BeforeEach
   void setUpMockMvc() {
     mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+  }
+
+  @Test
+  void listEligibleRecipients_returnsTheConsultantsTheOfferWouldAccept() throws Exception {
+    when(caseHandoverService.listEligibleRecipients(123L))
+        .thenReturn(
+            List.of(
+                CaseHandoverRecipient.builder()
+                    .consultantId("c-1")
+                    .displayName("Jonas Lehmann")
+                    .build()));
+
+    mockMvc
+        .perform(get("/users/sessions/123/case-handover/recipients"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$[0].consultantId").value("c-1"))
+        .andExpect(jsonPath("$[0].displayName").value("Jonas Lehmann"));
+
+    verify(caseHandoverService).listEligibleRecipients(123L);
   }
 
   @Test

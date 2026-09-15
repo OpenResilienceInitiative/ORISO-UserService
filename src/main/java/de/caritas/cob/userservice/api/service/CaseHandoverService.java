@@ -551,6 +551,68 @@ public class CaseHandoverService {
     return toStatus(saved);
   }
 
+  /**
+   * The colleagues this session may actually be offered to.
+   *
+   * <p>It applies exactly the rule {@link #createOffer} enforces — same tenant, present, inside the
+   * session's department (its agency AND an overlapping topic), neither the current owner nor a
+   * previous one — so the picker can no longer show a name whose offer the very next request
+   * rejects with a 403. Only the active owner may ask; a colleague browsing someone else's case
+   * learns nothing about who could take it.
+   */
+  @Transactional(readOnly = true)
+  public List<CaseHandoverRecipient> listEligibleRecipients(Long sessionId) {
+    Session session = getSession(sessionId);
+    Consultant initiator = retrieveCurrentConsultant();
+    verifyConsultantTenant(initiator, session);
+    if (!isActiveOwner(session, initiator)) {
+      throw new ForbiddenException("Only the current owner may list case handover recipients");
+    }
+    if (session.getAgencyId() == null) {
+      return List.of();
+    }
+
+    // One query for the whole session instead of wasPreviousOwner() per candidate.
+    Set<String> previousOwnerIds = grantedPreviousOwnerIds(sessionId);
+
+    Map<String, Consultant> byId = new LinkedHashMap<>();
+    consultantAgencyRepository
+        .findByAgencyIdAndDeleteDateIsNullOrderByConsultantFirstNameAsc(session.getAgencyId())
+        .stream()
+        .map(ConsultantAgency::getConsultant)
+        .filter(Objects::nonNull)
+        .filter(candidate -> candidate.getId() != null)
+        .forEach(candidate -> byId.putIfAbsent(candidate.getId(), candidate));
+
+    return byId.values().stream()
+        .filter(candidate -> !Objects.equals(initiator.getId(), candidate.getId()))
+        .filter(candidate -> Objects.equals(session.getTenantId(), candidate.getTenantId()))
+        .filter(candidate -> !candidate.isAbsent())
+        .filter(candidate -> isInRequesterDepartment(session, candidate))
+        .filter(candidate -> !previousOwnerIds.contains(candidate.getId()))
+        .map(
+            candidate ->
+                CaseHandoverRecipient.builder()
+                    .consultantId(candidate.getId())
+                    .displayName(decodeUsername(candidate.getInternalDisplayNameOrFallback()))
+                    .build())
+        .collect(Collectors.toList());
+  }
+
+  private Set<String> grantedPreviousOwnerIds(Long sessionId) {
+    List<CaseHandoverRequest> requests = caseHandoverRequestRepository.findBySessionId(sessionId);
+    if (requests == null) {
+      return Set.of();
+    }
+    return requests.stream()
+        .filter(request -> request.getStatus() == Status.GRANTED)
+        .map(CaseHandoverRequest::getPreviousConsultant)
+        .filter(Objects::nonNull)
+        .map(Consultant::getId)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toSet());
+  }
+
   @Transactional
   public CaseHandoverStatus createOffer(
       Long sessionId,
@@ -1675,6 +1737,13 @@ public class CaseHandoverService {
     private Integer displayOrder;
     private String policyAuthority;
     private Map<String, String> clientNotificationTemplates;
+  }
+
+  @Data
+  @Builder
+  public static class CaseHandoverRecipient {
+    private String consultantId;
+    private String displayName;
   }
 
   @Data

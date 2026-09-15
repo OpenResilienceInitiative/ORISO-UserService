@@ -327,6 +327,8 @@ public class SecurityConfig {
                     "/service/users/case-handover/batch",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/offers",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/offers",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/recipients",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/recipients",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover/{requestId:[0-9]+}/recipient-decision",
                     "/users/chat-series/**",

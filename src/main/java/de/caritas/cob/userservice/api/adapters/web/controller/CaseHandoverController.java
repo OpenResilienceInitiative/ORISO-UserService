@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandov
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
 import de.caritas.cob.userservice.api.service.CaseHandoverService;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverReason;
+import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverRecipient;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
 import io.swagger.annotations.Api;
 import jakarta.validation.Valid;
@@ -74,6 +75,15 @@ public class CaseHandoverController {
   public ResponseEntity<CaseHandoverStatus> getRequestStatus(
       @PathVariable Long sessionId, @PathVariable Long requestId) {
     return ResponseEntity.ok(caseHandoverService.getRequestStatus(sessionId, requestId));
+  }
+
+  @GetMapping({
+    "/users/sessions/{sessionId}/case-handover/recipients",
+    "/service/users/sessions/{sessionId}/case-handover/recipients"
+  })
+  public ResponseEntity<List<CaseHandoverRecipient>> listEligibleRecipients(
+      @PathVariable Long sessionId) {
+    return ResponseEntity.ok(caseHandoverService.listEligibleRecipients(sessionId));
   }
 
   @GetMapping({"/users/case-handover/candidates", "/service/users/case-handover/candidates"})

@@ -40,6 +40,7 @@ import de.caritas.cob.userservice.api.port.out.CaseHandoverRequestRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverReason;
+import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverRecipient;
 import de.caritas.cob.userservice.api.service.CaseHandoverService.CaseHandoverStatus;
 import de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService;
 import de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification;
@@ -48,6 +49,7 @@ import de.caritas.cob.userservice.api.service.session.SessionOwnershipService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
@@ -1894,6 +1896,102 @@ class CaseHandoverServiceTest {
       UUID operationId) {
     return caseHandoverService.requestAccess(
         sessionId, reasonCode, explanation, expectedOwnershipRevision, operationId);
+  }
+
+  // --- FE#1262: the picker may only offer colleagues the offer itself would accept ---
+
+  private Consultant departmentColleague(String id, String displayName, Long... topicIds) {
+    Consultant colleague = eligibleConsultant(id, displayName);
+    Set<ConsultantTopic> topics = new HashSet<>();
+    for (Long topicId : topicIds) {
+      ConsultantTopic topic = new ConsultantTopic();
+      topic.setConsultant(colleague);
+      topic.setTopicId(topicId);
+      topics.add(topic);
+    }
+    colleague.setConsultantTopics(topics);
+    return colleague;
+  }
+
+  private void givenAgencyRoster(Consultant... consultants) {
+    List<ConsultantAgency> rows = new ArrayList<>();
+    for (Consultant colleague : consultants) {
+      ConsultantAgency row = new ConsultantAgency();
+      row.setAgencyId(10L);
+      row.setConsultant(colleague);
+      rows.add(row);
+    }
+    when(consultantAgencyRepository.findByAgencyIdAndDeleteDateIsNullOrderByConsultantFirstNameAsc(
+            10L))
+        .thenReturn(rows);
+  }
+
+  private void givenOwnerAsksForRecipients() {
+    ReflectionTestUtils.setField(caseHandoverService, "topicsEnabled", true);
+    session.setConsultant(requester);
+    session.setMainTopicId(5L);
+  }
+
+  @Test
+  void listEligibleRecipients_keepsOnlyColleaguesWhoShareTheSessionTopic() {
+    givenOwnerAsksForRecipients();
+    givenAgencyRoster(
+        requester,
+        departmentColleague("same-topic", "Jonas Lehmann", 5L),
+        departmentColleague("other-topic", "Ayse Demir", 9L),
+        departmentColleague("no-topic", "Topicless Colleague"));
+
+    List<CaseHandoverRecipient> recipients = caseHandoverService.listEligibleRecipients(123L);
+
+    assertEquals(1, recipients.size());
+    assertEquals("same-topic", recipients.get(0).getConsultantId());
+    assertEquals("Jonas Lehmann", recipients.get(0).getDisplayName());
+  }
+
+  @Test
+  void listEligibleRecipients_matchesASecondarySessionTopicNotOnlyTheMainOne() {
+    givenOwnerAsksForRecipients();
+    SessionTopic secondary = new SessionTopic();
+    secondary.setTopicId(9L);
+    session.setSessionTopics(List.of(secondary));
+    givenAgencyRoster(requester, departmentColleague("secondary", "Ayse Demir", 9L));
+
+    List<CaseHandoverRecipient> recipients = caseHandoverService.listEligibleRecipients(123L);
+
+    assertEquals(1, recipients.size());
+    assertEquals("secondary", recipients.get(0).getConsultantId());
+  }
+
+  @Test
+  void listEligibleRecipients_leavesOutAbsentColleaguesAndForeignTenants() {
+    givenOwnerAsksForRecipients();
+    Consultant absent = departmentColleague("absent", "Absent Colleague", 5L);
+    absent.setAbsent(true);
+    Consultant foreign = departmentColleague("foreign", "Foreign Tenant", 5L);
+    foreign.setTenantId(8L);
+    givenAgencyRoster(requester, absent, foreign);
+
+    assertTrue(caseHandoverService.listEligibleRecipients(123L).isEmpty());
+  }
+
+  @Test
+  void listEligibleRecipients_leavesOutAPreviousOwnerBecauseReclaimIsRejected() {
+    givenOwnerAsksForRecipients();
+    Consultant returning = departmentColleague("returning", "Returning Colleague", 5L);
+    givenAgencyRoster(requester, returning);
+    CaseHandoverRequest granted = grantedRequest(requester);
+    granted.setPreviousConsultant(returning);
+    when(caseHandoverRequestRepository.findBySessionId(123L)).thenReturn(List.of(granted));
+
+    assertTrue(caseHandoverService.listEligibleRecipients(123L).isEmpty());
+  }
+
+  @Test
+  void listEligibleRecipients_rejectsEveryoneButTheActiveOwner() {
+    ReflectionTestUtils.setField(caseHandoverService, "topicsEnabled", true);
+    session.setConsultant(previous);
+
+    assertThrows(ForbiddenException.class, () -> caseHandoverService.listEligibleRecipients(123L));
   }
 
   private Consultant consultant(String id, String displayName) {
