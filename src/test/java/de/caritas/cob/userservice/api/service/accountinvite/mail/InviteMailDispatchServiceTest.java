@@ -406,8 +406,9 @@ class InviteMailDispatchServiceTest {
 
   /**
    * #1006: the credentials failure must tell the operator both ways out — set the deployment secret
-   * (the supported configuration) or send with a platform-admin token. Never a generic "unavailable
-   * or incomplete".
+   * (the supported configuration) or make the guarded endpoint accept the technical identity. Never
+   * a generic "unavailable or incomplete". #1160: the second way out is no longer "send with a
+   * platform-admin token", because the lookup no longer uses the caller's token at all.
    */
   @Test
   void send_Should_throwSmtpSendException_When_NoCredentialsAnywhere() {
@@ -418,7 +419,7 @@ class InviteMailDispatchServiceTest {
         .isInstanceOf(SmtpSendException.class)
         .hasMessageContaining("SMTP_USER")
         .hasMessageContaining("SMTP_PASSWORD")
-        .hasMessageContaining("platform-admin")
+        .hasMessageContaining("technical")
         .isInstanceOfSatisfying(
             SmtpSendException.class,
             e ->
