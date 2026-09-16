@@ -133,12 +133,12 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("now") LocalDateTime now);
 
   /**
-   * The {@code search} match against recipient email/first/last name and the {@code
-   * searchTenantId} exact tenant-ID match are two independent legs of the same query-box term
+   * The {@code search} match against recipient email/first/last name and the {@code searchTenantId}
+   * exact tenant-ID match are two independent legs of the same query-box term
    * (ORISO-UserService#479): the service lower-cases and trims the raw query once for {@code
-   * search}, and additionally parses it as a tenant ID for {@code searchTenantId} when it is
-   * purely numeric. A blank/absent query leaves both null, which short-circuits this clause to
-   * true and preserves the existing result set.
+   * search}, and additionally parses it as a tenant ID for {@code searchTenantId} when it is purely
+   * numeric. A blank/absent query leaves both null, which short-circuits this clause to true and
+   * preserves the existing result set.
    */
   @Query(
       "SELECT i FROM AccountInvite i"
