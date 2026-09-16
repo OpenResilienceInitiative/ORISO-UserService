@@ -1,0 +1,81 @@
+openapi: 3.0.1
+info:
+  title: Internal consultant pictures
+  version: 1.0.0
+  description: >-
+    UserService-owned internal photos. Both /useradmin and /service/useradmin prefixes are supported.
+    Advice seekers cannot retrieve these bytes. Read access requires a colleague or admin authority;
+    changes require CONSULTANT_UPDATE. The caller and active target must belong to the same tenant,
+    except a verified platform admin. Restricted agency admins must share an agency with the target.
+    No query-string authentication, public visibility, branding storage, or Matrix media is used.
+    This contract is separate from generated JSON controllers so servlet multipart parsing and
+    generated RequestBody byte-array conversion cannot persist or allocate unbounded upload bytes
+    before the target authorization and bounded intake checks.
+servers:
+  - url: /
+  - url: /service
+paths:
+  /useradmin/consultants/{consultantId}/picture:
+    parameters:
+      - in: path
+        name: consultantId
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getConsultantPicture
+      security: [{Bearer: []}]
+      summary: Retrieve the internal picture for an eligible colleague or admin
+      responses:
+        '200':
+          description: Exact clean image bytes; Cache-Control private, no-store; X-Content-Type-Options nosniff.
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+        '401': {description: Authentication required}
+        '403': {description: Caller is not eligible; no response body}
+        '404': {description: Consultant or picture absent; no response body}
+    put:
+      operationId: putConsultantPicture
+      security: [{Bearer: []}]
+      summary: Upload or atomically replace an internal picture
+      description: >-
+        Raw body, never multipart. JPEG or PNG, 1..5242880 bytes, each dimension at most 4096,
+        at most 12000000 decoded pixels. Actual decoded content must match Content-Type.
+        Only an explicit clean scan of these exact bytes permits storage. Failed replacement
+        retains the previous clean image. Scanner disabled, busy, unavailable or malformed
+        result refuses the upload. Deletion racing a scan cannot recreate the image.
+      requestBody:
+        required: true
+        content:
+          image/png: {schema: {type: string, format: binary, maxLength: 5242880}}
+          image/jpeg: {schema: {type: string, format: binary, maxLength: 5242880}}
+      responses:
+        '204': {description: Stored successfully}
+        '400': {description: PICTURE_INVALID_IMAGE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '401': {description: Authentication required}
+        '403': {description: Caller is not eligible; no response body}
+        '404': {description: Active consultant absent; no response body}
+        '413': {description: PICTURE_TOO_LARGE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '415': {description: PICTURE_UNSUPPORTED_TYPE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '422': {description: PICTURE_REJECTED, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '503': {description: PICTURE_SCAN_UNAVAILABLE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+    delete:
+      operationId: deleteConsultantPicture
+      security: [{Bearer: []}]
+      summary: Remove the internal picture immediately
+      responses:
+        '204': {description: Removed or already absent}
+        '401': {description: Authentication required}
+        '403': {description: Caller is not eligible; no response body}
+        '404': {description: Active consultant absent; no response body}
+components:
+  securitySchemes:
+    Bearer: {type: http, scheme: bearer, bearerFormat: JWT}
+  schemas:
+    PictureError:
+      type: object
+      required: [reason]
+      properties:
+        reason:
+          type: string
+          enum: [PICTURE_INVALID_IMAGE, PICTURE_TOO_LARGE, PICTURE_UNSUPPORTED_TYPE, PICTURE_REJECTED, PICTURE_SCAN_UNAVAILABLE]

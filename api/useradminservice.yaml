@@ -3,6 +3,9 @@ info:
   title: will be replaced
   description: This information will be replaced by the SpringFox config information
   version: 0.0.1
+externalDocs:
+  description: Internal consultant picture API (bounded raw-byte intake, maintained separately from generated JSON controllers).
+  url: ./useradmin-consultant-picture.yaml
 paths:
   /useradmin:
     get:
