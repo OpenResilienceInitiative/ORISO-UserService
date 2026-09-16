@@ -106,13 +106,34 @@ public class AccountInactivityController {
 
   private void requirePlatformAdmin(Principal principal) {
     var jwt = token(principal).getToken();
-    var realm = jwt.getClaim("realm_access");
+    var roles = new java.util.HashSet<String>();
+    addRoles(roles, jwt.getClaim("realm_access"));
+    Object resources = jwt.getClaim("resource_access");
+    if (resources instanceof Map<?, ?> clients)
+      clients.values().forEach(client -> addRoles(roles, client));
     Object tenantId = jwt.getClaim("tenantId");
-    boolean platform = "0".equals(String.valueOf(tenantId));
-    if (!(platform
-        && realm instanceof Map<?, ?> claims
-        && claims.get("roles") instanceof Collection<?> roles
-        && roles.contains("agency-admin")
-        && roles.contains("tenant-admin"))) throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+    boolean platform = false;
+    if (tenantId instanceof Number number) {
+      try {
+        platform =
+            new java.math.BigDecimal(number.toString()).compareTo(java.math.BigDecimal.ZERO) == 0;
+      } catch (NumberFormatException invalid) {
+        /* Non-finite values are not a tenant. */
+      }
+    } else platform = "0".equals(tenantId);
+    if (!(platform && roles.contains("agency-admin") && roles.contains("tenant-admin")))
+      throw new ResponseStatusException(HttpStatus.FORBIDDEN);
+  }
+
+  private void addRoles(java.util.Set<String> result, Object access) {
+    if (access instanceof Map<?, ?> claims && claims.get("roles") instanceof Collection<?> roles) {
+      for (Object role : roles) {
+        if (!(role instanceof String name)) continue;
+        // Match RoleAuthorizationAuthorityMapper; agency-admin has no mapped authority of its own.
+        String normalized = name.toLowerCase(java.util.Locale.ROOT);
+        if (normalized.startsWith("role_")) normalized = normalized.substring(5);
+        result.add(normalized.replace('_', '-'));
+      }
+    }
   }
 }

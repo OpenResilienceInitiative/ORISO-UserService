@@ -66,6 +66,8 @@ public class AccountInactivityEnrollmentService {
           clock.instant().truncatedTo(java.time.temporal.ChronoUnit.MICROS));
     } catch (RuntimeException failure) {
       // Upstream exceptions can contain credentials or response bodies: do not propagate them.
+      org.apache.commons.logging.LogFactory.getLog(getClass())
+          .warn("Account inactivity policy unavailable: " + failure.getClass().getSimpleName());
       throw new ResponseStatusException(
           HttpStatus.BAD_GATEWAY, "Account inactivity policy unavailable");
     }
