@@ -282,6 +282,22 @@ public class RequestBodyConstants {
           + ", \"agencyId\": "
           + "${AGENCY_ID}"
           + " }";
+
+  /** A conversation circle: repetitive series, classified SELF_HELP by {@code ChatConverter}. */
+  public static final String VALID_CREATE_CIRCLE_BODY_WITH_AGENCY_PLACEHOLDER =
+      "{ \"topic\": \""
+          + CHAT_TOPIC
+          + "\", \"startDate\": \""
+          + CHAT_START_DATE
+          + "\", "
+          + "\"startTime\": \""
+          + CHAT_START_TIME
+          + "\", \"duration\": \""
+          + CHAT_DURATION
+          + "\", \"repetitive\": true, \"repeatCount\": 4, \"agencyId\": "
+          + "${AGENCY_ID}"
+          + " }";
+
   public static final String VALID_UPDATE_CHAT_BODY =
       "{ \"topic\": \""
           + CHAT_TOPIC
