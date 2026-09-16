@@ -20,21 +20,36 @@ public class InactiveAskerDeletionService {
 
   public List<DeletionWorkflowError> delete(String identityId) {
     var user = users.findById(identityId);
-    if (user.isEmpty()) return List.of();
-    var outcome = new AskerDeletionWorkflowDTO(user.get(), new ArrayList<>());
+    // Realm-only legacy identities and retries after a local-row deletion still own remote
+    // appointment data and content addressed by identity ID. Never treat a missing row as proof
+    // that these systems or Keycloak have already been cleaned.
+    var target =
+        user.orElseGet(
+            () -> {
+              var identityOnly = new de.caritas.cob.userservice.api.model.User();
+              identityOnly.setUserId(identityId);
+              return identityOnly;
+            });
+    var outcome = new AskerDeletionWorkflowDTO(target, new ArrayList<>());
     // Stop on the first incomplete system. In particular, keep session room ids after a Matrix
     // failure and keep the identity/account row until every preceding cleanup step is confirmed.
     List<Class<? extends ActionCommand<AskerDeletionWorkflowDTO>>> steps =
-        List.of(
-            DeleteMatrixAskerAction.class,
-            DeleteAskerRoomsAndSessionsAction.class,
-            DeleteDatabaseAskerAgencyAction.class,
-            DeleteAnonymousRegistryIdAction.class,
-            DeleteAppointmentServiceAskerAction.class,
-            DeleteAskerDraftMessagesAction.class,
-            DeleteAskerEventNotificationsAction.class,
-            DeleteKeycloakAskerAction.class,
-            DeleteDatabaseAskerAction.class);
+        user.isEmpty()
+            ? List.of(
+                DeleteAppointmentServiceAskerAction.class,
+                DeleteAskerDraftMessagesAction.class,
+                DeleteAskerEventNotificationsAction.class,
+                DeleteKeycloakAskerAction.class)
+            : List.of(
+                DeleteMatrixAskerAction.class,
+                DeleteAskerRoomsAndSessionsAction.class,
+                DeleteDatabaseAskerAgencyAction.class,
+                DeleteAnonymousRegistryIdAction.class,
+                DeleteAppointmentServiceAskerAction.class,
+                DeleteAskerDraftMessagesAction.class,
+                DeleteAskerEventNotificationsAction.class,
+                DeleteKeycloakAskerAction.class,
+                DeleteDatabaseAskerAction.class);
     for (var step : steps) {
       actions
           .buildContainerForType(AskerDeletionWorkflowDTO.class)
