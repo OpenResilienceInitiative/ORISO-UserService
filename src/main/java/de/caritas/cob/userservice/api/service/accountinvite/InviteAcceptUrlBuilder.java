@@ -35,13 +35,20 @@ public class InviteAcceptUrlBuilder {
   private final String appFrontendBaseUrl;
   private final String adminFrontendBaseUrl;
 
+  /**
+   * Both origins fall back to this environment's own {@code app.base.url}, never to a hardcoded
+   * production host: an environment whose ACCOUNT_INVITE_* env vars are missing must mail out a
+   * link to itself, not to https://app.oriso.org (dev invite mails pointed at production,
+   * 2026-09-16).
+   */
   public InviteAcceptUrlBuilder(
-      @Value("${account.invite.app.frontend.base-url:https://app.oriso.org}")
-          String appFrontendBaseUrl,
-      @Value("${account.invite.admin.frontend.base-url:https://app.oriso.org}")
-          String adminFrontendBaseUrl) {
-    this.appFrontendBaseUrl = normalize(appFrontendBaseUrl, "https://app.oriso.org");
-    this.adminFrontendBaseUrl = normalize(adminFrontendBaseUrl, "https://app.oriso.org");
+      @Value("${account.invite.app.frontend.base-url:${app.base.url}}") String appFrontendBaseUrl,
+      @Value("${account.invite.admin.frontend.base-url:${app.base.url}}")
+          String adminFrontendBaseUrl,
+      @Value("${app.base.url}") String appBaseUrl) {
+    String fallback = normalize(appBaseUrl, "http://localhost:8082");
+    this.appFrontendBaseUrl = normalize(appFrontendBaseUrl, fallback);
+    this.adminFrontendBaseUrl = normalize(adminFrontendBaseUrl, fallback);
   }
 
   /** Builds the absolute accept URL for the given role's public frontend route. */

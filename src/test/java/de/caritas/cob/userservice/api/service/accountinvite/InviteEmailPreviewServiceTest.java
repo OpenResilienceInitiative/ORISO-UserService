@@ -56,7 +56,8 @@ class InviteEmailPreviewServiceTest {
   @BeforeEach
   void setUp() {
     acceptUrlBuilder =
-        new InviteAcceptUrlBuilder("https://app.oriso.org", "https://admin.oriso.org");
+        new InviteAcceptUrlBuilder(
+            "https://app.oriso.org", "https://admin.oriso.org", "https://app.oriso.org");
     dispatchService =
         new InviteMailDispatchService(
             restTemplate,
