@@ -132,16 +132,31 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
+  /**
+   * The {@code search} match against recipient email/first/last name and the {@code
+   * searchTenantId} exact tenant-ID match are two independent legs of the same query-box term
+   * (ORISO-UserService#479): the service lower-cases and trims the raw query once for {@code
+   * search}, and additionally parses it as a tenant ID for {@code searchTenantId} when it is
+   * purely numeric. A blank/absent query leaves both null, which short-circuits this clause to
+   * true and preserves the existing result set.
+   */
   @Query(
       "SELECT i FROM AccountInvite i"
           + " WHERE (:tenantId IS NULL OR i.tenantId = :tenantId)"
           + " AND (:targetRole IS NULL OR i.targetRole = :targetRole)"
           + " AND (:status IS NULL OR i.status = :status)"
+          + " AND (:search IS NULL"
+          + "      OR LOWER(i.recipientEmail) LIKE CONCAT('%', :search, '%')"
+          + "      OR LOWER(i.firstName) LIKE CONCAT('%', :search, '%')"
+          + "      OR LOWER(i.lastName) LIKE CONCAT('%', :search, '%')"
+          + "      OR (:searchTenantId IS NOT NULL AND i.tenantId = :searchTenantId))"
           + " ORDER BY i.createDate DESC")
   Page<AccountInvite> findAllByFilters(
       @Param("tenantId") Long tenantId,
       @Param("targetRole") AccountInviteTargetRole targetRole,
       @Param("status") AccountInviteStatus status,
+      @Param("search") String search,
+      @Param("searchTenantId") Long searchTenantId,
       Pageable pageable);
 
   List<AccountInvite> findAllByAcceptedByUserIdAndTwoFactorStatus(

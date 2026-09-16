@@ -475,10 +475,41 @@ public class AccountInviteService {
       AccountInviteTargetRole targetRole,
       AccountInviteStatus status,
       Long tenantId,
+      String query,
       int page,
       int size) {
+    String search = normalizeSearch(query);
     return accountInviteRepository.findAllByFilters(
-        tenantId, targetRole, status, PageRequest.of(Math.max(page, 0), clampSize(size)));
+        tenantId,
+        targetRole,
+        status,
+        search,
+        parseNumericSearch(search),
+        PageRequest.of(Math.max(page, 0), clampSize(size)));
+  }
+
+  /**
+   * Blank/missing preserves the existing result set (ORISO-UserService#479 acceptance): only a
+   * non-empty, trimmed, lower-cased term is passed to the repository, since {@code null} is the
+   * sentinel {@code findAllByFilters} short-circuits its search clause on.
+   */
+  private static String normalizeSearch(String query) {
+    if (query == null) {
+      return null;
+    }
+    String trimmed = query.trim();
+    return trimmed.isEmpty() ? null : trimmed.toLowerCase();
+  }
+
+  private static Long parseNumericSearch(String normalizedSearch) {
+    if (normalizedSearch == null || !normalizedSearch.matches("\\d+")) {
+      return null;
+    }
+    try {
+      return Long.parseLong(normalizedSearch);
+    } catch (NumberFormatException exception) {
+      return null;
+    }
   }
 
   @Transactional
