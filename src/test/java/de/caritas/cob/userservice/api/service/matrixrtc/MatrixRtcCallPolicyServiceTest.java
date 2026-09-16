@@ -56,9 +56,27 @@ class MatrixRtcCallPolicyServiceTest {
                 teamDiscussionRepository),
             tenantService,
             matrixSynapseService,
-            correlationIdHasher());
+            correlationIdHasher(),
+            activeLifecycle());
     when(matrixSynapseService.getRoomMembers(ROOM_ID))
         .thenReturn(Optional.of(List.of(MATRIX_USER_ID)));
+  }
+
+  private org.springframework.jdbc.core.JdbcTemplate activeLifecycle() {
+    var jdbc =
+        new org.springframework.jdbc.core.JdbcTemplate(
+            new org.springframework.jdbc.datasource.DriverManagerDataSource(
+                "jdbc:h2:mem:rtclegacy"
+                    + java.util.UUID.randomUUID()
+                    + ";DB_CLOSE_DELAY=-1;NON_KEYWORDS=USER",
+                "sa",
+                ""));
+    jdbc.execute("CREATE TABLE user(user_id VARCHAR(36),matrix_user_id VARCHAR(255))");
+    jdbc.execute("CREATE TABLE consultant(consultant_id VARCHAR(36),matrix_user_id VARCHAR(255))");
+    jdbc.execute("CREATE TABLE account_inactivity(identity_id VARCHAR(36),status VARCHAR(20))");
+    jdbc.update("INSERT INTO user VALUES ('person',?)", MATRIX_USER_ID);
+    jdbc.update("INSERT INTO account_inactivity VALUES ('person','ACTIVE')");
+    return jdbc;
   }
 
   @Test

@@ -42,6 +42,9 @@ import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class CreateAdminServiceTest {
+  @Mock
+  private de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
 
   @InjectMocks private CreateAdminService createAdminService;
 

@@ -1,0 +1,149 @@
+openapi: 3.0.3
+info:
+  title: Account inactivity lifecycle
+  version: 1.0.0
+  description: >-
+    Hand-written controller contract. All identities come from validated bearer tokens.
+    Platform administration requires tenantId 0 and both agency-admin and tenant-admin.
+    Transport aliases prefixed with /service have identical behavior.
+security:
+  - Bearer: []
+paths:
+  /users/account-inactivity:
+    get:
+      operationId: getOwnAccountInactivity
+      responses:
+        '200':
+          description: The caller's immutable policy and lifecycle state
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Account' }
+        '401': { description: Authentication required }
+        '403': { description: Suspended or unavailable identity }
+        '404': { description: No lifecycle record }
+  /users/account-inactivity/activity:
+    post:
+      operationId: confirmPersonalActivity
+      description: >-
+        Called only for deliberate foreground use. No body or client timestamp is accepted;
+        the server uses its own clock. Background polling and token refresh must not call this.
+      responses:
+        '204': { description: Activity confirmed for the authenticated caller }
+        '401': { description: Authentication required }
+        '403': { description: Suspended or unavailable identity }
+  /users/account-inactivity/access:
+    get:
+      operationId: checkInactivityAccess
+      description: >-
+        Internal ingress check. Anonymous requests pass through to downstream authorization;
+        authenticated requests must pass lifecycle admission. This grants no downstream role.
+      security:
+        - {}
+        - Bearer: []
+      responses:
+        '204': { description: Continue to downstream authorization }
+        '401': { description: Invalid bearer token }
+        '403': { description: Suspended or unavailable identity }
+  /useradmin/account-inactivity/inventory:
+    get:
+      operationId: reportInactivityInventory
+      description: Platform administrators only. Rollout cutoff, inventory progress and unassigned-identity diagnostics.
+      parameters:
+        - in: query
+          name: after
+          schema: { type: string, default: '' }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+      responses:
+        '200':
+          description: Durable inventory status and paginated gaps requiring operator investigation
+          content:
+            application/json:
+              schema: { type: object }
+        '400': { description: Invalid page limit }
+        '403': { description: Platform administrator required }
+  /useradmin/account-inactivity/candidates:
+    get:
+      operationId: reportInactivityCandidates
+      description: Platform administrators only. Report without executing actions, across tenants.
+      parameters:
+        - in: query
+          name: after
+          schema: { type: string, default: '' }
+        - in: query
+          name: limit
+          schema: { type: integer, minimum: 1, maximum: 1000, default: 200 }
+      responses:
+        '200':
+          description: Candidate page; use the last identityId as the next after cursor
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    snapshot: { $ref: '#/components/schemas/Account' }
+                    roles:
+                      type: array
+                      items: { type: string, enum: [ASKER, CONSULTANT, OTHER, UNKNOWN] }
+                    plannedAction: { type: string, enum: [DELETE, SUSPEND, REACTIVATE, BLOCKED] }
+        '400': { description: Invalid page limit }
+        '403': { description: Platform administrator required }
+  /useradmin/account-inactivity/{identityId}:
+    parameters:
+      - $ref: '#/components/parameters/IdentityId'
+    get:
+      operationId: getAccountInactivityReport
+      description: Platform administrators only. Includes durable per-system attempt evidence.
+      responses:
+        '200':
+          description: Account state and durable action journal
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  account: { $ref: '#/components/schemas/Account' }
+                  attempts:
+                    type: array
+                    items: { type: object }
+        '403': { description: Platform administrator required }
+        '404': { description: Unknown identity }
+  /useradmin/account-inactivity/{identityId}/reactivate:
+    parameters:
+      - $ref: '#/components/parameters/IdentityId'
+    post:
+      operationId: reactivateInactiveAccount
+      description: >-
+        Platform administrators only. Restores the access state that existed before this
+        lifecycle suspension. Repeated successful requests do not extend activity again.
+      responses:
+        '204': { description: Reactivated or already active }
+        '403': { description: Platform administrator required }
+        '404': { description: Unknown identity }
+        '409': { description: Lifecycle state cannot be reactivated }
+        '503': { description: External restoration incomplete; durable retry state retained }
+components:
+  securitySchemes:
+    Bearer: { type: http, scheme: bearer, bearerFormat: JWT }
+  parameters:
+    IdentityId:
+      in: path
+      name: identityId
+      required: true
+      schema: { type: string }
+  schemas:
+    Account:
+      type: object
+      properties:
+        identityId: { type: string }
+        tenantId: { type: integer, format: int64, nullable: true }
+        assignedMonths: { type: integer, minimum: 1 }
+        revision: { type: integer, format: int64, minimum: 0 }
+        lastActivity: { type: string, format: date-time }
+        dueAt: { type: string, format: date-time }
+        status: { type: string, enum: [ACTIVE, SUSPENDING, SUSPENDED, DELETING, DELETED, REACTIVATING] }
+        attempts: { type: integer, minimum: 0 }
+        lastError: { type: string, nullable: true }

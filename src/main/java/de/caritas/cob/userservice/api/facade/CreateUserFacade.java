@@ -63,6 +63,8 @@ import org.springframework.web.client.RestClientException;
 @Slf4j
 public class CreateUserFacade {
   private final ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
+  private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
   private final @NonNull UserVerifier userVerifier;
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
@@ -116,6 +118,11 @@ public class CreateUserFacade {
 
       RecoveryPolicySnapshot snapshot =
           chatRecoveryEnrollmentPolicyService.forNewAsker(TenantContext.getCurrentTenant());
+      var inactivityPolicy =
+          inactivityEnrollment.capture(
+              TenantContext.getCurrentTenant(),
+              de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
+                  .ASKER);
       CreatedIdentity response = identityClient.createUser(userDTO);
       String identityUserId = CreatedIdentity.requireUserId(response);
       provisioningAttempt = provisioningCompensator.begin(ProvisioningWorkflow.REGISTERED_USER);
@@ -125,8 +132,13 @@ public class CreateUserFacade {
       activeAttempt.register(
           DATABASE_USER,
           identityUserId,
-          () -> deleteDatabaseUser(identityUserId, provisionedUser.get()));
+          () -> {
+            deleteDatabaseUser(identityUserId, provisionedUser.get());
+            inactivityEnrollment.discardUncompletedCreation(identityUserId, inactivityPolicy);
+          });
 
+      inactivityEnrollment.enroll(
+          identityUserId, TenantContext.getCurrentTenant(), inactivityPolicy);
       User user = updateIdentityAndCreateAccount(identityUserId, userDTO, UserRole.USER, snapshot);
       provisionedUser.set(user);
       User savedUser = userService.saveUser(user);

@@ -193,4 +193,7 @@
 
   <include file="db/changelog/changeset/20260910_chat_recovery_policy/changeSet.xml"/>
   <include file="db/changelog/changeset/20260915_consultant_picture_1048/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260916_account_inactivity_bootstrap/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260916_account_inactivity/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260916_account_inactivity_access/changeSet.xml"/>
 </databaseChangeLog>

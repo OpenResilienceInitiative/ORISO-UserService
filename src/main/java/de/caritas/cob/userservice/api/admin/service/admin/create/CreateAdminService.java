@@ -49,12 +49,16 @@ public class CreateAdminService {
   private final @NonNull UserHelper userHelper;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
 
+  @org.springframework.transaction.annotation.Transactional
   public Admin createNewAgencyAdmin(CreateAdminDTO createAdminDTO) {
     setTenantId(createAdminDTO);
     return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY);
   }
 
+  @org.springframework.transaction.annotation.Transactional
   public Admin createNewTenantAdmin(CreateAdminDTO createAdminDTO) {
     return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT);
   }
@@ -99,6 +103,10 @@ public class CreateAdminService {
   }
 
   private Admin createNewAdmin(final CreateAdminDTO createAdminDTO, Admin.AdminType adminType) {
+    var inactivityPolicy =
+        inactivityEnrollment.capture(
+            createAdminDTO.getTenantId() == null ? null : createAdminDTO.getTenantId().longValue(),
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group.OTHER);
     final String keycloakUserId = createUser(createAdminDTO);
     final String password =
         StringUtils.isNotBlank(createAdminDTO.getPassword())
@@ -107,7 +115,9 @@ public class CreateAdminService {
     try {
       identityPasswordUpdater.updatePassword(keycloakUserId, password);
       getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
-      return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
+      var admin = buildAdmin(createAdminDTO, adminType, keycloakUserId);
+      inactivityEnrollment.enroll(keycloakUserId, admin.getTenantId(), inactivityPolicy);
+      return adminRepository.save(admin);
     } catch (CustomValidationHttpStatusException e) {
       identityAccountRemover.rollbackUser(keycloakUserId);
       throw e;

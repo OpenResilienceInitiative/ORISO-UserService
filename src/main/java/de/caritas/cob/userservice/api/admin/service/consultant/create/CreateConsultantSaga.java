@@ -64,6 +64,8 @@ import org.springframework.web.client.RestClientException;
 public class CreateConsultantSaga {
 
   private final ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
+  private final de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService
+      inactivityEnrollment;
   private static final String CREATE_CONSULTANT = "createConsultant";
   private final @NonNull IdentityClient identityClient;
   private final @NonNull IdentityPasswordUpdater identityPasswordUpdater;
@@ -205,6 +207,7 @@ public class CreateConsultantSaga {
    * @param roles the roles to add to given {@link Consultant}
    * @return the generated {@link Consultant}
    */
+  @Transactional
   public Consultant createNewConsultant(ImportRecord importRecord, Set<String> roles) {
     ConsultantCreationInput consultantCreationInput =
         new ImportRecordCreationInputAdapter(importRecord);
@@ -221,6 +224,11 @@ public class CreateConsultantSaga {
 
     RecoveryPolicySnapshot snapshot =
         chatRecoveryEnrollmentPolicyService.forNewConsultant(consultantCreationInput.getTenantId());
+    var inactivityPolicy =
+        inactivityEnrollment.capture(
+            consultantCreationInput.getTenantId(),
+            de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Group
+                .CONSULTANT);
     String keycloakUserId = createKeycloakUser(consultantCreationInput);
 
     String password = consultantCreationInput.getPassword();
@@ -275,7 +283,7 @@ public class CreateConsultantSaga {
 
     var consultant =
         createConsultantInMariaDBOrRollback(
-            consultantCreationInput, keycloakUserId, matrixUserId, snapshot);
+            consultantCreationInput, keycloakUserId, matrixUserId, snapshot, inactivityPolicy);
 
     assignAgenciesOrRollback(consultant, consultantCreationInput.getAgencyIds());
     return consultant;
@@ -351,13 +359,16 @@ public class CreateConsultantSaga {
       ConsultantCreationInput consultantCreationInput,
       String keycloakUserId,
       String matrixUserId,
-      RecoveryPolicySnapshot snapshot) {
+      RecoveryPolicySnapshot snapshot,
+      de.caritas.cob.userservice.api.service.AccountInactivityEnrollmentService.Policy
+          inactivityPolicy) {
     var existing = consultantService.getConsultant(keycloakUserId);
     if (existing.isPresent()) return existing.get();
     Consultant consultant = buildConsultant(consultantCreationInput, keycloakUserId, matrixUserId);
     consultant.setChatRecoveryMode(snapshot.mode());
     consultant.setChatRecoveryPolicyRevision(snapshot.revision());
     try {
+      inactivityEnrollment.enroll(keycloakUserId, consultant.getTenantId(), inactivityPolicy);
       return consultantService.saveConsultant(consultant);
     } catch (Exception e) {
       log.error(
