@@ -74,6 +74,7 @@ import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.ConsultingTypeControllerApi;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.BasicConsultingTypeResponseDTO;
@@ -151,7 +152,7 @@ import org.springframework.web.util.UriTemplateHandler;
       "identity.otp-allowed-for-consultants=true"
     })
 @Transactional
-class UserControllerE2EIT {
+class UserControllerE2EIT extends AccountInactivityPolicyHttpFixture {
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
     org.mockito.Mockito.when(
