@@ -1472,6 +1472,21 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void changeLanguage_Should_setLocale_When_storedUserHasNoAttributeMapAtAll() {
+    var stored = new UserRepresentation();
+    stored.setAttributes(null);
+    UserResource userResource = givenUserResourceWithRepresentation(stored);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+
+    keycloakService.changeLanguage("userId", "en");
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    assertThat(representationCaptor.getValue().getAttributes().get("locale"), is(List.of("en")));
+  }
+
+  @Test
   public void changeLanguage_ShouldChangeLanguageIfLocaleAttributeDoesNotExistInKeycloak() {
     // given
     UserRepresentation userRepresentation = givenUserRepresentation("email");

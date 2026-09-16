@@ -168,6 +168,11 @@ public class KeycloakService
   protected void changeLanguageForTheUser(
       String locale, UserResource userResource, UserRepresentation user) {
     if (needToUpdateLocale(locale, user)) {
+      // Accounts created outside the UserService (Keycloak console, imports) can come back
+      // without any attribute map — the language switch on login must not 500 on them.
+      if (user.getAttributes() == null) {
+        user.setAttributes(new HashMap<>());
+      }
       user.getAttributes().put(LOCALE, Lists.newArrayList(locale));
       userResource.update(user);
     } else {
@@ -176,8 +181,10 @@ public class KeycloakService
   }
 
   private boolean needToUpdateLocale(String locale, UserRepresentation userRepresentation) {
-    return !userRepresentation.getAttributes().containsKey(LOCALE)
-        || !userRepresentation.getAttributes().get(LOCALE).contains(locale);
+    var attributes = userRepresentation.getAttributes();
+    return attributes == null
+        || !attributes.containsKey(LOCALE)
+        || !attributes.get(LOCALE).contains(locale);
   }
 
   @Override
