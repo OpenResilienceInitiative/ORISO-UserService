@@ -153,6 +153,40 @@ class IdentityConfigTest {
   }
 
   @Test
+  void isOtpAllowedShouldAllowAgencyAdminsWhenTheirFlagIsTrue() {
+    givenAValidIdentityConfig();
+    givenAllOtpFlagsDisabled();
+    identityConfig.setOtpAllowedForAgencyAdmins(true);
+
+    assertTrue(identityConfig.isOtpAllowed(Set.of(UserRole.AGENCY_ADMIN.getValue())));
+    assertTrue(
+        identityConfig.isTwoFactorAuthenticationAllowed(Set.of(UserRole.AGENCY_ADMIN.getValue())));
+  }
+
+  @Test
+  void isOtpAllowedShouldDenyAgencyAdminsWhenTheirFlagIsFalse() {
+    givenAValidIdentityConfig();
+    givenAllOtpFlagsDisabled();
+    identityConfig.setOtpAllowedForRestrictedAgencyAdmins(true);
+    identityConfig.setOtpAllowedForAgencyAdmins(false);
+
+    // The restricted-agency-admin flag must not leak into the plain agency-admin role.
+    assertFalse(identityConfig.isOtpAllowed(Set.of(UserRole.AGENCY_ADMIN.getValue())));
+  }
+
+  @Test
+  void isOtpAllowedShouldTreatRestrictedAgencyAdminsIndependentlyOfAgencyAdmins() {
+    givenAValidIdentityConfig();
+    givenAllOtpFlagsDisabled();
+    identityConfig.setOtpAllowedForAgencyAdmins(true);
+
+    assertFalse(identityConfig.isOtpAllowed(Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue())));
+
+    identityConfig.setOtpAllowedForRestrictedAgencyAdmins(true);
+    assertTrue(identityConfig.isOtpAllowed(Set.of(UserRole.RESTRICTED_AGENCY_ADMIN.getValue())));
+  }
+
+  @Test
   void shouldFindNoViolationsOnValidConfig() {
     givenAValidIdentityConfig();
 
@@ -189,6 +223,15 @@ class IdentityConfigTest {
     violations = validator.validate(identityConfig);
 
     assertValidationError("technicalUser", "must not be null");
+  }
+
+  private void givenAllOtpFlagsDisabled() {
+    identityConfig.setOtpAllowedForUsers(false);
+    identityConfig.setOtpAllowedForConsultants(false);
+    identityConfig.setOtpAllowedForAgencyAdmins(false);
+    identityConfig.setOtpAllowedForRestrictedAgencyAdmins(false);
+    identityConfig.setOtpAllowedForSingleTenantAdmins(false);
+    identityConfig.setOtpAllowedForTenantSuperAdmins(false);
   }
 
   private void givenAValidIdentityConfig() {

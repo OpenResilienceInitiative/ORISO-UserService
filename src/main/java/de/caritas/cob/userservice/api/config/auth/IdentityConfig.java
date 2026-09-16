@@ -36,6 +36,8 @@ public class IdentityConfig implements IdentityClientConfig, IdentityPolicy {
 
   @NotNull private Boolean otpAllowedForConsultants;
 
+  @NotNull private Boolean otpAllowedForAgencyAdmins;
+
   @NotNull private Boolean otpAllowedForRestrictedAgencyAdmins;
 
   @NotNull private Boolean otpAllowedForSingleTenantAdmins;
@@ -86,6 +88,7 @@ public class IdentityConfig implements IdentityClientConfig, IdentityPolicy {
         || roles.contains(UserRole.TENANT_ADMIN.getValue()) && otpAllowedForTenantSuperAdmins
         || roles.contains(UserRole.SINGLE_TENANT_ADMIN.getValue())
             && otpAllowedForSingleTenantAdmins
+        || roles.contains(UserRole.AGENCY_ADMIN.getValue()) && otpAllowedForAgencyAdmins
         || roles.contains(UserRole.RESTRICTED_AGENCY_ADMIN.getValue())
             && otpAllowedForRestrictedAgencyAdmins;
   }
