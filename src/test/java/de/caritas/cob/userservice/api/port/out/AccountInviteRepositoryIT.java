@@ -8,6 +8,8 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import java.time.LocalDateTime;
 import java.time.temporal.ChronoUnit;
+import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -15,6 +17,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.context.annotation.Import;
+import org.springframework.data.domain.Page;
+import org.springframework.data.domain.PageRequest;
 import org.springframework.test.context.ActiveProfiles;
 
 /**
@@ -67,6 +71,68 @@ class AccountInviteRepositoryIT {
     assertEquals(SIGNED_AT.minusDays(1), reload(alreadyStamped).getDpaSignedAt());
   }
 
+  /**
+   * {@code findAllByFilters}' search leg (ORISO-UserService#479): the service passes an
+   * already-normalized {@code search} term and, when the raw query is purely numeric, a parsed
+   * {@code searchTenantId} — this proves the JPQL clause itself matches recipient email, first
+   * name, last name, and exact tenant ID, and that {@code null}/blank leaves the result set
+   * untouched.
+   */
+  @Test
+  void findAllByFilters_Should_matchRecipientEmail_When_searchIsSubstring() {
+    var target =
+        persistedInviteWithEmail(1L, AccountInviteTargetRole.COUNSELLOR, "jane.doe@example.org");
+    persistedInviteWithEmail(1L, AccountInviteTargetRole.COUNSELLOR, "other@example.org");
+
+    Page<AccountInvite> result = search("jane.doe");
+
+    assertEquals(List.of(target.getId()), ids(result));
+  }
+
+  @Test
+  void findAllByFilters_Should_matchFirstOrLastName_CaseInsensitively() {
+    var target =
+        persistedInviteWithName(
+            1L, AccountInviteTargetRole.COUNSELLOR, "a@example.org", "Jane", "Doe");
+    persistedInviteWithName(
+        1L, AccountInviteTargetRole.COUNSELLOR, "b@example.org", "John", "Smith");
+
+    assertEquals(List.of(target.getId()), ids(search("jane")));
+    assertEquals(List.of(target.getId()), ids(search("doe")));
+  }
+
+  @Test
+  void findAllByFilters_Should_matchTenantIdExactly_When_searchIsNumeric() {
+    var target = persistedInviteWithEmail(42L, AccountInviteTargetRole.COUNSELLOR, "a@example.org");
+    persistedInviteWithEmail(420L, AccountInviteTargetRole.COUNSELLOR, "b@example.org");
+
+    Page<AccountInvite> result =
+        accountInviteRepository.findAllByFilters(
+            null, null, null, "42", 42L, PageRequest.of(0, 20));
+
+    assertEquals(List.of(target.getId()), ids(result));
+  }
+
+  @Test
+  void findAllByFilters_Should_returnAllRows_When_searchIsNull() {
+    var first = persistedInviteWithEmail(1L, AccountInviteTargetRole.COUNSELLOR, "a@example.org");
+    var second = persistedInviteWithEmail(2L, AccountInviteTargetRole.COUNSELLOR, "b@example.org");
+
+    Page<AccountInvite> result = search(null);
+
+    assertEquals(2, result.getTotalElements());
+    assertEquals(Set.of(first.getId(), second.getId()), Set.copyOf(ids(result)));
+  }
+
+  private Page<AccountInvite> search(String search) {
+    return accountInviteRepository.findAllByFilters(
+        null, null, null, search, null, PageRequest.of(0, 20));
+  }
+
+  private List<Long> ids(Page<AccountInvite> page) {
+    return page.getContent().stream().map(AccountInvite::getId).toList();
+  }
+
   private AccountInvite reload(AccountInvite invite) {
     return accountInviteRepository.findById(invite.getId()).orElseThrow();
   }
@@ -81,6 +147,30 @@ class AccountInviteRepositoryIT {
             .tokenHash(UUID.randomUUID().toString())
             .expiresAt(LocalDateTime.now().plusDays(10))
             .dpaSignedAt(dpaSignedAt)
+            .createDate(LocalDateTime.now())
+            .build());
+  }
+
+  private AccountInvite persistedInviteWithEmail(
+      Long tenantId, AccountInviteTargetRole targetRole, String recipientEmail) {
+    return persistedInviteWithName(tenantId, targetRole, recipientEmail, null, null);
+  }
+
+  private AccountInvite persistedInviteWithName(
+      Long tenantId,
+      AccountInviteTargetRole targetRole,
+      String recipientEmail,
+      String firstName,
+      String lastName) {
+    return accountInviteRepository.save(
+        AccountInvite.builder()
+            .targetRole(targetRole)
+            .tenantId(tenantId)
+            .recipientEmail(recipientEmail)
+            .firstName(firstName)
+            .lastName(lastName)
+            .tokenHash(UUID.randomUUID().toString())
+            .expiresAt(LocalDateTime.now().plusDays(10))
             .createDate(LocalDateTime.now())
             .build());
   }
