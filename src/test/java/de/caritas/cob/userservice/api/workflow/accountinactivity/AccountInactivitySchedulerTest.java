@@ -27,6 +27,14 @@ class AccountInactivitySchedulerTest {
     try (var context = context(true)) {
       var lifecycle = context.getBean(AccountInactivityService.class);
       lifecycle.assignAtCreation("due", 1L, 1, 1, Instant.parse("2026-01-01T00:00:00Z"));
+      assertThat(lifecycle.candidateReport("", 200))
+          .singleElement()
+          .satisfies(
+              candidate -> {
+                assertThat(candidate.snapshot().identityId()).isEqualTo("due");
+                assertThat(candidate.plannedAction())
+                    .isEqualTo(AccountInactivityService.PlannedAction.DELETE);
+              });
       context.getBean(AccountInactivityScheduler.class).scan();
       assertThat(lifecycle.snapshot("due").orElseThrow().status())
           .isEqualTo(AccountInactivityService.Status.ACTIVE);
@@ -34,9 +42,10 @@ class AccountInactivitySchedulerTest {
   }
 
   private AnnotationConfigApplicationContext context(boolean enabled) {
-    var ds = new DriverManagerDataSource("jdbc:h2:mem:scheduler;DB_CLOSE_DELAY=-1", "sa", "");
+    var ds =
+        new DriverManagerDataSource(
+            "jdbc:h2:mem:scheduler" + java.util.UUID.randomUUID() + ";DB_CLOSE_DELAY=-1", "sa", "");
     var jdbc = new JdbcTemplate(ds);
-    jdbc.execute("DROP TABLE IF EXISTS account_inactivity");
     jdbc.execute(
         "CREATE TABLE account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id"
             + " BIGINT,assigned_months INT NOT NULL,revision BIGINT NOT NULL,last_activity"

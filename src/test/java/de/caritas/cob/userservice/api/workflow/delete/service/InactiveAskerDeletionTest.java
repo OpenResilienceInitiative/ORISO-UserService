@@ -28,25 +28,42 @@ import org.springframework.web.client.RestTemplate;
 @ActiveProfiles("testing")
 class InactiveAskerDeletionTest {
   @Autowired UserRepository users;
+  private boolean committedFixture;
   @Autowired SessionRepository sessions;
 
   @Autowired javax.sql.DataSource dataSource;
   @Autowired org.springframework.transaction.PlatformTransactionManager transactions;
+
+  @org.junit.jupiter.api.AfterEach
+  void removeCommittedOwnedFixtures() {
+    if (!committedFixture) return;
+    var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+    jdbc.update(
+        "DELETE FROM account_inactivity_matrix_state WHERE identity_id=?", "inactivity-lock-first");
+    jdbc.update(
+        "DELETE FROM account_inactivity_access_state WHERE identity_id=?", "inactivity-lock-first");
+    jdbc.update("DELETE FROM user WHERE user_id=?", "inactivity-lock-first");
+  }
 
   @Test
   @org.springframework.transaction.annotation.Transactional(
       propagation = org.springframework.transaction.annotation.Propagation.NOT_SUPPORTED)
   void deletionLocksExistingAccessBeforeDestructiveMatrixCallsAndRetainsFailedWork()
       throws Exception {
+    var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
+    jdbc.execute(
+        "CREATE TABLE IF NOT EXISTS account_inactivity_access_state(identity_id VARCHAR(36) PRIMARY"
+            + " KEY,keycloak_enabled BOOLEAN NOT NULL,restored BOOLEAN NOT NULL,deletion_authorized"
+            + " BOOLEAN NOT NULL)");
+    jdbc.execute(
+        "CREATE TABLE IF NOT EXISTS account_inactivity_matrix_state(identity_id"
+            + " VARCHAR(36),matrix_user_id VARCHAR(255),original_locked BOOLEAN NOT NULL,PRIMARY"
+            + " KEY(identity_id,matrix_user_id))");
+    committedFixture = true;
     var user =
         new User("inactivity-lock-first", null, "lock-first", "lock-first@example.invalid", false);
     user.setMatrixUserId("@lock-first:matrix.test");
     users.save(user);
-    var jdbc = new org.springframework.jdbc.core.JdbcTemplate(dataSource);
-    jdbc.execute(
-        "CREATE TABLE IF NOT EXISTS account_inactivity_access_state(identity_id VARCHAR(36) PRIMARY KEY,keycloak_enabled BOOLEAN NOT NULL,restored BOOLEAN NOT NULL,deletion_authorized BOOLEAN NOT NULL)");
-    jdbc.execute(
-        "CREATE TABLE IF NOT EXISTS account_inactivity_matrix_state(identity_id VARCHAR(36),matrix_user_id VARCHAR(255),original_locked BOOLEAN NOT NULL,PRIMARY KEY(identity_id,matrix_user_id))");
     try (var remote = new InactivityDeletionRemote();
         var context = new StaticApplicationContext()) {
       var config = new MatrixConfig();
@@ -77,6 +94,9 @@ class InactiveAskerDeletionTest {
                 new de.caritas.cob.userservice.api.adapters.keycloak.KeycloakClient(
                     transport, kc, keycloakConfig),
                 matrix,
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityMediaClient(
+                    new RestTemplate(), true, remote.url(), "test-only-media-lifecycle-secret-32"),
                 context.getBeanProvider(InactiveAskerDeletionService.class));
         for (int attempt = 0; attempt < 2; attempt++) {
           org.assertj.core.api.Assertions.assertThatThrownBy(() -> effects.delete(user.getUserId()))

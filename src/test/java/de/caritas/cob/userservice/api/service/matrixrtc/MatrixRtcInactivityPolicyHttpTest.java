@@ -31,6 +31,8 @@ import org.springframework.web.client.RestTemplate;
 @ActiveProfiles("testing")
 class MatrixRtcInactivityPolicyHttpTest {
   @Autowired UserRepository users;
+  @Autowired ConsultantRepository consultants;
+  private boolean schemaReady;
   @Autowired SessionRepository sessions;
   @Autowired ChatRepository chats;
   @Autowired SessionSupervisorRepository supervisors;
@@ -40,6 +42,13 @@ class MatrixRtcInactivityPolicyHttpTest {
 
   @Test
   void newGrantsRequireAnActivePersistedIdentityAndNeverRenewItsClock() throws Exception {
+    var jdbc = new JdbcTemplate(dataSource);
+    jdbc.execute(
+        "CREATE TABLE IF NOT EXISTS account_inactivity(identity_id VARCHAR(36) PRIMARY"
+            + " KEY,tenant_id BIGINT,assigned_months INT NOT NULL,revision BIGINT NOT"
+            + " NULL,last_activity TIMESTAMP(6) NOT NULL,due_at TIMESTAMP(6) NOT NULL,status"
+            + " VARCHAR(20) NOT NULL,last_error VARCHAR(1000),attempts INT DEFAULT 0 NOT NULL)");
+    schemaReady = true;
     var user = new User("rtc-policy-person", null, "rtc-policy", "rtc@example.invalid", false);
     user.setMatrixUserId("@rtc:matrix.test");
     user.setTenantId(7L);
@@ -52,11 +61,9 @@ class MatrixRtcInactivityPolicyHttpTest {
     session.setConversationType(ConversationType.AGENCY_COUNSELLING);
     sessions.save(session);
     entityManager.flush();
-    var jdbc = new JdbcTemplate(dataSource);
-    jdbc.execute(
-        "CREATE TABLE IF NOT EXISTS account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,tenant_id BIGINT,assigned_months INT NOT NULL,revision BIGINT NOT NULL,last_activity TIMESTAMP(6) NOT NULL,due_at TIMESTAMP(6) NOT NULL,status VARCHAR(20) NOT NULL,last_error VARCHAR(1000),attempts INT DEFAULT 0 NOT NULL)");
     jdbc.update(
-        "INSERT INTO account_inactivity VALUES (?,7,24,0,TIMESTAMP '2026-01-01 00:00:00',TIMESTAMP '2028-01-01 00:00:00','SUSPENDED',NULL,0)",
+        "INSERT INTO account_inactivity VALUES (?,7,24,0,TIMESTAMP '2026-01-01 00:00:00',TIMESTAMP"
+            + " '2028-01-01 00:00:00','SUSPENDED',NULL,0)",
         user.getUserId());
     var remote = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
     remote.createContext(
@@ -142,14 +149,30 @@ class MatrixRtcInactivityPolicyHttpTest {
                       "{\"sourceRoomId\":\"!rtc:matrix.test\",\"matrixUserId\":\"@rtc:matrix.test\"}"))
           .andExpect(status().isOk())
           .andExpect(jsonPath("$.audioAllowed").value(false));
-      String consultantId =
-          jdbc.queryForList("SELECT consultant_id FROM consultant", String.class).getFirst();
+      String consultantId = "rtc-policy-consultant";
+      consultants.save(
+          Consultant.builder()
+              .id(consultantId)
+              .username("rtc-policy-consultant")
+              .firstName("RTC")
+              .lastName("Policy")
+              .email("rtc-consultant@example.invalid")
+              .languageCode(com.neovisionaries.i18n.LanguageCode.de)
+              .walkThroughEnabled(false)
+              .encourage2fa(false)
+              .magicLinkLoginEnabled(false)
+              .notifyEnquiriesRepeating(false)
+              .notifyNewChatMessageFromAdviceSeeker(false)
+              .tenantId(7L)
+              .build());
+      entityManager.flush();
       jdbc.update(
           "UPDATE consultant SET matrix_user_id=? WHERE consultant_id=?",
           "@rtc:matrix.test",
           consultantId);
       jdbc.update(
-          "INSERT INTO account_inactivity VALUES (?,7,24,0,TIMESTAMP '2026-01-01 00:00:00',TIMESTAMP '2028-01-01 00:00:00','ACTIVE',NULL,0)",
+          "INSERT INTO account_inactivity VALUES (?,7,24,0,TIMESTAMP '2026-01-01"
+              + " 00:00:00',TIMESTAMP '2028-01-01 00:00:00','ACTIVE',NULL,0)",
           consultantId);
       // Two distinct realm subjects with one Matrix binding must never pick the active one.
       expectPolicy(mvc, false);
@@ -163,6 +186,19 @@ class MatrixRtcInactivityPolicyHttpTest {
     } finally {
       remote.stop(0);
     }
+  }
+
+  @org.springframework.test.context.transaction.AfterTransaction
+  void removeCommittedOwnedFixtures() {
+    if (!schemaReady) return;
+    var jdbc = new JdbcTemplate(dataSource);
+    jdbc.update(
+        "DELETE FROM account_inactivity WHERE identity_id IN (?,?)",
+        "rtc-policy-person",
+        "rtc-policy-consultant");
+    jdbc.update("DELETE FROM session WHERE user_id=?", "rtc-policy-person");
+    jdbc.update("DELETE FROM user WHERE user_id=?", "rtc-policy-person");
+    jdbc.update("DELETE FROM consultant WHERE consultant_id=?", "rtc-policy-consultant");
   }
 
   private void expectPolicy(org.springframework.test.web.servlet.MockMvc mvc, boolean allowed)
