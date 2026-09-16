@@ -60,7 +60,9 @@ import jakarta.ws.rs.NotFoundException;
 import jakarta.ws.rs.core.Response;
 import java.net.URI;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.jeasy.random.EasyRandom;
@@ -1287,6 +1289,54 @@ public class KeycloakServiceTest {
     verify(userResource).toRepresentation();
     verify(usersResource).search("newemail", 0, Integer.MAX_VALUE);
     verify(userResource, never()).update(any());
+  }
+
+  @Test
+  public void updateProfile_Should_preserveAttributesKeycloakAlreadyHolds() {
+    setField(keycloakService, "multiTenancyEnabled", true);
+    var existing = new UserRepresentation();
+    existing.setEmail("email");
+    existing.setAttributes(
+        new LinkedHashMap<>(
+            Map.of(
+                "userId", singletonList("8ed43c2c-keycloak-id"),
+                "locale", singletonList("de"),
+                "tenantId", singletonList("1"))));
+    UserResource userResource = givenUserResourceWithRepresentation(existing);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(usernameTranscoder.decodeUsername("username")).thenReturn("username");
+    var profile = new IdentityProfileUpdate("username", "email", 2L, "firstName", "lastName");
+
+    this.keycloakService.updateProfile("userId", profile);
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    var attributes = representationCaptor.getValue().getAttributes();
+    assertThat(attributes.get("userId"), is(singletonList("8ed43c2c-keycloak-id")));
+    assertThat(attributes.get("locale"), is(singletonList("de")));
+    assertThat(attributes.get("tenantId"), is(singletonList("2")));
+    assertThat(attributes.get("username"), is(singletonList("username")));
+    setField(keycloakService, "multiTenancyEnabled", false);
+  }
+
+  @Test
+  public void updateDummyEmail_Should_preserveAttributesKeycloakAlreadyHolds() {
+    var existing = new UserRepresentation();
+    existing.setAttributes(new LinkedHashMap<>(Map.of("userId", singletonList("kc-id"))));
+    UserResource userResource = givenUserResourceWithRepresentation(existing);
+    UsersResource usersResource = givenUsersResourceWithAnyUserId(userResource);
+    when(keycloakClient.getUsersResource()).thenReturn(usersResource);
+    when(userHelper.getDummyEmail("userId")).thenReturn("dummy");
+    when(usernameTranscoder.decodeUsername("encoded-user")).thenReturn("decoded-user");
+
+    keycloakService.updateDummyEmail("userId", new IdentityDummyEmailUpdate("encoded-user", 42L));
+
+    var representationCaptor = ArgumentCaptor.forClass(UserRepresentation.class);
+    verify(userResource).update(representationCaptor.capture());
+    var attributes = representationCaptor.getValue().getAttributes();
+    assertThat(attributes.get("userId"), is(singletonList("kc-id")));
+    assertThat(attributes.get("username"), is(singletonList("decoded-user")));
   }
 
   @Test

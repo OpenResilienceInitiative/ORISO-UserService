@@ -857,7 +857,8 @@ public class KeycloakService
     user.setEmail(dummyEmail);
     user.setTenantId(identityUpdate.tenantId());
     var userResource = keycloakClient.getUsersResource().get(userId);
-    userResource.update(getUserRepresentation(user, null, null));
+    userResource.update(
+        withExistingAttributes(userResource, getUserRepresentation(user, null, null)));
     log.debug("Set email dummy for {} to {}", userId, dummyEmail);
     return dummyEmail;
   }
@@ -871,8 +872,42 @@ public class KeycloakService
   @Override
   public void updateProfile(final String userId, final IdentityProfileUpdate profile) {
     var userResource = keycloakClient.getUsersResource().get(userId);
-    verifyEmail(userResource.toRepresentation(), profile.email());
-    userResource.update(getUserRepresentation(profile));
+    var existing = userResource.toRepresentation();
+    verifyEmail(existing, profile.email());
+    userResource.update(withExistingAttributes(existing, getUserRepresentation(profile)));
+  }
+
+  /**
+   * Keycloak's user update replaces the whole attribute map when the representation carries one. A
+   * representation built only from the profile values therefore silently dropped every attribute it
+   * did not know about — above all {@code userId}, the custom claim the AgencyService needs to
+   * scope a Beratungsstellen-Admin to their own agencies (their agency list answered 403 after the
+   * first admin edit). Merge the profile attributes onto the attributes Keycloak currently holds so
+   * an update never removes what creation wrote.
+   */
+  private UserRepresentation withExistingAttributes(
+      UserResource userResource, UserRepresentation update) {
+    UserRepresentation existing;
+    try {
+      existing = userResource.toRepresentation();
+    } catch (RuntimeException e) {
+      log.warn("Could not read current keycloak user before update; attributes may be lost", e);
+      existing = null;
+    }
+    return withExistingAttributes(existing, update);
+  }
+
+  private UserRepresentation withExistingAttributes(
+      UserRepresentation existing, UserRepresentation update) {
+    if (existing == null || existing.getAttributes() == null) {
+      return update;
+    }
+    Map<String, List<String>> merged = new LinkedHashMap<>(existing.getAttributes());
+    if (update.getAttributes() != null) {
+      merged.putAll(update.getAttributes());
+    }
+    update.setAttributes(merged);
+    return update;
   }
 
   private void verifyEmail(UserRepresentation userRepresentation, String email) {
