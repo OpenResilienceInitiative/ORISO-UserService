@@ -5,6 +5,7 @@ public class AccountInactivityEffectException extends RuntimeException {
   public enum Target {
     KEYCLOAK,
     MATRIX,
+    MEDIA,
     DATABASE,
     APPOINTMENT_SERVICE,
     ANONYMOUS_REGISTRY_IDS,

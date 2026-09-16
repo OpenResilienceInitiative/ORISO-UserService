@@ -82,8 +82,12 @@ class ConsultantPictureJwtHttpTest {
     try {
       mvc.perform(request(get(path("")), 1)).andExpect(status().isForbidden());
     } finally {
-      assertThat(inactivity.reactivate("caller")).isTrue();
+      inactivity.reactivate("caller");
     }
+    assertThat(inactivity.snapshot("caller").orElseThrow().status())
+        .isEqualTo(
+            de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                .Status.ACTIVE);
     mvc.perform(request(get(path("")), 1)).andExpect(status().isOk());
   }
 

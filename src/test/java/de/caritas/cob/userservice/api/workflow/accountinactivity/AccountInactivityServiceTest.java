@@ -11,6 +11,27 @@ import org.springframework.jdbc.datasource.DriverManagerDataSource;
 
 class AccountInactivityServiceTest {
   @Test
+  void disappearingCandidateDoesNotAbortOtherTenants() {
+    var captured = Instant.parse("2023-01-01T00:00:00Z");
+    var owner = new java.util.concurrent.atomic.AtomicReference<AccountInactivityService>();
+    var service =
+        createService(
+            new Effects() {
+              public Set<Role> currentRoles(String id) {
+                if (id.equals("a")) owner.get().discardUncompletedCreation("b", 24, 0, captured);
+                return Set.of(Role.ASKER);
+              }
+            });
+    owner.set(service);
+    for (String id : java.util.List.of("a", "b", "c"))
+      service.assignAtCreation(id, id.equals("c") ? 2L : 1L, 24, 0, captured);
+    service.scan(false);
+    assertThat(service.snapshot("b")).isEmpty();
+    assertThat(service.snapshot("c").orElseThrow().status())
+        .isEqualTo(AccountInactivityService.Status.DELETED);
+  }
+
+  @Test
   void failedCreationCleanupDeletesOnlyMatchingUnprogressedSnapshot() {
     var service = createService(new Effects());
     var captured = Instant.parse("2026-01-01T00:00:00.123456Z");

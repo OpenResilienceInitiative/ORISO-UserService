@@ -3,12 +3,32 @@ info:
   title: Account inactivity lifecycle
   version: 1.0.0
   description: >-
-    Hand-written controller contract. All identities come from validated bearer tokens.
+    Hand-written controller contract. Personal identities come from validated bearer tokens. Media admission is a cluster-internal dedicated-secret callback.
     Platform administration requires tenantId 0 and both agency-admin and tenant-admin.
     Transport aliases prefixed with /service have identical behavior.
 security:
   - Bearer: []
 paths:
+  /internal/matrixrtc/media-access:
+    post:
+      operationId: checkMediaInactivityAdmission
+      description: Exact persisted Matrix identity binding must resolve to one ACTIVE account. Never records activity. No public ingress.
+      security:
+        - MediaLifecycleToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [matrixUserId]
+              properties:
+                matrixUserId: { type: string, minLength: 1, maxLength: 255 }
+      responses:
+        '204': { description: Active identity }
+        '403': { description: Invalid credential or unavailable identity }
+        '410': { description: Identity binding removed or terminally deleted; permits bounded media registry cleanup }
+        '503': { description: Integration disabled or database unavailable }
   /users/account-inactivity:
     get:
       operationId: getOwnAccountInactivity
@@ -127,6 +147,10 @@ paths:
         '503': { description: External restoration incomplete; durable retry state retained }
 components:
   securitySchemes:
+    MediaLifecycleToken:
+      type: apiKey
+      in: header
+      name: x-matrixrtc-lifecycle-token
     Bearer: { type: http, scheme: bearer, bearerFormat: JWT }
   parameters:
     IdentityId:

@@ -130,6 +130,8 @@ public class AccountInactivityBootstrap implements SmartInitializingSingleton {
         }
       }
     } catch (RuntimeException failure) {
+      org.apache.commons.logging.LogFactory.getLog(getClass())
+          .warn("Account inactivity inventory aborted: " + failure.getClass().getSimpleName());
       failed++;
     }
     if (finished)

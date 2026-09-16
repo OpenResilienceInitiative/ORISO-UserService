@@ -52,14 +52,11 @@ class RegisteredOnlyInactivityGuardTest {
         .extracting(User::getUserId)
         .contains(user.getUserId());
     var jdbc = new JdbcTemplate(dataSource);
-    jdbc.execute(
-        "CREATE TABLE IF NOT EXISTS account_inactivity(identity_id VARCHAR(36) PRIMARY KEY,status"
-            + " VARCHAR(20))");
-    jdbc.update("INSERT INTO account_inactivity VALUES (?,'ACTIVE')", user.getUserId());
-    // The shared JPA seed also contains legacy candidates; enroll them as rollout does.
     jdbc.update(
-        "INSERT INTO account_inactivity SELECT user_id,'ACTIVE' FROM user WHERE user_id<>?",
+        "INSERT INTO account_inactivity(identity_id,assigned_months,revision,last_activity,due_at,status)"
+            + " VALUES (?,24,0,CURRENT_TIMESTAMP,DATEADD('MONTH',24,CURRENT_TIMESTAMP),'ACTIVE')",
         user.getUserId());
+    // The shared schema fixture already enrolls legacy seed candidates as rollout does.
     var headers = new SecurityHeaderSupplier(new AuthenticatedUser());
     var auth =
         new IdentityAuthentication() {

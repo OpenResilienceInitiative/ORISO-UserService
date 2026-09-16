@@ -64,6 +64,9 @@ class DefaultAccountInactivityEffectsTest {
                 new DataSourceTransactionManager(ds),
                 client,
                 matrix,
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityMediaClient(
+                    new RestTemplate(), true, remote.url(), "test-only-media-lifecycle-secret-32"),
                 new StaticListableBeanFactory()
                     .getBeanProvider(InactiveAskerDeletionService.class));
         assertThat(effects.suspend("person")).isTrue();
@@ -122,6 +125,9 @@ class DefaultAccountInactivityEffectsTest {
                 new DataSourceTransactionManager(ds),
                 client,
                 matrix,
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityMediaClient(
+                    new RestTemplate(), true, remote.url(), "test-only-media-lifecycle-secret-32"),
                 new StaticListableBeanFactory()
                     .getBeanProvider(InactiveAskerDeletionService.class));
         var outer =
@@ -184,6 +190,9 @@ class DefaultAccountInactivityEffectsTest {
                 new DataSourceTransactionManager(ds),
                 client,
                 matrix,
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityMediaClient(
+                    new RestTemplate(), true, remote.url(), "test-only-media-lifecycle-secret-32"),
                 new StaticListableBeanFactory()
                     .getBeanProvider(InactiveAskerDeletionService.class));
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> effects.delete("person"))
@@ -243,6 +252,9 @@ class DefaultAccountInactivityEffectsTest {
                 new DataSourceTransactionManager(ds),
                 client,
                 matrix,
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityMediaClient(
+                    new RestTemplate(), true, remote.url(), "test-only-media-lifecycle-secret-32"),
                 new StaticListableBeanFactory()
                     .getBeanProvider(InactiveAskerDeletionService.class));
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> effects.delete("person"))
@@ -304,6 +316,9 @@ class DefaultAccountInactivityEffectsTest {
                 new DataSourceTransactionManager(ds),
                 client,
                 matrix,
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityMediaClient(
+                    new RestTemplate(), true, remote.url(), "test-only-media-lifecycle-secret-32"),
                 new StaticListableBeanFactory()
                     .getBeanProvider(InactiveAskerDeletionService.class));
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> effects.delete("person"))
@@ -362,6 +377,9 @@ class DefaultAccountInactivityEffectsTest {
                 new DataSourceTransactionManager(ds),
                 client,
                 matrix,
+                new de.caritas.cob.userservice.api.workflow.accountinactivity
+                    .AccountInactivityMediaClient(
+                    new RestTemplate(), true, remote.url(), "test-only-media-lifecycle-secret-32"),
                 new StaticListableBeanFactory()
                     .getBeanProvider(InactiveAskerDeletionService.class));
         assertThat(effects.suspend("person")).isTrue();
@@ -398,7 +416,8 @@ class DefaultAccountInactivityEffectsTest {
             var body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
             String response = "{}";
             int status = 200;
-            if (path.endsWith("/login")) response = "{\"access_token\":\"test-token\"}";
+            if (path.startsWith("/internal/lifecycle/")) status = 204;
+            else if (path.endsWith("/login")) response = "{\"access_token\":\"test-token\"}";
             else if (path.contains("/_synapse/admin/v2/users/")) {
               if (method.equals("PUT") && failMatrix.get()) {
                 exchange.sendResponseHeaders(503, -1);

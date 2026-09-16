@@ -200,7 +200,9 @@ public class AccountInactivityService {
           } catch (RuntimeException failure) {
             // A claimed action records its typed failure in execute(); role-discovery failures
             // keep the account active and are retried on the next scan.
-            if (snapshot(candidate.identityId()).orElseThrow().status() == Status.ACTIVE) {
+            if (snapshot(candidate.identityId())
+                .map(row -> row.status() == Status.ACTIVE)
+                .orElse(false)) {
               jdbc.update(
                   "UPDATE account_inactivity SET last_error=? WHERE identity_id=?",
                   "ROLE_DISCOVERY_FAILED",

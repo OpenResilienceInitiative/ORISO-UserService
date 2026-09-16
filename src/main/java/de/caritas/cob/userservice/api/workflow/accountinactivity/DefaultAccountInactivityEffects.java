@@ -29,6 +29,7 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
   private final TransactionTemplate durable;
   private final KeycloakClient keycloak;
   private final MatrixSynapseService matrix;
+  private final AccountInactivityMediaClient media;
   private final ObjectProvider<InactiveAskerDeletionService> deletion;
 
   public DefaultAccountInactivityEffects(
@@ -36,10 +37,12 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
       PlatformTransactionManager manager,
       KeycloakClient keycloak,
       MatrixSynapseService matrix,
+      AccountInactivityMediaClient media,
       ObjectProvider<InactiveAskerDeletionService> deletion) {
     this.jdbc = jdbc;
     this.keycloak = keycloak;
     this.matrix = matrix;
+    this.media = media;
     this.deletion = deletion;
     durable = new TransactionTemplate(manager);
     durable.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
@@ -118,6 +121,7 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
     for (var access : matrixStates(id))
       if (!matrix.setAccountSuspended(access.id(), true))
         throw new AccountInactivityEffectException(MATRIX, UNCONFIRMED);
+    media.revoke(matrixStates(id).stream().map(MatrixAccess::id).toList());
     return true;
   }
 
@@ -130,6 +134,7 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
     for (var access : matrixStates(id))
       if (!matrix.setAccountSuspended(access.id(), access.locked()))
         throw new AccountInactivityEffectException(MATRIX, UNCONFIRMED);
+    media.restore(matrixStates(id).stream().map(MatrixAccess::id).toList());
     try {
       var user = keycloak.getUsersResource().get(id);
       var representation = user.toRepresentation();
@@ -186,6 +191,11 @@ public class DefaultAccountInactivityEffects implements AccountInactivityEffects
       throw new AccountInactivityEffectException(safeTarget, UNCONFIRMED);
     }
     if (!keycloakGone(id)) throw new AccountInactivityEffectException(KEYCLOAK, UNCONFIRMED);
+    media.forget(matrixStates(id).stream().map(MatrixAccess::id).toList());
+    // These recovery identifiers are needed only until all systems confirm deletion. This
+    // transaction also commits the lifecycle DELETED state; rollback preserves retry metadata.
+    jdbc.update("DELETE FROM account_inactivity_matrix_state WHERE identity_id=?", id);
+    jdbc.update("DELETE FROM account_inactivity_access_state WHERE identity_id=?", id);
     return true;
   }
 

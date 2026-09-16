@@ -24,7 +24,8 @@ final class InactivityDeletionRemote implements AutoCloseable {
           var body = new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8);
           String response = "{}";
           int status = 200;
-          if (path.endsWith("/login")) response = "{\"access_token\":\"test-token\"}";
+          if (path.startsWith("/internal/lifecycle/")) status = 204;
+          else if (path.endsWith("/login")) response = "{\"access_token\":\"test-token\"}";
           else if (path.contains("/_synapse/admin/v2/users/")) {
             if (method.equals("PUT"))
               locked.set(body.matches("(?s).*\\\"locked\\\"\\s*:\\s*true.*"));
