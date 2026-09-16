@@ -22,6 +22,56 @@ import org.springframework.web.client.RestTemplate;
 
 class AccountInactivityBootstrapTest {
   @Test
+  void failedInventoryReleasesGuardAndNextRunRecovers() throws Exception {
+    try (var fixture = new Fixture(List.of(person("old", false, "2026-01-01T00:00:00Z")))) {
+      fixture.failInventory = true;
+      fixture.bootstrap.scan();
+      assertThat(fixture.bootstrap.report().complete()).isFalse();
+      assertThat(fixture.bootstrap.report().failed()).isEqualTo(1);
+      assertThat(fixture.lifecycle.snapshot("old")).isEmpty();
+      fixture.failInventory = false;
+      var worker = java.util.concurrent.Executors.newSingleThreadExecutor();
+      try {
+        worker.submit(fixture.bootstrap::scan).get(5, java.util.concurrent.TimeUnit.SECONDS);
+      } finally {
+        worker.shutdownNow();
+      }
+      assertThat(fixture.bootstrap.report().complete()).isTrue();
+      assertThat(fixture.lifecycle.snapshot("old")).isPresent();
+    }
+  }
+
+  @Test
+  void overlappingInventoriesSerializeRemoteReadsAndPublishOneWholeReport() throws Exception {
+    try (var fixture = new Fixture(List.of(person("old", false, "2026-01-01T00:00:00Z")))) {
+      fixture.blockInventory = true;
+      var workers = java.util.concurrent.Executors.newFixedThreadPool(2);
+      try {
+        var first = workers.submit(fixture.bootstrap::scan);
+        assertThat(fixture.inventoryEntered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+            .isTrue();
+        var second = workers.submit(fixture.bootstrap::scan);
+        try {
+          assertThat(
+                  fixture.secondInventoryEntered.await(
+                      500, java.util.concurrent.TimeUnit.MILLISECONDS))
+              .isFalse();
+        } finally {
+          fixture.releaseInventory.countDown();
+        }
+        first.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        second.get(5, java.util.concurrent.TimeUnit.SECONDS);
+        assertThat(fixture.inventoryStarts.get()).isEqualTo(2);
+        assertThat(fixture.bootstrap.report().complete()).isTrue();
+        assertThat(fixture.lifecycle.snapshot("old").orElseThrow().assignedMonths()).isEqualTo(24);
+      } finally {
+        fixture.releaseInventory.countDown();
+        workers.shutdownNow();
+      }
+    }
+  }
+
+  @Test
   void paginatedInventoryIncludesDormantKeycloakOnlyHumansAndExcludesServiceAccounts()
       throws Exception {
     try (var fixture =
@@ -92,6 +142,17 @@ class AccountInactivityBootstrapTest {
         new java.util.concurrent.ConcurrentHashMap<>();
     final java.util.concurrent.atomic.AtomicBoolean withClients =
         new java.util.concurrent.atomic.AtomicBoolean();
+    final AtomicInteger inventoryStarts = new AtomicInteger();
+    final java.util.concurrent.CountDownLatch inventoryEntered =
+        new java.util.concurrent.CountDownLatch(1);
+    final java.util.concurrent.CountDownLatch secondInventoryEntered =
+        new java.util.concurrent.CountDownLatch(1);
+    final java.util.concurrent.CountDownLatch releaseInventory =
+        new java.util.concurrent.CountDownLatch(1);
+    final java.util.concurrent.ExecutorService httpWorkers =
+        java.util.concurrent.Executors.newCachedThreadPool();
+    volatile boolean blockInventory;
+    volatile boolean failInventory;
     final AtomicInteger pages = new AtomicInteger();
     final HttpServer server;
     final org.keycloak.admin.client.Keycloak kc;
@@ -100,12 +161,26 @@ class AccountInactivityBootstrapTest {
 
     Fixture(List<String> people) throws Exception {
       server = HttpServer.create(new InetSocketAddress("127.0.0.1", 0), 0);
+      server.setExecutor(httpWorkers);
       server.createContext(
           "/",
           exchange -> {
             var path = exchange.getRequestURI().getPath();
             String response;
             int status = 200;
+            if (path.endsWith("/clients")) {
+              if (failInventory) status = 503;
+              int run = inventoryStarts.incrementAndGet();
+              if (run == 1) inventoryEntered.countDown();
+              else secondInventoryEntered.countDown();
+              if (blockInventory && run == 1) {
+                try {
+                  releaseInventory.await(5, java.util.concurrent.TimeUnit.SECONDS);
+                } catch (InterruptedException interrupted) {
+                  Thread.currentThread().interrupt();
+                }
+              }
+            }
             if (path.endsWith("/users")) {
               pages.incrementAndGet();
               var query = exchange.getRequestURI().getQuery();
@@ -193,12 +268,18 @@ class AccountInactivityBootstrapTest {
       config.setRealm("test");
       bootstrap =
           new AccountInactivityBootstrap(
-              jdbc, new KeycloakClient(new RestTemplate(), kc, config), lifecycle, clock, 1);
+              jdbc,
+              new KeycloakClient(new RestTemplate(), kc, config),
+              lifecycle,
+              clock,
+              new DataSourceTransactionManager(ds),
+              1);
     }
 
     public void close() {
       kc.close();
       server.stop(0);
+      httpWorkers.shutdownNow();
     }
   }
 }

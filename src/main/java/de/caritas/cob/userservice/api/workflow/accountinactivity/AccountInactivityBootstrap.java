@@ -37,12 +37,14 @@ public class AccountInactivityBootstrap implements SmartInitializingSingleton {
   private final AccountInactivityService lifecycle;
   private final Clock clock;
   private final int pageSize;
+  private final org.springframework.transaction.support.TransactionTemplate inventoryTransaction;
 
   public AccountInactivityBootstrap(
       JdbcTemplate jdbc,
       KeycloakClient keycloak,
       AccountInactivityService lifecycle,
       Clock clock,
+      org.springframework.transaction.PlatformTransactionManager transactionManager,
       @Value("${account.inactivity.bootstrap.page-size:100}") int pageSize) {
     if (pageSize < 1 || pageSize > 1000)
       throw new IllegalArgumentException("Inventory page size must be 1..1000");
@@ -51,6 +53,10 @@ public class AccountInactivityBootstrap implements SmartInitializingSingleton {
     this.lifecycle = lifecycle;
     this.clock = clock;
     this.pageSize = pageSize;
+    this.inventoryTransaction =
+        new org.springframework.transaction.support.TransactionTemplate(transactionManager);
+    this.inventoryTransaction.setPropagationBehavior(
+        org.springframework.transaction.TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
 
   @Override
@@ -65,6 +71,17 @@ public class AccountInactivityBootstrap implements SmartInitializingSingleton {
 
   @Scheduled(cron = "${account.inactivity.bootstrap.cron:0 30 1 * * *}", zone = "UTC")
   public void scan() {
+    inventoryTransaction.executeWithoutResult(
+        ignored -> {
+          // The database owns this lock until commit/rollback, even if remote enumeration is slow.
+          // Enrollment, issue cleanup and the final report share this transaction and connection.
+          jdbc.queryForObject(
+              "SELECT id FROM account_inactivity_rollout WHERE id=1 FOR UPDATE", Integer.class);
+          scanLocked();
+        });
+  }
+
+  private void scanLocked() {
     Instant cutoff = report().cutoff();
     Instant now = clock.instant().truncatedTo(ChronoUnit.MICROS);
     int enrolled = 0, missingNew = 0, failed = 0;

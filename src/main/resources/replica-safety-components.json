@@ -613,12 +613,12 @@
       "components": [
         "scan"
       ],
-      "decision": "Runs at startup and daily independently of destructive expiry. Enrollment is idempotent through the identity primary key and immutable persisted rollout cutoff. Concurrent scans have no shared lease: aggregate report updates are last-writer-wins and stale-issue cleanup may race another scan. Serialize complete inventories or version reports before relying on multi-replica inventory completeness; enrollment safety does not certify report consistency.",
+      "decision": "Runs at startup and daily independently of destructive expiry. A transaction-scoped lock on the singleton rollout row serializes the complete inventory across replicas without an expiring lease. Enrollment, issue cleanup and report publication share that transaction; rollback or connection loss releases the lock. The identity primary key and immutable rollout cutoff preserve enrollment idempotency. Concurrent-scan and remote-failure recovery tests cover serialization and subsequent progress.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
       ],
-      "status": "blocker"
+      "status": "bounded"
     }
   ]
 }
