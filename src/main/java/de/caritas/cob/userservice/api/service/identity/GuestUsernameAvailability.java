@@ -1,10 +1,10 @@
 package de.caritas.cob.userservice.api.service.identity;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -19,7 +19,7 @@ public class GuestUsernameAvailability {
   private final UserRepository userRepository;
   private final ConsultantRepository consultantRepository;
   private final IdentityUsernameAvailability identityUsernameAvailability;
-  private final MatrixSynapseService matrixSynapseService;
+  private final MatrixUserClient matrixUserClient;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
   /** Returns true only when every backing system confirms the validated username is free. */
@@ -27,8 +27,8 @@ public class GuestUsernameAvailability {
     try {
       return !existsInDatabase(username)
           && identityUsernameAvailability.isUsernameAvailable(username)
-          && !matrixSynapseService.userExistsStrict(usernameTranscoder.encodeUsername(username))
-          && !matrixSynapseService.userExistsStrict(username);
+          && !matrixUserClient.userExistsStrict(usernameTranscoder.encodeUsername(username))
+          && !matrixUserClient.userExistsStrict(username);
     } catch (ServiceUnavailableException exception) {
       throw exception;
     } catch (RuntimeException exception) {

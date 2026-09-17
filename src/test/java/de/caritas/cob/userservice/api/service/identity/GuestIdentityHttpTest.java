@@ -6,7 +6,6 @@ import static org.springframework.security.test.web.servlet.setup.SecurityMockMv
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.controller.AgencyInviteLinkController;
 import de.caritas.cob.userservice.api.adapters.web.controller.IdentitySuggestionController;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
@@ -20,6 +19,7 @@ import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.ConsultingTypeService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -78,7 +78,7 @@ class GuestIdentityHttpTest {
   @MockitoBean JwtDecoder jwtDecoder;
   @MockitoBean IdentityUsernameAvailability identityProvider;
   @MockitoBean UserRepository users;
-  @MockitoBean MatrixSynapseService matrix;
+  @MockitoBean MatrixUserClient matrix;
   @MockitoBean AgencyInviteLinkRepository links;
   @MockitoBean AuthenticatedUser caller;
   @MockitoBean TopicService topics;

@@ -25,3 +25,7 @@ Independent source review found two problems (partial tenant-context restoration
 ## Acceptance still open
 
 No deployment of this change, real-browser frontend integration, real-provider failure test or account/queue side-effect readback has been performed. The later explicit Join slice must revalidate the selected identity and make retries idempotent; a suggestion does not reserve a name. Deploy the narrow ingress cap before making the new API publicly available. Existing clients keep their current paths until cutover.
+
+## CI follow-up
+
+Branch CI exposed a direct Matrix adapter dependency forbidden by the existing identity-module boundary. The local architecture test reproduced that failure. Guest availability now uses the existing `MatrixUserClient` outbound port; the adapter behavior is unchanged. All 100 Python CI contract tests pass after the correction. Targeted Java tests covering the port consumers and guest HTTP flow, formatting and package/repackage also pass.

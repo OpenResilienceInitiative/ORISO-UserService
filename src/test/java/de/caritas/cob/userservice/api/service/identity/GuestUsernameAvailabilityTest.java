@@ -6,11 +6,11 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.*;
 
-import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
+import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -30,7 +30,7 @@ class GuestUsernameAvailabilityTest {
   @Mock private UserRepository users;
   @Mock private ConsultantRepository consultants;
   @Mock private IdentityUsernameAvailability identity;
-  @Mock private MatrixSynapseService matrix;
+  @Mock private MatrixUserClient matrix;
   @InjectMocks private GuestUsernameAvailability availability;
 
   @AfterEach
