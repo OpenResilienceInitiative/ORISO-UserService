@@ -18,6 +18,24 @@ class GuestIdentityCatalogTest {
   }
 
   @Test
+  void cyrillicAnimalLabelRetainsTheSelectedAvatarStem() {
+    assertThat(GuestIdentityCatalog.identityFor("Сова", "owl.svg", "Mika", 1234))
+        .isEqualTo(new GuestIdentitySuggestion("owl_mika_1234", "owl_mika_1234", "owl.svg"));
+  }
+
+  @Test
+  void longIdentityBasesAreTruncatedAndDoNotLeaveADoubledSeparator() {
+    assertThat(
+            GuestIdentityCatalog.identityFor("abcdefghijklmnopqrstuvwxyz", "owl.svg", "Mika", 1234)
+                .username())
+        .isEqualTo("abcdefghijklmnopqrstuvwxy_1234");
+    assertThat(
+            GuestIdentityCatalog.identityFor("abcdefghijklmnopqrstuvwx", "owl.svg", "Mika", 1234)
+                .username())
+        .isEqualTo("abcdefghijklmnopqrstuvwx_1234");
+  }
+
+  @Test
   void allSupportedLocalesReturnBoundedNamesAndLocalAssets() {
     var catalog = new GuestIdentityCatalog();
     for (String locale :

@@ -29,3 +29,19 @@ No deployment of this change, real-browser frontend integration, real-provider f
 ## CI follow-up
 
 Branch CI exposed a direct Matrix adapter dependency forbidden by the existing identity-module boundary. The local architecture test reproduced that failure. Guest availability now uses the existing `MatrixUserClient` outbound port; the adapter behavior is unchanged. All 100 Python CI contract tests pass after the correction. Targeted Java tests covering the port consumers and guest HTTP flow, formatting and package/repackage also pass.
+
+
+## Review corrections: current local verification
+
+The later review identified a real side effect hidden behind the former mocked token helper: strict Matrix lookup called `getAdminToken`, which can log in or bootstrap an admin on a cold cache. A new real-RestTemplate HTTP contract reproduced the unwanted `POST /_matrix/client/r0/login` before the correction (`/tmp/r3-readonly-matrix-red.log`). Strict lookup now consumes only `matrix.availabilityAdminAccessToken`, supplied through `MATRIX_AVAILABILITY_ADMIN_ACCESS_TOKEN`. Missing, revoked or rejected credentials fail with sanitized 503 without login/registration fallback. Six HTTP cases cover no-credential and configured-token GET sequences; existing strict status contracts no longer mock internal token acquisition. Legacy provisioning methods remain unchanged.
+
+This requires deployment-owned credential provisioning and rotation before enabling the new UI. The credential has full Synapse admin privileges even though this code uses only GET. Helm PR #355 at `91045418e631bc7b57d0556d48346327abe090b9` provides an explicit existing-Secret reference and a rollout/rotation runbook; no secret value is stored in source, and no runtime secret or deployment has been changed.
+
+Other review dispositions:
+
+- Endpoint limiting is provided by companion Helm PR #355; its full-chart lint, rendering, package round-trip and route contracts pass. Runtime 429 and client-IP verification remain required.
+- Availability diagnostics now log only the dependency exception class. The original exception is deliberately not retained as a cause because it can contain credentials. A red-then-green logging contract verifies the diagnostic and the absence of message/cause leakage (`/tmp/r3-review-contracts-red.log`).
+- Catalogue tests now deterministically verify Cyrillic-label fallback to the selected avatar stem, exact truncation and separator cleanup.
+- The exclusion-size regression uses valid usernames, so it cannot pass merely because username validation rejects the fixture.
+
+Current verification: 135 targeted Java tests passed with zero failures/errors/skips (`/tmp/r3-review-contracts-green.log`); 109 Python CI/OpenAPI tests plus two subtests passed (`/tmp/r3-review-python.log`). Maven formatting and package/repackage passed (`/tmp/r3-review-package.log`). The earlier 4,675-test result belongs to the baseline before these corrections; it was not rerun for this review revision. Independent read-only review found no additional concrete auth/Secret-reference issue. These are local results, not live-provider or browser acceptance.

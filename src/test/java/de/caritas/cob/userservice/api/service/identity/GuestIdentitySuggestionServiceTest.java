@@ -62,7 +62,7 @@ class GuestIdentitySuggestionServiceTest {
   void rejectsUnboundedInputsBeforeDependencies() {
     assertThatThrownBy(() -> service.suggest("de", 100, List.of()))
         .isInstanceOf(BadRequestException.class);
-    assertThatThrownBy(() -> service.suggest("de", 1, java.util.Collections.nCopies(21, "x")))
+    assertThatThrownBy(() -> service.suggest("de", 1, java.util.Collections.nCopies(21, "abc_123")))
         .isInstanceOf(BadRequestException.class);
     verifyNoInteractions(catalog, availability);
   }
