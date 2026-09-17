@@ -30,6 +30,7 @@ import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
 
 class CounsellorInviteProvisioningServiceTest {
 
@@ -117,6 +118,51 @@ class CounsellorInviteProvisioningServiceTest {
         .hasMessageContaining("already in progress");
 
     verifyNoInteractions(consultantAdminFacade);
+  }
+
+  @Test
+  void acceptCounsellorInvite_mapsTheAvatarChoiceOntoTheCreateConsultantDTO() {
+    CreateConsultantDTO created = captureCreatedConsultant("ICON", "motif-24");
+
+    assertThat(created.getAvatarKind()).isEqualTo(CreateConsultantDTO.AvatarKindEnum.ICON);
+    assertThat(created.getAvatarId()).isEqualTo("motif-24");
+  }
+
+  @Test
+  void acceptCounsellorInvite_ignoresAnUnknownAvatarKindInsteadOfFailing() {
+    CreateConsultantDTO created = captureCreatedConsultant("<script>alert(1)</script>", "motif-24");
+
+    assertThat(created.getAvatarKind()).isNull();
+  }
+
+  private CreateConsultantDTO captureCreatedConsultant(String avatarKind, String avatarId) {
+    AccountInvite invite = activeCounsellorInvite();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(
+            new ConsultantAdminResponseDTO()
+                .embedded(new ConsultantDTO().id("created-consultant")));
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant")).thenReturn(invite);
+
+    service.acceptInvite(
+        "raw-token",
+        new ProvisionCounsellorCommand(
+            "invited-counsellor",
+            "test-password",
+            true,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            avatarKind,
+            avatarId));
+
+    ArgumentCaptor<CreateConsultantDTO> captor = ArgumentCaptor.forClass(CreateConsultantDTO.class);
+    verify(consultantAdminFacade).createNewConsultant(captor.capture());
+    return captor.getValue();
   }
 
   @Test

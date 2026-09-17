@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateCons
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -172,7 +173,16 @@ public class CounsellorInviteProvisioningService {
         .position(command.position())
         .title(command.title())
         .displayName(command.displayName())
-        .internalDisplayName(command.internalDisplayName());
+        .internalDisplayName(command.internalDisplayName())
+        // #1046 avatar choice. Parsed through the one shared null-safe helper: an unknown wire
+        // value from the public wizard is simply "no choice", never a 500.
+        .avatarKind(toWireAvatarKind(command.avatarKind()))
+        .avatarId(command.avatarId());
+  }
+
+  private static CreateConsultantDTO.AvatarKindEnum toWireAvatarKind(String avatarKind) {
+    ConsultantAvatarKind kind = ConsultantAvatarKind.fromNameOrNull(avatarKind);
+    return kind == null ? null : CreateConsultantDTO.AvatarKindEnum.fromValue(kind.name());
   }
 
   private static void validate(ProvisionCounsellorCommand command, AccountInvite invite) {
@@ -224,6 +234,8 @@ public class CounsellorInviteProvisioningService {
       String displayName,
       String internalDisplayName,
       List<Long> topicIds,
+      String avatarKind,
+      String avatarId,
       /**
        * True when the wizard just created this invite's Beratungsstelle (#998): the provisioned
        * consultant then also becomes its Beratungsstellen-Admin. Never set on the plain accept
@@ -239,6 +251,8 @@ public class CounsellorInviteProvisioningService {
           password,
           formalLanguage,
           acceptedByUserId,
+          null,
+          null,
           null,
           null,
           null,
@@ -271,7 +285,68 @@ public class CounsellorInviteProvisioningService {
           displayName,
           internalDisplayName,
           topicIds,
+          null,
+          null,
           false);
+    }
+
+    /** Wizard shape with avatar, no admin grant (#1046). */
+    public ProvisionCounsellorCommand(
+        String username,
+        String password,
+        Boolean formalLanguage,
+        String acceptedByUserId,
+        String salutation,
+        String position,
+        String title,
+        String displayName,
+        String internalDisplayName,
+        List<Long> topicIds,
+        String avatarKind,
+        String avatarId) {
+      this(
+          username,
+          password,
+          formalLanguage,
+          acceptedByUserId,
+          salutation,
+          position,
+          title,
+          displayName,
+          internalDisplayName,
+          topicIds,
+          avatarKind,
+          avatarId,
+          false);
+    }
+
+    /** New-Beratungsstelle grant without an avatar choice. */
+    public ProvisionCounsellorCommand(
+        String username,
+        String password,
+        Boolean formalLanguage,
+        String acceptedByUserId,
+        String salutation,
+        String position,
+        String title,
+        String displayName,
+        String internalDisplayName,
+        List<Long> topicIds,
+        Boolean grantAgencyAdmin) {
+      this(
+          username,
+          password,
+          formalLanguage,
+          acceptedByUserId,
+          salutation,
+          position,
+          title,
+          displayName,
+          internalDisplayName,
+          topicIds,
+          null,
+          null,
+          grantAgencyAdmin);
     }
   }
 }

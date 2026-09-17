@@ -187,7 +187,7 @@ class UserControllerIT {
           .offline(false)
           .consultingType(CONSULTING_TYPE_ID_SUCHT);
   private final SessionConsultantForUserDTO SESSION_CONSULTANT_DTO =
-      new SessionConsultantForUserDTO(null, NAME, IS_ABSENT, ABSENCE_MESSAGE, null);
+      new SessionConsultantForUserDTO(null, NAME, IS_ABSENT, ABSENCE_MESSAGE, null, null, null);
   private final UserSessionResponseDTO USER_SESSION_RESPONSE_DTO =
       new UserSessionResponseDTO()
           .session(SESSION_DTO)

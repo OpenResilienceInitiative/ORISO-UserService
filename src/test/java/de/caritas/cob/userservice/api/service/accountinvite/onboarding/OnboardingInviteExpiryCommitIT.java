@@ -167,6 +167,8 @@ class OnboardingInviteExpiryCommitIT {
         null,
         "Lisa",
         "Lisa S. (Nord)",
-        List.of(2L));
+        List.of(2L),
+        null,
+        null);
   }
 }

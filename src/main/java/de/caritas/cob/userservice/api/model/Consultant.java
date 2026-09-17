@@ -191,6 +191,18 @@ public class Consultant implements TenantAware, NotificationsAware {
   @JdbcTypeCode(SqlTypes.LONGVARCHAR)
   private String adminRemarks;
 
+  /**
+   * Counsellor avatar choice (#1046). Both columns are nullable: existing rows carry no choice and
+   * keep rendering the initials fallback, so no migration of existing data is required. Always
+   * written through {@link ConsultantAvatars#apply} so a half choice cannot be persisted.
+   */
+  @Column(name = "avatar_id", length = 64)
+  private String avatarId;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "avatar_kind", length = 16)
+  private ConsultantAvatarKind avatarKind;
+
   @Column(name = "public_slug", length = 128)
   private String publicSlug;
 

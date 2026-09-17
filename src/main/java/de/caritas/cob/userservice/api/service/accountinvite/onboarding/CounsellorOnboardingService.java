@@ -419,6 +419,8 @@ public class CounsellorOnboardingService {
         trimToNull(command.displayName()),
         trimToNull(command.internalDisplayName()),
         command.topicIds(),
+        trimToNull(command.avatarKind()),
+        trimToNull(command.avatarId()),
         grantAgencyAdmin);
   }
 
@@ -628,6 +630,8 @@ public class CounsellorOnboardingService {
       String displayName,
       String internalDisplayName,
       List<Long> topicIds,
+      String avatarKind,
+      String avatarId,
       /**
        * Name of the Beratungsstelle to create for an invite on a reserved agency ID (wizard section
        * "Ihre Beratungsstelle"). Null for invites into an existing agency; agency creation on
@@ -635,7 +639,7 @@ public class CounsellorOnboardingService {
        */
       String agencyName) {
 
-    /** Shape without the new-agency name (existing agency). */
+    /** Shape without avatar or new-agency name (existing agency). */
     public RegisterCounsellorCommand(
         String username,
         String password,
@@ -654,7 +658,60 @@ public class CounsellorOnboardingService {
           displayName,
           internalDisplayName,
           topicIds,
+          null,
+          null,
           null);
+    }
+
+    /** Shape with avatar, no new-agency name (#1046). */
+    public RegisterCounsellorCommand(
+        String username,
+        String password,
+        String salutation,
+        String position,
+        String title,
+        String displayName,
+        String internalDisplayName,
+        List<Long> topicIds,
+        String avatarKind,
+        String avatarId) {
+      this(
+          username,
+          password,
+          salutation,
+          position,
+          title,
+          displayName,
+          internalDisplayName,
+          topicIds,
+          avatarKind,
+          avatarId,
+          null);
+    }
+
+    /** Shape with new-agency name, no avatar (#998). */
+    public RegisterCounsellorCommand(
+        String username,
+        String password,
+        String salutation,
+        String position,
+        String title,
+        String displayName,
+        String internalDisplayName,
+        List<Long> topicIds,
+        String agencyName) {
+      this(
+          username,
+          password,
+          salutation,
+          position,
+          title,
+          displayName,
+          internalDisplayName,
+          topicIds,
+          null,
+          null,
+          agencyName);
     }
   }
 

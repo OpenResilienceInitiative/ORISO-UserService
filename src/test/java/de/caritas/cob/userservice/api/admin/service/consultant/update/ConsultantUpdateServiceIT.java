@@ -30,6 +30,16 @@ public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
   }
 
   @Test
+  public void updateConsultant_Should_persistAvatar_With_nullUntouchedAndBlankIdClearing() {
+    super.updateConsultant_Should_persistAvatar_With_nullUntouchedAndBlankIdClearing();
+  }
+
+  @Test
+  public void updateConsultant_Should_dropMotifId_When_kindIsNotIcon() {
+    super.updateConsultant_Should_dropMotifId_When_kindIsNotIcon();
+  }
+
+  @Test
   public void updateConsultant_Should_throwCustomResponseException_When_absenceIsInvalid() {
     super.updateConsultant_Should_throwCustomResponseException_When_absenceIsInvalid();
   }

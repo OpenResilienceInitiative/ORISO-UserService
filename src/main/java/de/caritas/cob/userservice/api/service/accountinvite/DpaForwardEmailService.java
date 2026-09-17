@@ -25,7 +25,7 @@ public class DpaForwardEmailService {
   public DpaForwardEmailService(
       @NonNull TenantService tenantService,
       @NonNull DpaSigningEmailDispatchService dpaSigningEmailDispatchService,
-      @Value("${dpa.sign.frontend.base-url:https://app.oriso.org}") String appBaseUrl) {
+      @Value("${dpa.sign.frontend.base-url:${app.base.url}}") String appBaseUrl) {
     this.tenantService = tenantService;
     this.dpaSigningEmailDispatchService = dpaSigningEmailDispatchService;
     this.permittedAppOrigin = parseUri(appBaseUrl, "appBaseUrl");
