@@ -346,7 +346,9 @@ public class CounsellorOnboardingService {
         trimToNull(command.title()),
         trimToNull(command.displayName()),
         trimToNull(command.internalDisplayName()),
-        command.topicIds());
+        command.topicIds(),
+        trimToNull(command.avatarKind()),
+        trimToNull(command.avatarId()));
   }
 
   /**
@@ -526,7 +528,9 @@ public class CounsellorOnboardingService {
       String title,
       String displayName,
       String internalDisplayName,
-      List<Long> topicIds) {}
+      List<Long> topicIds,
+      String avatarKind,
+      String avatarId) {}
 
   /**
    * The created consultant plus the TOTP setup material for the 2FA step. {@code twoFactorRequired}

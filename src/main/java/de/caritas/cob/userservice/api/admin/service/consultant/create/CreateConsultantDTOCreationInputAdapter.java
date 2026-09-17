@@ -112,6 +112,17 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
     return this.createConsultantDTO.getAdminRemarks();
   }
 
+  @Override
+  public String getAvatarKind() {
+    var avatarKind = this.createConsultantDTO.getAvatarKind();
+    return avatarKind == null ? null : avatarKind.getValue();
+  }
+
+  @Override
+  public String getAvatarId() {
+    return this.createConsultantDTO.getAvatarId();
+  }
+
   /**
    * Provides the password.
    *
