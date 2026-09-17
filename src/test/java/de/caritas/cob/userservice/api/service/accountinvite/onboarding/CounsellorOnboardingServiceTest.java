@@ -688,6 +688,34 @@ class CounsellorOnboardingServiceTest {
   }
 
   @Test
+  void consultantIdForOnboardingPicture_resumableInvite_returnsTheProvisionedConsultant() {
+    AccountInvite resumable = invite();
+    resumable.setStatus(AccountInviteStatus.ACCEPTED);
+    resumable.setAcceptedByUserId(CONSULTANT_ID);
+    resumable.setProvisionedUserId(CONSULTANT_ID);
+    inviteResolves(resumable);
+
+    assertEquals(CONSULTANT_ID, service.consultantIdForOnboardingPicture(RAW_TOKEN));
+  }
+
+  @Test
+  void requireOnboardingPictureInvite_expiredResumeWindow_answersConsumed() {
+    AccountInvite expired = invite();
+    expired.setStatus(AccountInviteStatus.ACCEPTED);
+    expired.setAcceptedByUserId(CONSULTANT_ID);
+    expired.setProvisionedUserId(CONSULTANT_ID);
+    expired.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+    inviteResolves(expired);
+
+    var exception =
+        assertThrows(
+            AccountInviteLinkException.class,
+            () -> service.requireOnboardingPictureInvite(RAW_TOKEN));
+
+    assertEquals(AccountInviteLinkException.Reason.CONSUMED, exception.getReason());
+  }
+
+  @Test
   void activateTwoFactor_blankOtp_answers400() {
     assertThrows(BadRequestException.class, () -> service.activateTwoFactor(RAW_TOKEN, "  "));
   }

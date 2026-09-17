@@ -229,6 +229,30 @@ public class CounsellorOnboardingService {
   }
 
   /**
+   * Issue #1049: the consultant this invite created, while the link is still resumable at the
+   * two-factor step. At that point the raw invite token is the only credential the wizard holds, so
+   * the picture write is guarded by exactly the gate that guards the two-factor activation:
+   * registration must have happened, the link must not be dead, expired or terminally consumed.
+   */
+  public String consultantIdForOnboardingPicture(String rawToken) {
+    return requireOnboardingPictureInvite(rawToken).getProvisionedUserId();
+  }
+
+  /**
+   * Same gate as {@link #consultantIdForOnboardingPicture}, but for a caller that already holds a
+   * write transaction. The invite row is locked here ({@code findByTokenHash}'s pessimistic lock)
+   * so an expiry or terminal consumption racing the ClamAV scan cannot persist after the credential
+   * has died.
+   */
+  public AccountInvite requireOnboardingPictureInvite(String rawToken) {
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    if (isBlank(invite.getProvisionedUserId())) {
+      throw new BadRequestException("Registration has not happened yet for this invite");
+    }
+    return invite;
+  }
+
+  /**
    * The database-only precondition check of {@link #activateTwoFactor}. Every rejection here is
    * thrown before anything is written, so an ordinary rollback loses nothing.
    */

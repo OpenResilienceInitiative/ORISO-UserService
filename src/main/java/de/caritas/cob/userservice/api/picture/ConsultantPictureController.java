@@ -36,6 +36,25 @@ public class ConsultantPictureController {
         .body(picture.getBytes());
   }
 
+  /** Issue #1049: read the publish decision without transferring the image bytes. */
+  @GetMapping("/visibility")
+  public ResponseEntity<ConsultantPictureVisibility> getVisibility(
+      @PathVariable String consultantId) {
+    return ResponseEntity.ok()
+        .cacheControl(CacheControl.noStore().cachePrivate())
+        .body(new ConsultantPictureVisibility(store.readInternalOnly(consultantId)));
+  }
+
+  /** Issue #1049: publish or withdraw an existing picture; withdrawal is immediate. */
+  @PutMapping(path = "/visibility", consumes = MediaType.APPLICATION_JSON_VALUE)
+  public ResponseEntity<Void> putVisibility(
+      @PathVariable String consultantId,
+      @org.springframework.web.bind.annotation.RequestBody @jakarta.validation.Valid
+          ConsultantPictureVisibility visibility) {
+    store.writeInternalOnly(consultantId, visibility.internalOnly());
+    return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+  }
+
   @DeleteMapping
   public ResponseEntity<Void> delete(@PathVariable String consultantId) {
     access.check(consultantId, true);
