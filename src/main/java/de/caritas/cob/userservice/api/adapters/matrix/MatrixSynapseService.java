@@ -445,7 +445,8 @@ public class MatrixSynapseService implements MatrixUserClient {
       throw new IllegalArgumentException("Matrix localpart must not be blank");
     }
     try {
-      String adminToken = getAdminToken();
+      // Anonymous availability requests must never invoke login or account bootstrap.
+      String adminToken = matrixConfig.getAvailabilityAdminAccessToken();
       if (adminToken == null
           || adminToken.isBlank()
           || matrixConfig.getServerName() == null

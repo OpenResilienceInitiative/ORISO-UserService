@@ -24,19 +24,20 @@ import org.springframework.web.client.*;
 class MatrixSynapseServiceStrictAvailabilityTest {
   @Mock private RestTemplate rest;
   private MatrixSynapseService service;
+  private MatrixConfig config;
 
   @BeforeEach
   void setup() {
-    var config = new MatrixConfig();
+    config = new MatrixConfig();
+    config.setAvailabilityAdminAccessToken("test-token");
     config.setApiUrl("https://matrix.example.com");
     config.setServerName("matrix.example.com");
-    service = spy(new MatrixSynapseService(config, rest, rest, null, null));
+    service = new MatrixSynapseService(config, rest, rest, null, null);
   }
 
   @ParameterizedTest
   @ValueSource(ints = {200, 204, 299})
   void confirmedSuccessMeansOccupied(int status) {
-    doReturn("test-token").when(service).getAdminToken();
     when(rest.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
         .thenReturn(ResponseEntity.status(status).build());
     assertThat(service.userExistsStrict("Otter")).isTrue();
@@ -48,7 +49,6 @@ class MatrixSynapseServiceStrictAvailabilityTest {
 
   @Test
   void confirmed404MeansAbsent() {
-    doReturn("test-token").when(service).getAdminToken();
     when(rest.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
         .thenThrow(
             HttpClientErrorException.create(
@@ -63,7 +63,6 @@ class MatrixSynapseServiceStrictAvailabilityTest {
 
   @Test
   void raw404ResponseMeansAbsent() {
-    doReturn("test-token").when(service).getAdminToken();
     when(rest.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
         .thenReturn(ResponseEntity.notFound().build());
     assertThat(service.userExistsStrict("otter")).isFalse();
@@ -72,7 +71,6 @@ class MatrixSynapseServiceStrictAvailabilityTest {
   @ParameterizedTest
   @ValueSource(ints = {301, 400, 401, 403, 429, 500, 503})
   void unexpectedStatusIsUnavailableButLegacyStillReturnsFalse(int status) {
-    doReturn("test-token").when(service).getAdminToken();
     when(rest.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
         .thenReturn(ResponseEntity.status(status).build());
     assertThatThrownBy(() -> service.userExistsStrict("otter"))
@@ -83,7 +81,6 @@ class MatrixSynapseServiceStrictAvailabilityTest {
   @ParameterizedTest
   @ValueSource(ints = {401, 403, 429, 500, 503})
   void httpExceptionIsUnavailable(int status) {
-    doReturn("test-token").when(service).getAdminToken();
     when(rest.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
         .thenThrow(new HttpClientErrorException(HttpStatusCode.valueOf(status)));
     assertThatThrownBy(() -> service.userExistsStrict("otter"))
@@ -91,16 +88,7 @@ class MatrixSynapseServiceStrictAvailabilityTest {
   }
 
   @Test
-  void tokenProvider404DoesNotMeanUsernameAbsent() {
-    doThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND)).when(service).getAdminToken();
-    assertThatThrownBy(() -> service.userExistsStrict("otter"))
-        .isInstanceOf(ServiceUnavailableException.class);
-    verifyNoInteractions(rest);
-  }
-
-  @Test
   void networkFailureIsUnavailableButLegacyStillReturnsFalse() {
-    doReturn("test-token").when(service).getAdminToken();
     when(rest.exchange(any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(String.class)))
         .thenThrow(new ResourceAccessException("network failed"));
     assertThatThrownBy(() -> service.userExistsStrict("otter"))
@@ -110,18 +98,10 @@ class MatrixSynapseServiceStrictAvailabilityTest {
 
   @Test
   void missingTokenIsUnavailableButLegacyStillReturnsFalse() {
-    doReturn(null).when(service).getAdminToken();
+    config.setAvailabilityAdminAccessToken(null);
     assertThatThrownBy(() -> service.userExistsStrict("otter"))
         .isInstanceOf(ServiceUnavailableException.class);
     assertThat(service.userExists("otter")).isFalse();
-    verifyNoInteractions(rest);
-  }
-
-  @Test
-  void tokenProviderFailureIsUnavailable() {
-    doThrow(new IllegalStateException("dependency failed")).when(service).getAdminToken();
-    assertThatThrownBy(() -> service.userExistsStrict("otter"))
-        .isInstanceOf(ServiceUnavailableException.class);
     verifyNoInteractions(rest);
   }
 }
