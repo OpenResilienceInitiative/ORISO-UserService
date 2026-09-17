@@ -5,6 +5,7 @@ import static org.apache.commons.lang3.StringUtils.isBlank;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.service.notification.DpaSigningEmailDispatchService;
+import de.caritas.cob.userservice.api.service.notification.DpaSigningEmailPreview;
 import java.net.URI;
 import java.time.LocalDateTime;
 import java.util.Objects;
@@ -14,6 +15,10 @@ import org.springframework.stereotype.Service;
 
 @Service
 public class DpaForwardEmailService {
+
+  static final String PREVIEW_RECIPIENT = "preview@example.org";
+  static final String SAMPLE_SIGN_TOKEN = "SAMPLE-PREVIEW-TOKEN";
+  private static final int PREVIEW_EXPIRY_DAYS = 14;
 
   /** See {@link #resolveTenantName(Long)} for why this fallback is German-only. */
   private static final String GENERIC_ORGANISATION_NAME = "Ihrer Organisation";
@@ -44,6 +49,21 @@ public class DpaForwardEmailService {
     var tenantName = resolveTenantName(command.tenantId());
     dpaSigningEmailDispatchService.send(
         command.recipientEmail().trim(), tenantName, signLink, command.expiresAt());
+  }
+
+  /**
+   * Renders the canonical CTS signing mail with non-deliverable sample data. No DPA sign link is
+   * minted and no mail is sent by this path.
+   */
+  public DpaSigningEmailPreview previewSigningMail(Long tenantId) {
+    if (tenantId == null) {
+      throw new BadRequestException("tenantId is required");
+    }
+    return dpaSigningEmailDispatchService.preview(
+        PREVIEW_RECIPIENT,
+        resolveTenantName(tenantId),
+        toAbsoluteSignLink("/dpa-sign/" + SAMPLE_SIGN_TOKEN),
+        LocalDateTime.now().plusDays(PREVIEW_EXPIRY_DAYS));
   }
 
   /**

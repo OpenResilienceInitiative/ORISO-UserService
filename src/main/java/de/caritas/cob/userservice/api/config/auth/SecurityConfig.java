@@ -203,7 +203,9 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.GET,
                     "/users/account-invites/{token}/onboarding",
-                    "/service/users/account-invites/{token}/onboarding")
+                    "/service/users/account-invites/{token}/onboarding",
+                    "/users/account-invites/{token}/onboarding/dpa-mail-preview",
+                    "/service/users/account-invites/{token}/onboarding/dpa-mail-preview")
                 .permitAll()
                 .requestMatchers(
                     HttpMethod.POST,

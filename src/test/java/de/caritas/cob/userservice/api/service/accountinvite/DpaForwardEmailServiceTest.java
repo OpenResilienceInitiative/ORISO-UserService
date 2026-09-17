@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -11,6 +12,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.service.notification.DpaSigningEmailDispatchService;
+import de.caritas.cob.userservice.api.service.notification.DpaSigningEmailPreview;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.BeforeEach;
@@ -135,6 +137,33 @@ class DpaForwardEmailServiceTest {
 
     verifyNoInteractions(tenantService);
     verify(dpaSigningEmailDispatchService, org.mockito.Mockito.never())
+        .send(anyString(), anyString(), anyString(), any(LocalDateTime.class));
+  }
+
+  @Test
+  void previewSigningMail_usesFixedSampleValuesAndCanonicalRendererWithoutSending() {
+    when(tenantService.getRestrictedTenantData(84L))
+        .thenReturn(new RestrictedTenantDTO().id(84L).name("E2E Full Gate 202607191747"));
+    DpaSigningEmailPreview expected =
+        new DpaSigningEmailPreview("Vertragsunterlagen", "<p>canonical preview</p>");
+    when(dpaSigningEmailDispatchService.preview(
+            org.mockito.ArgumentMatchers.eq("preview@example.org"),
+            org.mockito.ArgumentMatchers.eq("E2E Full Gate 202607191747"),
+            org.mockito.ArgumentMatchers.eq(
+                "https://app.oriso-dev.site/dpa-sign/SAMPLE-PREVIEW-TOKEN"),
+            any(LocalDateTime.class)))
+        .thenReturn(expected);
+
+    assertThat(service.previewSigningMail(84L)).isEqualTo(expected);
+
+    verify(dpaSigningEmailDispatchService)
+        .preview(
+            org.mockito.ArgumentMatchers.eq("preview@example.org"),
+            org.mockito.ArgumentMatchers.eq("E2E Full Gate 202607191747"),
+            org.mockito.ArgumentMatchers.eq(
+                "https://app.oriso-dev.site/dpa-sign/SAMPLE-PREVIEW-TOKEN"),
+            any(LocalDateTime.class));
+    verify(dpaSigningEmailDispatchService, never())
         .send(anyString(), anyString(), anyString(), any(LocalDateTime.class));
   }
 

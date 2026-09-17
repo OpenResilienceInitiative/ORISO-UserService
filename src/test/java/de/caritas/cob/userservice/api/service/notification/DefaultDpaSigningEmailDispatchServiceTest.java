@@ -111,4 +111,56 @@ class DefaultDpaSigningEmailDispatchServiceTest {
 
     server.verify();
   }
+
+  @Test
+  void preview_usesNoSendEndpointAndReturnsCanonicalMail() {
+    HttpHeaders headers = new HttpHeaders();
+    headers.setBearerAuth("tenant-admin-token");
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders()).thenReturn(headers);
+    server
+        .expect(
+            requestTo(
+                "http://consulting-type.example/service/settingsadmin/dpa-signing-emails/preview"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(header("Authorization", "Bearer tenant-admin-token"))
+        .andExpect(jsonPath("$.tenantName").value("Example organisation"))
+        .andRespond(
+            org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                "{\"subject\":\"Contract documents\",\"html\":\"<p>Canonical mail</p>\"}",
+                org.springframework.http.MediaType.APPLICATION_JSON));
+
+    var preview =
+        service.preview(
+            "preview@example.org",
+            "Example organisation",
+            "https://app.oriso.org/dpa-sign/SAMPLE-PREVIEW-TOKEN",
+            LocalDateTime.parse("2026-09-30T12:00:00"));
+
+    org.assertj.core.api.Assertions.assertThat(preview.subject()).isEqualTo("Contract documents");
+    org.assertj.core.api.Assertions.assertThat(preview.html()).isEqualTo("<p>Canonical mail</p>");
+    server.verify();
+  }
+
+  @Test
+  void preview_rejectsEmptyResponseInsteadOfInventingMail() {
+    when(securityHeaderSupplier.getOptionalKeycloakAndCsrfHttpHeaders())
+        .thenReturn(
+            org.springframework.http.HttpHeaders.readOnlyHttpHeaders(
+                org.springframework.util.MultiValueMap.fromSingleValue(
+                    java.util.Map.of(HttpHeaders.AUTHORIZATION, "Bearer tenant-admin-token"))));
+    server
+        .expect(
+            requestTo(
+                "http://consulting-type.example/service/settingsadmin/dpa-signing-emails/preview"))
+        .andRespond(withNoContent());
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                service.preview(
+                    "preview@example.org",
+                    "Example organisation",
+                    "https://app.oriso.org/dpa-sign/SAMPLE-PREVIEW-TOKEN",
+                    LocalDateTime.parse("2026-09-30T12:00:00")))
+        .isInstanceOf(IllegalStateException.class);
+    server.verify();
+  }
 }
