@@ -27,6 +27,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.test.context.ActiveProfiles;
+import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
@@ -39,6 +40,9 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+// The forward endpoint only accepts sign links on the configured App origin. Pin it explicitly:
+// the fallback is this environment's own app.base.url, never a production host (#1170).
+@TestPropertySource(properties = "dpa.sign.frontend.base-url=https://app.example.org")
 class TenantAdminDpaForwardWizardIT {
 
   private static final Long RESERVED_TENANT_ID = 83L;
@@ -69,7 +73,7 @@ class TenantAdminDpaForwardWizardIT {
           .thenReturn(
               new DpaSignInviteDTO()
                   .token("RAWSIGNTOKEN")
-                  .signLink("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN")
+                  .signLink("https://app.example.org/dpa-sign/RAWSIGNTOKEN")
                   .expiresAt("2026-08-29T14:31:07"));
 
       // no Authorization header at all: the invite token in the path is the only credential
@@ -79,7 +83,7 @@ class TenantAdminDpaForwardWizardIT {
                   .header("X-CSRF-Token", CSRF)
                   .cookie(CSRF_COOKIE))
           .andExpect(status().isOk())
-          .andExpect(jsonPath("$.signUrl").value("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN"))
+          .andExpect(jsonPath("$.signUrl").value("https://app.example.org/dpa-sign/RAWSIGNTOKEN"))
           .andExpect(jsonPath("$.expiresAt").value("2026-08-29T14:31:07"))
           .andExpect(jsonPath("$.mailSent").value(false));
     }
