@@ -2102,6 +2102,18 @@ components:
         lastName:
           type: string
           example: Mustermann
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            The counsellor's chosen avatar (#1046/#1047), so the advice seeker sees the same
+            avatar in the chat that the counsellor picked. Absent when no choice was made and the
+            initials fallback is rendered.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: Id of the chosen counsellor motif; only set together with avatarKind = ICON.
 
     Date:
       type: object
@@ -2695,6 +2707,18 @@ components:
         absenceMessage:
           type: string
           example: Bin nicht da
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            The counsellor's chosen avatar (#1046/#1047), so the advice seeker sees the same
+            avatar in the chat that the counsellor picked. Absent when no choice was made and the
+            initials fallback is rendered.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: Id of the chosen counsellor motif; only set together with avatarKind = ICON.
 
     EnquiryMessageDTO:
       type: object

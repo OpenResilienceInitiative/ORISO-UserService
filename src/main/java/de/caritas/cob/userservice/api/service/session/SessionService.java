@@ -526,7 +526,10 @@ public class SessionService {
         consultant.getUsername(),
         consultant.isAbsent(),
         consultant.getAbsenceMessage(),
-        null);
+        null,
+        // #1047: the advice seeker must see the avatar the counsellor chose (#1046).
+        consultant.getAvatarKind() != null ? consultant.getAvatarKind().name() : null,
+        consultant.getAvatarId());
   }
 
   /**
