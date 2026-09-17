@@ -41,6 +41,8 @@ class CounsellorInviteProvisioningServiceTest {
   private final CreateConsultantSaga createConsultantSaga = mock(CreateConsultantSaga.class);
   private final IdentityAuthentication identityAuthentication = mock(IdentityAuthentication.class);
   private final IdentityClientConfig identityClientConfig = mock(IdentityClientConfig.class);
+  private final CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService =
+      mock(CounsellorAgencyAdminGrantService.class);
 
   private CounsellorInviteProvisioningService service;
 
@@ -54,7 +56,8 @@ class CounsellorInviteProvisioningServiceTest {
             consultantRepository,
             createConsultantSaga,
             identityAuthentication,
-            identityClientConfig);
+            identityClientConfig,
+            counsellorAgencyAdminGrantService);
     var technicalUser = new TechnicalUserConfig();
     technicalUser.setUsername("technical-user");
     technicalUser.setPassword("technical-password");
@@ -141,6 +144,83 @@ class CounsellorInviteProvisioningServiceTest {
     } finally {
       TenantContext.clear();
     }
+  }
+
+  @Test
+  void newAgencyRegistrationMakesTheInviteeTheAgencyAdmin() {
+    // ORISO-Admin#998: the invitee just created this Beratungsstelle, so they administrate it.
+    AccountInvite invite = activeCounsellorInvite();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(
+            new ConsultantAdminResponseDTO()
+                .embedded(new ConsultantDTO().id("created-consultant")));
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant")).thenReturn(invite);
+
+    service.acceptInvite(
+        "raw-token",
+        new ProvisionCounsellorCommand(
+            "invited-counsellor",
+            "test-password",
+            true,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            java.util.List.of(2L),
+            true));
+
+    verify(counsellorAgencyAdminGrantService).grantAgencyAdmin("created-consultant", 275L, invite);
+  }
+
+  @Test
+  void existingAgencyRegistrationGrantsNoAgencyAdminRights() {
+    AccountInvite invite = activeCounsellorInvite();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(
+            new ConsultantAdminResponseDTO()
+                .embedded(new ConsultantDTO().id("created-consultant")));
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant")).thenReturn(invite);
+
+    service.acceptInvite(
+        "raw-token",
+        new ProvisionCounsellorCommand("invited-counsellor", "test-password", true, null));
+
+    verifyNoInteractions(counsellorAgencyAdminGrantService);
+  }
+
+  @Test
+  void newAgencyInviteWithoutDepartmentIsAcceptedWhenTopicsWereChosen() {
+    // A reserved-agency invite carries no department yet — the wizard's topic selection is the
+    // department. Requiring departmentId would make every new-Beratungsstelle invite a 400.
+    AccountInvite invite = activeCounsellorInvite();
+    invite.setDepartmentId(null);
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(
+            new ConsultantAdminResponseDTO()
+                .embedded(new ConsultantDTO().id("created-consultant")));
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant")).thenReturn(invite);
+
+    service.acceptInvite(
+        "raw-token",
+        new ProvisionCounsellorCommand(
+            "invited-counsellor",
+            "test-password",
+            true,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            java.util.List.of(7L),
+            true));
+
+    verify(counsellorAgencyAdminGrantService).grantAgencyAdmin("created-consultant", 275L, invite);
   }
 
   private static AccountInvite activeCounsellorInvite() {
