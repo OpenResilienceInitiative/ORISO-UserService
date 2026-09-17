@@ -97,7 +97,9 @@ public class CounsellorOnboardingService {
       repairMissingTotpSecret(invite);
       return new CounsellorOnboardingState(invite, true, List.of());
     }
-    return new CounsellorOnboardingState(invite, false, resolveTopicCoverage(invite).topics());
+    CoverageResolution coverage = resolveTopicCoverage(invite);
+    return new CounsellorOnboardingState(
+        invite, false, coverage.topics(), coverage.availableTopics(), coverage.agencyExists());
   }
 
   /** The database-only part of {@link #resolveOnboardingInvite}: locked load and classification. */
@@ -274,12 +276,17 @@ public class CounsellorOnboardingService {
     TenantData requestTenant = snapshotTenantContext();
     TenantContext.setCurrentTenant(invite.getTenantId());
     boolean agencyLookupFailed = false;
+    // A reserved (not yet created) Beratungsstellen-ID answers "no agency" — the invitee then
+    // names the agency in the wizard. An unreachable AgencyService is NOT "no agency".
+    boolean agencyExists = true;
     try {
       Set<Long> topicIds = new LinkedHashSet<>();
       if (invite.getAgencyId() != null) {
         try {
           var agency = agencyService.getAgencyWithoutCaching(invite.getAgencyId());
-          if (agency != null && agency.getTopicIds() != null) {
+          if (agency == null) {
+            agencyExists = false;
+          } else if (agency.getTopicIds() != null) {
             topicIds.addAll(agency.getTopicIds());
           }
         } catch (RuntimeException exception) {
@@ -303,7 +310,15 @@ public class CounsellorOnboardingService {
                     return new TopicOption(id, topic == null ? null : topic.getName());
                   })
               .toList();
-      return new CoverageResolution(topics, agencyLookupFailed);
+      // Every active tenant topic is selectable on top of the coverage (owner decision
+      // 2026-09-17): the invitee removes preselected topics or adds further ones.
+      List<TopicOption> availableTopics =
+          namesById.values().stream()
+              .filter(topic -> topic.getId() != null)
+              .map(topic -> new TopicOption(topic.getId(), topic.getName()))
+              .toList();
+      return new CoverageResolution(
+          topics, availableTopics, agencyLookupFailed, namesById.isEmpty(), agencyExists);
     } finally {
       restoreTenantContext(requestTenant);
     }
@@ -476,12 +491,13 @@ public class CounsellorOnboardingService {
   private static void validateTopicSelection(List<Long> chosen, CoverageResolution coverage) {
     Set<Long> allowed =
         new LinkedHashSet<>(coverage.topics().stream().map(TopicOption::id).toList());
+    coverage.availableTopics().forEach(topic -> allowed.add(topic.id()));
     for (Long topicId : chosen) {
       if (topicId == null) {
         throw new BadRequestException("Topic null is outside the coverage of this invite");
       }
       if (!allowed.contains(topicId)) {
-        if (coverage.agencyLookupFailed()) {
+        if (coverage.agencyLookupFailed() || coverage.topicLookupFailed()) {
           throw new InternalServerErrorException(
               "Topic "
                   + topicId
@@ -495,8 +511,16 @@ public class CounsellorOnboardingService {
     }
   }
 
-  /** Resolved coverage plus whether the agency topic lookup failed (degraded set). */
-  private record CoverageResolution(List<TopicOption> topics, boolean agencyLookupFailed) {}
+  /**
+   * Resolved coverage, the tenant's active topics, whether either lookup failed (degraded set — a
+   * selection outside it is indeterminate, not invalid), and whether the invite's agency exists.
+   */
+  private record CoverageResolution(
+      List<TopicOption> topics,
+      List<TopicOption> availableTopics,
+      boolean agencyLookupFailed,
+      boolean topicLookupFailed,
+      boolean agencyExists) {}
 
   private static boolean isBlank(String value) {
     return value == null || value.trim().isEmpty();
@@ -515,7 +539,20 @@ public class CounsellorOnboardingService {
    * step shows no topics).
    */
   public record CounsellorOnboardingState(
-      AccountInvite invite, boolean pendingTwoFactorResume, List<TopicOption> topics) {}
+      AccountInvite invite,
+      boolean pendingTwoFactorResume,
+      List<TopicOption> topics,
+      /** The tenant's active topics the invitee may add on top of the coverage. */
+      List<TopicOption> availableTopics,
+      /** False when the invite's agency ID is still a reservation (new Beratungsstelle). */
+      boolean agencyExists) {
+
+    /** Resume/legacy shape: no selectable extras, agency assumed to exist. */
+    public CounsellorOnboardingState(
+        AccountInvite invite, boolean pendingTwoFactorResume, List<TopicOption> topics) {
+      this(invite, pendingTwoFactorResume, topics, List.of(), true);
+    }
+  }
 
   /** Input of the wizard registration; mirrors the Admin panel request shape. */
   public record RegisterCounsellorCommand(
@@ -526,7 +563,36 @@ public class CounsellorOnboardingService {
       String title,
       String displayName,
       String internalDisplayName,
-      List<Long> topicIds) {}
+      List<Long> topicIds,
+      /**
+       * Name of the Beratungsstelle to create for an invite on a reserved agency ID (wizard section
+       * "Ihre Beratungsstelle"). Null for invites into an existing agency; agency creation on
+       * accept is the AgencyService/provisioning follow-up.
+       */
+      String agencyName) {
+
+    /** Shape without the new-agency name (existing agency). */
+    public RegisterCounsellorCommand(
+        String username,
+        String password,
+        String salutation,
+        String position,
+        String title,
+        String displayName,
+        String internalDisplayName,
+        List<Long> topicIds) {
+      this(
+          username,
+          password,
+          salutation,
+          position,
+          title,
+          displayName,
+          internalDisplayName,
+          topicIds,
+          null);
+    }
+  }
 
   /**
    * The created consultant plus the TOTP setup material for the 2FA step. {@code twoFactorRequired}

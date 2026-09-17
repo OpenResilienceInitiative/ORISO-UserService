@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
@@ -316,6 +317,79 @@ class CounsellorOnboardingServiceTest {
 
     assertThrows(BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, outside));
     verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any());
+  }
+
+  @Test
+  void resolveOnboardingInvite_exposesActiveTenantTopicsAndAgencyExistence() {
+    inviteResolves(invite());
+    agencyCoverageResolves();
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertTrue(state.agencyExists());
+    assertEquals(2, state.availableTopics().size());
+    assertTrue(state.availableTopics().stream().anyMatch(t -> t.id().equals(DEPARTMENT_TOPIC_ID)));
+    assertTrue(
+        state.availableTopics().stream().anyMatch(t -> t.id().equals(EXTRA_AGENCY_TOPIC_ID)));
+  }
+
+  @Test
+  void resolveOnboardingInvite_reservedAgencyId_answersNoAgencyAndTenantTopicsOnly() {
+    AccountInvite reserved = invite();
+    reserved.setDepartmentId(null);
+    inviteResolves(reserved);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID)).thenReturn(null);
+    when(topicService.getAllActiveTopicsMap())
+        .thenReturn(
+            Map.of(EXTRA_AGENCY_TOPIC_ID, new TopicDTO().id(EXTRA_AGENCY_TOPIC_ID).name("Debt")));
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertFalse(state.agencyExists());
+    assertTrue(state.topics().isEmpty());
+    assertEquals(1, state.availableTopics().size());
+    assertEquals(EXTRA_AGENCY_TOPIC_ID, state.availableTopics().get(0).id());
+  }
+
+  @Test
+  void registerCounsellor_activeTenantTopicOutsideAgencyCoverage_isAccepted() {
+    inviteResolves(invite());
+    lenient()
+        .when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(DEPARTMENT_TOPIC_ID)));
+    lenient()
+        .when(topicService.getAllActiveTopicsMap())
+        .thenReturn(
+            Map.of(
+                DEPARTMENT_TOPIC_ID,
+                new TopicDTO().id(DEPARTMENT_TOPIC_ID).name("Family counselling"),
+                EXTRA_AGENCY_TOPIC_ID,
+                new TopicDTO().id(EXTRA_AGENCY_TOPIC_ID).name("Debt counselling")));
+    AccountInvite accepted = invite();
+    accepted.setStatus(AccountInviteStatus.ACCEPTED);
+    accepted.setProvisionedUserId("consultant-1");
+    accepted.setTwoFactorStatus(TwoFactorGateStatus.ACTIVE);
+    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any()))
+        .thenReturn(accepted);
+
+    RegisterCounsellorCommand added =
+        new RegisterCounsellorCommand(
+            "lena.b",
+            "s3cretPassword",
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of(DEPARTMENT_TOPIC_ID, EXTRA_AGENCY_TOPIC_ID));
+
+    service.registerCounsellor(RAW_TOKEN, added);
+
+    verify(counsellorInviteProvisioningService)
+        .acceptInvite(
+            eq(RAW_TOKEN),
+            argThat(
+                cmd -> cmd.topicIds().equals(List.of(DEPARTMENT_TOPIC_ID, EXTRA_AGENCY_TOPIC_ID))));
   }
 
   @Test
