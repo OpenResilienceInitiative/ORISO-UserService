@@ -95,6 +95,21 @@ class EventNotificationServiceTest {
     assertThat(parsed.get("caseHandoverRequestId").asLong()).isEqualTo(88L);
   }
 
+  @Test
+  void buildCaseHandoverParams_marksTheExistingConsentCardAsOptOutVariant() throws Exception {
+    JsonNode parsed =
+        objectMapper.readTree(
+            eventNotificationService.buildCaseHandoverParams(
+                sessionMock(),
+                "Dr. Muster",
+                "COUNSELLOR_ASKED_FOR_ADVICE",
+                "Rat benötigt",
+                88L,
+                "OPT_OUT"));
+
+    assertThat(parsed.get("clientConsent").asText()).isEqualTo("OPT_OUT");
+  }
+
   /**
    * The params object is the replacement for the stored English sentence, so it must stay a set of
    * known keys. Nothing here may become a channel for the free text task 1a removed.
@@ -285,6 +300,7 @@ class EventNotificationServiceTest {
             "senderDisplayName",
             "contentClass",
             "recipientRole",
+            "clientConsent",
             "threadRootId",
             "mentioned",
             "seriesId",
@@ -1853,5 +1869,91 @@ class EventNotificationServiceTest {
     eventNotificationService.createFirstResponseNotification(session);
 
     verify(eventNotificationRepository, never()).save(any());
+  }
+
+  // ---------------------------------------------------------------------------
+  // #1377 slice 7 — unread total with exclusions, bulk read by event type
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void countUnread_withoutExclusions_usesPlainCount() {
+    when(eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull("user-1"))
+        .thenReturn(9L);
+
+    assertThat(eventNotificationService.countUnread("user-1", java.util.Set.of())).isEqualTo(9L);
+    assertThat(eventNotificationService.countUnread("user-1", null)).isEqualTo(9L);
+    verify(eventNotificationRepository, never())
+        .countByRecipientUserIdAndReadDateIsNullAndEventTypeNotIn(any(), any());
+  }
+
+  @Test
+  void countUnread_withExclusions_trimsAndDedupesBeforeQuerying() {
+    when(eventNotificationRepository.countByRecipientUserIdAndReadDateIsNullAndEventTypeNotIn(
+            "user-1", new java.util.TreeSet<>(java.util.Set.of("call.missed", "supervisor.added"))))
+        .thenReturn(4L);
+
+    long count =
+        eventNotificationService.countUnread(
+            "user-1", java.util.Set.of(" call.missed ", "supervisor.added", "", "call.missed"));
+
+    assertThat(count).isEqualTo(4L);
+  }
+
+  @Test
+  void getFeed_withExclusions_echoesThemAndUsesTheExcludingCount() {
+    when(eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDescIdDesc(any(), any()))
+        .thenReturn(List.of());
+    when(eventNotificationRepository.countByRecipientUserIdAndReadDateIsNullAndEventTypeNotIn(
+            any(), any()))
+        .thenReturn(2L);
+
+    var result =
+        eventNotificationService.getFeed("user-1", 0, 50, java.util.Set.of("supervisor.added"));
+
+    assertThat(result.getUnreadCount()).isEqualTo(2L);
+    assertThat(result.getExcludedEventTypes()).containsExactly("supervisor.added");
+    verify(eventNotificationRepository, never()).countByRecipientUserIdAndReadDateIsNull(any());
+  }
+
+  @Test
+  void getFeed_withoutExclusions_echoesAnEmptyList() {
+    when(eventNotificationRepository.findByRecipientUserIdOrderByCreateDateDescIdDesc(any(), any()))
+        .thenReturn(List.of());
+    when(eventNotificationRepository.countByRecipientUserIdAndReadDateIsNull(any())).thenReturn(1L);
+
+    var result = eventNotificationService.getFeed("user-1", 0, 50);
+
+    assertThat(result.getUnreadCount()).isEqualTo(1L);
+    assertThat(result.getExcludedEventTypes()).isEmpty();
+  }
+
+  @Test
+  void markAsReadByEventTypes_runsOneBulkUpdateAndReportsItsCount() {
+    when(eventNotificationRepository.markReadByEventTypes(
+            org.mockito.ArgumentMatchers.eq("user-1"),
+            org.mockito.ArgumentMatchers.eq(
+                new java.util.TreeSet<>(java.util.Set.of("supervisor.added"))),
+            any(LocalDateTime.class)))
+        .thenReturn(2);
+
+    int updated =
+        eventNotificationService.markAsReadByEventTypes(
+            "user-1", java.util.Set.of(" supervisor.added ", "supervisor.added"));
+
+    assertThat(updated).isEqualTo(2);
+    verify(eventNotificationRepository, never()).saveAll(any());
+  }
+
+  @Test
+  void markAsReadByEventTypes_emptyTypes_touchesNothing() {
+    assertThat(eventNotificationService.markAsReadByEventTypes("user-1", java.util.Set.of()))
+        .isZero();
+    assertThat(eventNotificationService.markAsReadByEventTypes("user-1", null)).isZero();
+    // A non-empty set that normalises to nothing (blank/null entries) is a no-op too.
+    assertThat(
+            eventNotificationService.markAsReadByEventTypes(
+                "user-1", new java.util.HashSet<>(java.util.Arrays.asList(null, "  "))))
+        .isZero();
+    verify(eventNotificationRepository, never()).markReadByEventTypes(any(), any(), any());
   }
 }

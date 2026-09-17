@@ -444,4 +444,38 @@ class InviteMailDispatchServiceTest {
                 assertThat(e.getCategory())
                     .isEqualTo(SmtpSendException.Category.SMTP_TRANSPORT_FAILED));
   }
+
+  @Test
+  void send_Should_markUnexpectedRenderingFailureAsConfirmedNotSent() {
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(completeSettingsPayload());
+    when(emailBrandingResolver.resolve(any()))
+        .thenThrow(new IllegalStateException("branding unavailable"));
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOfSatisfying(
+            SmtpSendException.class,
+            exception -> {
+              assertThat(exception.getDeliveryDisposition())
+                  .isEqualTo(SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT);
+              assertThat(exception).hasCauseInstanceOf(IllegalStateException.class);
+            });
+    verifyNoInteractions(inviteMailTransport);
+  }
+
+  @Test
+  void send_Should_markUnexpectedTransportRuntimeFailureAsDeliveryUncertain() {
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(completeSettingsPayload());
+    givenNeutralBranding();
+    when(inviteMailTransport.send(any(), any(), any(), any(), any()))
+        .thenThrow(new IllegalStateException("connection disappeared"));
+
+    assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))
+        .isInstanceOfSatisfying(
+            SmtpSendException.class,
+            exception -> {
+              assertThat(exception.getDeliveryDisposition())
+                  .isEqualTo(SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN);
+              assertThat(exception).hasCauseInstanceOf(IllegalStateException.class);
+            });
+  }
 }

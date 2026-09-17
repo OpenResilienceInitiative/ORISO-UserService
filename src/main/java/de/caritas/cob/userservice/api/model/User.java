@@ -72,6 +72,20 @@ public class User implements TenantAware, NotificationsAware {
   @Column(name = "matrix_user_id")
   private String matrixUserId;
 
+  @Column(name = "chat_recovery_mode", updatable = false)
+  private String chatRecoveryMode;
+
+  @Column(name = "chat_recovery_policy_revision", updatable = false)
+  private Long chatRecoveryPolicyRevision;
+
+  public String getEffectiveChatRecoveryMode() {
+    return chatRecoveryMode == null ? "RECOVERY_KEY" : chatRecoveryMode;
+  }
+
+  public long getEffectiveChatRecoveryPolicyRevision() {
+    return chatRecoveryPolicyRevision == null ? 0L : chatRecoveryPolicyRevision;
+  }
+
   @Column(name = "language_formal", nullable = false, columnDefinition = "tinyint")
   @JdbcTypeCode(SqlTypes.TINYINT)
   private boolean languageFormal;

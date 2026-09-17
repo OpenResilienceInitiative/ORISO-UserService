@@ -1463,9 +1463,26 @@ components:
           example: 'false'
         tenantAdminControls:
           $ref: '#/components/schemas/TenantAdminControls'
+    ChatRecoveryMode:
+      type: string
+      enum: [RECOVERY_KEY, LOGIN_PASSWORD]
+    ChatRecoverySettings:
+      type: object
+      required: [asker, consultant, revision]
+      properties:
+        asker:
+          $ref: '#/components/schemas/ChatRecoveryMode'
+        consultant:
+          $ref: '#/components/schemas/ChatRecoveryMode'
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
     TenantAdminControls:
       type: object
       properties:
+        chatRecoverySettings:
+          $ref: '#/components/schemas/ChatRecoverySettings'
         permissionsPageEnabled:
           type: boolean
           example: 'true'

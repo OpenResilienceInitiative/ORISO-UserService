@@ -212,7 +212,12 @@ public class SessionSupervisorController {
   public ResponseEntity<List<SessionSupervisorResponseDTO>> getSupervisors(
       @PathVariable @NotNull Long sessionId) {
     log.info("Get supervisors request: sessionId={}", sessionId);
-    List<SessionSupervisor> supervisors = sessionSupervisorFacade.getSupervisors(sessionId);
+    Consultant currentConsultant = userAccountService.retrieveValidatedConsultant();
+    if (currentConsultant == null) {
+      return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+    }
+    List<SessionSupervisor> supervisors =
+        sessionSupervisorFacade.getSupervisors(sessionId, currentConsultant);
     List<SessionSupervisorResponseDTO> response =
         supervisors.stream().map(this::mapToDTO).collect(Collectors.toList());
     return ResponseEntity.ok(response);
@@ -242,6 +247,11 @@ public class SessionSupervisorController {
     dto.setSessionId(supervisor.getSession().getId());
     dto.setSupervisorConsultantId(supervisor.getSupervisorConsultant().getId());
     dto.setSupervisorUsername(supervisor.getSupervisorConsultant().getUsername());
+    String supervisorMatrixUserId = supervisor.getSupervisorConsultant().getMatrixUserId();
+    dto.setSupervisorMatrixUserId(
+        supervisorMatrixUserId == null || supervisorMatrixUserId.isBlank()
+            ? null
+            : supervisorMatrixUserId);
     dto.setAddedByConsultantId(supervisor.getAddedByConsultant().getId());
     dto.setAddedDate(supervisor.getAddedDate());
     dto.setMatrixRoomId(supervisor.getMatrixRoomId());
@@ -358,6 +368,7 @@ public class SessionSupervisorController {
     private Long sessionId;
     private String supervisorConsultantId;
     private String supervisorUsername;
+    private String supervisorMatrixUserId;
     private String addedByConsultantId;
     private java.time.LocalDateTime addedDate;
     private String matrixRoomId;
@@ -397,6 +408,14 @@ public class SessionSupervisorController {
 
     public void setSupervisorUsername(String supervisorUsername) {
       this.supervisorUsername = supervisorUsername;
+    }
+
+    public String getSupervisorMatrixUserId() {
+      return supervisorMatrixUserId;
+    }
+
+    public void setSupervisorMatrixUserId(String supervisorMatrixUserId) {
+      this.supervisorMatrixUserId = supervisorMatrixUserId;
     }
 
     public String getAddedByConsultantId() {

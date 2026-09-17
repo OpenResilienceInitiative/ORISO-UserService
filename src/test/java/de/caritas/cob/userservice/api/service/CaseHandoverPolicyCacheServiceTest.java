@@ -1,0 +1,351 @@
+package de.caritas.cob.userservice.api.service;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
+import de.caritas.cob.userservice.api.model.TenantCaseHandoverPolicyCache;
+import de.caritas.cob.userservice.api.port.out.TenantCaseHandoverPolicyCacheRepository;
+import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies;
+import de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantPermissionPolicies;
+import java.time.Clock;
+import java.time.Duration;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.Map;
+import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.TransactionStatus;
+import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.RestClientException;
+
+@ExtendWith(MockitoExtension.class)
+class CaseHandoverPolicyCacheServiceTest {
+
+  @Mock private TenantCaseHandoverPolicyCacheRepository repository;
+  @Mock private TenantCaseHandoverPolicyReadClient tenantControllerApi;
+  @Mock private ScheduledTaskClaimService scheduledTaskClaimService;
+  @Mock private PlatformTransactionManager transactionManager;
+  @Mock private TransactionStatus transactionStatus;
+  private final Clock clock = Clock.fixed(Instant.parse("2026-08-16T10:00:00Z"), ZoneOffset.UTC);
+  private CaseHandoverPolicyCacheService service;
+
+  @BeforeEach
+  void setUp() {
+    service =
+        new CaseHandoverPolicyCacheService(
+            repository, tenantControllerApi, scheduledTaskClaimService, clock, transactionManager);
+    lenient().when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
+    lenient().when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
+  }
+
+  @Test
+  void publicScheduledEntryPreservesSnapshotWhenAnotherReplicaOwnsLease() throws Exception {
+    assertThat(
+            CaseHandoverPolicyCacheService.class.getMethod("refreshKnownTenants").getReturnType())
+        .isEqualTo(void.class);
+    var cache =
+        TenantCaseHandoverPolicyCache.builder().tenantId(42L).policies("{\"reasons\":{}}").build();
+    when(repository.findAll()).thenReturn(java.util.List.of(cache));
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(scheduledTaskClaimService.tryClaim(
+            "case-handover-policy-refresh-42", java.time.Duration.ofMinutes(1)))
+        .thenReturn(false);
+    service.refreshKnownTenants();
+    verify(tenantControllerApi, never()).getTenantPermissionPolicies(any());
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void refresh_persistsOnlyTheRequestedTenantSnapshot() {
+    var policies = new CaseHandoverPolicies().reasons(Map.of());
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(
+            new TenantPermissionPolicies()
+                .tenantId(42L)
+                .policies(Map.of())
+                .caseHandoverPolicies(policies));
+
+    assertThat(service.refresh(42L)).isSameAs(policies);
+
+    ArgumentCaptor<TenantCaseHandoverPolicyCache> saved =
+        ArgumentCaptor.forClass(TenantCaseHandoverPolicyCache.class);
+    verify(repository).save(saved.capture());
+    assertThat(saved.getValue().getTenantId()).isEqualTo(42L);
+    assertThat(saved.getValue().getRefreshedAt()).isEqualTo(LocalDateTime.of(2026, 8, 16, 10, 0));
+    assertThat(saved.getValue().getStaleSince()).isNull();
+  }
+
+  @Test
+  void refresh_keepsLastKnownGoodAndMarksItStaleWhenTenantServiceFails() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder()
+            .tenantId(42L)
+            .policies("{\"reasons\":{}}")
+            .refreshedAt(LocalDateTime.of(2026, 8, 16, 9, 0))
+            .build();
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("TenantService unavailable"));
+
+    assertThat(service.refresh(42L).getReasons()).isEmpty();
+    assertThat(cache.getStaleSince()).isEqualTo(LocalDateTime.of(2026, 8, 16, 10, 0));
+    verify(repository).save(cache);
+  }
+
+  @Test
+  void refresh_keeps180AndHolidayConsentFalseInLastKnownGoodDuringOutage() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder()
+            .tenantId(42L)
+            .policies(
+                "{\"reasons\":{\"COUNSELLOR_ASKED_FOR_ADVICE\":{\"code\":\"COUNSELLOR_ASKED_FOR_ADVICE\",\"maxAccessDurationMinutes\":{\"value\":180}},\"COUNSELLOR_ON_HOLIDAY\":{\"code\":\"COUNSELLOR_ON_HOLIDAY\",\"clientConsentRequired\":{\"value\":false}}}}")
+            .refreshedAt(LocalDateTime.of(2026, 8, 16, 9, 0))
+            .build();
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("Synthetic outage"));
+
+    var reasons = service.refresh(42L).getReasons();
+
+    assertThat(reasons.get("COUNSELLOR_ASKED_FOR_ADVICE").getMaxAccessDurationMinutes().getValue())
+        .isEqualTo(180);
+    assertThat(reasons.get("COUNSELLOR_ON_HOLIDAY").getClientConsentRequired().getValue())
+        .isFalse();
+    assertThat(cache.getStaleSince()).isNotNull();
+  }
+
+  @Test
+  void failedRefreshNeverLogsDownstreamBodyOrThrowable() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder().tenantId(42L).policies("{\"reasons\":{}}").build();
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("synthetic-sensitive-provider-body"));
+    try (var logs =
+        de.caritas.cob.userservice.testutils.LogbackCaptor.forClass(
+            CaseHandoverPolicyCacheService.class)) {
+      service.refresh(42L);
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain("synthetic-sensitive-provider-body");
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+      assertThat(logs.hasWarnLog()).isTrue();
+    }
+  }
+
+  @Test
+  void refresh_failsClosedWithoutAValidSnapshot() {
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("TenantService unavailable"));
+
+    assertThatThrownBy(() -> service.refresh(42L))
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("unavailable");
+  }
+
+  @Test
+  void refresh_rejectsAMismatchedTenantResponseWithoutPersistingIt() {
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(
+            new TenantPermissionPolicies()
+                .tenantId(43L)
+                .policies(Map.of())
+                .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of())));
+
+    assertThatThrownBy(() -> service.refresh(42L))
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("unavailable");
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void refresh_usesThePersistedSnapshotWhenAnotherReplicaOwnsTheTenantLease() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder()
+            .tenantId(42L)
+            .policies("{\"reasons\":{}}")
+            .refreshedAt(LocalDateTime.of(2026, 8, 16, 9, 0))
+            .build();
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(false);
+
+    assertThat(service.refresh(42L).getReasons()).isEmpty();
+
+    verify(tenantControllerApi, never()).getTenantPermissionPolicies(any());
+    verify(repository, never()).save(any());
+  }
+
+  @Test
+  void refresh_signalsARetryableConflictWhenAnotherReplicaOwnsTheLeaseAndNoSnapshotExists() {
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(false);
+
+    assertThatThrownBy(() -> service.refresh(42L))
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("retry");
+    verify(tenantControllerApi, never()).getTenantPermissionPolicies(any());
+  }
+
+  @Test
+  void refresh_passesTheConfiguredClaimDurationToTheLease() {
+    ReflectionTestUtils.setField(service, "policyRefreshClaimDuration", Duration.ofMinutes(5));
+    var policies = new CaseHandoverPolicies().reasons(Map.of());
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(
+            new TenantPermissionPolicies()
+                .tenantId(42L)
+                .policies(Map.of())
+                .caseHandoverPolicies(policies));
+
+    service.refresh(42L);
+
+    verify(scheduledTaskClaimService)
+        .tryClaim("case-handover-policy-refresh-42", Duration.ofMinutes(5));
+  }
+
+  @Test
+  void getEffective_refreshesTheTenantWhenNoSnapshotIsCached() {
+    var policies = new CaseHandoverPolicies().reasons(Map.of());
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(
+            new TenantPermissionPolicies()
+                .tenantId(42L)
+                .policies(Map.of())
+                .caseHandoverPolicies(policies));
+
+    assertThat(service.getEffective(42L)).isSameAs(policies);
+    verify(repository).save(any(TenantCaseHandoverPolicyCache.class));
+  }
+
+  @Test
+  void updateEffectivePreservesUnrelatedTenantPoliciesAndStoresResolvedResponse() {
+    var generalPolicy =
+        new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                .BooleanPermissionPolicy(null)
+            .value(true)
+            .mode(
+                de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .PermissionPolicyMode.ENFORCED);
+    var current =
+        new TenantPermissionPolicies()
+            .tenantId(42L)
+            .policies(Map.of("somePolicy", generalPolicy))
+            .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of()));
+    var requested = new CaseHandoverPolicies().reasons(Map.of());
+    when(tenantControllerApi.getTenantPermissionPolicies(42L)).thenReturn(current);
+    when(tenantControllerApi.updateTenantPermissionPolicies(42L, current)).thenReturn(current);
+    when(repository.findById(42L)).thenReturn(Optional.empty());
+
+    assertThat(service.updateEffective(42L, requested).getReasons()).isEmpty();
+
+    assertThat(current.getPolicies()).containsKey("somePolicy");
+    assertThat(current.getCaseHandoverPolicies()).isSameAs(requested);
+    verify(repository).save(any(TenantCaseHandoverPolicyCache.class));
+  }
+
+  @Test
+  void refresh_returnsRetryableFailureWhenTheSnapshotItselfIsUnreadable() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder()
+            .tenantId(42L)
+            .policies("{ this is not valid json")
+            .refreshedAt(LocalDateTime.of(2026, 8, 16, 9, 0))
+            .build();
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenThrow(new RestClientException("TenantService unavailable"));
+
+    assertThatThrownBy(() -> service.refresh(42L))
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessage("Tenant Case Handover policy is unavailable");
+  }
+
+  @Test
+  void getEffective_refreshesInsteadOfFailingWhenTheStoredSnapshotIsUnreadable() {
+    var cache =
+        TenantCaseHandoverPolicyCache.builder().tenantId(42L).policies("<<corrupt>>").build();
+    var policies = new CaseHandoverPolicies().reasons(Map.of());
+    when(repository.findById(42L)).thenReturn(Optional.of(cache));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(
+            new TenantPermissionPolicies()
+                .tenantId(42L)
+                .policies(Map.of())
+                .caseHandoverPolicies(policies));
+
+    assertThat(service.getEffective(42L)).isSameAs(policies);
+  }
+
+  /** Provider calls stay outside proxy transactions; short database work uses REQUIRES_NEW. */
+  @Test
+  void entryPoints_carryTheTransactionAnnotationAtTheProxyBoundary() throws Exception {
+    assertThat(
+            CaseHandoverPolicyCacheService.class
+                .getMethod("getEffective", Long.class)
+                .isAnnotationPresent(Transactional.class))
+        .isFalse();
+    assertThat(
+            CaseHandoverPolicyCacheService.class
+                .getDeclaredMethod("refreshKnownTenants")
+                .isAnnotationPresent(Transactional.class))
+        .isFalse();
+  }
+
+  @Test
+  void refreshKnownTenants_continuesAfterATenantThatFails() {
+    var failing =
+        TenantCaseHandoverPolicyCache.builder().tenantId(41L).policies("{\"reasons\":{}}").build();
+    var healthy =
+        TenantCaseHandoverPolicyCache.builder().tenantId(42L).policies("{\"reasons\":{}}").build();
+    when(repository.findAll()).thenReturn(java.util.List.of(failing, healthy));
+    // No persisted snapshot for 41: refresh has nothing to fall back on and propagates.
+    when(repository.findById(41L)).thenReturn(Optional.empty());
+    when(tenantControllerApi.getTenantPermissionPolicies(41L))
+        .thenThrow(new RestClientException("TenantService unavailable"));
+    when(repository.findById(42L)).thenReturn(Optional.of(healthy));
+    when(tenantControllerApi.getTenantPermissionPolicies(42L))
+        .thenReturn(
+            new TenantPermissionPolicies()
+                .tenantId(42L)
+                .policies(Map.of())
+                .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of())));
+
+    service.refreshKnownTenants();
+
+    // The second tenant must still be refreshed; an aborted sweep would leave it silently aging.
+    verify(tenantControllerApi).getTenantPermissionPolicies(42L);
+    verify(repository).save(healthy);
+    var definitions = ArgumentCaptor.forClass(TransactionDefinition.class);
+    verify(transactionManager, org.mockito.Mockito.times(4)).getTransaction(definitions.capture());
+    assertThat(definitions.getAllValues())
+        .allMatch(
+            definition ->
+                definition.getPropagationBehavior()
+                    == TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+  }
+}

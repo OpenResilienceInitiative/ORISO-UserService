@@ -72,6 +72,8 @@ public class ConsultantDataProvider {
     var agencies = agencyDTOsOf(consultant);
 
     return UserDataResponseDTO.builder()
+        .chatRecoveryMode(consultant.getEffectiveChatRecoveryMode())
+        .chatRecoveryPolicyRevision(consultant.getEffectiveChatRecoveryPolicyRevision())
         .userId(consultant.getId())
         .userName(consultant.getUsername())
         .firstName(consultant.getFirstName())

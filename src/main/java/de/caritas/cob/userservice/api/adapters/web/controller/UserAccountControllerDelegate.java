@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.update.Consultant
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.userdata.AgencyAdminDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataProvider;
@@ -64,6 +65,7 @@ class UserAccountControllerDelegate {
   private final @NonNull AskerDataProvider askerDataProvider;
   private final @NonNull VideoChatConfig videoChatConfig;
   private final @NonNull KeycloakUserDataProvider keycloakUserDataProvider;
+  private final @NonNull AgencyAdminDataProvider agencyAdminDataProvider;
   private final @NonNull UsernameTranscoder usernameTranscoder;
 
   ResponseEntity<Void> updateAbsence(AbsenceDTO absence) {
@@ -105,7 +107,12 @@ class UserAccountControllerDelegate {
       enrichConsultantDisplayName(partialUserData);
       enrichConsultantAvailability(partialUserData);
     } else if (isTenantAdmin() || isAgencyAdmin()) {
-      partialUserData = keycloakUserDataProvider.retrieveAuthenticatedUserData();
+      // A Beratungsstellen-Admin needs their assigned agencies so the Admin UI can land them on
+      // their own agency (ORISO-UserService#1101). The tenant-admin branch stays Keycloak-only.
+      partialUserData =
+          isTenantAdmin()
+              ? keycloakUserDataProvider.retrieveAuthenticatedUserData()
+              : agencyAdminDataProvider.retrieveData();
       // Only ask a platform admin to set 2FA up when the OTP role policy would actually
       // let them finish. Encouraging it unconditionally deadlocks the admin UI: the
       // client gates on isToEncourage && !isActive, but isActive can never become true
