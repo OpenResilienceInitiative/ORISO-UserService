@@ -701,11 +701,12 @@ class AccountInviteServiceTest {
   @Test
   void listInvites_Should_delegateToRepositoryWithClampedPageAndSize() {
     Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
-    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any())).thenReturn(page);
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
 
     Page<AccountInvite> result =
         service.listInvites(
-            AccountInviteTargetRole.COUNSELLOR, AccountInviteStatus.DRAFT, 7L, -1, -1);
+            AccountInviteTargetRole.COUNSELLOR, AccountInviteStatus.DRAFT, 7L, null, -1, -1);
 
     assertThat(result).isSameAs(page);
     verify(accountInviteRepository)
@@ -713,22 +714,64 @@ class AccountInviteServiceTest {
             eq(7L),
             eq(AccountInviteTargetRole.COUNSELLOR),
             eq(AccountInviteStatus.DRAFT),
+            eq(null),
+            eq(null),
             argThat(pr -> pr.getPageNumber() == 0 && pr.getPageSize() == 20));
   }
 
   @Test
   void listInvites_Should_clampSize_When_tooLarge() {
     Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
-    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any())).thenReturn(page);
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
 
-    service.listInvites(null, null, null, 2, 500);
+    service.listInvites(null, null, null, null, 2, 500);
 
     verify(accountInviteRepository)
         .findAllByFilters(
             eq(null),
             eq(null),
             eq(null),
+            eq(null),
+            eq(null),
             argThat(pr -> pr.getPageNumber() == 2 && pr.getPageSize() == 100));
+  }
+
+  @Test
+  void listInvites_Should_normalizeQuery_When_searchTermHasWhitespaceAndMixedCase() {
+    Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
+
+    service.listInvites(null, null, null, "  Jane.Doe@Example.org  ", 0, 20);
+
+    verify(accountInviteRepository)
+        .findAllByFilters(
+            eq(null), eq(null), eq(null), eq("jane.doe@example.org"), eq(null), any());
+  }
+
+  @Test
+  void listInvites_Should_alsoDeriveExactTenantIdMatch_When_queryIsNumeric() {
+    Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
+
+    service.listInvites(null, null, null, " 42 ", 0, 20);
+
+    verify(accountInviteRepository)
+        .findAllByFilters(eq(null), eq(null), eq(null), eq("42"), eq(42L), any());
+  }
+
+  @Test
+  void listInvites_Should_treatBlankQueryAsNoSearch() {
+    Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
+
+    service.listInvites(null, null, null, "   ", 0, 20);
+
+    verify(accountInviteRepository)
+        .findAllByFilters(eq(null), eq(null), eq(null), eq(null), eq(null), any());
   }
 
   // --- revokeInvite ---

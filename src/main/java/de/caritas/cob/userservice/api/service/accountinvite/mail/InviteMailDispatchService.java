@@ -249,9 +249,10 @@ public class InviteMailDispatchService {
         throw new SmtpSendException(
             SmtpSendException.Category.SMTP_CREDENTIALS_MISSING,
             "Invite mail not sent: no SMTP credentials available — set SMTP_USER and SMTP_PASSWORD"
-                + " on the UserService deployment (the supported configuration), or the request"
-                + " must carry a platform-admin token for the guarded credentials endpoint (see"
-                + " the UserService log for the credential lookup outcome)");
+                + " on the UserService deployment (the supported configuration), or make the"
+                + " guarded ConsultingTypeService credentials endpoint accept the technical"
+                + " service identity (see the UserService log for the credential lookup"
+                + " outcome). #1160: the outcome no longer depends on who triggered the send.");
       }
       username = credentials.get().getGlobalSmtpUsername();
       password = credentials.get().getGlobalSmtpPassword();

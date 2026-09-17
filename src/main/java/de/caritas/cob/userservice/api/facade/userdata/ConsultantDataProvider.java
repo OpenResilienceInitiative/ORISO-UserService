@@ -91,6 +91,8 @@ public class ConsultantDataProvider {
             consultant.getPublicSlugStatus() != null
                 ? consultant.getPublicSlugStatus().name()
                 : null)
+        .avatarKind(consultant.getAvatarKind() != null ? consultant.getAvatarKind().name() : null)
+        .avatarId(consultant.getAvatarId())
         .absenceMessage(consultant.getAbsenceMessage())
         .isInTeamAgency(consultant.isTeamConsultant())
         .agencies(agencies)

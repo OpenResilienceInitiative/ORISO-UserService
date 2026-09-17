@@ -2,7 +2,9 @@ package de.caritas.cob.userservice.api.admin.service.consultant;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import org.junit.jupiter.api.Test;
 
 class ConsultantResponseDTOBuilderTest {
@@ -47,6 +49,29 @@ class ConsultantResponseDTOBuilderTest {
     var dto = ConsultantResponseDTOBuilder.getInstance(consultant).buildResponseDTO().getEmbedded();
 
     assertThat(dto.getInternalDisplayName()).isEqualTo("Anna Beispiel (Standort Nord)");
+  }
+
+  @Test
+  void buildResponseDTO_Should_mapAvatarChoice() {
+    var consultant = consultantWithPersonalInfo();
+    consultant.setAvatarKind(ConsultantAvatarKind.ICON);
+    consultant.setAvatarId("motif-24");
+
+    var dto = ConsultantResponseDTOBuilder.getInstance(consultant).buildResponseDTO().getEmbedded();
+
+    assertThat(dto.getAvatarKind()).isEqualTo(ConsultantDTO.AvatarKindEnum.ICON);
+    assertThat(dto.getAvatarId()).isEqualTo("motif-24");
+  }
+
+  @Test
+  void buildResponseDTO_Should_leaveAvatarUnset_When_noChoiceWasMade() {
+    var dto =
+        ConsultantResponseDTOBuilder.getInstance(consultantWithPersonalInfo())
+            .buildResponseDTO()
+            .getEmbedded();
+
+    assertThat(dto.getAvatarKind()).isNull();
+    assertThat(dto.getAvatarId()).isNull();
   }
 
   @Test

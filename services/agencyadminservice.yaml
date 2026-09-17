@@ -1160,6 +1160,15 @@ components:
         agencyLogo:
           type: string
           example: base64 encoded image
+        reservedAgencyId:
+          type: integer
+          format: int64
+          minimum: 1
+          description: >-
+            Creates the agency with exactly this pre-reserved ID instead of the sequence-generated
+            one (TEN-INV-U2). The reservation is consumed atomically with the insert; an ID that is
+            not held by an open reservation - or already assigned - is answered with 409.
+          example: 42
     AgencyAdminFullResponseDTO:
       type: object
       properties:

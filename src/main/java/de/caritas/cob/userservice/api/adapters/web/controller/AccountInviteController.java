@@ -95,6 +95,7 @@ public class AccountInviteController {
       @RequestParam(value = "target_role", required = false) String targetRole,
       @RequestParam(value = "status", required = false) String status,
       @RequestParam(value = "tenant_id", required = false) Long tenantId,
+      @RequestParam(value = "query", required = false) String query,
       @RequestParam(value = "page", required = false) Integer page,
       @RequestParam(value = "size", required = false) Integer size) {
     Page<AccountInvite> result =
@@ -102,6 +103,7 @@ public class AccountInviteController {
             parseOptionalEnum(AccountInviteTargetRole.class, targetRole, "target_role"),
             parseOptionalEnum(AccountInviteStatus.class, status, "status"),
             tenantId,
+            query,
             page == null ? 0 : page,
             size == null ? 20 : size);
     List<AccountInviteResponseDTO> content =
