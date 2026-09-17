@@ -10,11 +10,13 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import java.util.List;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 /** Read-only check of the global guest username namespace; does not reserve or allocate names. */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class GuestUsernameAvailability {
   private final UserRepository userRepository;
   private final ConsultantRepository consultantRepository;
@@ -33,6 +35,7 @@ public class GuestUsernameAvailability {
       throw exception;
     } catch (RuntimeException exception) {
       // Dependency errors may contain credentials. Do not expose or log their messages.
+      log.warn("Guest username availability failed, cause type {}", exception.getClass().getName());
       throw new ServiceUnavailableException("Guest username availability could not be determined");
     }
   }

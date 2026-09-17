@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
@@ -36,6 +37,23 @@ class GuestUsernameAvailabilityTest {
   @AfterEach
   void cleanup() {
     TenantContext.clear();
+  }
+
+  @Test
+  void diagnosticContainsOnlyDependencyTypeWithoutSecretMessageOrCause() {
+    when(identity.isUsernameAvailable(NAME))
+        .thenThrow(new IllegalStateException("secret-credential-in-upstream-body"));
+    try (var logs = LogbackCaptor.forClass(GuestUsernameAvailability.class)) {
+      assertThatThrownBy(() -> availability.isAvailable(NAME))
+          .isInstanceOf(ServiceUnavailableException.class)
+          .hasNoCause()
+          .hasMessageNotContaining("secret-credential");
+      assertThat(logs.events()).hasSize(1);
+      assertThat(logs.events().getFirst().getFormattedMessage())
+          .contains("java.lang.IllegalStateException")
+          .doesNotContain("secret-credential");
+      assertThat(logs.events().getFirst().getThrowableProxy()).isNull();
+    }
   }
 
   @Test
