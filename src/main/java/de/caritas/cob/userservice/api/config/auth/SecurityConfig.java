@@ -141,6 +141,32 @@ public class SecurityConfig {
                     "/useradmin/consultants/{consultantId}/picture",
                     "/service/useradmin/consultants/{consultantId}/picture")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Issue #1049 publish switch: reading the flag follows the internal read roles,
+                // changing it follows the write roles. Both stay above every useradmin catch-all.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/consultants/{consultantId}/picture/visibility",
+                    "/service/useradmin/consultants/{consultantId}/picture/visibility")
+                .hasAnyAuthority(
+                    CONSULTANT_DEFAULT,
+                    USER_ADMIN,
+                    CONSULTANT_UPDATE,
+                    TENANT_ADMIN,
+                    SINGLE_TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN,
+                    TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/consultants/{consultantId}/picture/visibility",
+                    "/service/useradmin/consultants/{consultantId}/picture/visibility")
+                .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Issue #1049 advice-seeker read of a published picture. Authentication is still
+                // required; the store refuses every internal-only picture with 404.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/consultants/{consultantId}/picture",
+                    "/service/users/consultants/{consultantId}/picture")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
                 .requestMatchers(
                     "/users/docs",
                     "/users/docs/**",

@@ -4,7 +4,8 @@ info:
   version: 1.0.0
   description: >-
     UserService-owned internal photos. Both /useradmin and /service/useradmin prefixes are supported.
-    Advice seekers cannot retrieve these bytes. Read access requires a colleague or admin authority;
+    Advice seekers retrieve these bytes only through the separate published route, and only while
+    the owner keeps the picture published (issue #1049). Read access requires a colleague or admin authority;
     changes require CONSULTANT_UPDATE. The caller and active target must belong to the same tenant,
     except a verified platform admin. Restricted agency admins must share an agency with the target.
     No query-string authentication, public visibility, branding storage, or Matrix media is used.
@@ -68,10 +69,74 @@ paths:
         '401': {description: Authentication required}
         '403': {description: Caller is not eligible; no response body}
         '404': {description: Active consultant absent; no response body}
+  /useradmin/consultants/{consultantId}/picture/visibility:
+    parameters:
+      - in: path
+        name: consultantId
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getConsultantPictureVisibility
+      security: [{Bearer: []}]
+      summary: Read the publish decision without transferring image bytes
+      responses:
+        '200':
+          description: Current publish decision; Cache-Control private, no-store.
+          content:
+            application/json: {schema: {$ref: '#/components/schemas/PictureVisibility'}}
+        '401': {description: Authentication required}
+        '403': {description: Caller is not eligible; no response body}
+        '404': {description: Consultant or picture absent; no response body}
+    put:
+      operationId: putConsultantPictureVisibility
+      security: [{Bearer: []}]
+      summary: Publish the picture to advice seekers, or withdraw it again
+      description: >-
+        Requires CONSULTANT_UPDATE. Withdrawal is immediate: the published route re-reads the flag
+        on every request and never caches. Uploading a replacement image resets the picture to
+        internal only, so a new image has to be published deliberately.
+      requestBody:
+        required: true
+        content:
+          application/json: {schema: {$ref: '#/components/schemas/PictureVisibility'}}
+      responses:
+        '204': {description: Stored successfully}
+        '400': {description: Malformed body}
+        '401': {description: Authentication required}
+        '403': {description: Caller is not eligible; no response body}
+        '404': {description: Active consultant or picture absent; no response body}
+  /users/consultants/{consultantId}/picture:
+    parameters:
+      - in: path
+        name: consultantId
+        required: true
+        schema: {type: string, format: uuid}
+    get:
+      operationId: getPublishedConsultantPicture
+      security: [{Bearer: []}]
+      summary: Advice-seeker read of a published picture
+      description: >-
+        Authentication is still required and the caller must belong to the target's tenant. Every
+        refusal answers 404, so an internal-only picture is indistinguishable from no picture.
+      responses:
+        '200':
+          description: Exact clean image bytes; Cache-Control private, no-store; X-Content-Type-Options nosniff.
+          content:
+            image/png: {schema: {type: string, format: binary}}
+            image/jpeg: {schema: {type: string, format: binary}}
+        '401': {description: Authentication required}
+        '404': {description: No published picture for this consultant; no response body}
 components:
   securitySchemes:
     Bearer: {type: http, scheme: bearer, bearerFormat: JWT}
   schemas:
+    PictureVisibility:
+      type: object
+      required: [internalOnly]
+      properties:
+        internalOnly:
+          type: boolean
+          description: True keeps the picture internal to colleagues and admins; false publishes it.
     PictureError:
       type: object
       required: [reason]

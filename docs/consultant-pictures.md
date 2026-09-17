@@ -35,6 +35,31 @@ removes the picture immediately. Final hard deletion has an `ON DELETE CASCADE` 
 The existing account safeguard/hold workflow remains in place. GET uses true MIME,
 `X-Content-Type-Options: nosniff` and `Cache-Control: no-store, private`.
 
+## Publish switch (#1049)
+
+The picture is internal by default. `consultant_picture.internal_only` carries the owner's publish
+decision and is read and written through
+`/useradmin/consultants/{id}/picture/visibility` (GET with the internal read roles, PUT with
+`CONSULTANT_UPDATE`). Advice seekers read a published picture through the separate route
+`/users/consultants/{id}/picture`, under both prefixes.
+
+Three properties hold:
+
+- **Withdrawal is immediate.** The published route re-reads the flag on every request and answers
+  `Cache-Control: no-store, private`, so nothing keeps delivering a withdrawn picture.
+- **A replacement image starts internal again.** `replace` writes a fresh row, whose flag defaults
+  to internal, so a new photo is never published on the strength of a decision made about the old
+  one. The administrative form re-applies the switch after a successful upload.
+- **Refusals are indistinguishable.** Every refusal on the published route is a 404 — wrong tenant,
+  missing authentication role, deleted consultant, no picture, or an internal-only picture all look
+  the same to an advice seeker, so the route never reveals that a private picture exists.
+
+The published route is not public: it requires `USER_DEFAULT`, `ANONYMOUS_DEFAULT` or
+`CONSULTANT_DEFAULT` and the caller's tenant must match the target's. Anonymous live-chat guests
+are covered by `ANONYMOUS_DEFAULT`. The counsellor avatar (#1046/#1047) is a separate,
+genuinely public field and is unaffected by this switch — an advice seeker who cannot see the
+picture still sees the avatar.
+
 ## Scanner deployment contract
 
 New uploads are refused by default; GET and removal of already stored images remain usable.

@@ -58,6 +58,48 @@ public class ConsultantPictureStore {
     pictures.removeByConsultantId(consultant.getId());
   }
 
+  /** Issue #1049: the stored publish decision, for the administrative form. */
+  @Transactional(readOnly = true)
+  public boolean readInternalOnly(String id) {
+    var consultant =
+        consultants
+            .findByIdAndDeleteDateIsNull(id)
+            .orElseThrow(() -> new NotFoundException("Consultant not found"));
+    access.checkTarget(consultant, false);
+    return picture(consultant.getId(), "Picture not found").isInternalOnly();
+  }
+
+  /**
+   * Publish or withdraw an existing picture. Withdrawal takes effect on the next read because the
+   * published route never caches and always re-reads this flag.
+   */
+  @Transactional
+  public void writeInternalOnly(String id, boolean internalOnly) {
+    var consultant = lockActiveConsultant(id);
+    access.checkTarget(consultant, true);
+    picture(consultant.getId(), "Picture not found").setInternalOnly(internalOnly);
+  }
+
+  /**
+   * Advice-seeker facing read. Unpublished pictures are indistinguishable from absent ones, and no
+   * row lock is taken because this path never writes.
+   */
+  @Transactional(readOnly = true)
+  public ConsultantPicture readPublished(String id) {
+    var consultant =
+        consultants
+            .findByIdAndDeleteDateIsNull(id)
+            .orElseThrow(() -> new NotFoundException("Picture not found"));
+    access.checkPublishedReaderTarget(consultant);
+    var picture = picture(consultant.getId(), "Picture not found");
+    if (picture.isInternalOnly()) throw new NotFoundException("Picture not found");
+    return picture;
+  }
+
+  private ConsultantPicture picture(String id, String message) {
+    return pictures.findById(id).orElseThrow(() -> new NotFoundException(message));
+  }
+
   @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
   public void removeForConsultantDeletion(String id) {
     pictures.removeByConsultantId(id);
