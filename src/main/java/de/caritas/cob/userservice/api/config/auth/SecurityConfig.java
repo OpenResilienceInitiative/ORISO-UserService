@@ -167,6 +167,17 @@ public class SecurityConfig {
                     "/users/consultants/{consultantId}/picture",
                     "/service/users/consultants/{consultantId}/picture")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+                // Issue #1049 onboarding picture step: the invitee has no session yet, so the raw
+                // invite token is the credential — the same arrangement the register and
+                // two-factor steps of this flow already use. The controller resolves the token to
+                // the consultant it created before any bytes are read.
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/users/account-invites/{token}/onboarding/picture",
+                    "/service/users/account-invites/{token}/onboarding/picture",
+                    "/users/account-invites/{token}/onboarding/picture/visibility",
+                    "/service/users/account-invites/{token}/onboarding/picture/visibility")
+                .permitAll()
                 .requestMatchers(
                     "/users/docs",
                     "/users/docs/**",

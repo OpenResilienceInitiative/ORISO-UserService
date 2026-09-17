@@ -96,6 +96,24 @@ public class ConsultantPictureStore {
     return picture;
   }
 
+  /**
+   * Issue #1049 onboarding: the invite token already proved that the caller is the person this
+   * consultant was created for, so no administrative authority is required here. The route that
+   * calls this is the only caller, and it resolves the id from the token itself.
+   */
+  @Transactional
+  public void replaceForOnboarding(String id, byte[] bytes, String contentType) {
+    var consultant = lockActiveConsultant(id);
+    pictures.save(new ConsultantPicture(consultant.getId(), bytes, contentType));
+  }
+
+  /** Issue #1049 onboarding: the same publish decision, with the invite token as the credential. */
+  @Transactional
+  public void writeInternalOnlyForOnboarding(String id, boolean internalOnly) {
+    var consultant = lockActiveConsultant(id);
+    picture(consultant.getId(), "Picture not found").setInternalOnly(internalOnly);
+  }
+
   private ConsultantPicture picture(String id, String message) {
     return pictures.findById(id).orElseThrow(() -> new NotFoundException(message));
   }

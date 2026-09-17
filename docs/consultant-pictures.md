@@ -60,6 +60,21 @@ are covered by `ANONYMOUS_DEFAULT`. The counsellor avatar (#1046/#1047) is a sep
 genuinely public field and is unaffected by this switch — an advice seeker who cannot see the
 picture still sees the avatar.
 
+### Onboarding wizard step
+
+The public counsellor onboarding wizard runs before the invitee has a session, so it cannot use the
+administrative route. `PUT /users/account-invites/{token}/onboarding/picture` (and its
+`/visibility` sibling, both prefixes) take the **raw invite token** as the credential, exactly as
+the register and two-factor steps of the same flow do. The controller resolves the token through
+`CounsellorOnboardingService.consultantIdForOnboardingPicture`, which reuses the gate that guards
+the two-factor activation: registration must already have happened, and the link must not be dead,
+expired or terminally consumed. Only then is a byte read.
+
+The write path is otherwise identical — same `PictureIntake`, same two upload slots, same
+fail-closed ClamAV scan, same multipart refusal filter. What it skips is the administrative
+authority check, because the token, not a role, is what proves the caller owns this consultant. The
+route never serves or removes bytes; there is no GET or DELETE.
+
 ## Scanner deployment contract
 
 New uploads are refused by default; GET and removal of already stored images remain usable.

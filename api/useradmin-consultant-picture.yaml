@@ -126,6 +126,55 @@ paths:
             image/jpeg: {schema: {type: string, format: binary}}
         '401': {description: Authentication required}
         '404': {description: No published picture for this consultant; no response body}
+  /users/account-invites/{token}/onboarding/picture:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: {type: string}
+    put:
+      operationId: putOnboardingConsultantPicture
+      summary: Picture step of the public counsellor onboarding wizard
+      description: >-
+        The invitee has no session yet, so the raw invite token is the credential — the same
+        arrangement the register and two-factor steps of this flow use. The token is resolved to the
+        consultant it created, and only while the link is still resumable at the two-factor step.
+        Raw body, never multipart; identical intake, bounded concurrency and fail-closed scan as the
+        administrative route.
+      requestBody:
+        required: true
+        content:
+          image/png: {schema: {type: string, format: binary, maxLength: 5242880}}
+          image/jpeg: {schema: {type: string, format: binary, maxLength: 5242880}}
+      responses:
+        '204': {description: Stored successfully}
+        '400': {description: PICTURE_INVALID_IMAGE, or the invite has not registered yet}
+        '404': {description: Unknown invite token}
+        '409': {description: The invite link is terminally consumed}
+        '410': {description: The invite link expired}
+        '413': {description: PICTURE_TOO_LARGE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '415': {description: PICTURE_UNSUPPORTED_TYPE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '422': {description: PICTURE_REJECTED, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+        '503': {description: PICTURE_SCAN_UNAVAILABLE, content: {application/json: {schema: {$ref: '#/components/schemas/PictureError'}}}}
+  /users/account-invites/{token}/onboarding/picture/visibility:
+    parameters:
+      - in: path
+        name: token
+        required: true
+        schema: {type: string}
+    put:
+      operationId: putOnboardingConsultantPictureVisibility
+      summary: The same publish switch, during onboarding
+      requestBody:
+        required: true
+        content:
+          application/json: {schema: {$ref: '#/components/schemas/PictureVisibility'}}
+      responses:
+        '204': {description: Stored successfully}
+        '400': {description: Malformed body, or the invite has not registered yet}
+        '404': {description: Unknown invite token, or no picture stored}
+        '409': {description: The invite link is terminally consumed}
+        '410': {description: The invite link expired}
 components:
   securitySchemes:
     Bearer: {type: http, scheme: bearer, bearerFormat: JWT}
