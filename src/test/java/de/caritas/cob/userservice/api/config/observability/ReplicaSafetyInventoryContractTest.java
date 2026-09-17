@@ -52,7 +52,8 @@ class ReplicaSafetyInventoryContractTest {
           "support-room-expiry-scheduler",
           "event-notification-retention-scheduler",
           "team-discussion-retention-scheduler",
-          "team-discussion-orphan-cleanup-scheduler");
+          "team-discussion-orphan-cleanup-scheduler",
+          "team-discussion-access-repair");
 
   @Test
   void shouldInventoryEveryKnownReplicaLocalComponentWithAnActionableSignal() throws Exception {

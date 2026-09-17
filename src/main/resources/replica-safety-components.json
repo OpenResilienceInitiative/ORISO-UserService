@@ -565,7 +565,7 @@
       "components": [
         "purgeOrphanedDiscussions"
       ],
-      "decision": "Leases the run through ScheduledTaskClaimService; purging a Matrix room is idempotent (a 404 counts as purged) and the row delete is keyed by id, so a second replica finds nothing left to do.",
+      "decision": "Leases the run through ScheduledTaskClaimService; purging a Matrix room is idempotent (a 404 counts as purged), failed losing-room purges retain a durable retry row, and retries refuse to purge a room referenced by a persisted discussion.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"
@@ -614,6 +614,22 @@
         "scan"
       ],
       "decision": "Runs at startup and daily independently of destructive expiry. A transaction-scoped lock on the singleton rollout row serializes the complete inventory across replicas without an expiring lease. Enrollment, issue cleanup and report publication share that transaction; rollback or connection loss releases the lock. The identity primary key and immutable rollout cutoff preserve enrollment idempotency. Concurrent-scan and remote-failure recovery tests cover serialization and subsequent progress.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "team-discussion-access-repair",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/teamdiscussion/TeamDiscussionAccessRepairScheduler.java",
+      "kind": "scheduler",
+      "owner": "team-discussion",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "reconcileAccess"
+      ],
+      "decision": "Uses a database lease and persisted archive/participant rows to retry Matrix read-only enforcement and revoked agency access. Successful removals delete their retry footprint; failed operations remain queryable.",
       "signals": [
         "userservice.scheduler.executions",
         "userservice.scheduler.duration"

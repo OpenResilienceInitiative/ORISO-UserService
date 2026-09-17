@@ -32,6 +32,8 @@ import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
+import de.caritas.cob.userservice.api.model.ConsultantAvatars;
 import de.caritas.cob.userservice.api.model.ConsultantStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
@@ -486,6 +488,11 @@ public class CreateConsultantSaga {
             .build();
 
     consultant.replaceTopics(consultantCreationInput.getTopicIds());
+    // #1046: normalised in one shared place so a half avatar choice can never be persisted.
+    ConsultantAvatars.apply(
+        consultant,
+        ConsultantAvatarKind.fromNameOrNull(consultantCreationInput.getAvatarKind()),
+        consultantCreationInput.getAvatarId());
     consultantPublicSlugService.applyAdminSlug(consultant, consultantCreationInput.getPublicSlug());
     return consultant;
   }

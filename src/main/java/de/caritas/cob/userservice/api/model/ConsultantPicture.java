@@ -24,10 +24,25 @@ public class ConsultantPicture {
   @Column(name = "updated_at", nullable = false)
   private LocalDateTime updatedAt;
 
+  /**
+   * Issue #1049: the picture is internal by default. Only an explicit publish switch on the stored
+   * row lets an advice seeker retrieve the bytes. A replacement image is a new picture, so it
+   * starts internal again and has to be published deliberately.
+   */
+  @Column(name = "internal_only", nullable = false)
+  private boolean internalOnly = true;
+
   public ConsultantPicture(String id, byte[] bytes, String contentType) {
     this.consultantId = id;
     this.bytes = bytes;
     this.contentType = contentType;
+    this.internalOnly = true;
+    this.updatedAt = LocalDateTime.now(java.time.ZoneOffset.UTC);
+  }
+
+  /** Publish or withdraw immediately; nothing else about the stored image changes. */
+  public void setInternalOnly(boolean internalOnly) {
+    this.internalOnly = internalOnly;
     this.updatedAt = LocalDateTime.now(java.time.ZoneOffset.UTC);
   }
 }

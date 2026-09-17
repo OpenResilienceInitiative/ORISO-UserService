@@ -12,6 +12,8 @@ import de.caritas.cob.userservice.api.admin.service.consultant.validation.Update
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
+import de.caritas.cob.userservice.api.model.ConsultantAvatars;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -204,6 +206,28 @@ public class ConsultantUpdateService {
     applyIfProvided(updateConsultantDTO.getPosition(), consultant::setPosition);
     applyIfProvided(updateConsultantDTO.getTitle(), consultant::setTitle);
     applyIfProvided(updateConsultantDTO.getAdminRemarks(), consultant::setAdminRemarks);
+    applyAvatar(updateConsultantDTO, consultant);
+  }
+
+  /**
+   * Counsellor avatar choice (#1046). The kind is a typed enum, so it carries no empty-string
+   * clear: null leaves the stored choice untouched, INITIALS drops an icon. The motif id follows
+   * the usual convention (null untouched, empty clears). The resolved pair goes through {@link
+   * ConsultantAvatars#apply}, the one place that rejects a half choice — so clearing the id of a
+   * stored ICON demotes it to INITIALS instead of leaving an icon without a motif.
+   */
+  private void applyAvatar(UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant) {
+    var requestedKind = updateConsultantDTO.getAvatarKind();
+    var requestedId = updateConsultantDTO.getAvatarId();
+    if (requestedKind == null && requestedId == null) {
+      return;
+    }
+    ConsultantAvatarKind resolvedKind =
+        requestedKind == null
+            ? consultant.getAvatarKind()
+            : ConsultantAvatarKind.fromNameOrNull(requestedKind.getValue());
+    String resolvedId = requestedId == null ? consultant.getAvatarId() : requestedId;
+    ConsultantAvatars.apply(consultant, resolvedKind, resolvedId);
   }
 
   private void applyIfProvided(String value, java.util.function.Consumer<String> setter) {

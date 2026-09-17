@@ -1298,6 +1298,23 @@ components:
           description: >-
             Internal remarks about the consultant. Only readable and writable for tenant-level
             admins (tenant admin / platform admin); ignored for other callers.
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            Counsellor avatar choice (#1046): ICON = one of the platform's monochrome counsellor
+            motifs (then avatarId carries the motif id), INITIALS = the generated initials tile,
+            PICTURE = an own uploaded picture. The upload itself is a separate ticket
+            (#1048/#1049) and is not served by this service yet. Omitted means no choice; the
+            initials fallback is rendered.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: >-
+            Id of the chosen counsellor motif. Only meaningful together with avatarKind = ICON;
+            it is dropped for every other kind, and an ICON without a motif id is stored as
+            INITIALS — a half choice is never persisted.
 
     IsGroupchatConsultant:
       type: boolean
@@ -1426,6 +1443,21 @@ components:
             Internal remarks about the consultant. Only readable and writable for tenant-level
             admins (tenant admin / platform admin); ignored for other callers. Null leaves the
             stored value untouched; an empty string clears it.
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            Counsellor avatar choice (#1046). Null leaves the stored choice untouched. Unlike the
+            free-text personal-info fields this is a typed enum, so it carries no empty-string
+            clear: send INITIALS to drop an icon choice.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: >-
+            Id of the chosen counsellor motif, only meaningful with avatarKind = ICON. Null
+            leaves the stored value untouched; an empty string clears it — which also demotes a
+            stored ICON choice to INITIALS, because a half choice is never persisted.
 
     ConsultantDTO:
       type: object
@@ -1513,6 +1545,16 @@ components:
         publicSlugStatus:
           type: string
           enum: [PENDING, APPROVED, REJECTED]
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            Counsellor avatar choice (#1046); absent when the counsellor made no choice.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: Id of the chosen counsellor motif; only set together with avatarKind = ICON.
         roleInOrg:
           type: string
         vacated:

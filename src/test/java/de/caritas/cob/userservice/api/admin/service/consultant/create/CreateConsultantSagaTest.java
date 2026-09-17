@@ -8,6 +8,7 @@ import static de.caritas.cob.userservice.api.exception.httpresponses.customheade
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
+import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -165,6 +166,60 @@ class CreateConsultantSagaTest {
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
     verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
     verify(appointmentService, never()).createConsultant(any());
+  }
+
+  @Test
+  void createNewConsultant_Should_persistTheAvatarChoice() throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setAvatarKind(CreateConsultantDTO.AvatarKindEnum.ICON);
+    dto.setAvatarId("motif-24");
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(
+        captured.getValue().getAvatarKind(),
+        is(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.ICON));
+    assertThat(captured.getValue().getAvatarId(), is("motif-24"));
+  }
+
+  @Test
+  void createNewConsultant_Should_notPersistAHalfAvatarChoice() throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setAvatarKind(CreateConsultantDTO.AvatarKindEnum.ICON);
+    dto.setAvatarId(null);
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(
+        captured.getValue().getAvatarKind(),
+        is(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.INITIALS));
+    assertThat(captured.getValue().getAvatarId(), nullValue());
+  }
+
+  @Test
+  void createNewConsultant_Should_dropAMotifIdThatBelongsToNoIcon() throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setAvatarKind(CreateConsultantDTO.AvatarKindEnum.INITIALS);
+    dto.setAvatarId("motif-24");
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(
+        captured.getValue().getAvatarKind(),
+        is(de.caritas.cob.userservice.api.model.ConsultantAvatarKind.INITIALS));
+    assertThat(captured.getValue().getAvatarId(), nullValue());
   }
 
   @Test

@@ -100,6 +100,11 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
                 ? ConsultantDTO.PublicSlugStatusEnum.fromValue(
                     consultant.getPublicSlugStatus().name())
                 : null)
+        .avatarKind(
+            consultant.getAvatarKind() != null
+                ? ConsultantDTO.AvatarKindEnum.fromValue(consultant.getAvatarKind().name())
+                : null)
+        .avatarId(consultant.getAvatarId())
         .isSupervisor(consultant.isSupervisor())
         .assignedSupervisorId(consultant.getAssignedSupervisorId());
   }

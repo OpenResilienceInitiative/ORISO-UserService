@@ -107,6 +107,57 @@ class RequiredCiContractTest(unittest.TestCase):
 
         self.assertEqual(23, result.returncode)
 
+    def test_required_runner_retries_a_maven_central_403(self):
+        runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_root = Path(temp_dir)
+            attempt_file = temp_root / "attempts"
+            arguments_file = temp_root / "arguments"
+            fake_maven = temp_root / "mvnw"
+            fake_maven.write_text(
+                "#!/usr/bin/env python3\n"
+                "import os\n"
+                "import sys\n"
+                "from pathlib import Path\n"
+                "path = Path(os.environ['MAVEN_ATTEMPT_FILE'])\n"
+                "attempt = int(path.read_text()) if path.exists() else 0\n"
+                "attempt += 1\n"
+                "path.write_text(str(attempt))\n"
+                "Path(os.environ['MAVEN_ARGUMENTS_FILE']).write_text('\\n'.join(sys.argv[1:]))\n"
+                "if attempt == 1:\n"
+                "    print(\n"
+                "        'Could not transfer artifact org.apache.maven.plugins:'\n"
+                "        'maven-clean-plugin:pom:3.5.0 from/to central '\n"
+                "        '(https://repo.maven.apache.org/maven2): status code: 403, '\n"
+                "        'reason phrase: Forbidden (403)',\n"
+                "        file=sys.stderr,\n"
+                "    )\n"
+                "    raise SystemExit(1)\n"
+                "raise SystemExit(23)\n"
+            )
+            fake_maven.chmod(0o755)
+            env = os.environ.copy()
+            env["ORISO_MAVEN_WRAPPER"] = str(fake_maven)
+            env["MAVEN_ATTEMPT_FILE"] = str(attempt_file)
+            env["MAVEN_ARGUMENTS_FILE"] = str(arguments_file)
+            env["ORISO_MAVEN_RESOLVE_RETRY_DELAY_SECONDS"] = "0"
+
+            result = subprocess.run(
+                [runner],
+                cwd=temp_root,
+                env=env,
+                check=False,
+                capture_output=True,
+                text=True,
+            )
+
+            self.assertEqual(23, result.returncode, result.stderr)
+            self.assertEqual("2", attempt_file.read_text())
+            arguments = arguments_file.read_text()
+            self.assertIn("github-maven-settings.xml", arguments)
+            self.assertIn("clean", arguments)
+            self.assertIn("integration-test", arguments)
+
     def test_required_runner_does_not_discover_mariadb_owned_tests(self):
         runner = ROOT / "scripts/ci/run-required-integration-tests.sh"
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -276,6 +327,13 @@ class RequiredCiContractTest(unittest.TestCase):
 
     def test_full_integration_suite_is_required_without_quarantine(self):
         runner = (ROOT / "scripts/ci/run-required-integration-tests.sh").read_text()
+        settings = ROOT / "scripts/ci/github-maven-settings.xml"
+        self.assertTrue(settings.is_file())
+        self.assertIn(
+            "maven-central.storage-download.googleapis.com/maven2",
+            settings.read_text(),
+        )
+        self.assertIn("github-maven-settings.xml", runner)
         self.assertIn("-Dskip.unit-tests=true", runner)
         self.assertIn('"-Dtest=${required_test_pattern}" clean integration-test', runner)
         minimum_reports = re.search(

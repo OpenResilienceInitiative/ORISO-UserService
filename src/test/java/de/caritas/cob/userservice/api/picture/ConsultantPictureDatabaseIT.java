@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.update.Consultant
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
@@ -83,6 +84,7 @@ class ConsultantPictureDatabaseIT {
   @MockitoBean AccountManager accountManager;
   @MockitoBean AppointmentService appointments;
   @MockitoBean TopicService topics;
+  @MockitoBean CounsellorOnboardingService onboarding;
   String id;
   byte[] png;
 
@@ -183,7 +185,7 @@ class ConsultantPictureDatabaseIT {
     assertThatThrownBy(
             () ->
                 jdbc.update(
-                    "INSERT INTO consultant_picture VALUES (?, ?, 'image/png', UTC_TIMESTAMP())",
+                    "INSERT INTO consultant_picture (consultant_id, image_bytes, content_type, updated_at) VALUES (?, ?, 'image/png', UTC_TIMESTAMP())",
                     id,
                     png))
         .isInstanceOf(org.springframework.dao.DataIntegrityViolationException.class);
@@ -222,7 +224,9 @@ class ConsultantPictureDatabaseIT {
     byte[] boundary = new byte[PictureIntake.MAX_BYTES];
     Arrays.fill(boundary, (byte) 17);
     jdbc.update(
-        "INSERT INTO consultant_picture VALUES (?, ?, 'image/png', UTC_TIMESTAMP())", id, boundary);
+        "INSERT INTO consultant_picture (consultant_id, image_bytes, content_type, updated_at) VALUES (?, ?, 'image/png', UTC_TIMESTAMP())",
+        id,
+        boundary);
     assertThat(savedBytes()).isEqualTo(boundary);
     assertThatThrownBy(
             () ->
@@ -341,6 +345,64 @@ class ConsultantPictureDatabaseIT {
       writer.get(5, TimeUnit.SECONDS);
       deleteResult.get(5, TimeUnit.SECONDS);
       assertThat(pictureCount()).isZero();
+    }
+  }
+
+  boolean internalOnlyColumn() {
+    return Boolean.TRUE.equals(
+        jdbc.queryForObject(
+            "SELECT internal_only FROM consultant_picture WHERE consultant_id = ?",
+            Boolean.class,
+            id));
+  }
+
+  @Test
+  void issue1049AnUploadedPictureIsInternalOnlyUntilItIsPublished() {
+    upload(png);
+    assertThat(internalOnlyColumn()).isTrue();
+    assertThat(store.readInternalOnly(id)).isTrue();
+    assertThatThrownBy(() -> asAdviceSeeker(() -> store.readPublished(id)))
+        .isInstanceOf(NotFoundException.class);
+    store.writeInternalOnly(id, false);
+    assertThat(internalOnlyColumn()).isFalse();
+    assertThat(asAdviceSeeker(() -> store.readPublished(id)).getBytes()).isEqualTo(png);
+  }
+
+  @Test
+  void issue1049WithdrawingAndReplacingBothHideThePictureAgainImmediately() throws Exception {
+    upload(png);
+    store.writeInternalOnly(id, false);
+    store.writeInternalOnly(id, true);
+    assertThat(internalOnlyColumn()).isTrue();
+    assertThatThrownBy(() -> asAdviceSeeker(() -> store.readPublished(id)))
+        .isInstanceOf(NotFoundException.class);
+
+    store.writeInternalOnly(id, false);
+    byte[] replacement = PictureIntakeTest.png(3, 3);
+    upload(replacement);
+    assertThat(internalOnlyColumn()).isTrue();
+    assertThat(savedBytes()).isEqualTo(replacement);
+    assertThatThrownBy(() -> asAdviceSeeker(() -> store.readPublished(id)))
+        .isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void issue1049DeletingTheConsultantAlsoEndsPublicDelivery() {
+    upload(png);
+    store.writeInternalOnly(id, false);
+    deletion.markConsultantForDeletion(id, false);
+    assertThat(pictureCount()).isZero();
+    assertThatThrownBy(() -> asAdviceSeeker(() -> store.readPublished(id)))
+        .isInstanceOf(NotFoundException.class);
+  }
+
+  /** Swap the mocked caller to an advice seeker for one read, then restore the administrator. */
+  <T> T asAdviceSeeker(java.util.function.Supplier<T> read) {
+    when(caller.getGrantedAuthorities()).thenReturn(Set.of(USER_DEFAULT));
+    try {
+      return read.get();
+    } finally {
+      when(caller.getGrantedAuthorities()).thenReturn(Set.of(USER_ADMIN, CONSULTANT_UPDATE));
     }
   }
 }

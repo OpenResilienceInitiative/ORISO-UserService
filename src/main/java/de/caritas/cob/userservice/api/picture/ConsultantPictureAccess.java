@@ -58,6 +58,24 @@ public class ConsultantPictureAccess {
       throw new ForbiddenException("Picture access denied");
   }
 
+  /**
+   * Issue #1049: a published picture is still not world-readable. The caller must be an
+   * authenticated platform user of the same tenant. Every refusal is a {@link NotFoundException} so
+   * that an advice seeker cannot tell an internal-only picture apart from no picture at all.
+   */
+  public void checkPublishedReaderTarget(Consultant target) {
+    if (caller.getGrantedAuthorities() == null
+        || Collections.disjoint(
+            Set.of(USER_DEFAULT, ANONYMOUS_DEFAULT, CONSULTANT_DEFAULT),
+            caller.getGrantedAuthorities())) throw new NotFoundException("Picture not found");
+    if (target.getDeleteDate() != null) throw new NotFoundException("Picture not found");
+    if (caller.isPlatformAdmin()) return;
+    if (multitenancy && (caller.getTenantId() == null || caller.getTenantId() <= 0))
+      throw new NotFoundException("Picture not found");
+    if (!Objects.equals(caller.getTenantId(), target.getTenantId()))
+      throw new NotFoundException("Picture not found");
+  }
+
   private void checkAuthority(boolean write) {
     var allowed =
         write

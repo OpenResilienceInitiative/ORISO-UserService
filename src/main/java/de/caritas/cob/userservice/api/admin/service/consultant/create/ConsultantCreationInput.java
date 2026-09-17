@@ -48,6 +48,20 @@ interface ConsultantCreationInput {
     return null;
   }
 
+  /**
+   * Counsellor avatar choice (#1046) as its wire spelling, e.g. {@code "ICON"}. Kept as a plain
+   * string here so this input contract stays free of generated DTO types; unknown values are
+   * resolved to "no choice" downstream.
+   */
+  default String getAvatarKind() {
+    return null;
+  }
+
+  /** Id of the chosen counsellor motif; only meaningful together with {@code ICON}. */
+  default String getAvatarId() {
+    return null;
+  }
+
   String getPassword();
 
   default boolean shouldGeneratePassword() {
