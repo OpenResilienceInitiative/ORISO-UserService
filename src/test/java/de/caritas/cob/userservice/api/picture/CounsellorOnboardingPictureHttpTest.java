@@ -104,7 +104,7 @@ class CounsellorOnboardingPictureHttpTest {
     mvc.perform(csrf(put(picture(prefix)).contentType("image/png").content(png)))
         .andExpect(status().isNoContent());
     verify(scanner).scan(png);
-    verify(store).replaceForOnboarding(consultantId, png, "image/png");
+    verify(store).replaceForOnboarding(token, png, "image/png");
     verify(store, never()).replace(anyString(), any(), anyString());
   }
 
@@ -117,7 +117,7 @@ class CounsellorOnboardingPictureHttpTest {
                     .contentType("application/json")
                     .content("{\"internalOnly\":false}")))
         .andExpect(status().isNoContent());
-    verify(store).writeInternalOnlyForOnboarding(consultantId, false);
+    verify(store).writeInternalOnlyForOnboarding(token, false);
   }
 
   @ParameterizedTest

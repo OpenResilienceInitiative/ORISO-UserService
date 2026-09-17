@@ -50,9 +50,11 @@ Three properties hold:
 - **A replacement image starts internal again.** `replace` writes a fresh row, whose flag defaults
   to internal, so a new photo is never published on the strength of a decision made about the old
   one. The administrative form re-applies the switch after a successful upload.
-- **Refusals are indistinguishable.** Every refusal on the published route is a 404 — wrong tenant,
-  missing authentication role, deleted consultant, no picture, or an internal-only picture all look
-  the same to an advice seeker, so the route never reveals that a private picture exists.
+- **Refusals after authorization are indistinguishable.** The security chain still answers `401`
+  when the caller is unauthenticated and `403` when they lack `USER_DEFAULT`, `ANONYMOUS_DEFAULT`
+  or `CONSULTANT_DEFAULT`. Once the route has authorized the caller, every remaining refusal is a
+  404 — wrong tenant, deleted consultant, no picture, or an internal-only picture all look the same
+  to an advice seeker, so the route never reveals that a private picture exists.
 
 The published route is not public: it requires `USER_DEFAULT`, `ANONYMOUS_DEFAULT` or
 `CONSULTANT_DEFAULT` and the caller's tenant must match the target's. Anonymous live-chat guests
@@ -66,9 +68,12 @@ The public counsellor onboarding wizard runs before the invitee has a session, s
 administrative route. `PUT /users/account-invites/{token}/onboarding/picture` (and its
 `/visibility` sibling, both prefixes) take the **raw invite token** as the credential, exactly as
 the register and two-factor steps of the same flow do. The controller resolves the token through
-`CounsellorOnboardingService.consultantIdForOnboardingPicture`, which reuses the gate that guards
-the two-factor activation: registration must already have happened, and the link must not be dead,
-expired or terminally consumed. Only then is a byte read.
+`CounsellorOnboardingService.consultantIdForOnboardingPicture` before any byte is read — the same
+gate as two-factor activation. The raw token is then carried through intake and scanning (no
+database transaction is held over that work) into the final write, where
+`replaceForOnboarding` / `writeInternalOnlyForOnboarding` lock the invite again in the same
+transaction as the picture mutation and refuse an expired or no-longer-resumable link before
+anything is persisted.
 
 The write path is otherwise identical — same `PictureIntake`, same two upload slots, same
 fail-closed ClamAV scan, same multipart refusal filter. What it skips is the administrative

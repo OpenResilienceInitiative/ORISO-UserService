@@ -5,18 +5,36 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantPicture;
 import de.caritas.cob.userservice.api.port.out.ConsultantPictureRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import jakarta.persistence.EntityManager;
-import lombok.RequiredArgsConstructor;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
-@RequiredArgsConstructor
 public class ConsultantPictureStore {
   private final ConsultantRepository consultants;
   private final ConsultantPictureRepository pictures;
   private final ConsultantPictureAccess access;
   private final EntityManager entityManager;
+  private final CounsellorOnboardingService onboarding;
+
+  /**
+   * Lazy: {@code ConsultantAdminService} already depends on this store; onboarding reaches that
+   * facade.
+   */
+  public ConsultantPictureStore(
+      ConsultantRepository consultants,
+      ConsultantPictureRepository pictures,
+      ConsultantPictureAccess access,
+      EntityManager entityManager,
+      @Lazy CounsellorOnboardingService onboarding) {
+    this.consultants = consultants;
+    this.pictures = pictures;
+    this.access = access;
+    this.entityManager = entityManager;
+    this.onboarding = onboarding;
+  }
 
   /** Also used by soft deletion; caller must hold the enclosing lifecycle transaction. */
   @Transactional(propagation = org.springframework.transaction.annotation.Propagation.MANDATORY)
@@ -97,20 +115,21 @@ public class ConsultantPictureStore {
   }
 
   /**
-   * Issue #1049 onboarding: the invite token already proved that the caller is the person this
-   * consultant was created for, so no administrative authority is required here. The route that
-   * calls this is the only caller, and it resolves the id from the token itself.
+   * Issue #1049 onboarding: the raw invite token is the credential. It is re-locked and revalidated
+   * in this write transaction so an expiry during intake/scanning cannot persist.
    */
   @Transactional
-  public void replaceForOnboarding(String id, byte[] bytes, String contentType) {
-    var consultant = lockActiveConsultant(id);
+  public void replaceForOnboarding(String rawToken, byte[] bytes, String contentType) {
+    String consultantId = onboarding.requireOnboardingPictureInvite(rawToken).getProvisionedUserId();
+    var consultant = lockActiveConsultant(consultantId);
     pictures.save(new ConsultantPicture(consultant.getId(), bytes, contentType));
   }
 
   /** Issue #1049 onboarding: the same publish decision, with the invite token as the credential. */
   @Transactional
-  public void writeInternalOnlyForOnboarding(String id, boolean internalOnly) {
-    var consultant = lockActiveConsultant(id);
+  public void writeInternalOnlyForOnboarding(String rawToken, boolean internalOnly) {
+    String consultantId = onboarding.requireOnboardingPictureInvite(rawToken).getProvisionedUserId();
+    var consultant = lockActiveConsultant(consultantId);
     picture(consultant.getId(), "Picture not found").setInternalOnly(internalOnly);
   }
 

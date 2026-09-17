@@ -220,11 +220,21 @@ public class CounsellorOnboardingService {
    * registration must have happened, the link must not be dead, expired or terminally consumed.
    */
   public String consultantIdForOnboardingPicture(String rawToken) {
-    String consultantId = loadInviteForTwoFactorActivation(rawToken).getProvisionedUserId();
-    if (isBlank(consultantId)) {
+    return requireOnboardingPictureInvite(rawToken).getProvisionedUserId();
+  }
+
+  /**
+   * Same gate as {@link #consultantIdForOnboardingPicture}, but for a caller that already holds a
+   * write transaction. The invite row is locked here ({@code findByTokenHash}'s pessimistic lock)
+   * so an expiry or terminal consumption racing the ClamAV scan cannot persist after the credential
+   * has died.
+   */
+  public AccountInvite requireOnboardingPictureInvite(String rawToken) {
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    if (isBlank(invite.getProvisionedUserId())) {
       throw new BadRequestException("Registration has not happened yet for this invite");
     }
-    return consultantId;
+    return invite;
   }
 
   /**

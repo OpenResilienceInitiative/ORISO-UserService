@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.update.Consultant
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
@@ -83,6 +84,7 @@ class ConsultantPictureDatabaseIT {
   @MockitoBean AccountManager accountManager;
   @MockitoBean AppointmentService appointments;
   @MockitoBean TopicService topics;
+  @MockitoBean CounsellorOnboardingService onboarding;
   String id;
   byte[] png;
 

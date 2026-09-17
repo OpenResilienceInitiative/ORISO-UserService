@@ -24,13 +24,13 @@ public class ConsultantPictureService {
   }
 
   /**
-   * Issue #1049: the onboarding wizard's upload. The caller has already resolved the consultant
-   * from the raw invite token, which is the credential there. Intake, bounded concurrency and the
-   * fail-closed scan are identical to the administrative path.
+   * Issue #1049: the onboarding wizard's upload. The raw invite token is resolved before any bytes
+   * are read, then carried through intake and the fail-closed scan into the write transaction,
+   * which locks the invite again before persisting.
    */
   @Transactional(propagation = Propagation.NOT_SUPPORTED)
-  public void putForOnboarding(String id, InputStream body, String contentType) {
-    scanAndStore(id, body, contentType, store::replaceForOnboarding);
+  public void putForOnboarding(String rawToken, InputStream body, String contentType) {
+    scanAndStore(rawToken, body, contentType, store::replaceForOnboarding);
   }
 
   private void scanAndStore(String id, InputStream body, String contentType, PictureWriter write) {

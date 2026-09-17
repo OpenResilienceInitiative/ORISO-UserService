@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantPicture;
 import de.caritas.cob.userservice.api.port.out.ConsultantPictureRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import jakarta.persistence.EntityManager;
 import java.time.LocalDateTime;
 import java.util.*;
@@ -26,10 +27,11 @@ class ConsultantPictureVisibilityTest {
   final AdminUserFacade admins = mock(AdminUserFacade.class);
   final ConsultantAgencyAdminService agencies = mock(ConsultantAgencyAdminService.class);
   final EntityManager entityManager = mock(EntityManager.class);
+  final CounsellorOnboardingService onboarding = mock(CounsellorOnboardingService.class);
   final ConsultantPictureAccess access =
       new ConsultantPictureAccess(caller, consultants, admins, agencies);
   final ConsultantPictureStore store =
-      new ConsultantPictureStore(consultants, pictures, access, entityManager);
+      new ConsultantPictureStore(consultants, pictures, access, entityManager, onboarding);
   final Consultant target = new Consultant();
   final byte[] bytes = {1, 2, 3};
   ConsultantPicture picture = new ConsultantPicture("target", bytes, "image/png");

@@ -28,8 +28,8 @@ public class CounsellorOnboardingPictureController {
   })
   public ResponseEntity<Void> put(@PathVariable String token, HttpServletRequest request)
       throws IOException {
-    var consultantId = onboarding.consultantIdForOnboardingPicture(token);
-    service.putForOnboarding(consultantId, request.getInputStream(), request.getContentType());
+    onboarding.consultantIdForOnboardingPicture(token);
+    service.putForOnboarding(token, request.getInputStream(), request.getContentType());
     return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
   }
 
@@ -41,8 +41,8 @@ public class CounsellorOnboardingPictureController {
       consumes = MediaType.APPLICATION_JSON_VALUE)
   public ResponseEntity<Void> putVisibility(
       @PathVariable String token, @RequestBody @Valid ConsultantPictureVisibility visibility) {
-    var consultantId = onboarding.consultantIdForOnboardingPicture(token);
-    store.writeInternalOnlyForOnboarding(consultantId, visibility.internalOnly());
+    onboarding.consultantIdForOnboardingPicture(token);
+    store.writeInternalOnlyForOnboarding(token, visibility.internalOnly());
     return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
   }
 }
