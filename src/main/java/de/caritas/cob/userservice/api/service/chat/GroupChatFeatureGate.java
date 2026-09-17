@@ -78,7 +78,7 @@ public class GroupChatFeatureGate {
     Optional<Settings> settings;
     try {
       settings = effectiveAgencySettingsLookup.findEffectiveSettings(agencyId);
-    } catch (RuntimeException agencyServiceFailure) {
+    } catch (org.springframework.web.client.RestClientException agencyServiceFailure) {
       log.warn(
           "Could not read effective settings of agency {} from the AgencyService; the tenant "
               + "decision stands for this {} create request. Cause: {}",
