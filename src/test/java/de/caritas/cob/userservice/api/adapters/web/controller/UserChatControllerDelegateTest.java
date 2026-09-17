@@ -87,7 +87,7 @@ class UserChatControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
     assertThat(response.getBody()).isSameAs(createChatResponseDTO);
-    verify(groupChatFeatureGate).requireEnabled(consultant);
+    verify(groupChatFeatureGate).requireEnabled(consultant, chatDTO);
   }
 
   @Test

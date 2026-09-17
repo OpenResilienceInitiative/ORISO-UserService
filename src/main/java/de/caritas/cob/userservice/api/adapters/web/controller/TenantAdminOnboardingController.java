@@ -160,6 +160,7 @@ public class TenantAdminOnboardingController {
     AccountDataDTO account = safe.account == null ? new AccountDataDTO() : safe.account;
     PersonDataDTO person = safe.person == null ? new PersonDataDTO() : safe.person;
     DisplayNamesDataDTO names = safe.names == null ? new DisplayNamesDataDTO() : safe.names;
+    AvatarDataDTO avatar = safe.avatar == null ? new AvatarDataDTO() : safe.avatar;
     return new RegisterCounsellorCommand(
         account.username,
         account.password,
@@ -168,7 +169,9 @@ public class TenantAdminOnboardingController {
         person.title,
         names.publicName,
         names.internalDisplayName,
-        safe.topicIds);
+        safe.topicIds,
+        avatar.kind,
+        avatar.id);
   }
 
   private static RegisterTenantAdminCommand toCommand(TenantAdminRegistrationRequestDTO request) {
@@ -226,6 +229,15 @@ public class TenantAdminOnboardingController {
     public String internalDisplayName;
   }
 
+  /**
+   * Counsellor wizard "Avatar" step (#1046). Kept as free text on purpose: an unknown or garbage
+   * kind from this PUBLIC endpoint must be ignored (no choice stored), never answered with a 500.
+   */
+  public static class AvatarDataDTO {
+    public String kind;
+    public String id;
+  }
+
   public static class TenantAdminRegistrationRequestDTO {
     public OrganisationDataDTO organisation;
     public DpaAcceptanceDataDTO dpa;
@@ -240,6 +252,9 @@ public class TenantAdminOnboardingController {
     public PersonDataDTO person;
 
     public DisplayNamesDataDTO names;
+
+    /** Counsellor wizard avatar choice (#1046). */
+    public AvatarDataDTO avatar;
 
     /** Counsellor wizard topic selection — validated against the invite's coverage. */
     public List<Long> topicIds;

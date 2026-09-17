@@ -52,6 +52,30 @@ class CreateConsultantDTOCreationInputAdapterTest {
   }
 
   @Test
+  void avatarGetters_Should_flattenTheGeneratedEnumToItsWireSpelling() {
+    CreateConsultantDTO dto = new CreateConsultantDTO();
+    dto.setUsername(USERNAME);
+    dto.setAvatarKind(CreateConsultantDTO.AvatarKindEnum.ICON);
+    dto.setAvatarId("motif-24");
+
+    ConsultantCreationInput input = new CreateConsultantDTOCreationInputAdapter(dto);
+
+    assertThat(input.getAvatarKind(), is("ICON"));
+    assertThat(input.getAvatarId(), is("motif-24"));
+  }
+
+  @Test
+  void avatarGetters_Should_returnNull_When_noChoiceWasMade() {
+    CreateConsultantDTO dto = new CreateConsultantDTO();
+    dto.setUsername(USERNAME);
+
+    ConsultantCreationInput input = new CreateConsultantDTOCreationInputAdapter(dto);
+
+    assertThat(input.getAvatarKind(), nullValue());
+    assertThat(input.getAvatarId(), nullValue());
+  }
+
+  @Test
   void booleanFlags_Should_defaultToFalse_When_dtoFlagsAreNull() {
     CreateConsultantDTO dto = new CreateConsultantDTO();
     dto.setUsername(USERNAME);

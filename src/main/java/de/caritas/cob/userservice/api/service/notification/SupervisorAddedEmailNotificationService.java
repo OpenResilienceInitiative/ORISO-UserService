@@ -50,7 +50,7 @@ public class SupervisorAddedEmailNotificationService {
   @Value("${app.base.url}")
   private String applicationBaseUrl;
 
-  @Value("${system.notification.frontend.base-url:https://app.oriso.org}")
+  @Value("${system.notification.frontend.base-url:${app.base.url}}")
   private String publicFrontendBaseUrl;
 
   @Value("${identity.email-dummy-suffix}")

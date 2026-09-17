@@ -12,8 +12,10 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.TeamDiscussion;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRoomGateway;
+import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
 import java.util.List;
@@ -45,8 +47,44 @@ class AgencyLateJoinerMembershipServiceTest {
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private SessionRoomGateway sessionRoomGateway;
   @Mock private AgencySilentMembershipService agencySilentMembershipService;
+  @Mock private TeamDiscussionRepository teamDiscussionRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.teamdiscussion.TeamDiscussionParticipantWriter
+      participantWriter;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository
+      consultantAgencyRepository;
+
+  @Mock private de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService claims;
 
   @InjectMocks private AgencyLateJoinerMembershipService underTest;
+
+  private void guardedTeamRoom(String roomId) {
+    when(teamDiscussionRepository.findByMatrixRoomId(roomId))
+        .thenReturn(Optional.of(TeamDiscussion.builder().matrixRoomId(roomId).build()));
+    var lease =
+        new de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService.ClaimLease(
+            AgencyLateJoinerMembershipService.TEAM_ACCESS_REPAIR_TASK,
+            java.time.LocalDateTime.now().plusMinutes(2));
+    when(claims.tryClaimLease(anyString(), any())).thenReturn(Optional.of(lease));
+    when(claims.runIfHeld(eq(lease), any()))
+        .thenAnswer(
+            invocation -> {
+              invocation.<Runnable>getArgument(1).run();
+              return true;
+            });
+  }
+
+  @Test
+  void recordedRevocationRemainsPendingWhenMatrixIdentityIsMissing() {
+    var consultant = lateJoiner();
+    consultant.setMatrixUserId(null);
+    assertEquals(
+        false, underTest.removeConsultantFromTeamRoom(consultant, AGENCY_ID, "!team:test"));
+    verifyNoInteractions(sessionRoomGateway, matrixCredentialClient);
+  }
 
   private Consultant lateJoiner() {
     var consultant = new Consultant();
@@ -213,7 +251,7 @@ class AgencyLateJoinerMembershipServiceTest {
 
   @Test
   @DisplayName("a counsellor removed from the agency loses membership in its open enquiry rooms")
-  void removeConsultantFromOpenEnquiryRooms_removesFromEveryOpenEnquiryRoom() {
+  void removeConsultantFromAgencyRooms_removesFromEveryOpenEnquiryRoom() {
     var consultant = lateJoiner();
     openEnquiries(openEnquiry(1L, "!one:oriso.org"), openEnquiry(2L, "!two:oriso.org"));
     agencyServiceAccountAvailable();
@@ -224,16 +262,67 @@ class AgencyLateJoinerMembershipServiceTest {
             "!two:oriso.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
         .thenReturn(true);
 
-    assertEquals(2, underTest.removeConsultantFromOpenEnquiryRooms(consultant, AGENCY_ID));
+    assertEquals(2, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
+  }
+
+  @Test
+  @DisplayName("agency removal also revokes open team discussions the counsellor joined")
+  void removeConsultantFromAgencyRooms_removesJoinedTeamDiscussionRooms() {
+    var consultant = lateJoiner();
+    openEnquiries();
+    when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(
+            consultant.getId(), AGENCY_ID, TeamDiscussion.Status.OPEN))
+        .thenReturn(List.of("!team:oriso.org"));
+    agencyServiceAccountAvailable();
+    guardedTeamRoom("!team:oriso.org");
+    var marked = new java.util.concurrent.atomic.AtomicBoolean();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              marked.set(true);
+              return null;
+            })
+        .when(participantWriter)
+        .markAgencyRevocation(consultant.getId(), AGENCY_ID);
+    when(sessionRoomGateway.removeUserFromRoom(
+            "!team:oriso.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
+        .thenAnswer(
+            invocation -> {
+              assertEquals(true, marked.get(), "Repair marker must commit before the kick");
+              return true;
+            });
+
+    assertEquals(1, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
+
+    verify(sessionRoomGateway)
+        .removeUserFromRoom("!team:oriso.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN);
+  }
+
+  @Test
+  void removeConsultantFromAgencyRooms_alsoRevokesArchivedTeamRooms() {
+    guardedTeamRoom("!archive:oriso.org");
+    var consultant = lateJoiner();
+    openEnquiries();
+    when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(
+            consultant.getId(), AGENCY_ID, TeamDiscussion.Status.ARCHIVED))
+        .thenReturn(List.of("!archive:oriso.org"));
+    when(teamDiscussionRepository.findRoomIdsForParticipantInAgency(
+            consultant.getId(), AGENCY_ID, TeamDiscussion.Status.OPEN))
+        .thenReturn(List.of());
+    agencyServiceAccountAvailable();
+    when(sessionRoomGateway.removeUserFromRoom(
+            "!archive:oriso.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
+        .thenReturn(true);
+
+    assertEquals(1, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
   }
 
   @Test
   @DisplayName("a counsellor without a Matrix account has nothing to revoke")
-  void removeConsultantFromOpenEnquiryRooms_skipsConsultantWithoutMatrixAccount() {
+  void removeConsultantFromAgencyRooms_skipsConsultantWithoutMatrixAccount() {
     var consultant = lateJoiner();
     consultant.setMatrixUserId(null);
 
-    assertEquals(0, underTest.removeConsultantFromOpenEnquiryRooms(consultant, AGENCY_ID));
+    assertEquals(0, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
 
     verifyNoInteractions(sessionRepository);
     verifyNoInteractions(matrixCredentialClient);
@@ -242,7 +331,7 @@ class AgencyLateJoinerMembershipServiceTest {
 
   @Test
   @DisplayName("one failing removal does not stop the remaining rooms from being revoked")
-  void removeConsultantFromOpenEnquiryRooms_isBestEffortPerRoom() {
+  void removeConsultantFromAgencyRooms_isBestEffortPerRoom() {
     var consultant = lateJoiner();
     openEnquiries(openEnquiry(1L, "!broken:oriso.org"), openEnquiry(2L, "!healthy:oriso.org"));
     agencyServiceAccountAvailable();
@@ -253,6 +342,6 @@ class AgencyLateJoinerMembershipServiceTest {
             "!healthy:oriso.org", CONSULTANT_MATRIX_USER_ID, AGENCY_TOKEN))
         .thenReturn(true);
 
-    assertEquals(1, underTest.removeConsultantFromOpenEnquiryRooms(consultant, AGENCY_ID));
+    assertEquals(1, underTest.removeConsultantFromAgencyRooms(consultant, AGENCY_ID));
   }
 }
