@@ -1,0 +1,1 @@
+ALTER TABLE consultant ADD COLUMN avatar_kind VARCHAR(16) NULL, ADD COLUMN avatar_id VARCHAR(64) NULL;

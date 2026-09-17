@@ -193,4 +193,5 @@
 
   <include file="db/changelog/changeset/20260910_chat_recovery_policy/changeSet.xml"/>
   <include file="db/changelog/changeset/20260915_consultant_picture_1048/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260917_consultant_avatar_1046/changeSet.xml"/>
 </databaseChangeLog>

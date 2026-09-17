@@ -303,6 +303,9 @@ class TenantAdminOnboardingControllerTest {
     request.names.publicName = "Lena";
     request.names.internalDisplayName = "Lena B. (Nord)";
     request.topicIds = java.util.List.of(12L);
+    request.avatar = new TenantAdminOnboardingController.AvatarDataDTO();
+    request.avatar.kind = "ICON";
+    request.avatar.id = "motif-24";
 
     var response = controller.registerTenantAdmin("tok", request);
 
@@ -327,6 +330,57 @@ class TenantAdminOnboardingControllerTest {
     assertEquals("Lena", command.displayName());
     assertEquals("Lena B. (Nord)", command.internalDisplayName());
     assertEquals(java.util.List.of(12L), command.topicIds());
+    assertEquals("ICON", command.avatarKind());
+    assertEquals("motif-24", command.avatarId());
+  }
+
+  @Test
+  void registerTenantAdmin_counsellorInvite_garbageAvatarKindIsCarriedAsPlainText() {
+    probeAnswersCounsellor();
+    when(counsellorOnboardingService.registerCounsellor(
+            eq("tok"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new CounsellorRegistrationResult("consultant-1", "TOTPSECRET", "QR", true));
+
+    var request = new TenantAdminOnboardingController.TenantAdminRegistrationRequestDTO();
+    request.account = new TenantAdminOnboardingController.AccountDataDTO();
+    request.account.username = "lena.b";
+    request.account.password = "s3cretPassword";
+    request.topicIds = java.util.List.of(12L);
+    request.avatar = new TenantAdminOnboardingController.AvatarDataDTO();
+    request.avatar.kind = "<script>alert(1)</script>";
+    request.avatar.id = "motif-24";
+
+    var response = controller.registerTenantAdmin("tok", request);
+
+    // The public endpoint must not blow up on an unknown kind; it is resolved to "no choice"
+    // further down the chain (see CounsellorInviteProvisioningService).
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    ArgumentCaptor<RegisterCounsellorCommand> captor =
+        ArgumentCaptor.forClass(RegisterCounsellorCommand.class);
+    verify(counsellorOnboardingService).registerCounsellor(eq("tok"), captor.capture());
+    assertEquals("<script>alert(1)</script>", captor.getValue().avatarKind());
+  }
+
+  @Test
+  void registerTenantAdmin_counsellorInvite_missingAvatarBlockIsNoChoice() {
+    probeAnswersCounsellor();
+    when(counsellorOnboardingService.registerCounsellor(
+            eq("tok"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new CounsellorRegistrationResult("consultant-1", "TOTPSECRET", "QR", true));
+
+    var request = new TenantAdminOnboardingController.TenantAdminRegistrationRequestDTO();
+    request.account = new TenantAdminOnboardingController.AccountDataDTO();
+    request.account.username = "lena.b";
+    request.account.password = "s3cretPassword";
+    request.topicIds = java.util.List.of(12L);
+
+    controller.registerTenantAdmin("tok", request);
+
+    ArgumentCaptor<RegisterCounsellorCommand> captor =
+        ArgumentCaptor.forClass(RegisterCounsellorCommand.class);
+    verify(counsellorOnboardingService).registerCounsellor(eq("tok"), captor.capture());
+    assertNull(captor.getValue().avatarKind());
+    assertNull(captor.getValue().avatarId());
   }
 
   @Test

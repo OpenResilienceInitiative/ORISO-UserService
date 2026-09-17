@@ -138,7 +138,9 @@ class CounsellorOnboardingServiceTest {
         "Dipl.-Soz.Päd.",
         "Lena",
         "Lena B. (Nord)",
-        List.of(DEPARTMENT_TOPIC_ID));
+        List.of(DEPARTMENT_TOPIC_ID),
+        null,
+        null);
   }
 
   // --- resolve ---
@@ -284,6 +286,45 @@ class CounsellorOnboardingServiceTest {
     assertEquals("Lena", provision.displayName());
     assertEquals("Lena B. (Nord)", provision.internalDisplayName());
     assertEquals(List.of(DEPARTMENT_TOPIC_ID), provision.topicIds());
+    assertNull(provision.avatarKind());
+    assertNull(provision.avatarId());
+  }
+
+  @Test
+  void registerCounsellor_carriesTheAvatarChoiceToProvisioning() {
+    AccountInvite deliverable = invite();
+    inviteResolves(deliverable);
+    agencyCoverageResolves();
+
+    AccountInvite accepted = invite();
+    accepted.setStatus(AccountInviteStatus.ACCEPTED);
+    accepted.setProvisionedUserId(CONSULTANT_ID);
+    when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any()))
+        .thenReturn(accepted);
+    when(usernameTranscoder.encodeUsername("lena.b")).thenReturn("enc.lena.b");
+    when(identitySecondFactor.getOtpCredential("enc.lena.b"))
+        .thenReturn(
+            new IdentityOtpCredential(false, "TOTPSECRET", "QRBASE64", IdentityOtpType.APP));
+
+    service.registerCounsellor(
+        RAW_TOKEN,
+        new RegisterCounsellorCommand(
+            "lena.b",
+            "s3cretPassword",
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of(DEPARTMENT_TOPIC_ID),
+            "  ICON  ",
+            " motif-24 "));
+
+    ArgumentCaptor<ProvisionCounsellorCommand> captor =
+        ArgumentCaptor.forClass(ProvisionCounsellorCommand.class);
+    verify(counsellorInviteProvisioningService).acceptInvite(eq(RAW_TOKEN), captor.capture());
+    assertEquals("ICON", captor.getValue().avatarKind());
+    assertEquals("motif-24", captor.getValue().avatarId());
   }
 
   @Test
@@ -312,7 +353,7 @@ class CounsellorOnboardingServiceTest {
 
     RegisterCounsellorCommand outside =
         new RegisterCounsellorCommand(
-            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(999L));
+            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(999L), null, null);
 
     assertThrows(BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, outside));
     verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any());
@@ -322,7 +363,7 @@ class CounsellorOnboardingServiceTest {
   void registerCounsellor_missingTopics_isRejected() {
     RegisterCounsellorCommand noTopics =
         new RegisterCounsellorCommand(
-            "lena.b", "s3cretPassword", null, null, null, null, null, List.of());
+            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(), null, null);
 
     assertThrows(BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, noTopics));
   }
@@ -331,7 +372,16 @@ class CounsellorOnboardingServiceTest {
   void registerCounsellor_shortPassword_isRejected() {
     RegisterCounsellorCommand shortPassword =
         new RegisterCounsellorCommand(
-            "lena.b", "short", null, null, null, null, null, List.of(DEPARTMENT_TOPIC_ID));
+            "lena.b",
+            "short",
+            null,
+            null,
+            null,
+            null,
+            null,
+            List.of(DEPARTMENT_TOPIC_ID),
+            null,
+            null);
 
     assertThrows(
         BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, shortPassword));
@@ -554,7 +604,9 @@ class CounsellorOnboardingServiceTest {
             null,
             null,
             null,
-            List.of(EXTRA_AGENCY_TOPIC_ID));
+            List.of(EXTRA_AGENCY_TOPIC_ID),
+            null,
+            null);
 
     assertThrows(
         InternalServerErrorException.class,
@@ -569,7 +621,7 @@ class CounsellorOnboardingServiceTest {
     agencyCoverageResolves();
     var commandWithForeignTopic =
         new RegisterCounsellorCommand(
-            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(999L));
+            "lena.b", "s3cretPassword", null, null, null, null, null, List.of(999L), null, null);
 
     assertThrows(
         BadRequestException.class,

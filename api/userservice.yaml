@@ -2767,6 +2767,17 @@ components:
         publicSlugStatus:
           type: string
           enum: [PENDING, APPROVED, REJECTED]
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            Counsellor avatar choice (#1046); absent when the counsellor made no choice and the
+            initials fallback is rendered.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: Id of the chosen counsellor motif; only set together with avatarKind = ICON.
         firstName:
           type: string
           example: Max
