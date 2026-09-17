@@ -3,6 +3,39 @@
 set -euo pipefail
 
 maven_wrapper="${ORISO_MAVEN_WRAPPER:-./mvnw}"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+maven_settings="${script_dir}/github-maven-settings.xml"
+
+run_maven() {
+  local max_attempts="${ORISO_MAVEN_RESOLVE_ATTEMPTS:-4}"
+  local delay="${ORISO_MAVEN_RESOLVE_RETRY_DELAY_SECONDS:-15}"
+  local attempt=1
+  local log status
+  log="$(mktemp)"
+  while true; do
+    set +e
+    set +o pipefail
+    "${maven_wrapper}" -s "${maven_settings}" "$@" 2>&1 | tee "${log}"
+    status=${PIPESTATUS[0]}
+    set -o pipefail
+    set -e
+    if [[ "${status}" -eq 0 ]]; then
+      rm -f "${log}"
+      return 0
+    fi
+    if [[ "${attempt}" -ge "${max_attempts}" ]] ||
+      ! grep -Eq 'status code: 403|Could not transfer artifact' "${log}"; then
+      rm -f "${log}"
+      return "${status}"
+    fi
+    echo "Maven Central transfer failed (attempt ${attempt}/${max_attempts}); retrying in ${delay}s." >&2
+    sleep "${delay}"
+    attempt=$((attempt + 1))
+    if [[ "${delay}" -gt 0 ]]; then
+      delay=$((delay * 2))
+    fi
+  done
+}
 
 # Real-MariaDB contracts are owned by the separately required mariadb-contract job. Excluding them
 # from discovery here prevents JUnit's environment conditions from manufacturing skipped reports.
@@ -31,7 +64,7 @@ done
 
 # The application/H2 *IT suite is the required contract here. Unit tests and real-MariaDB tests
 # have their own required jobs, so they are not discovered in this report inventory.
-"${maven_wrapper}" -B -Dskip.unit-tests=true "-Dtest=${required_test_pattern}" clean integration-test
+run_maven -B -Dskip.unit-tests=true "-Dtest=${required_test_pattern}" clean integration-test
 
 python3 - <<'PY'
 from pathlib import Path
