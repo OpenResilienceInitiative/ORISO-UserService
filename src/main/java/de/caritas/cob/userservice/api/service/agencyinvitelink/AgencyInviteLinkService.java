@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.service.ConsultingTypeService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.HttpServletRequest;
 import java.security.SecureRandom;
@@ -154,6 +155,43 @@ public class AgencyInviteLinkService {
     }
     return result;
   }
+
+  /** Read public entry metadata without provisioning a session or changing the link. */
+  @Transactional(readOnly = true)
+  public InvitationContext getContext(String token) {
+    AgencyInviteLink link =
+        repository
+            .findByToken(token)
+            .orElseThrow(() -> new NotFoundException("Invite link not found"));
+    if (!InviteLinkStatus.ACTIVE.name().equals(link.getStatus())) {
+      throw new BadRequestException("Invite link is not active");
+    }
+    if (link.getExpiresAt() != null && link.getExpiresAt().isBefore(LocalDateTime.now())) {
+      throw new BadRequestException("Invite link expired");
+    }
+
+    TenantData previousTenant = TenantContext.getCurrentTenantData();
+    try {
+      TenantContext.setCurrentTenantData(new TenantData(link.getTenantId(), null));
+      Integer consultingTypeId = pickConsultingTypeId(link);
+      Long agencyId =
+          InviteLinkChatType.LIVE_CHAT.name().equals(link.getChatType())
+              ? null
+              : resolveAgencyIdForRegistration(link, consultingTypeId);
+      return new InvitationContext(
+          link.getTenantId(), agencyId, consultingTypeId, link.getTopicId(), link.getChatType());
+    } finally {
+      if (previousTenant == null) {
+        TenantContext.clear();
+      } else {
+        TenantContext.setCurrentTenantData(previousTenant);
+      }
+    }
+  }
+
+  /** Public context deliberately excludes credentials and invitation administration data. */
+  public record InvitationContext(
+      Long tenantId, Long agencyId, Integer consultingTypeId, Long topicId, String chatType) {}
 
   /**
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for
