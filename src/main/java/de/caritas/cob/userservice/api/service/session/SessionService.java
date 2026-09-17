@@ -446,7 +446,7 @@ public class SessionService {
 
   private boolean isVisibleRegisteredEnquiryForConsultant(Session session) {
     if (!isAnonymousStyleRegistration(session)) {
-      return true;
+      return nonNull(session.getEnquiryMessageDate());
     }
     return nonNull(session.getUser()) && nonNull(session.getUser().getDataPrivacyConfirmation());
   }
