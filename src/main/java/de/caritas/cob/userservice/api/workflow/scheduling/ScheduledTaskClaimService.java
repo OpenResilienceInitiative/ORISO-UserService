@@ -41,6 +41,11 @@ public class ScheduledTaskClaimService {
     }
   }
 
+  /** Runs one bounded operation while the lease row remains exclusively locked. */
+  public boolean runIfHeld(ClaimLease lease, Runnable operation) {
+    return claimWriter.runIfHeld(lease, operation);
+  }
+
   public boolean release(ClaimLease lease) {
     return claimWriter.release(lease.taskName(), lease.claimedUntil());
   }

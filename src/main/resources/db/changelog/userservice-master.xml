@@ -185,6 +185,10 @@
     file="db/changelog/changeset/0098_case_handover_matrix_repair/0098_changeSet.xml" />
   <include
     file="db/changelog/changeset/0099_case_handover_matrix_repair_generation/0099_changeSet.xml" />
+  <include
+    file="db/changelog/changeset/0100_team_discussion_room_cleanup/0100_changeSet.xml" />
+
+  <include file="db/changelog/changeset/0101_team_discussion_access_repair/0101_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
