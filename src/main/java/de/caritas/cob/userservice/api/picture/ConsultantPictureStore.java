@@ -120,7 +120,8 @@ public class ConsultantPictureStore {
    */
   @Transactional
   public void replaceForOnboarding(String rawToken, byte[] bytes, String contentType) {
-    String consultantId = onboarding.requireOnboardingPictureInvite(rawToken).getProvisionedUserId();
+    String consultantId =
+        onboarding.requireOnboardingPictureInvite(rawToken).getProvisionedUserId();
     var consultant = lockActiveConsultant(consultantId);
     pictures.save(new ConsultantPicture(consultant.getId(), bytes, contentType));
   }
@@ -128,7 +129,8 @@ public class ConsultantPictureStore {
   /** Issue #1049 onboarding: the same publish decision, with the invite token as the credential. */
   @Transactional
   public void writeInternalOnlyForOnboarding(String rawToken, boolean internalOnly) {
-    String consultantId = onboarding.requireOnboardingPictureInvite(rawToken).getProvisionedUserId();
+    String consultantId =
+        onboarding.requireOnboardingPictureInvite(rawToken).getProvisionedUserId();
     var consultant = lockActiveConsultant(consultantId);
     picture(consultant.getId(), "Picture not found").setInternalOnly(internalOnly);
   }
