@@ -68,7 +68,10 @@ class AgencyCreationClientTest {
 
     client =
         new AgencyCreationClient(
-            securityHeaderSupplier, identityAuthentication, identityClientConfig, controllerFactory);
+            securityHeaderSupplier,
+            identityAuthentication,
+            identityClientConfig,
+            controllerFactory);
     ReflectionTestUtils.setField(client, "defaultConsultingType", 1);
   }
 
@@ -78,7 +81,8 @@ class AgencyCreationClientTest {
   }
 
   private void createAgency() {
-    client.createAgencyWithReservedId(RESERVED_AGENCY_ID, "Beratungsstelle", TENANT_ID, List.of(3L));
+    client.createAgencyWithReservedId(
+        RESERVED_AGENCY_ID, "Beratungsstelle", TENANT_ID, List.of(3L));
   }
 
   /**

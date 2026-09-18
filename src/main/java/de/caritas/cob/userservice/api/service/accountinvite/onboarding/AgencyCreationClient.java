@@ -43,11 +43,11 @@ public class AgencyCreationClient {
    * a consulting type, so new Beratungsstellen are created under the platform default. Kept
    * configurable rather than hard-coded so an operator can move it without a code change.
    *
-   * <p>The default is 1, the consulting type every ORISO installation ships (ORISO-Helm
-   * {@code consulting-type-settings/c1.json}). It was 0 before, an ID no environment serves:
-   * AgencyService validates the consulting type against ConsultingTypeService before it creates
-   * anything, so every counsellor onboarding that had to create its reserved Beratungsstelle
-   * failed with an unexplained 500 (ORISO-Admin#998).
+   * <p>The default is 1, the consulting type every ORISO installation ships (ORISO-Helm {@code
+   * consulting-type-settings/c1.json}). It was 0 before, an ID no environment serves: AgencyService
+   * validates the consulting type against ConsultingTypeService before it creates anything, so
+   * every counsellor onboarding that had to create its reserved Beratungsstelle failed with an
+   * unexplained 500 (ORISO-Admin#998).
    */
   @Value("${counsellor.onboarding.agency.default-consulting-type:1}")
   private int defaultConsultingType;
