@@ -189,6 +189,21 @@ public class AgencyInviteLinkService {
     }
   }
 
+  /** Resolves the complete server-owned Join target; public callers cannot choose a tenant. */
+  @Transactional(readOnly = true)
+  public de.caritas.cob.userservice.api.model.GuestJoinTarget getGuestJoinTarget(String token) {
+    var context = getContext(token);
+    if (!InviteLinkChatType.LIVE_CHAT.name().equals(context.chatType())) {
+      throw new BadRequestException("Invitation does not support guest Live Chat Join");
+    }
+    var link =
+        repository
+            .findByToken(token)
+            .orElseThrow(() -> new NotFoundException("Invite link not found"));
+    return new de.caritas.cob.userservice.api.model.GuestJoinTarget(
+        link.getId(), context.tenantId(), context.topicId(), context.consultingTypeId());
+  }
+
   /** Public context deliberately excludes credentials and invitation administration data. */
   public record InvitationContext(
       Long tenantId, Long agencyId, Integer consultingTypeId, Long topicId, String chatType) {}
