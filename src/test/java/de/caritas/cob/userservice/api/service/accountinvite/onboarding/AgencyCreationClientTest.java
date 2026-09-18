@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.accountinvite.onboarding;
 
+import static java.util.Objects.requireNonNull;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
@@ -28,12 +29,13 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.context.annotation.AnnotationConfigApplicationContext;
-import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.env.MapPropertySource;
+import org.springframework.core.env.StandardEnvironment;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
+import org.springframework.util.ReflectionUtils;
 import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.ResourceAccessException;
@@ -162,29 +164,21 @@ class AgencyCreationClientTest {
   }
 
   /**
-   * The tests above construct the client directly, so they would stay green if the {@code @Value}
-   * fallback went back to the 0 that broke onboarding. Resolve it through Spring instead, with the
-   * property absent, so the shipped default itself is pinned.
+   * The cases above construct the client directly and set the field, so they would stay green if
+   * the {@code @Value} fallback went back to the 0 that broke onboarding. Resolve the annotation's
+   * own expression through Spring's placeholder resolution instead — the same mechanism
+   * {@code @Value} uses — so the shipped default is pinned to the annotation, not to the test.
    */
   private int resolveConfiguredConsultingType(Map<String, Object> properties) {
-    try (var context = new AnnotationConfigApplicationContext()) {
-      if (!properties.isEmpty()) {
-        context
-            .getEnvironment()
-            .getPropertySources()
-            .addFirst(new MapPropertySource("test", properties));
-      }
-      context.registerBean(PropertySourcesPlaceholderConfigurer.class);
-      context.registerBean(SecurityHeaderSupplier.class, () -> securityHeaderSupplier);
-      context.registerBean(IdentityAuthentication.class, () -> identityAuthentication);
-      context.registerBean(IdentityClientConfig.class, () -> identityClientConfig);
-      context.registerBean(AgencyAdminServiceApiControllerFactory.class, () -> controllerFactory);
-      context.registerBean(AgencyCreationClient.class);
-      context.refresh();
-      return (Integer)
-          ReflectionTestUtils.getField(
-              context.getBean(AgencyCreationClient.class), "defaultConsultingType");
+    var environment = new StandardEnvironment();
+    if (!properties.isEmpty()) {
+      environment.getPropertySources().addFirst(new MapPropertySource("test", properties));
     }
+    var field =
+        requireNonNull(
+            ReflectionUtils.findField(AgencyCreationClient.class, "defaultConsultingType"));
+    var expression = requireNonNull(field.getAnnotation(Value.class)).value();
+    return Integer.parseInt(environment.resolveRequiredPlaceholders(expression));
   }
 
   /** Without the property the client must use 1, the consulting type every installation ships. */
