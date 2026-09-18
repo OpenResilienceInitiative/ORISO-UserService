@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import java.util.List;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -28,9 +29,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpHeaders;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * ORISO-Admin#998: the counsellor wizard creates the Beratungsstelle its invite reserved. Every
@@ -88,7 +95,8 @@ class AgencyCreationClientTest {
   /**
    * The regression: AgencyService validates the consulting type before it creates anything and
    * answers 400 when it does not exist. That answer escaped unmapped and reached the invitee as an
-   * unexplained 500 with nothing logged on this side.
+   * unexplained 500 with nothing logged on this side. It stays a 500 deliberately: a rejected
+   * request is this service's own configuration being wrong, and repeating it cannot succeed.
    */
   @Test
   void createAgencyWithReservedId_upstreamBadRequest_isTranslatedInsteadOfEscapingRaw() {
@@ -107,17 +115,33 @@ class AgencyCreationClientTest {
     assertThatThrownBy(this::createAgency).isInstanceOf(ConflictException.class);
   }
 
-  /** A server-side outage upstream is reported as such, not as a raw client exception. */
+  /**
+   * docs/api-error-contract.md: a downstream service that failed is 424/502, never 500. An
+   * AgencyService outage is retryable and must not look like a fault of this service.
+   */
   @Test
-  void createAgencyWithReservedId_upstreamServerError_isTranslated() {
+  void createAgencyWithReservedId_upstreamServerError_isADownstreamFailure() {
     when(adminAgencyControllerApi.createAgency(any(AgencyDTO.class)))
         .thenThrow(
-            org.springframework.web.client.HttpServerErrorException.create(
+            HttpServerErrorException.create(
                 HttpStatus.SERVICE_UNAVAILABLE, "unavailable", null, null, null));
 
     assertThatThrownBy(this::createAgency)
-        .isInstanceOf(InternalServerErrorException.class)
-        .hasMessageContaining("503");
+        .isInstanceOf(ResponseStatusException.class)
+        .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+        .isEqualTo(HttpStatus.BAD_GATEWAY);
+  }
+
+  /** An unreachable AgencyService carries no status, and is the same class of failure as a 5xx. */
+  @Test
+  void createAgencyWithReservedId_unreachableUpstream_isADownstreamFailure() {
+    when(adminAgencyControllerApi.createAgency(any(AgencyDTO.class)))
+        .thenThrow(new ResourceAccessException("connection refused"));
+
+    assertThatThrownBy(this::createAgency)
+        .isInstanceOf(ResponseStatusException.class)
+        .extracting(exception -> ((ResponseStatusException) exception).getStatusCode())
+        .isEqualTo(HttpStatus.BAD_GATEWAY);
   }
 
   /**
@@ -135,5 +159,46 @@ class AgencyCreationClientTest {
     assertThat(sent.getValue().getConsultingType()).isEqualTo(1);
     assertThat(sent.getValue().getReservedAgencyId()).isEqualTo(RESERVED_AGENCY_ID);
     assertThat(sent.getValue().getTenantId()).isEqualTo(TENANT_ID);
+  }
+
+  /**
+   * The tests above construct the client directly, so they would stay green if the {@code @Value}
+   * fallback went back to the 0 that broke onboarding. Resolve it through Spring instead, with the
+   * property absent, so the shipped default itself is pinned.
+   */
+  private int resolveConfiguredConsultingType(Map<String, Object> properties) {
+    try (var context = new AnnotationConfigApplicationContext()) {
+      if (!properties.isEmpty()) {
+        context
+            .getEnvironment()
+            .getPropertySources()
+            .addFirst(new MapPropertySource("test", properties));
+      }
+      context.registerBean(PropertySourcesPlaceholderConfigurer.class);
+      context.registerBean(SecurityHeaderSupplier.class, () -> securityHeaderSupplier);
+      context.registerBean(IdentityAuthentication.class, () -> identityAuthentication);
+      context.registerBean(IdentityClientConfig.class, () -> identityClientConfig);
+      context.registerBean(AgencyAdminServiceApiControllerFactory.class, () -> controllerFactory);
+      context.registerBean(AgencyCreationClient.class);
+      context.refresh();
+      return (Integer)
+          ReflectionTestUtils.getField(
+              context.getBean(AgencyCreationClient.class), "defaultConsultingType");
+    }
+  }
+
+  /** Without the property the client must use 1, the consulting type every installation ships. */
+  @Test
+  void defaultConsultingType_withoutConfiguration_fallsBackToTheShippedConsultingType() {
+    assertThat(resolveConfiguredConsultingType(Map.of())).isEqualTo(1);
+  }
+
+  /** The default stays overridable, so an operator can move it without a code change. */
+  @Test
+  void defaultConsultingType_withConfiguration_usesTheConfiguredValue() {
+    assertThat(
+            resolveConfiguredConsultingType(
+                Map.of("counsellor.onboarding.agency.default-consulting-type", "7")))
+        .isEqualTo(7);
   }
 }

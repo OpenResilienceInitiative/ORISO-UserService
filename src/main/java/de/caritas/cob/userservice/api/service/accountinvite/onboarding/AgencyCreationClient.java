@@ -15,9 +15,13 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpServerErrorException;
 import org.springframework.web.client.HttpStatusCodeException;
+import org.springframework.web.client.ResourceAccessException;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Server-to-server creation of the Beratungsstelle an invite reserved but never created
@@ -87,24 +91,50 @@ public class AgencyCreationClient {
     } catch (HttpClientErrorException.Conflict exception) {
       throw new ConflictException(
           "Agency creation conflicted — the reserved agency ID is no longer consumable");
-    } catch (HttpStatusCodeException exception) {
-      // Anything but the documented 409 used to propagate raw, so the onboarding wizard answered
-      // a bare 500 and the reason existed only in AgencyService's log. Record the upstream status
-      // and body here: this is a server-to-server admin call, so the body carries AgencyService's
-      // validation reason, never invitee content.
+    } catch (HttpServerErrorException exception) {
+      // AgencyService is down or broken: a retryable downstream failure, not a fault of this
+      // service. docs/api-error-contract.md reserves 424/502 for exactly this, so the invitee's
+      // wizard can tell an outage apart from a request it must never repeat unchanged.
+      logUpstreamFailure(reservedAgencyId, tenantId, exception);
+      throw new ResponseStatusException(
+          HttpStatus.BAD_GATEWAY, "Agency creation is unavailable upstream");
+    } catch (ResourceAccessException exception) {
+      // No status at all — connection refused, timeout, DNS. Same class of failure as a 5xx.
       log.error(
-          "Agency creation for reserved agency ID {} (tenant {}, consulting type {}) failed:"
-              + " AgencyService answered {} {}",
+          "Agency creation for reserved agency ID {} (tenant {}) could not reach AgencyService",
           reservedAgencyId,
           tenantId,
-          defaultConsultingType,
-          exception.getStatusCode().value(),
-          exception.getResponseBodyAsString(),
           exception);
+      throw new ResponseStatusException(
+          HttpStatus.BAD_GATEWAY, "Agency creation is unavailable upstream");
+    } catch (HttpStatusCodeException exception) {
+      // A 4xx that is not the documented 409 means AgencyService rejected what this client sent
+      // — a wrong consulting type, a malformed field. That is this service's own configuration or
+      // request being wrong, so it stays a 500: repeating it unchanged cannot succeed.
+      logUpstreamFailure(reservedAgencyId, tenantId, exception);
       throw new InternalServerErrorException(
-          "Agency creation for the reserved ID failed upstream with status "
+          "Agency creation for the reserved ID was rejected upstream with status "
               + exception.getStatusCode().value());
     }
+  }
+
+  /**
+   * Every rejection used to propagate raw, so the public onboarding endpoint answered a bare 500
+   * and the reason existed only in AgencyService's log. The body is safe to record: this is a
+   * server-to-server admin call, so it carries AgencyService's validation reason, never invitee
+   * content.
+   */
+  private void logUpstreamFailure(
+      Long reservedAgencyId, Long tenantId, HttpStatusCodeException exception) {
+    log.error(
+        "Agency creation for reserved agency ID {} (tenant {}, consulting type {}) failed:"
+            + " AgencyService answered {} {}",
+        reservedAgencyId,
+        tenantId,
+        defaultConsultingType,
+        exception.getStatusCode().value(),
+        exception.getResponseBodyAsString(),
+        exception);
   }
 
   private AdminAgencyControllerApi createControllerApi() {
