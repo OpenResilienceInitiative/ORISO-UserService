@@ -7,7 +7,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
 
 import de.caritas.cob.userservice.api.adapters.web.controller.AgencyInviteLinkController;
-import de.caritas.cob.userservice.api.adapters.web.controller.IdentitySuggestionController;
+import de.caritas.cob.userservice.api.adapters.web.controller.IdentitySuggestionControllerDelegate;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
 import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
@@ -47,13 +47,14 @@ class GuestIdentityHttpTest {
   @Import({
     SecurityConfig.class,
     RoleAuthorizationAuthorityMapper.class,
-    IdentitySuggestionController.class,
+    IdentitySuggestionControllerDelegate.class,
     GuestIdentitySuggestionService.class,
     GuestIdentityCatalog.class,
     GuestUsernameAvailability.class,
     AgencyInviteLinkController.class,
     AgencyInviteLinkService.class,
-    ApiResponseEntityExceptionHandler.class
+    ApiResponseEntityExceptionHandler.class,
+    GuestIdentityHttpTest.ContractImplementor.class
   })
   static class Config {
     @Bean
@@ -71,6 +72,27 @@ class GuestIdentityHttpTest {
       whitelist.setHeader(wh);
       p.setWhitelist(whitelist);
       return p;
+    }
+  }
+
+  /**
+   * Stands in for the application's {@code UsersApi} implementor. The generated contract maps the
+   * suggestion path itself, so a context without it cannot show which handler the running service
+   * picks.
+   */
+  @org.springframework.web.bind.annotation.RestController
+  @lombok.RequiredArgsConstructor
+  static class ContractImplementor
+      implements de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi {
+    private final IdentitySuggestionControllerDelegate delegate;
+
+    @Override
+    public org.springframework.http.ResponseEntity<
+            java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.GuestIdentitySuggestion>>
+        suggestGuestIdentities(
+            de.caritas.cob.userservice.api.adapters.web.dto.GuestIdentitySuggestionRequest
+                guestIdentitySuggestionRequest) {
+      return delegate.suggestGuestIdentities(guestIdentitySuggestionRequest);
     }
   }
 
@@ -107,6 +129,17 @@ class GuestIdentityHttpTest {
         .andExpect(jsonPath("$[0].avatarKey").isString())
         .andExpect(jsonPath("$[0].accessToken").doesNotExist());
     verifyNoInteractions(links, provisioning, agencies);
+  }
+
+  @Test
+  void theGeneratedUsersContractServesSuggestionsRatherThanAnUnimplementedStub() throws Exception {
+    when(identityProvider.isUsernameAvailable(anyString())).thenReturn(true);
+    mvc.perform(
+            post("/users/identity-suggestions")
+                .contentType("application/json")
+                .content("{\"locale\":\"de\",\"count\":4,\"exclude\":[]}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.length()").value(4));
   }
 
   @Test
