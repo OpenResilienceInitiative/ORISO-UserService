@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.guestjoin;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.GuestJoinAttempt;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -8,6 +9,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService;
 import de.caritas.cob.userservice.api.service.identity.GuestIdentityCatalog;
+import de.caritas.cob.userservice.api.service.identity.GuestUsernameAvailability;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import java.time.LocalDateTime;
@@ -30,6 +32,7 @@ public class GuestJoinService {
   private final ChatRecoveryEnrollmentPolicyService recovery;
   private final GuestJoinNotifications notifications;
   private final IdentityAuthentication authentication;
+  private final GuestUsernameAvailability availability;
 
   public JoinResponse join(
       String token, String retryKey, String username, String avatarKey, boolean languageFormal) {
@@ -50,6 +53,12 @@ public class GuestJoinService {
               avatarKey,
               languageFormal,
               LocalDateTime.now(ZoneOffset.UTC).plusHours(48));
+      // Only a freshly prepared attempt may still change its mind about the name. Later phases
+      // may already own it in a provider, where a namespace answer would be about themselves.
+      if (attempt.getPhase() == GuestJoinAttempt.Phase.PREPARED
+          && !availability.isAvailable(username)) {
+        throw new ConflictException("Selected guest name is occupied");
+      }
       var policy =
           attempt.getPhase() == GuestJoinAttempt.Phase.COMPLETE
               ? null
