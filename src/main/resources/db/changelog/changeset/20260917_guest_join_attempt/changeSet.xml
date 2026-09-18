@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="20260917-guest-join-attempt" author="frank">
+    <sqlFile path="migrate.sql" relativeToChangelogFile="true" splitStatements="true" stripComments="true"/>
+    <rollback><sql>DROP TABLE guest_join_attempt;</sql></rollback>
+  </changeSet>
+</databaseChangeLog>

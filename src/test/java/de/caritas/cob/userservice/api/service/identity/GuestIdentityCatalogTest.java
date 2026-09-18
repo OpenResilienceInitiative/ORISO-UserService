@@ -44,6 +44,7 @@ class GuestIdentityCatalogTest {
         var identity = catalog.next(locale);
         assertThat(identity.username()).matches("[a-z0-9_]{3,30}");
         assertThat(identity.displayName()).isEqualTo(identity.username());
+        assertThat(catalog.isKnownSelection(identity.username(), identity.avatarKey())).isTrue();
         assertThat(identity.avatarKey()).matches("[a-zA-Z0-9_-]+\\.svg");
       }
     }

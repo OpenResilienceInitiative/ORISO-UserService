@@ -12,12 +12,16 @@ import de.caritas.cob.userservice.api.model.UserMobileToken;
 import de.caritas.cob.userservice.api.port.out.UserMobileTokenRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import jakarta.persistence.EntityManager;
+import jakarta.persistence.PersistenceContext;
 import java.util.List;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.auditing.AuditingHandler;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Propagation;
+import org.springframework.transaction.annotation.Transactional;
 
 @Service
 @RequiredArgsConstructor
@@ -27,6 +31,8 @@ public class UserService {
   private final @NonNull UserMobileTokenRepository userMobileTokenRepository;
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
   private final AuditingHandler auditingHandler;
+
+  @PersistenceContext private EntityManager entityManager;
 
   /**
    * Deletes an user.
@@ -87,6 +93,35 @@ public class UserService {
           snapshot) {
     var existing = userRepository.findById(userId);
     if (existing.isPresent()) return existing.get();
+    return userRepository.save(
+        buildNewUser(userId, oldId, username, email, languageFormal, preferredLanguage, snapshot));
+  }
+
+  /** Insert-only creation for the atomic guest Join transaction; never merges an existing user. */
+  @Transactional(propagation = Propagation.MANDATORY)
+  public User createNewUser(
+      String userId,
+      String username,
+      String email,
+      boolean languageFormal,
+      de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService
+              .RecoveryPolicySnapshot
+          snapshot) {
+    var user = buildNewUser(userId, null, username, email, languageFormal, null, snapshot);
+    entityManager.persist(user);
+    return user;
+  }
+
+  private User buildNewUser(
+      String userId,
+      Long oldId,
+      String username,
+      String email,
+      boolean languageFormal,
+      String preferredLanguage,
+      de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService
+              .RecoveryPolicySnapshot
+          snapshot) {
     var user = new User(userId, oldId, username, email, languageFormal);
     if (snapshot != null) {
       user.setChatRecoveryMode(snapshot.mode());
@@ -98,7 +133,7 @@ public class UserService {
       user.setLanguageCode(LanguageCode.valueOf(preferredLanguage));
     }
 
-    return userRepository.save(user);
+    return user;
   }
 
   /**

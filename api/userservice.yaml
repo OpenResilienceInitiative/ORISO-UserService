@@ -32,6 +32,45 @@ paths:
           description: Public request limit exceeded
         '503':
           description: Availability unknown or bounded generation attempts exhausted
+  /users/invitelinks/{token}/join:
+    post:
+      tags: [guest-identity-controller]
+      operationId: joinGuestInvitation
+      summary: Create the selected guest once and recover the same active session on retry
+      description: >-
+        The client generates a cryptographically random 32-byte base64url retry key once before
+        Join and retains it until recovery completes. Reuse the same key and selection after
+        timeouts or 503 responses. The key is a bearer recovery capability; never log it.
+        Tenant, topic and consulting type are resolved from the invitation by the server.
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: {type: string}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GuestJoinRequest'
+      responses:
+        '200':
+          description: Same chosen identity and active session; credentials are never cacheable
+          headers:
+            Cache-Control:
+              schema: {type: string, enum: [no-store]}
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GuestJoinResponse'
+        '400': {description: Invalid selection, retry key or invitation}
+        '403': {description: Invitation, account or session is no longer eligible}
+        '404': {description: Invitation not found}
+        '409': {description: Changed retry binding or confirmed occupied identity}
+        '429': {description: Public request limit exceeded}
+        '502': {description: Server enrollment policy is unavailable}
+        '503': {description: Incomplete provider outcome or concurrent Join; retry the same request}
   /users/invitelinks/{token}/context:
     get:
       tags: [guest-identity-controller]
@@ -1973,6 +2012,34 @@ paths:
 
 components:
   schemas:
+    GuestJoinRequest:
+      type: object
+      required: [retryKey, username, avatarKey, languageFormal]
+      properties:
+        retryKey:
+          type: string
+          minLength: 43
+          maxLength: 43
+          pattern: '^[A-Za-z0-9_-]{43}$'
+          writeOnly: true
+          description: Canonical unpadded base64url encoding of 32 cryptographically random bytes
+        username: {type: string, pattern: '^[a-z0-9_]{3,30}$'}
+        avatarKey: {type: string, maxLength: 128}
+        languageFormal: {type: boolean}
+    GuestJoinResponse:
+      type: object
+      required: [userName, avatarKey, sessionId, tenantId, consultingTypeId, topicId, accessToken, expiresIn, refreshToken, refreshExpiresIn]
+      properties:
+        userName: {type: string}
+        avatarKey: {type: string}
+        sessionId: {type: integer, format: int64}
+        tenantId: {type: integer, format: int64}
+        consultingTypeId: {type: integer, format: int32}
+        topicId: {type: integer, format: int64}
+        accessToken: {type: string}
+        expiresIn: {type: integer, format: int32}
+        refreshToken: {type: string}
+        refreshExpiresIn: {type: integer, format: int32}
     GuestIdentitySuggestionRequest:
       type: object
       required: [locale, count, exclude]

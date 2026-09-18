@@ -153,7 +153,8 @@ public class SecurityConfig {
                 .permitAll()
                 .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
                 .permitAll()
-                .requestMatchers(HttpMethod.POST, "/users/identity-suggestions")
+                .requestMatchers(
+                    HttpMethod.POST, "/users/identity-suggestions", "/users/invitelinks/*/join")
                 .permitAll()
                 // This cluster-internal endpoint authenticates with its own dedicated shared
                 // secret because the MatrixRTC gateway is not a Keycloak user. The controller

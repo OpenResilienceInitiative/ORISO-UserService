@@ -5,9 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.security.SecureRandom;
 import java.text.Normalizer;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import org.springframework.stereotype.Component;
 
 /**
@@ -18,14 +21,43 @@ import org.springframework.stereotype.Component;
 @Component
 public class GuestIdentityCatalog {
   private final Map<String, Language> languages;
+  private final Map<String, Set<String>> allowedBases = new HashMap<>();
   private final SecureRandom random = new SecureRandom();
 
   public GuestIdentityCatalog() {
     try (var source = getClass().getResourceAsStream("/identity/guest-name-catalog.json")) {
       if (source == null) throw new IllegalStateException("Missing guest identity catalogue");
       languages = new ObjectMapper().readValue(source, new TypeReference<>() {});
+      indexSelections();
     } catch (IOException e) {
       throw new IllegalStateException("Invalid guest identity catalogue", e);
+    }
+  }
+
+  /** Validates the coupled selection without reserving names or accepting arbitrary asset paths. */
+  public boolean isKnownSelection(String username, String avatarKey) {
+    return username != null
+        && username.matches("[a-z0-9_]{1,25}_[1-9][0-9]{3}")
+        && avatarKey != null
+        && avatarKey.length() <= 128
+        && allowedBases
+            .getOrDefault(avatarKey, Set.of())
+            .contains(username.substring(0, username.length() - 5));
+  }
+
+  private void indexSelections() {
+    for (Language language : languages.values()) {
+      for (Animal animal : language.animals()) {
+        for (String name : language.names()) {
+          for (String actualName :
+              slug(name).isEmpty() ? languages.get("en").names() : List.of(name)) {
+            String sample = identityFor(animal.label(), animal.svg(), actualName, 1000).username();
+            allowedBases
+                .computeIfAbsent(animal.svg(), ignored -> new HashSet<>())
+                .add(sample.substring(0, sample.length() - 5));
+          }
+        }
+      }
     }
   }
 
