@@ -91,18 +91,6 @@ class TenantAdminDpaMailPreviewControllerTest {
   }
 
   @Test
-  void preview_consumedInvite_rejectsWithoutCallingCanonicalRenderer() {
-    when(accountInviteService.findInviteByToken("accepted-token"))
-        .thenReturn(
-            invite(AccountInviteTargetRole.TENANT_ADMIN, AccountInviteStatus.ACCEPTED, 42L));
-
-    assertThatThrownBy(() -> controller.preview("accepted-token"))
-        .isInstanceOf(BadRequestException.class);
-
-    verify(dpaForwardEmailService, never()).previewSigningMail(42L);
-  }
-
-  @Test
   void preview_nonTenantAdminInvite_isNotExposedOrRendered() {
     when(accountInviteService.findInviteByToken("other-role-token"))
         .thenReturn(
@@ -123,6 +111,27 @@ class TenantAdminDpaMailPreviewControllerTest {
         .isInstanceOf(NotFoundException.class);
 
     verify(dpaForwardEmailService, never()).previewSigningMail(42L);
+  }
+
+  /**
+   * The DPA step sits AFTER account registration in the wizard, and {@code registerTenantAdmin}
+   * claims the invite via {@code claimForAcceptance}, which moves it to ACCEPTED. The two-factor
+   * guard states the same lifecycle from the other side: it rejects EMAIL_SENT with "Registration
+   * has not happened yet for this invite". So by the time the forward dialog opens, ACCEPTED is the
+   * ordinary state — requiring EMAIL_SENT here made the preview fail for every real onboarding.
+   */
+  @Test
+  void preview_registeredInviteAtTheDpaStep_rendersTheMail() {
+    when(accountInviteService.findInviteByToken("registered-token"))
+        .thenReturn(
+            invite(AccountInviteTargetRole.TENANT_ADMIN, AccountInviteStatus.ACCEPTED, 42L));
+    when(dpaForwardEmailService.previewSigningMail(42L))
+        .thenReturn(new DpaSigningEmailPreview("Vertragsunterlagen", "<p>preview</p>"));
+
+    var response = controller.preview("registered-token");
+
+    assertThat(response.getStatusCode().value()).isEqualTo(200);
+    verify(dpaForwardEmailService).previewSigningMail(42L);
   }
 
   /**
