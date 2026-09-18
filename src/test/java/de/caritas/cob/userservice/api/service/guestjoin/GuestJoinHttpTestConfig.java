@@ -1,6 +1,6 @@
 package de.caritas.cob.userservice.api.service.guestjoin;
 
-import de.caritas.cob.userservice.api.adapters.web.controller.GuestJoinController;
+import de.caritas.cob.userservice.api.adapters.web.controller.GuestJoinControllerDelegate;
 import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
 import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
@@ -10,16 +10,40 @@ import org.springframework.context.annotation.*;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
-/** Real HTTP/security wiring; the parent test supplies its real transactional Join service. */
+/**
+ * Real HTTP/security wiring; the parent test supplies its real transactional Join service.
+ *
+ * <p>{@link ContractImplementor} stands in for the application's {@code UsersApi} implementor. The
+ * generated contract maps the Join path itself, so a context without it cannot show which handler
+ * the running service actually picks.
+ */
 @TestConfiguration
 @EnableWebMvc
 @Import({
   SecurityConfig.class,
   RoleAuthorizationAuthorityMapper.class,
-  GuestJoinController.class,
-  ApiResponseEntityExceptionHandler.class
+  GuestJoinControllerDelegate.class,
+  ApiResponseEntityExceptionHandler.class,
+  GuestJoinHttpTestConfig.ContractImplementor.class
 })
 class GuestJoinHttpTestConfig {
+
+  @org.springframework.web.bind.annotation.RestController
+  @lombok.RequiredArgsConstructor
+  static class ContractImplementor
+      implements de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi {
+    private final GuestJoinControllerDelegate delegate;
+
+    @Override
+    public org.springframework.http.ResponseEntity<
+            de.caritas.cob.userservice.api.adapters.web.dto.GuestJoinResponse>
+        joinGuestInvitation(
+            String token,
+            de.caritas.cob.userservice.api.adapters.web.dto.GuestJoinRequest guestJoinRequest) {
+      return delegate.joinGuestInvitation(token, guestJoinRequest);
+    }
+  }
+
   @Bean
   JwtDecoder jwtDecoder() {
     return org.mockito.Mockito.mock(JwtDecoder.class);

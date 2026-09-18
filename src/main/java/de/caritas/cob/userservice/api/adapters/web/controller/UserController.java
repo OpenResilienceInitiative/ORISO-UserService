@@ -142,6 +142,7 @@ public class UserController implements UsersApi {
   private final @NotNull GroupChatRoleService groupChatRoleService;
   private final @NotNull AuthenticatedUser authenticatedUser;
   private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
+  private final @NotNull GuestJoinControllerDelegate guestJoinControllerDelegate;
 
   @Override
   public ResponseEntity<
@@ -151,6 +152,14 @@ public class UserController implements UsersApi {
               guestIdentitySuggestionRequest) {
     return identitySuggestionControllerDelegate.suggestGuestIdentities(
         guestIdentitySuggestionRequest);
+  }
+
+  @Override
+  public ResponseEntity<de.caritas.cob.userservice.api.adapters.web.dto.GuestJoinResponse>
+      joinGuestInvitation(
+          String token,
+          de.caritas.cob.userservice.api.adapters.web.dto.GuestJoinRequest guestJoinRequest) {
+    return guestJoinControllerDelegate.joinGuestInvitation(token, guestJoinRequest);
   }
 
   @Override
