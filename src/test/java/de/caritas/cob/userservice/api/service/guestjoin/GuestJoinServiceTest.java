@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.agencyinvitelink.AgencyInviteLinkService;
 import de.caritas.cob.userservice.api.service.consultingtype.*;
 import de.caritas.cob.userservice.api.service.identity.GuestIdentityCatalog;
+import de.caritas.cob.userservice.api.service.identity.GuestUsernameAvailability;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.session.*;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -83,6 +84,7 @@ class GuestJoinServiceTest {
   @MockitoBean GuestIdentityAccount identity;
   @MockitoBean GuestChatIdentity matrix;
   @MockitoBean IdentityAuthentication authentication;
+  @MockitoBean GuestUsernameAvailability availability;
 
   @BeforeEach
   void setup() {
@@ -120,6 +122,7 @@ class GuestJoinServiceTest {
     when(authentication.login(eq(NAME), anyString()))
         .thenReturn(new IdentityLogin("test-access", 300, 1800, "test-refresh"));
     when(routing.findEligibleConsultantIds(9L)).thenReturn(List.of("consultant-id"));
+    when(availability.isAvailable(anyString())).thenReturn(true);
   }
 
   @AfterEach
@@ -396,6 +399,15 @@ class GuestJoinServiceTest {
         .isInstanceOf(ConflictException.class);
     assertThat(users.findById(USER_ID).orElseThrow().isLanguageFormal()).isTrue();
     verify(authentication, times(1)).login(anyString(), anyString());
+  }
+
+  @Test
+  void aNameTakenElsewhereInTheNamespaceIsRefusedBeforeAnyProviderWrite() {
+    when(availability.isAvailable(NAME)).thenReturn(false);
+    assertThatThrownBy(this::join).isInstanceOf(ConflictException.class);
+    verifyNoInteractions(identity, matrix, authentication);
+    assertThat(users.count()).isZero();
+    assertThat(sessions.count()).isZero();
   }
 
   GuestJoinService.JoinResponse join() {
