@@ -402,6 +402,31 @@ class GuestJoinServiceTest {
   }
 
   @Test
+  void theGeneratedUsersContractServesJoinRatherThanAnUnimplementedStub() throws Exception {
+    try (var web = httpContext()) {
+      var mvc =
+          org.springframework.test.web.servlet.setup.MockMvcBuilders.webAppContextSetup(web)
+              .apply(
+                  org.springframework.security.test.web.servlet.setup.SecurityMockMvcConfigurers
+                      .springSecurity())
+              .build();
+      mvc.perform(
+              org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post(
+                      "/users/invitelinks/join-proof-invite/join")
+                  .contentType("application/json")
+                  .content(
+                      "{\"retryKey\":\""
+                          + KEY
+                          + "\",\"username\":\""
+                          + NAME
+                          + "\",\"avatarKey\":\"bee.svg\",\"languageFormal\":true}"))
+          .andExpect(
+              org.springframework.test.web.servlet.result.MockMvcResultMatchers.status().isOk());
+      assertThat(sessions.count()).isEqualTo(1);
+    }
+  }
+
+  @Test
   void aNameTakenElsewhereInTheNamespaceIsRefusedBeforeAnyProviderWrite() {
     when(availability.isAvailable(NAME)).thenReturn(false);
     assertThatThrownBy(this::join).isInstanceOf(ConflictException.class);

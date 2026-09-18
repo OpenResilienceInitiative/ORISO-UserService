@@ -159,3 +159,38 @@ The in-flight Matrix first-dispatch slice completed before stopping. Public HTTP
 Outstanding concrete finding for future resumption: R4 currently omits R3's global legacy namespace preflight (active DB identities in other tenants and encoded Matrix identities). Independently confirmed. Reuse real GuestUsernameAvailability only in PREPARED under the row lock, before external writes/initial permit. Definite false must commit a distinct pre-provider collision; unknown must preserve PREPARED and return503. Never recheck availability during pending/reconciliation/completed phases, which may own their names. Retain provider race/conflict handling. Not implemented due to explicit deferral.
 
 All remaining earlier R4 gates remain open, including candidate replacement/compensation, profile migration, Join ingress limiting, stronger provider/application integration and real-browser proof. No R4 commit, push or PR has been created. UserService PR1182 and Helm PR355 are not dependencies of the focused Frontend PR1467 repair.
+
+
+## The Join endpoint was shadowed by its own generated contract — 18 September 2026
+
+Found by building the branch image and running it against the local stack with
+the `:dev` images of the other services. `POST /users/invitelinks/{token}/join`
+answered **501** in the running application.
+
+`UsersApi.joinGuestInvitation` is generated with a `@RequestMapping` and a
+default body returning `NOT_IMPLEMENTED`. `UserController implements UsersApi`
+and overrode nothing, so the contract's stub was a live handler. The separate
+`GuestJoinController` mapped the same path without `consumes`/`produces`, which
+makes it the less specific mapping: Spring accepted both without an ambiguity
+error and picked the generated stub for every JSON request.
+
+The 16 existing HTTP contracts passed because `GuestJoinHttpTestConfig` built a
+web context containing only `GuestJoinController`. The test's web context was
+not the application's.
+
+Red evidence: registering a bare `UsersApi` implementor in that context turned
+**four** existing public HTTP contracts red at once, all `expected:<200/409> but
+was:<501>`, alongside the new `theGeneratedUsersContractServesJoinRatherThanAn
+UnimplementedStub`.
+
+Repair, as decided with Frank: `GuestJoinControllerDelegate` serves the contract
+operation, `UserController.joinGuestInvitation` delegates to it, and
+`GuestJoinController` is deleted — one mapping, and the published contract stays
+the single source of truth. 94 targeted tests green, Maven exit 0.
+
+What the unit test does and does not guard: it proves the contract operation
+reaches the Join service with correct request/response mapping. It cannot prove
+that `UserController` itself still overrides the method, because that bean has
+around forty collaborators and is not constructible in this slice. That part is
+proven against the running local image: unknown invitation token now answers
+404 and an empty body 400, where both answered 501 before the repair.
