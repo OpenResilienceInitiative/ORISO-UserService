@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.agencyadminserivce.generated.web.AdminAgencyCo
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -16,6 +17,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.HttpStatusCodeException;
 
 /**
  * Server-to-server creation of the Beratungsstelle an invite reserved but never created
@@ -40,8 +42,14 @@ public class AgencyCreationClient {
    * the AgencyService contract still requires one. The wizard asks the invitee for topics, not for
    * a consulting type, so new Beratungsstellen are created under the platform default. Kept
    * configurable rather than hard-coded so an operator can move it without a code change.
+   *
+   * <p>The default is 1, the consulting type every ORISO installation ships (ORISO-Helm
+   * {@code consulting-type-settings/c1.json}). It was 0 before, an ID no environment serves:
+   * AgencyService validates the consulting type against ConsultingTypeService before it creates
+   * anything, so every counsellor onboarding that had to create its reserved Beratungsstelle
+   * failed with an unexplained 500 (ORISO-Admin#998).
    */
-  @Value("${counsellor.onboarding.agency.default-consulting-type:0}")
+  @Value("${counsellor.onboarding.agency.default-consulting-type:1}")
   private int defaultConsultingType;
 
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
@@ -79,6 +87,23 @@ public class AgencyCreationClient {
     } catch (HttpClientErrorException.Conflict exception) {
       throw new ConflictException(
           "Agency creation conflicted — the reserved agency ID is no longer consumable");
+    } catch (HttpStatusCodeException exception) {
+      // Anything but the documented 409 used to propagate raw, so the onboarding wizard answered
+      // a bare 500 and the reason existed only in AgencyService's log. Record the upstream status
+      // and body here: this is a server-to-server admin call, so the body carries AgencyService's
+      // validation reason, never invitee content.
+      log.error(
+          "Agency creation for reserved agency ID {} (tenant {}, consulting type {}) failed:"
+              + " AgencyService answered {} {}",
+          reservedAgencyId,
+          tenantId,
+          defaultConsultingType,
+          exception.getStatusCode().value(),
+          exception.getResponseBodyAsString(),
+          exception);
+      throw new InternalServerErrorException(
+          "Agency creation for the reserved ID failed upstream with status "
+              + exception.getStatusCode().value());
     }
   }
 
