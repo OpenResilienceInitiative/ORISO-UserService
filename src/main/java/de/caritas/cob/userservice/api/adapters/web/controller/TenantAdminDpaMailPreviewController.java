@@ -24,7 +24,10 @@ public class TenantAdminDpaMailPreviewController {
   private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull DpaForwardEmailService dpaForwardEmailService;
 
-  @GetMapping("/users/account-invites/{token}/onboarding/dpa-mail-preview")
+  @GetMapping({
+    "/users/account-invites/{token}/onboarding/dpa-mail-preview",
+    "/service/users/account-invites/{token}/onboarding/dpa-mail-preview"
+  })
   public ResponseEntity<DpaSigningMailPreviewResponse> preview(@PathVariable String token) {
     AccountInvite invite = accountInviteService.findInviteByToken(token);
     validatePreviewableTenantAdminInvite(invite);

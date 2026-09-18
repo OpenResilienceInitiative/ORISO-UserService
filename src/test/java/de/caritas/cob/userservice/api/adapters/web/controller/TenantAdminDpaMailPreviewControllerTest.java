@@ -6,6 +6,9 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -21,6 +24,8 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 @ExtendWith(MockitoExtension.class)
 class TenantAdminDpaMailPreviewControllerTest {
@@ -29,11 +34,13 @@ class TenantAdminDpaMailPreviewControllerTest {
   @Mock private DpaForwardEmailService dpaForwardEmailService;
 
   private TenantAdminDpaMailPreviewController controller;
+  private MockMvc mockMvc;
 
   @BeforeEach
   void setUp() {
     controller =
         new TenantAdminDpaMailPreviewController(accountInviteService, dpaForwardEmailService);
+    mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
   }
 
   @Test
@@ -116,6 +123,28 @@ class TenantAdminDpaMailPreviewControllerTest {
         .isInstanceOf(NotFoundException.class);
 
     verify(dpaForwardEmailService, never()).previewSigningMail(42L);
+  }
+
+  /**
+   * The Admin frontend calls the gateway path with the `/service` prefix (ORISO-Admin
+   * `src/api/tenantOnboarding/dpaMailPreview.ts`), exactly like every neighbouring onboarding
+   * endpoint. Routing is the seam here: the unit tests above call the handler directly and so
+   * cannot see a missing mapping, which is how the forward dialog ended up showing "preview could
+   * not be rendered" instead of the mail.
+   */
+  @Test
+  void preview_isServedOnTheGatewayPathTheAdminFrontendCalls() throws Exception {
+    when(accountInviteService.findInviteByToken("valid-token"))
+        .thenReturn(
+            invite(AccountInviteTargetRole.TENANT_ADMIN, AccountInviteStatus.EMAIL_SENT, 42L));
+    when(dpaForwardEmailService.previewSigningMail(42L))
+        .thenReturn(new DpaSigningEmailPreview("Vertragsunterlagen", "<p>preview</p>"));
+
+    mockMvc
+        .perform(get("/service/users/account-invites/valid-token/onboarding/dpa-mail-preview"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.subject").value("Vertragsunterlagen"))
+        .andExpect(jsonPath("$.html").value("<p>preview</p>"));
   }
 
   private static AccountInvite invite(
