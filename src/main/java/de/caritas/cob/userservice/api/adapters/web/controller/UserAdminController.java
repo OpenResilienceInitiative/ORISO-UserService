@@ -402,6 +402,10 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminResponseDTO> createAgencyAdmin(final CreateAdminDTO createAdminDTO) {
+    // Same normalisation as every sibling here. Without it this was the one account path
+    // that stored the address as typed, so the same person could end up with two
+    // differently-cased identities depending on which screen created them.
+    createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase());
     return ResponseEntity.ok(this.adminUserFacade.createNewAgencyAdmin(createAdminDTO));
   }
 
