@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- ORISO-UserService#1191: service hours of the live chat behind an invitation.
+       Both columns stay nullable: an invitation without hours must keep behaving
+       exactly as before, so absence has to remain expressible. -->
+  <changeSet id="20260919-invite-link-opening-hours-1191" author="oriso">
+    <addColumn tableName="agency_invite_link">
+      <column name="opening_hours" type="VARCHAR(2000)"/>
+      <column name="opening_hours_time_zone" type="VARCHAR(64)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="agency_invite_link" columnName="opening_hours"/>
+      <dropColumn tableName="agency_invite_link" columnName="opening_hours_time_zone"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

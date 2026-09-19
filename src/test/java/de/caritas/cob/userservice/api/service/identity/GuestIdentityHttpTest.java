@@ -156,6 +156,36 @@ class GuestIdentityHttpTest {
   }
 
   @Test
+  void configuredOpeningHoursAreReadableWithTheInvitationContext() throws Exception {
+    var link =
+        AgencyInviteLink.builder()
+            .token("with-hours")
+            .status("ACTIVE")
+            .chatType("LIVE_CHAT")
+            .tenantId(1L)
+            .consultingTypeId(3)
+            .topicId(11L)
+            .openingHours(
+                "[{\"dayOfWeek\":1,\"opens\":\"09:00\",\"closes\":\"12:00\"},"
+                    + "{\"dayOfWeek\":1,\"opens\":\"13:00\",\"closes\":\"17:00\"},"
+                    + "{\"dayOfWeek\":2,\"opens\":\"09:00\",\"closes\":\"10:30\"}]")
+            .openingHoursTimeZone("Europe/Berlin")
+            .build();
+    when(links.findByToken("with-hours")).thenReturn(Optional.of(link));
+    mvc.perform(get("/users/invitelinks/with-hours/context"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.openingHoursTimeZone").value("Europe/Berlin"))
+        .andExpect(jsonPath("$.openingHours.length()").value(3))
+        .andExpect(jsonPath("$.openingHours[0].dayOfWeek").value(1))
+        .andExpect(jsonPath("$.openingHours[0].opens").value("09:00"))
+        .andExpect(jsonPath("$.openingHours[0].closes").value("12:00"))
+        .andExpect(jsonPath("$.openingHours[1].opens").value("13:00"))
+        .andExpect(jsonPath("$.openingHours[2].dayOfWeek").value(2));
+    verify(links, never()).save(any());
+    verifyNoInteractions(provisioning);
+  }
+
+  @Test
   void anonymousContextReadUsesRealSecurityAndDoesNotCreateAnAccount() throws Exception {
     var link =
         AgencyInviteLink.builder()
