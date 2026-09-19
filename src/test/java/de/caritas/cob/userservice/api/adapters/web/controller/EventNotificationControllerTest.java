@@ -1,17 +1,31 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.EventNotification;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationDeduplicationWriter;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
+import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import jakarta.validation.constraints.Min;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -20,6 +34,7 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -49,6 +64,75 @@ class EventNotificationControllerTest {
             teamDiscussionNotificationService,
             authenticatedUser,
             Optional.empty());
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1201: the client posts the sender's name in the request body. The server must
+  // not repeat it to a third party -- it knows who the sender is (senderUserId comes from the
+  // authenticated principal, not from the body) and resolves the name itself.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createMessageEventNotification_Should_NotLetTheClientNameTheSenderToTheAdviceSeeker() {
+    var eventNotificationRepository = mock(EventNotificationRepository.class);
+    var sessionRepository = mock(SessionRepository.class);
+    var userRepository = mock(UserRepository.class);
+    var consultantRepository = mock(ConsultantRepository.class);
+    var identityTombstoneService = mock(IdentityTombstoneService.class);
+    var deduplicationWriter = mock(EventNotificationDeduplicationWriter.class);
+    var realService =
+        new EventNotificationService(
+            eventNotificationRepository,
+            sessionRepository,
+            userRepository,
+            consultantRepository,
+            identityTombstoneService,
+            deduplicationWriter,
+            new ConsultantDisplayNameResolver());
+    var controller =
+        new EventNotificationController(
+            realService, teamDiscussionNotificationService, authenticatedUser, Optional.empty());
+
+    when(authenticatedUser.getUserId()).thenReturn("counsellor-1");
+    when(consultantRepository.findByIdAndDeleteDateIsNull("counsellor-1"))
+        .thenReturn(
+            Optional.of(
+                Consultant.builder()
+                    .id("counsellor-1")
+                    .username("beraterin1")
+                    .firstName("Angela")
+                    .lastName("Musterfrau")
+                    .displayName(null)
+                    .email("angela@example.org")
+                    .build()));
+    var adviceSeeker = mock(User.class);
+    when(adviceSeeker.getUserId()).thenReturn("asker-1");
+    var session = mock(Session.class);
+    when(session.getUser()).thenReturn(adviceSeeker);
+    when(session.getId()).thenReturn(100L);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("!room-1:matrix.example");
+    request.setMessagePreview("hello");
+    // The lie: a client is free to put anything here, and the frontend in fact falls back to the
+    // real name when the counsellor has no pseudonym.
+    request.setSenderDisplayName("Angela Musterfrau");
+
+    controller.createMessageEventNotification(request);
+
+    var saved = ArgumentCaptor.forClass(EventNotification.class);
+    verify(eventNotificationRepository, atLeastOnce()).save(saved.capture());
+    assertThat(saved.getAllValues())
+        .isNotEmpty()
+        .allSatisfy(
+            row -> {
+              assertThat(row.getText()).doesNotContain("Angela", "Musterfrau");
+              assertThat(row.getParams()).doesNotContain("Angela", "Musterfrau");
+            });
+    assertThat(saved.getAllValues())
+        .anySatisfy(row -> assertThat(row.getText()).contains("beraterin1"));
   }
 
   @Test
@@ -157,7 +241,7 @@ class EventNotificationControllerTest {
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-2", "u-1", "hello", false, "Sender", null);
+        .createMessageNotificationFromRoom("room-2", "u-1", "hello", false, (PrivacyEnvelope) null);
   }
 
   @Test
@@ -180,7 +264,7 @@ class EventNotificationControllerTest {
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
         .createThreadReplyNotificationFromRoom(
-            "room-3", "u-2", "reply", "thread-3", true, "Sender-3", "parent", null);
+            "room-3", "u-2", "reply", "thread-3", true, "parent", null);
   }
 
   @Test
@@ -212,7 +296,8 @@ class EventNotificationControllerTest {
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-5", "u-4", "preview", false, null, null);
+        .createMessageNotificationFromRoom(
+            "room-5", "u-4", "preview", false, (PrivacyEnvelope) null);
   }
 
   @Test
@@ -234,7 +319,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("u-5"),
             org.mockito.ArgumentMatchers.eq("preview"),
             org.mockito.ArgumentMatchers.eq(false),
-            org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("$evt-42", envelopeCaptor.getValue().getMessageId());
   }
@@ -261,7 +345,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("u-6"),
             org.mockito.ArgumentMatchers.eq("preview"),
             org.mockito.ArgumentMatchers.eq(false),
-            org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("IMAGE", envelopeCaptor.getValue().getContentClass());
     assertEquals(true, envelopeCaptor.getValue().isHasAttachment());
@@ -286,7 +369,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("u-6"),
             org.mockito.ArgumentMatchers.isNull(),
             org.mockito.ArgumentMatchers.eq(false),
-            org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("OTHER", envelopeCaptor.getValue().getContentClass());
   }
@@ -313,7 +395,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("reply"),
             org.mockito.ArgumentMatchers.eq("$root-1"),
             org.mockito.ArgumentMatchers.eq(false),
-            org.mockito.ArgumentMatchers.isNull(),
             org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("$evt-44", envelopeCaptor.getValue().getMessageId());

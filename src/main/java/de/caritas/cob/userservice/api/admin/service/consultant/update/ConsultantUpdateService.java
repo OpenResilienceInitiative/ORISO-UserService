@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.validation.Consul
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UpdateConsultantDTOAbsenceInputAdapter;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.model.ConsultantAvatars;
@@ -35,6 +36,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Service class to provide update functionality for consultants. */
 @Slf4j
@@ -53,6 +56,7 @@ public class ConsultantUpdateService {
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   /**
    * Updates the basic data of consultant with given id.
@@ -84,9 +88,6 @@ public class ConsultantUpdateService {
     consultantTopicAgencyCompatibilityValidator.validateTopicUpdateAgainstAssignedAgencies(
         consultant.getId(), updateConsultantDTO.getTopicIds(), consultant.getTenantId());
 
-    String previousDisplayName = displayNameOf(consultant.getFirstName(), consultant.getLastName());
-    String nextDisplayName =
-        displayNameOf(updateConsultantDTO.getFirstname(), updateConsultantDTO.getLastname());
     boolean identityDataChanged = identityDataChanged(consultant, updateConsultantDTO);
     boolean appointmentDataChanged =
         identityDataChanged
@@ -113,25 +114,79 @@ public class ConsultantUpdateService {
       identityClient.removeRoleIfPresent(consultant.getId(), GROUP_CHAT_CONSULTANT.getValue());
     }
 
-    // Update Matrix user display name using the admin API (no password needed).
-    if (identityDataChanged && consultant.getMatrixUserId() != null) {
-      try {
-        String newDisplayName =
-            updateConsultantDTO.getFirstname() + " " + updateConsultantDTO.getLastname();
-        matrixUserClient.updateUserDisplayName(consultant.getMatrixUserId(), newDisplayName);
-      } catch (Exception e) {
-        // Matrix update failures are non-blocking
-      }
-    }
+    // Captured before the entity is mutated, so a display-name-only edit can be detected below.
+    String previousPublishedName =
+        consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
 
     var updatedConsultant = updateDatabaseConsultant(updateConsultantDTO, consultant, adminEdit);
+    // updateDatabaseConsultant mutates this very entity, so it already carries the new values.
+    scheduleMatrixDisplayNameUpdate(consultant, identityDataChanged, previousPublishedName);
     if (appointmentDataChanged) {
       appointmentService.syncConsultantData(updatedConsultant);
     }
-    if (identityDataChanged) {
-      emitCounselorRenameNotificationsIfNeeded(consultant, previousDisplayName, nextDisplayName);
-    }
+    emitCounselorRenameNotificationsIfNeeded(
+        consultant,
+        previousPublishedName,
+        consultantDisplayNameResolver.resolveMatrixDisplayName(consultant));
     return updatedConsultant;
+  }
+
+  /**
+   * Decides whether the counsellor's Matrix {@code displayname} must be pushed, and defers the push
+   * itself until the surrounding transaction has committed.
+   *
+   * <p>ADR-002 §2 / #1200: the advice seeker is a real member of the shared room and can read every
+   * member's displayname from {@code /joined_members}, so this must never be {@code firstName + " "
+   * + lastName}. {@link ConsultantDisplayNameResolver} is the single place that decides which name
+   * may go there — this method only decides <em>whether</em> to send it.
+   *
+   * <p>It sends on any identity edit (which also repairs profiles provisioned before the fix) and
+   * on a change of the resolved pseudonym itself.
+   *
+   * <p><b>Why after the commit.</b> {@code updateConsultant} is {@code @Transactional} and work
+   * that runs after this point is not fully contained — the rename-notification lookup and save can
+   * throw, which rolls the consultant update back. Sending inside the transaction would leave
+   * Synapse holding a name the database never kept, and nothing reconciles that drift. The values
+   * are therefore resolved <em>now</em>, while the entity is loaded and carries the new state, and
+   * only the outbound call waits for the commit. Without an active transaction (a direct call in a
+   * unit test) there is nothing to wait for, so the push happens immediately.
+   *
+   * <p>Failures stay non-blocking: the Matrix profile is cosmetic next to the persisted update.
+   */
+  private void scheduleMatrixDisplayNameUpdate(
+      Consultant consultant, boolean identityDataChanged, String previousMatrixDisplayName) {
+    final String matrixUserId = consultant.getMatrixUserId();
+    if (matrixUserId == null) {
+      return;
+    }
+    final String consultantId = consultant.getId();
+    final String newDisplayName =
+        consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
+    if (!identityDataChanged && Objects.equals(previousMatrixDisplayName, newDisplayName)) {
+      return;
+    }
+
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      pushMatrixDisplayName(consultantId, matrixUserId, newDisplayName);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            pushMatrixDisplayName(consultantId, matrixUserId, newDisplayName);
+          }
+        });
+  }
+
+  private void pushMatrixDisplayName(
+      String consultantId, String matrixUserId, String newDisplayName) {
+    try {
+      matrixUserClient.updateUserDisplayName(matrixUserId, newDisplayName);
+    } catch (Exception e) {
+      log.warn(
+          "Matrix display name update failed for consultant {}, but continuing", consultantId, e);
+    }
   }
 
   private boolean identityDataChanged(
@@ -301,12 +356,28 @@ public class ConsultantUpdateService {
             .collect(Collectors.toSet());
   }
 
+  /**
+   * Tells the advice seekers of this counsellor's open cases that the name they see has changed.
+   *
+   * <p>ADR-002 §2 / #1201. Two things here are deliberate:
+   *
+   * <ul>
+   *   <li><b>What triggers it</b> is a change of the <em>published</em> name — the pseudonym
+   *       resolved by {@link ConsultantDisplayNameResolver} — not of {@code firstName + " " +
+   *       lastName}. The advice seeker never saw the real name, so a real-name edit changes nothing
+   *       for them and must not produce an entry; conversely a pseudonym-only edit changes
+   *       everything they see and previously produced none.
+   *   <li><b>What it carries</b> is no name at all. Neither name is passed on, and neither is
+   *       logged: the old pseudonym plus the new one is a rename history, and with no pseudonym
+   *       stored both values are the real name.
+   * </ul>
+   */
   private void emitCounselorRenameNotificationsIfNeeded(
-      Consultant consultant, String previousDisplayName, String nextDisplayName) {
+      Consultant consultant, String previousPublishedName, String nextPublishedName) {
     if (consultant == null || consultant.getId() == null) {
       return;
     }
-    if (previousDisplayName.equals(nextDisplayName)) {
+    if (Objects.equals(previousPublishedName, nextPublishedName)) {
       return;
     }
     var activeStatuses = List.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS);
@@ -316,19 +387,10 @@ public class ConsultantUpdateService {
         .forEach(
             session ->
                 eventNotificationService.createCounselorRenamedNotification(
-                    session, session.getUser().getUserId(), previousDisplayName, nextDisplayName));
+                    session, session.getUser().getUserId()));
     log.info(
-        "Counselor rename event created for consultantId={} from='{}' to='{}' sessions={}",
+        "Counselor rename event created for consultantId={} sessions={}",
         consultant.getId(),
-        previousDisplayName,
-        nextDisplayName,
         sessions.size());
-  }
-
-  private String displayNameOf(String firstName, String lastName) {
-    String first = firstName == null ? "" : firstName.trim();
-    String last = lastName == null ? "" : lastName.trim();
-    String combined = (first + " " + last).trim();
-    return combined.isBlank() ? "Counselor" : combined;
   }
 }
