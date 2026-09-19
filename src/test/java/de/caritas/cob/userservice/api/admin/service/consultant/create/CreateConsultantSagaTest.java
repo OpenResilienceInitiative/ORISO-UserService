@@ -87,6 +87,7 @@ class CreateConsultantSagaTest {
   private static final String VALID_USERNAME = "validUsername";
   private static final String VALID_EMAIL = "valid@emailaddress.de";
   private static final String VALID_PASSWORD = "ValidPass1!";
+  private static final String MATRIX_USER_ID = "@validusername:oriso.local";
 
   @InjectMocks private CreateConsultantSaga createConsultantSaga;
 
@@ -340,7 +341,7 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void createNewConsultant_Should_throwBadRequest_When_passwordMissing() {
+  void createNewConsultant_Should_throwBadRequest_When_passwordMissing() throws Exception {
     CreateConsultantDTO dto = validCreateConsultantDto();
     dto.setPassword(null);
     stubKeycloakUserCreation();
@@ -349,7 +350,8 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void createNewConsultant_Should_throwCustomValidation_When_passwordUpdateFails() {
+  void createNewConsultant_Should_throwCustomValidation_When_passwordUpdateFails()
+      throws Exception {
     stubKeycloakUserCreation();
     doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
         .when(identityPasswordUpdater)
@@ -392,17 +394,26 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void
-      createNewConsultant_Should_continueWithoutMatrixIdentity_When_plainCredentialsAreUnavailable()
-          throws Exception {
-    stubHappyPath();
+  void createNewConsultant_Should_rollback_When_plainCredentialsAreUnavailable() throws Exception {
+    // This test used to be named ..._Should_continueWithoutMatrixIdentity_... and asserted
+    // that the saved consultant carried a null matrixUserId. It proved nothing: stubHappyPath
+    // populates PlainCredentialsHolder through stubKeycloakUserCreation, so the credentials
+    // were in fact available, and the null it asserted came from an unstubbed Matrix mock
+    // rather than from the scenario in its name. It documented the defect instead of a
+    // decision. The scenario is now set up for real -- no plain username -- and the contract
+    // is the one every other step in this saga already follows.
+    stubKeycloakUserCreation();
+    var dto = validCreateConsultantDto();
 
-    var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+    PlainCredentialsHolder.clear();
+    doThrow(new IllegalStateException("no plain credentials"))
+        .when(identityPasswordUpdater)
+        .updatePassword(anyString(), anyString());
 
-    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
-    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
-    verify(consultantService).saveConsultant(consultantCaptor.capture());
-    assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
+    assertThrows(
+        DistributedTransactionException.class, () -> createConsultantSaga.createNewConsultant(dto));
+
+    verify(consultantService, never()).saveConsultant(any());
   }
 
   @Test
@@ -640,13 +651,68 @@ class CreateConsultantSagaTest {
     verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
   }
 
+  @Test
+  void createNewConsultant_Should_rollback_When_matrixUserCreationFails() throws Exception {
+    // Every other step in this saga rolls back on failure. Matrix alone used to log
+    // and continue, so the admin got 200 OK for a counsellor who cannot chat: the
+    // consultant row is written with a null matrixUserId, and CreateChatFacade,
+    // TeamDiscussionFacade, SessionSupervisorFacade and DirectSessionMatrixRoomService
+    // all refuse to act on such a record. The account looks created and is not usable.
+    stubKeycloakUserCreation();
+    doThrow(new RuntimeException("synapse down"))
+        .when(matrixSynapseService)
+        .createUserId(anyString(), anyString(), anyString());
+
+    var ex =
+        assertThrows(
+            DistributedTransactionException.class,
+            () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
+
+    assertThat(
+        ex.getCustomHttpHeaders().get("X-Reason").get(0),
+        is("DISTRIBUTED_TRANSACTION_FAILED_ON_STEP_CREATE_ACCOUNT_IN_MATRIX"));
+    verify(consultantService, never()).saveConsultant(any());
+  }
+
+  @Test
+  void createNewConsultant_Should_rollback_When_matrixReturnsNoUserId() throws Exception {
+    // Synapse answering without a user_id is the same outcome as throwing: no Matrix
+    // account exists. It was previously only a log.warn, which is the quieter half of
+    // the same defect.
+    stubKeycloakUserCreation();
+    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString())).thenReturn(null);
+
+    assertThrows(
+        DistributedTransactionException.class,
+        () -> createConsultantSaga.createNewConsultant(validCreateConsultantDto()));
+
+    verify(consultantService, never()).saveConsultant(any());
+  }
+
+  @Test
+  void createNewConsultant_Should_persistTheMatrixUserId_When_synapseAnswers() throws Exception {
+    stubHappyPath();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    ArgumentCaptor<Consultant> captor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(captor.capture());
+    assertThat(captor.getValue().getMatrixUserId(), is(MATRIX_USER_ID));
+  }
+
   private void stubHappyPath() throws Exception {
     stubKeycloakUserCreation();
+    // Without this the mock returns null, which every happy-path test here silently
+    // accepted -- the fixture encoded the very defect the rollback tests above pin.
     when(consultantService.saveConsultant(any(Consultant.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
   }
 
-  private void stubKeycloakUserCreation() {
+  private void stubKeycloakUserCreation() throws Exception {
+    org.mockito.Mockito.lenient().when(userHelper.getRandomPassword()).thenReturn("MatrixPass1!");
+    org.mockito.Mockito.lenient()
+        .when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
+        .thenReturn(MATRIX_USER_ID);
     when(identityClient.createUser(any(), anyString(), anyString()))
         .thenAnswer(
             invocation -> {
