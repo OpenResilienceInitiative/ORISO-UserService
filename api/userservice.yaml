@@ -2001,6 +2001,28 @@ components:
         consultingTypeId: {type: integer, format: int32}
         topicId: {type: integer, format: int64, nullable: true}
         chatType: {type: string}
+        openingHours:
+          type: array
+          description: >-
+            Service hours of the live chat behind this invitation. An empty array means no
+            configured hours, which is not the same as closed around the clock: availability
+            alone decides then, exactly as before hours could be configured.
+          items: {$ref: '#/components/schemas/OpeningHoursEntry'}
+        openingHoursTimeZone:
+          type: string
+          nullable: true
+          description: IANA zone the opening hours are stated in, e.g. Europe/Berlin.
+          maxLength: 64
+    OpeningHoursEntry:
+      type: object
+      description: >-
+        One service interval, in the schema.org OpeningHoursSpecification shape. Several entries
+        for the same weekday express a break; a weekday without an entry is closed.
+      required: [dayOfWeek, opens, closes]
+      properties:
+        dayOfWeek: {type: integer, format: int32, minimum: 1, maximum: 7, description: 'ISO-8601 weekday, 1 = Monday'}
+        opens: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
+        closes: {type: string, pattern: '^([01][0-9]|2[0-3]):[0-5][0-9]$'}
     OccurrenceOverrideRequest:
       type: object
       required: [originalStartUtc]

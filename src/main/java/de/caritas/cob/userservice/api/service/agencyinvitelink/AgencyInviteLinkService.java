@@ -42,9 +42,14 @@ import org.springframework.web.context.request.ServletRequestAttributes;
  */
 @Service
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 public class AgencyInviteLinkService {
 
   private static final int TOKEN_BYTES = 24;
+
+  private static final com.fasterxml.jackson.databind.ObjectReader OPENING_HOURS_READER =
+      new com.fasterxml.jackson.databind.ObjectMapper().readerForListOf(OpeningHoursEntry.class);
+
   private static final SecureRandom RANDOM = new SecureRandom();
 
   private final @NonNull AgencyInviteLinkRepository repository;
@@ -179,7 +184,13 @@ public class AgencyInviteLinkService {
               ? null
               : resolveAgencyIdForRegistration(link, consultingTypeId);
       return new InvitationContext(
-          link.getTenantId(), agencyId, consultingTypeId, link.getTopicId(), link.getChatType());
+          link.getTenantId(),
+          agencyId,
+          consultingTypeId,
+          link.getTopicId(),
+          link.getChatType(),
+          readOpeningHours(link),
+          link.getOpeningHoursTimeZone());
     } finally {
       if (previousTenant == null) {
         TenantContext.clear();
@@ -189,9 +200,38 @@ public class AgencyInviteLinkService {
     }
   }
 
+  /**
+   * Stored hours are shown to a help seeker, never used to authorise anything, so unreadable
+   * content must not turn an otherwise valid invitation into an error. It reads as "no configured
+   * hours", which behaves exactly as an invitation that never had any.
+   */
+  private List<OpeningHoursEntry> readOpeningHours(AgencyInviteLink link) {
+    if (link.getOpeningHours() == null || link.getOpeningHours().isBlank()) {
+      return List.of();
+    }
+    try {
+      return OPENING_HOURS_READER.readValue(link.getOpeningHours());
+    } catch (com.fasterxml.jackson.core.JacksonException unreadable) {
+      log.warn("Invitation {} carries unreadable opening hours; reporting none", link.getId());
+      return List.of();
+    }
+  }
+
   /** Public context deliberately excludes credentials and invitation administration data. */
   public record InvitationContext(
-      Long tenantId, Long agencyId, Integer consultingTypeId, Long topicId, String chatType) {}
+      Long tenantId,
+      Long agencyId,
+      Integer consultingTypeId,
+      Long topicId,
+      String chatType,
+      List<OpeningHoursEntry> openingHours,
+      String openingHoursTimeZone) {}
+
+  /**
+   * One service interval, in the schema.org OpeningHoursSpecification shape: ISO-8601 weekday
+   * number (1 = Monday) and 24-hour local times. Two entries for the same day express a break.
+   */
+  public record OpeningHoursEntry(Integer dayOfWeek, String opens, String closes) {}
 
   /**
    * Redeem the token: validate, mark USED, return tenant/agency/consulting-type/topic metadata for

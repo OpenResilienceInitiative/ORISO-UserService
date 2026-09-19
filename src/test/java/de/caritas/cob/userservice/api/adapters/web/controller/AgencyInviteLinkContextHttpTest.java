@@ -64,7 +64,8 @@ class AgencyInviteLinkContextHttpTest {
             content()
                 .json(
                     """
-            {"tenantId":83,"agencyId":null,"consultingTypeId":1,"topicId":11,"chatType":"LIVE_CHAT"}
+            {"tenantId":83,"agencyId":null,"consultingTypeId":1,"topicId":11,"chatType":"LIVE_CHAT",\
+"openingHours":[],"openingHoursTimeZone":null}
             """,
                     org.springframework.test.json.JsonCompareMode.STRICT));
   }

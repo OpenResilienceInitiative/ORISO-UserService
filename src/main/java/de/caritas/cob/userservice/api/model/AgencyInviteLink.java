@@ -58,6 +58,19 @@ public class AgencyInviteLink {
   @Column(name = "notes", length = 500)
   private String notes;
 
+  /**
+   * Service hours of the live chat behind this invitation, as a JSON array in the schema.org
+   * OpeningHoursSpecification shape: {@code [{"dayOfWeek":1,"opens":"09:00","closes":"12:00"}]},
+   * ISO-8601 weekday numbers and 24-hour local times. Null means no configured hours, which is not
+   * the same as closed around the clock.
+   */
+  @Column(name = "opening_hours", length = 2000)
+  private String openingHours;
+
+  /** IANA zone the times above are stated in. Without it they mean nothing. */
+  @Column(name = "opening_hours_time_zone", length = 64)
+  private String openingHoursTimeZone;
+
   /** Required only when {@link #linkKind} = {@code COUNSELLOR}. */
   @Column(name = "consultant_id", length = 36)
   private String consultantId;
