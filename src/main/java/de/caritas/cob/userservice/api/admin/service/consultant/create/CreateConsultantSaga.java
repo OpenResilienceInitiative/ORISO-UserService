@@ -5,7 +5,6 @@ import static de.caritas.cob.userservice.api.config.auth.UserRole.CONSULTANT;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.GROUP_CHAT_CONSULTANT;
 import static de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils.serializeToJsonString;
 import static java.util.Objects.*;
-import static java.util.Objects.isNull;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 import static org.hibernate.validator.internal.util.CollectionHelper.asSet;
 
@@ -241,18 +240,38 @@ public class CreateConsultantSaga {
 
     // MATRIX MIGRATION: Create Matrix user for consultant with a random password that is never
     // persisted. User-scoped Matrix tokens are minted via Synapse admin login-as-user.
-    //
-    // This used to log and continue. Every other step here rolls back, so the odd one out
-    // returned 200 OK for a consultant whose matrixUserId is null -- and CreateChatFacade,
-    // TeamDiscussionFacade, SessionSupervisorFacade and DirectSessionMatrixRoomService all
-    // refuse to act on such a record. The administrator saw a created counsellor, the
-    // counsellor could not be used for counselling, and nothing connected the two.
-    // Failing here costs a retry when Synapse is down; the alternative costs an account
-    // that looks fine and is not.
-    String matrixUserId;
+    String matrixUserId = null;
     try {
-      matrixUserId = createMatrixUserOrRollback(consultantCreationInput, keycloakUserId);
+      if (plainCreds != null && plainCreds.getUsername() != null) {
+        String matrixPassword = userHelper.getRandomPassword();
+        log.info(
+            "Creating Matrix consultant user with plain username: '{}'", plainCreds.getUsername());
+        matrixUserId =
+            matrixUserClient.createUserId(
+                plainCreds.getUsername(),
+                matrixPassword,
+                consultantCreationInput.getFirstName()
+                    + " "
+                    + consultantCreationInput.getLastName());
+
+        if (matrixUserId != null) {
+          log.info(
+              "Successfully created Matrix user for consultant '{}' → Matrix ID: {}",
+              plainCreds.getUsername(),
+              matrixUserId);
+        } else {
+          log.warn(
+              "Matrix user creation response missing user_id for consultant: {}",
+              plainCreds.getUsername());
+        }
+      } else {
+        log.warn(
+            "Plain credentials not available from ThreadLocal, skipping Matrix user creation for consultant");
+      }
+    } catch (Exception e) {
+      log.error("Matrix user creation failed for consultant, but continuing", e);
     } finally {
+      // Clean up ThreadLocal
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
     }
 
@@ -326,46 +345,6 @@ public class CreateConsultantSaga {
                       TransactionalStep.UPDATE_USER_PASSWORD_IN_KEYCLOAK))
               .name(CREATE_CONSULTANT)
               .failedStep(TransactionalStep.UPDATE_USER_ROLES_IN_KEYCLOAK)
-              .build());
-    }
-  }
-
-  private String createMatrixUserOrRollback(
-      ConsultantCreationInput consultantCreationInput, String keycloakUserId) {
-    var plainCreds = de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.get();
-    try {
-      if (isNull(plainCreds) || isNull(plainCreds.getUsername())) {
-        // The plain username is captured at controller entry and read here. Absent, there
-        // is no localpart to create the account under -- not a reason to continue.
-        throw new IllegalStateException(
-            "plain credentials unavailable; cannot create the Matrix account");
-      }
-      var matrixUserId =
-          matrixUserClient.createUserId(
-              plainCreds.getUsername(),
-              userHelper.getRandomPassword(),
-              consultantCreationInput.getFirstName() + " " + consultantCreationInput.getLastName());
-      if (isNull(matrixUserId) || matrixUserId.isBlank()) {
-        // Synapse answering without a user_id leaves exactly the same hole as throwing.
-        throw new IllegalStateException("Matrix returned no user_id for the new consultant");
-      }
-      return matrixUserId;
-    } catch (Exception e) {
-      log.error(
-          "Unable to create the Matrix account for keycloak id {}. Initiating user rollback.",
-          keycloakUserId);
-      rollbackCreateNewConsultant(
-          buildConsultantDataForRollback(consultantCreationInput, keycloakUserId));
-      throw new DistributedTransactionException(
-          e,
-          DistributedTransactionInfo.builder()
-              .completedTransactionalOperations(
-                  newArrayList(
-                      TransactionalStep.CREATE_ACCOUNT_IN_KEYCLOAK,
-                      TransactionalStep.UPDATE_USER_PASSWORD_IN_KEYCLOAK,
-                      TransactionalStep.UPDATE_USER_ROLES_IN_KEYCLOAK))
-              .name(CREATE_CONSULTANT)
-              .failedStep(TransactionalStep.CREATE_ACCOUNT_IN_MATRIX)
               .build());
     }
   }
