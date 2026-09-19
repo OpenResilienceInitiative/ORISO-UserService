@@ -408,6 +408,33 @@ public class ConsultantUpdateServiceTest {
     verify(this.consultantService).saveConsultant(any());
   }
 
+  @Test
+  public void updateConsultant_Should_pushTheNewPseudonym_When_onlyTheDisplayNameChanges() {
+    // Two behaviours this PR relies on, both invisible when the real name changes as well:
+    // (1) a pseudonym-only edit must still reach Matrix, even though no identity field moved, and
+    // (2) the push happens AFTER the database write, so it carries the NEW pseudonym rather than
+    //     the stale one. Moving the call back before the write, or gating it on identity changes
+    //     only, each turn this test red.
+    Consultant consultant = matrixEnabledConsultant("Frau Alt.");
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    UpdateAdminConsultantDTO renameOfPseudonymOnly = renameTo("Old", "Name");
+    renameOfPseudonymOnly.setDisplayName("Frau Neu.");
+    renameOfPseudonymOnly.setAbsent(consultant.isAbsent());
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", renameOfPseudonymOnly);
+
+    ArgumentCaptor<String> displayName = ArgumentCaptor.forClass(String.class);
+    verify(this.matrixSynapseService)
+        .updateUserDisplayName(eq("@beraterin1:matrix.oriso.org"), displayName.capture());
+    assertThat(displayName.getValue()).isEqualTo("Frau Neu.");
+    // No identity field moved, so nothing else may be pushed on the identity side.
+    verify(this.keycloakService, Mockito.never())
+        .updateProfile(anyString(), any(IdentityProfileUpdate.class));
+  }
+
   /** A counsellor whose Matrix account exists; username is the ADR-002 fallback source. */
   private Consultant matrixEnabledConsultant(String publicDisplayName) {
     Consultant consultant = consultantWithId("counsellor-1");
