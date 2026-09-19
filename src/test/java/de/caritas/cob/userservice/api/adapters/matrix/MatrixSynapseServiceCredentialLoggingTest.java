@@ -64,7 +64,8 @@ class MatrixSynapseServiceCredentialLoggingTest {
             restTemplate,
             restTemplate,
             mock(MatrixRoomClient.class),
-            mock(MatrixMediaClient.class));
+            mock(MatrixMediaClient.class),
+            MatrixIdentifierRedactor.withKey("test-secret"));
 
     restTemplateLogger = (Logger) LoggerFactory.getLogger(RestTemplate.class);
     previousLevel = restTemplateLogger.getLevel();
