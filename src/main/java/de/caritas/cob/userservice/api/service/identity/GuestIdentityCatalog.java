@@ -46,12 +46,17 @@ public class GuestIdentityCatalog {
   }
 
   private void indexSelections() {
-    for (Language language : languages.values()) {
+    // Per language, with that language's own spelling rule: the index decides which offered name
+    // Join will later accept, so it has to be built exactly the way next() builds its offers.
+    for (var entry : languages.entrySet()) {
+      String locale = entry.getKey();
+      Language language = entry.getValue();
       for (Animal animal : language.animals()) {
         for (String name : language.names()) {
           for (String actualName :
-              slug(name).isEmpty() ? languages.get("en").names() : List.of(name)) {
-            String sample = identityFor(animal.label(), animal.svg(), actualName, 1000).username();
+              slug(locale, name).isEmpty() ? languages.get("en").names() : List.of(name)) {
+            String sample =
+                identityFor(locale, animal.label(), animal.svg(), actualName, 1000).username();
             allowedBases
                 .computeIfAbsent(animal.svg(), ignored -> new HashSet<>())
                 .add(sample.substring(0, sample.length() - 5));
@@ -68,32 +73,50 @@ public class GuestIdentityCatalog {
     String name = pick(language.names());
     // Credentials use the same ASCII alphabet as registration. For scripts that do not
     // normalize to ASCII, use the animal asset's stable English stem and an English name.
-    if (slug(name).isEmpty()) name = pick(languages.get("en").names());
-    return identityFor(animal.label(), animal.svg(), name, 1000 + random.nextInt(9000));
+    if (slug(normalized, name).isEmpty()) name = pick(languages.get("en").names());
+    return identityFor(normalized, animal.label(), animal.svg(), name, 1000 + random.nextInt(9000));
   }
 
   static GuestIdentitySuggestion identityFor(
       String animalLabel, String avatarKey, String name, int suffix) {
-    String animal = slug(animalLabel);
-    if (animal.isEmpty()) animal = slug(avatarKey.replace(".svg", ""));
-    String base = animal + "_" + slug(name);
+    return identityFor("de", animalLabel, avatarKey, name, suffix);
+  }
+
+  static GuestIdentitySuggestion identityFor(
+      String locale, String animalLabel, String avatarKey, String name, int suffix) {
+    String animal = slug(locale, animalLabel);
+    if (animal.isEmpty()) animal = slug(locale, avatarKey.replace(".svg", ""));
+    String base = animal + "_" + slug(locale, name);
     base = base.substring(0, Math.min(25, base.length())).replaceAll("_+$", "");
     String username = base + "_" + suffix;
     return new GuestIdentitySuggestion(username, username, avatarKey);
   }
 
   private static String slug(String value) {
-    return Normalizer.normalize(
-            value
-                .toLowerCase(Locale.ROOT)
-                .replace("ä", "ae")
-                .replace("ö", "oe")
-                .replace("ü", "ue")
-                .replace("ß", "ss"),
-            Normalizer.Form.NFD)
+    return slug("de", value);
+  }
+
+  /**
+   * German spells its umlauts out when it cannot draw the dots: Löwe becomes loewe, not lowe, and
+   * stripping the diacritic turns a familiar animal into a typo.
+   *
+   * <p>No other language here does that. In Spanish the dots on Pingüino are a diaeresis marking a
+   * spoken u; "pingueino" invents a syllable and hands the guest a name their own language does not
+   * contain. So the spelling-out is German only, and every other locale simply loses the mark.
+   */
+  private static String slug(String locale, String value) {
+    String lowered = value.toLowerCase(Locale.ROOT);
+    if (isGerman(locale)) {
+      lowered = lowered.replace("ä", "ae").replace("ö", "oe").replace("ü", "ue").replace("ß", "ss");
+    }
+    return Normalizer.normalize(lowered, Normalizer.Form.NFD)
         .replaceAll("\\p{M}", "")
         .replaceAll("[^a-z0-9]+", "_")
         .replaceAll("^_+|_+$", "");
+  }
+
+  private static boolean isGerman(String locale) {
+    return locale != null && locale.toLowerCase(Locale.ROOT).startsWith("de");
   }
 
   private <T> T pick(List<T> values) {
