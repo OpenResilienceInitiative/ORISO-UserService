@@ -22,6 +22,7 @@ public class GuestJoinProvisioner {
   private final GuestJoinEligibility eligibility;
   private final GuestIdentityAccount identity;
   private final GuestChatIdentity matrix;
+  private final de.caritas.cob.userservice.api.service.identity.GuestIdentityCatalog catalog;
   private final TransactionTemplate transaction;
 
   public GuestJoinProvisioner(
@@ -29,17 +30,20 @@ public class GuestJoinProvisioner {
       GuestJoinEligibility eligibility,
       GuestIdentityAccount identity,
       GuestChatIdentity matrix,
+      de.caritas.cob.userservice.api.service.identity.GuestIdentityCatalog catalog,
       PlatformTransactionManager manager) {
     this.attempts = attempts;
     this.eligibility = eligibility;
     this.identity = identity;
     this.matrix = matrix;
+    this.catalog = catalog;
     this.transaction = new TransactionTemplate(manager);
     transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
   }
 
   public GuestJoinAttempt provision(GuestJoinCapability capability) {
     InitialDispatch permit = null;
+    var tried = new java.util.HashSet<String>();
     // Includes independently committed reconciliation before either repeated provider write.
     for (int step = 0; step < 8; step++) {
       var currentPermit = permit;
@@ -48,8 +52,22 @@ public class GuestJoinProvisioner {
       var attempt = result.attempt();
       // Report only after the outcome commits. Throwing inside advance would erase the evidence.
       if (attempt.getPhase() == Phase.IDENTITY_COLLISION
-          || attempt.getPhase() == Phase.MATRIX_COLLISION)
+          || attempt.getPhase() == Phase.MATRIX_COLLISION) {
+        tried.add(attempt.actualUsername());
+        // A create the provider refused owns nothing, so another name may be tried at once. A
+        // Matrix collision leaves an owned identity behind and must clean it up first; until that
+        // is implemented it stays a conflict.
+        var replacement =
+            attempt.getPhase() == Phase.IDENTITY_COLLISION && attempt.mayTryAnotherCandidate()
+                ? catalog.nextForAvatar(attempt.getOriginalAvatarKey(), tried)
+                : java.util.Optional.<String>empty();
+        if (replacement.isPresent()) {
+          transaction.execute(status -> advanceCandidate(capability, replacement.get()));
+          permit = null;
+          continue;
+        }
         throw new ConflictException("Selected guest name is occupied");
+      }
       if (attempt.getPhase() == Phase.MATRIX_READY || attempt.getPhase() == Phase.COMPLETE)
         return attempt;
       // Hibernate updates the version at commit, before TransactionTemplate returns.
@@ -98,9 +116,19 @@ public class GuestJoinProvisioner {
     return new Step(attempt, null);
   }
 
+  /** Archives the collided candidate and binds the next one, under the attempt's own row lock. */
+  private GuestJoinAttempt advanceCandidate(GuestJoinCapability capability, String nextUsername) {
+    var attempt =
+        attempts
+            .findByKeyHashForUpdate(capability.attemptHash())
+            .orElseThrow(() -> new ForbiddenException("Guest Join attempt is unknown"));
+    attempt.advanceCandidate(nextUsername);
+    return attempts.saveAndFlush(attempt);
+  }
+
   private void provisionIdentity(
       GuestJoinAttempt attempt, GuestJoinCapability capability, boolean reconciling) {
-    String name = attempt.getOriginalUsername();
+    String name = attempt.actualUsername();
     String marker = attempt.ownershipMarker();
     String id;
     try {
@@ -128,7 +156,7 @@ public class GuestJoinProvisioner {
 
   private void provisionMatrix(
       GuestJoinAttempt attempt, GuestJoinCapability capability, boolean reconciling) {
-    String name = attempt.getOriginalUsername();
+    String name = attempt.actualUsername();
     try {
       attempt.matrixReady(
           reconciling

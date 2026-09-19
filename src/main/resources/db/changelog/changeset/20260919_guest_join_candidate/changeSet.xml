@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- ORISO-UserService#1183: which actual candidate an attempt is on, so a confirmed
+       collision can move to the next name without losing the guest's own request.
+       Both nullable: rows written before this change set are on their first candidate,
+       and the entity reads that absence as exactly that. -->
+  <changeSet id="20260919-guest-join-candidate-1183" author="oriso">
+    <addColumn tableName="guest_join_attempt">
+      <column name="actual_username" type="VARCHAR(30)"/>
+      <column name="candidate_ordinal" type="INT"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="guest_join_attempt" columnName="actual_username"/>
+      <dropColumn tableName="guest_join_attempt" columnName="candidate_ordinal"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

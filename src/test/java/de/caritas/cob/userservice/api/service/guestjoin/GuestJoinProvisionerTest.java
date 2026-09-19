@@ -28,7 +28,12 @@ import org.springframework.transaction.annotation.Transactional;
 
 @DataJpaTest(properties = "spring.sql.init.mode=never")
 @ActiveProfiles("testing")
-@Import({GuestJoinAttemptStore.class, GuestJoinProvisioner.class, GuestJoinEligibility.class})
+@Import({
+  GuestJoinAttemptStore.class,
+  GuestJoinProvisioner.class,
+  GuestJoinEligibility.class,
+  de.caritas.cob.userservice.api.service.identity.GuestIdentityCatalog.class
+})
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 class GuestJoinProvisionerTest {
   private static final String NAME = "biene_rayan_1234";
