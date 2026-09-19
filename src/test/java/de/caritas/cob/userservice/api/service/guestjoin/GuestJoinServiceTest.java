@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.*;
 import de.caritas.cob.userservice.api.helper.*;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
+import de.caritas.cob.userservice.api.model.GuestJoinAttempt;
 import de.caritas.cob.userservice.api.port.out.*;
 import de.caritas.cob.userservice.api.service.*;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -302,7 +303,9 @@ class GuestJoinServiceTest {
   @Test
   void publicMatrixCollisionCommitsBeforeReportingAndReplayDoesNotDispatchOrCleanUp()
       throws Exception {
-    when(matrix.createOnly(eq(NAME), anyString()))
+    // Every candidate collides, so the attempt runs out of names and the caller does get the
+    // conflict. What must not happen on the way there is an account left behind.
+    when(matrix.createOnly(anyString(), anyString()))
         .thenThrow(new ConflictException("Existing unrelated Matrix account"));
     try (var web = httpContext()) {
       var mvc =
@@ -342,7 +345,11 @@ class GuestJoinServiceTest {
     verify(identity, times(1)).createOnly(eq(NAME), anyString(), eq(7L), anyString());
     verify(matrix, times(1)).createOnly(eq(NAME), anyString());
     verify(matrix, never()).ensureOwned(anyString(), anyString());
-    verify(identity, never()).deleteOwned(anyString(), anyString(), anyLong(), anyString());
+    // Every candidate that owned an account had it released. A replay repeats the release, which
+    // the primitive defines as idempotent for an account that is already gone — so the floor is
+    // what matters here, not an exact count.
+    verify(identity, atLeast(GuestJoinAttempt.MAX_CANDIDATES))
+        .deleteOwned(anyString(), anyString(), anyLong(), anyString());
     verifyNoInteractions(authentication, notifications, legacyCreation);
   }
 
@@ -457,6 +464,45 @@ class GuestJoinServiceTest {
     assertThat(attempt.getOriginalUsername())
         .as("the guest's own request stays bound, whatever the server had to fall back to")
         .isEqualTo(NAME);
+  }
+
+  @Test
+  void aMatrixCollisionCleansUpItsOwnedAccountBeforeAnotherNameIsBound() {
+    // Keycloak already said yes for this candidate, so the attempt owns an account. Moving on
+    // without removing it would leave a guest account nobody will ever use or find.
+    when(matrix.createOnly(eq(NAME), anyString()))
+        .thenThrow(new ConflictException("Selected guest name is occupied"));
+    when(matrix.createOnly(argThat(other -> !NAME.equals(other)), anyString()))
+        .thenReturn("@replacement:matrix.example");
+    when(authentication.login(anyString(), anyString()))
+        .thenReturn(new IdentityLogin("test-access", 300, 1800, "test-refresh"));
+
+    var joined = join();
+
+    assertThat(joined.userName()).isNotEqualTo(NAME);
+    verify(identity).deleteOwned(eq(USER_ID), eq(NAME), eq(7L), anyString());
+    assertThat(users.count()).isEqualTo(1);
+    assertThat(sessions.count()).isEqualTo(1);
+  }
+
+  @Test
+  void anUnknownCleanupKeepsTheCandidateRatherThanOrphaningTheAccount() {
+    when(matrix.createOnly(eq(NAME), anyString()))
+        .thenThrow(new ConflictException("Selected guest name is occupied"));
+    doThrow(new ServiceUnavailableException("Cleanup outcome is unknown"))
+        .when(identity)
+        .deleteOwned(anyString(), anyString(), anyLong(), anyString());
+
+    assertThatThrownBy(this::join).isInstanceOf(ServiceUnavailableException.class);
+
+    var attempt =
+        attempts.findByKeyHash(GuestJoinCapability.parse(KEY).attemptHash()).orElseThrow();
+    assertThat(attempt.getIdentityUserId())
+        .as("the owned account stays recorded so the next attempt can finish removing it")
+        .isEqualTo(USER_ID);
+    assertThat(attempt.candidateOrdinal()).isEqualTo(1);
+    assertThat(users.count()).isZero();
+    assertThat(sessions.count()).isZero();
   }
 
   GuestJoinService.JoinResponse join() {
