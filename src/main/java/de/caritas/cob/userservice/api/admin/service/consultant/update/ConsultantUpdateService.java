@@ -36,6 +36,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Service class to provide update functionality for consultants. */
 @Slf4j
@@ -121,7 +123,7 @@ public class ConsultantUpdateService {
 
     var updatedConsultant = updateDatabaseConsultant(updateConsultantDTO, consultant, adminEdit);
     // updateDatabaseConsultant mutates this very entity, so it already carries the new values.
-    updateMatrixDisplayName(consultant, identityDataChanged, previousMatrixDisplayName);
+    scheduleMatrixDisplayNameUpdate(consultant, identityDataChanged, previousMatrixDisplayName);
     if (appointmentDataChanged) {
       appointmentService.syncConsultantData(updatedConsultant);
     }
@@ -132,7 +134,8 @@ public class ConsultantUpdateService {
   }
 
   /**
-   * Pushes the counsellor's Matrix {@code displayname} through the admin API (no password needed).
+   * Decides whether the counsellor's Matrix {@code displayname} must be pushed, and defers the push
+   * itself until the surrounding transaction has committed.
    *
    * <p>ADR-002 §2 / #1200: the advice seeker is a real member of the shared room and can read every
    * member's displayname from {@code /joined_members}, so this must never be {@code firstName + " "
@@ -140,25 +143,51 @@ public class ConsultantUpdateService {
    * may go there — this method only decides <em>whether</em> to send it.
    *
    * <p>It sends on any identity edit (which also repairs profiles provisioned before the fix) and
-   * on a change of the resolved pseudonym itself. Failures stay non-blocking: the Matrix profile is
-   * cosmetic next to the persisted update, which has already been committed at this point.
+   * on a change of the resolved pseudonym itself.
+   *
+   * <p><b>Why after the commit.</b> {@code updateConsultant} is {@code @Transactional} and work
+   * that runs after this point is not fully contained — the rename-notification lookup and save can
+   * throw, which rolls the consultant update back. Sending inside the transaction would leave
+   * Synapse holding a name the database never kept, and nothing reconciles that drift. The values
+   * are therefore resolved <em>now</em>, while the entity is loaded and carries the new state, and
+   * only the outbound call waits for the commit. Without an active transaction (a direct call in a
+   * unit test) there is nothing to wait for, so the push happens immediately.
+   *
+   * <p>Failures stay non-blocking: the Matrix profile is cosmetic next to the persisted update.
    */
-  private void updateMatrixDisplayName(
+  private void scheduleMatrixDisplayNameUpdate(
       Consultant consultant, boolean identityDataChanged, String previousMatrixDisplayName) {
-    if (consultant.getMatrixUserId() == null) {
+    final String matrixUserId = consultant.getMatrixUserId();
+    if (matrixUserId == null) {
       return;
     }
-    String newDisplayName = consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
+    final String consultantId = consultant.getId();
+    final String newDisplayName =
+        consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
     if (!identityDataChanged && Objects.equals(previousMatrixDisplayName, newDisplayName)) {
       return;
     }
+
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      pushMatrixDisplayName(consultantId, matrixUserId, newDisplayName);
+      return;
+    }
+    TransactionSynchronizationManager.registerSynchronization(
+        new TransactionSynchronization() {
+          @Override
+          public void afterCommit() {
+            pushMatrixDisplayName(consultantId, matrixUserId, newDisplayName);
+          }
+        });
+  }
+
+  private void pushMatrixDisplayName(
+      String consultantId, String matrixUserId, String newDisplayName) {
     try {
-      matrixUserClient.updateUserDisplayName(consultant.getMatrixUserId(), newDisplayName);
+      matrixUserClient.updateUserDisplayName(matrixUserId, newDisplayName);
     } catch (Exception e) {
       log.warn(
-          "Matrix display name update failed for consultant {}, but continuing",
-          consultant.getId(),
-          e);
+          "Matrix display name update failed for consultant {}, but continuing", consultantId, e);
     }
   }
 
