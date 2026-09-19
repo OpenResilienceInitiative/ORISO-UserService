@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -56,7 +57,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 @SpringBootTest(classes = UserServiceApplication.class)
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
-class CreateAdminServiceIT {
+class CreateAdminServiceIT extends AccountInactivityPolicyHttpFixture {
 
   private static final String VALID_USERNAME = "validUsername";
   private static final String VALID_EMAIL_ADDRESS = "valid@emailaddress.de";
@@ -122,6 +123,7 @@ class CreateAdminServiceIT {
     assertThat(admin).isNotNull();
     assertThat(admin.getTenantId()).isNull();
     assertThat(admin.getId()).isNotNull();
+    assertDefaultInactivityPolicy(admin.getId());
     assertThat(admin.getType()).isEqualTo(AdminType.AGENCY);
     assertThat(admin.getUsername()).isNotNull();
     assertThat(admin.getFirstName()).isNotNull();

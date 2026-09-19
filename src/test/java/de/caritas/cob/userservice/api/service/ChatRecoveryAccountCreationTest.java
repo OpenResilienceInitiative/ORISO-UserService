@@ -18,7 +18,10 @@ class ChatRecoveryAccountCreationTest {
   private final UserRepository repository = mock(UserRepository.class);
   private final UserService users =
       new UserService(
-          repository, mock(UserMobileTokenRepository.class), mock(AuditingHandler.class));
+          repository,
+          mock(UserMobileTokenRepository.class),
+          mock(AuditingHandler.class),
+          mock(AccountInactivityEnrollmentService.class));
 
   @Test
   void snapshotIsPresentOnFirstInsertAndRetryRetainsIt() {

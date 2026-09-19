@@ -21,7 +21,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional
 @TestPropertySource(
     properties =
-        "spring.sql.init.data-locations=classpath:database/UserServiceDatabase.sql,classpath:database/transformDataForTenants.sql")
+        "spring.sql.init.data-locations=classpath:database/UserServiceDatabase.sql,classpath:database/transformDataForTenants.sql,classpath:database/AccountInactivityDatabase.sql")
 @Sql(scripts = {"classpath:database/transformDataForTenants.sql"})
 public class ConsultantAdminFilterServiceTenantAwareIT extends ConsultantAdminFilterServiceBase {
 

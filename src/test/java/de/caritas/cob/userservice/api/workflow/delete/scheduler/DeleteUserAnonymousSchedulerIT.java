@@ -32,6 +32,7 @@ import de.caritas.cob.userservice.api.testConfig.ApiControllerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.ConsultingTypeManagerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.KeycloakTestConfig;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType;
 import de.caritas.cob.userservice.api.workflow.delete.model.DeletionTargetType;
@@ -62,7 +63,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
   ApiControllerTestConfig.class,
   ConsultingTypeManagerTestConfig.class
 })
-class DeleteUserAnonymousSchedulerIT {
+class DeleteUserAnonymousSchedulerIT extends AccountInactivityPolicyHttpFixture {
 
   private static final String TASK_NAME = "anonymous-user-deletion";
 
