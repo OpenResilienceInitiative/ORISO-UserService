@@ -435,6 +435,30 @@ class GuestJoinServiceTest {
     assertThat(sessions.count()).isZero();
   }
 
+  @Test
+  void aConfirmedCollisionOffersTheNextCandidateInsteadOfADeadEnd() {
+    // The first candidate is definitely taken: the create itself was refused, so nothing of it is
+    // owned and nothing has to be cleaned up before another name may be tried.
+    when(identity.createOnly(eq(NAME), anyString(), anyLong(), anyString()))
+        .thenThrow(new ConflictException("Selected guest name is occupied"));
+    // The replacement is a name the server picks, so the fixture cannot know it in advance.
+    when(matrix.createOnly(anyString(), anyString())).thenReturn("@replacement:matrix.example");
+    when(authentication.login(anyString(), anyString()))
+        .thenReturn(new IdentityLogin("test-access", 300, 1800, "test-refresh"));
+
+    var joined = join();
+
+    assertThat(joined.userName()).isNotEqualTo(NAME);
+    assertThat(joined.sessionId()).isNotNull();
+    assertThat(users.count()).isEqualTo(1);
+    assertThat(sessions.count()).isEqualTo(1);
+    var attempt =
+        attempts.findByKeyHash(GuestJoinCapability.parse(KEY).attemptHash()).orElseThrow();
+    assertThat(attempt.getOriginalUsername())
+        .as("the guest's own request stays bound, whatever the server had to fall back to")
+        .isEqualTo(NAME);
+  }
+
   GuestJoinService.JoinResponse join() {
     return service.join("join-proof-invite", KEY, NAME, "bee.svg", true);
   }

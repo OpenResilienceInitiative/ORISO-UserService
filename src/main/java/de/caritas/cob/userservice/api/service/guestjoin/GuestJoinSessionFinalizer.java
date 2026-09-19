@@ -92,7 +92,7 @@ public class GuestJoinSessionFinalizer {
                 var user =
                     userService.createNewUser(
                         attempt.getIdentityUserId(),
-                        attempt.getOriginalUsername(),
+                        attempt.actualUsername(),
                         userHelper.getDummyEmail(attempt.getIdentityUserId()),
                         attempt.isLanguageFormal(),
                         policy);
@@ -101,7 +101,7 @@ public class GuestJoinSessionFinalizer {
                 user.setDataPrivacyConfirmation(null);
                 var dto =
                     UserDTO.builder()
-                        .username(attempt.getOriginalUsername())
+                        .username(attempt.actualUsername())
                         .consultingType(attempt.getConsultingTypeId().toString())
                         .postcode("00000")
                         .mainTopicId(attempt.getTopicId())
@@ -115,7 +115,7 @@ public class GuestJoinSessionFinalizer {
                         Session.SessionStatus.NEW);
                 attempt.complete(session.getId());
                 return new JoinedSession(
-                    session.getId(), user.getUserId(), attempt.getOriginalUsername(), true);
+                    session.getId(), user.getUserId(), attempt.actualUsername(), true);
               }));
     } catch (PessimisticLockingFailureException busy) {
       throw new ServiceUnavailableException(
@@ -142,8 +142,7 @@ public class GuestJoinSessionFinalizer {
             && session.getStatus() != Session.SessionStatus.IN_PROGRESS)) {
       throw new ForbiddenException("Guest session has ended");
     }
-    return new JoinedSession(
-        session.getId(), user.getUserId(), attempt.getOriginalUsername(), false);
+    return new JoinedSession(session.getId(), user.getUserId(), attempt.actualUsername(), false);
   }
 
   public record JoinedSession(Long sessionId, String userId, String username, boolean created) {}

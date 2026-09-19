@@ -20,6 +20,9 @@ import lombok.NoArgsConstructor;
 @Getter
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class GuestJoinAttempt {
+
+  static final int MAX_CANDIDATES = 3;
+
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
   private Long id;
@@ -50,6 +53,18 @@ public class GuestJoinAttempt {
 
   @Column(name = "original_avatar_key", nullable = false, updatable = false, length = 128)
   private String originalAvatarKey;
+
+  /**
+   * The name actually being provisioned. It starts as the requested one and only differs after a
+   * confirmed collision; the original stays bound so a replay of the guest's own request still
+   * matches.
+   */
+  @Column(name = "actual_username", length = 30)
+  private String actualUsername;
+
+  /** How many actual candidates this attempt has used, the requested one included. */
+  @Column(name = "candidate_ordinal")
+  private Integer candidateOrdinal;
 
   @Column(
       name = "language_formal",
@@ -160,6 +175,36 @@ public class GuestJoinAttempt {
   public void matrixCollision() {
     requirePhase(Phase.MATRIX_PENDING);
     phase = Phase.MATRIX_COLLISION;
+  }
+
+  /** The name to provision: the replacement once there is one, the requested name otherwise. */
+  public String actualUsername() {
+    return actualUsername == null || actualUsername.isBlank() ? originalUsername : actualUsername;
+  }
+
+  public int candidateOrdinal() {
+    return candidateOrdinal == null ? 1 : candidateOrdinal;
+  }
+
+  /** At most three actual candidates, the requested one included. */
+  public boolean mayTryAnotherCandidate() {
+    return (phase == Phase.IDENTITY_COLLISION || phase == Phase.MATRIX_COLLISION)
+        && candidateOrdinal() < MAX_CANDIDATES;
+  }
+
+  /**
+   * Binds the next actual candidate and reopens the attempt for it. Only a committed collision may
+   * lead here: an uncertain outcome must never cost the guest their name.
+   */
+  public void advanceCandidate(String nextUsername) {
+    if (!mayTryAnotherCandidate()) {
+      throw new IllegalStateException("Guest Join attempt may not try another candidate");
+    }
+    this.actualUsername = nextUsername;
+    this.candidateOrdinal = candidateOrdinal() + 1;
+    this.identityUserId = null;
+    this.matrixUserId = null;
+    this.phase = Phase.PREPARED;
   }
 
   public String ownershipMarker() {

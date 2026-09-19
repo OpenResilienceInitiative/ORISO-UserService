@@ -5,12 +5,15 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.io.IOException;
 import java.security.SecureRandom;
 import java.text.Normalizer;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 /**
@@ -35,6 +38,25 @@ public class GuestIdentityCatalog {
   }
 
   /** Validates the coupled selection without reserving names or accepting arbitrary asset paths. */
+  /**
+   * Another name for the same animal, for when the chosen one turns out to be taken.
+   *
+   * <p>The avatar is what the guest picked off the card, so it stays. Only the name behind it
+   * changes, which is the smallest surprise we can hand someone who has already decided. Empty when
+   * this avatar has nothing else to offer.
+   */
+  public Optional<String> nextForAvatar(String avatarKey, Set<String> alreadyTried) {
+    List<String> bases =
+        allowedBases.getOrDefault(avatarKey, Set.of()).stream()
+            .sorted()
+            .collect(Collectors.toList());
+    Collections.shuffle(bases, random);
+    return bases.stream()
+        .map(base -> base + "_" + (1000 + random.nextInt(9000)))
+        .filter(candidate -> !alreadyTried.contains(candidate))
+        .findFirst();
+  }
+
   public boolean isKnownSelection(String username, String avatarKey) {
     return username != null
         && username.matches("[a-z0-9_]{1,25}_[1-9][0-9]{3}")
