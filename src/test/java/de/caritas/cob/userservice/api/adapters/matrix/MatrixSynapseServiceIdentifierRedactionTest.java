@@ -72,10 +72,23 @@ class MatrixSynapseServiceIdentifierRedactionTest {
       Pattern.compile("\\bnew\\s+(?:[A-Za-z0-9_.]*\\.)?[A-Za-z0-9_]*Exception\\s*\\(");
 
   private static final Pattern REDACTION_CALL =
-      Pattern.compile("\\b(?:redactor|MatrixIdentifierRedactor)\\s*\\.\\s*pseudonym\\s*\\(");
+      Pattern.compile(
+          "\\b(?:redactor|MatrixIdentifierRedactor)\\s*\\.\\s*(?:pseudonym|scrub)\\s*\\(");
+
+  /**
+   * Free text this adapter did not compose: a Synapse error body, a {@code RestTemplate} exception
+   * message, a URL. Each can carry a Matrix user id verbatim, so printing one beside a pseudonym
+   * hands back what the pseudonym withheld. Allowed only through {@code redactor.scrub(...)}.
+   */
+  private static final List<String> UNSCRUBBED_FREE_TEXT =
+      List.of("getMessage", "getResponseBodyAsString");
 
   private static final Pattern JAVA_IDENTIFIER = Pattern.compile("[A-Za-z_$][A-Za-z0-9_$]*");
 
+  /**
+   * The net: no logging call and no exception constructor in the adapter may be handed a raw Matrix
+   * identifier, or free text that could contain one.
+   */
   @Test
   void everyLogAndExceptionSiteInTheAdapterIsRedacted() throws IOException {
     var source = stripCommentsAndLiterals(Files.readString(ADAPTER_SOURCE, StandardCharsets.UTF_8));
@@ -90,9 +103,13 @@ class MatrixSynapseServiceIdentifierRedactionTest {
         .as("logging and exception sites found in %s", ADAPTER_SOURCE)
         .hasSizeGreaterThan(40);
 
-    var violations =
+    var stripped =
         sites.stream()
             .map(MatrixSynapseServiceIdentifierRedactionTest::stripRedactionCalls)
+            .toList();
+
+    var violations =
+        stripped.stream()
             .flatMap(args -> personalIdentifiersIn(args).stream().map(id -> id + "  in  " + args))
             .toList();
 
@@ -100,6 +117,18 @@ class MatrixSynapseServiceIdentifierRedactionTest {
         .as(
             "log statements and exception messages in MatrixSynapseService must pass "
                 + "redactor.pseudonym(...) rather than a raw Matrix identifier")
+        .isEmpty();
+
+    var unscrubbed =
+        stripped.stream()
+            .filter(args -> UNSCRUBBED_FREE_TEXT.stream().anyMatch(args::contains))
+            .toList();
+
+    assertThat(unscrubbed)
+        .as(
+            "free text this adapter did not compose (a Synapse error body, an exception message) "
+                + "must pass through redactor.scrub(...), or it reintroduces the identifier the "
+                + "pseudonym beside it withheld")
         .isEmpty();
   }
 
@@ -118,6 +147,7 @@ class MatrixSynapseServiceIdentifierRedactionTest {
   private Level previousLevel;
   private ListAppender<ILoggingEvent> logAppender;
 
+  /** Binds the adapter to a mock homeserver and captures everything it logs. */
   @BeforeEach
   void setUp() {
     redactor = MatrixIdentifierRedactor.withKey("test-secret");
@@ -145,12 +175,17 @@ class MatrixSynapseServiceIdentifierRedactionTest {
     adapterLogger.addAppender(logAppender);
   }
 
+  /** Restores the logger this test reconfigured, so the level does not leak into other tests. */
   @AfterEach
   void tearDown() {
     adapterLogger.detachAppender(logAppender);
     adapterLogger.setLevel(previousLevel);
   }
 
+  /**
+   * Proves the net sits over real behaviour: a genuine failed provisioning names the pseudonym in
+   * the log line and in the exception that reaches every caller, and the name in neither.
+   */
   @Test
   void aFailedUserCreationNamesThePseudonymInBothItsLogLineAndItsExceptionMessage() {
     var registerUrl = MATRIX_BASE_URL + "/_synapse/admin/v1/register";
@@ -173,6 +208,37 @@ class MatrixSynapseServiceIdentifierRedactionTest {
     assertThat(logMessages()).anySatisfy(m -> assertThat(m).contains(pseudonym));
   }
 
+  /**
+   * A Matrix localpart may contain {@code +}, and form-decoding would turn it into a space — one
+   * person with two pseudonyms, in the one place an operator looks for the correlation.
+   */
+  @Test
+  void aUrlPathCarriesTheSameTokenAsADirectCallEvenWhenTheLocalpartContainsAPlus() {
+    // A Matrix localpart may contain '+'. Decoding the path with form-encoding rules turns that
+    // '+' into a space, so the URL path would hash "anna x" while every explicit call site hashes
+    // "anna+x" - one person, two pseudonyms, and the correlation this redaction promises is gone
+    // exactly where an operator would go looking for it.
+    var localpart = "anna+x";
+    var url =
+        MATRIX_BASE_URL + "/_synapse/admin/v1/users/@" + localpart + ":matrix.example.com/devices";
+    mockServer.expect(requestTo(url)).andRespond(withServerError());
+
+    service.makeMatrixRequest(url, "GET", "syt_token", null);
+
+    mockServer.verify();
+    assertThat(logMessages())
+        .anySatisfy(
+            m ->
+                assertThat(m)
+                    .contains(redactor.pseudonym("@" + localpart + ":matrix.example.com")));
+    assertThat(redactor.pseudonym("@" + localpart + ":matrix.example.com"))
+        .isEqualTo(redactor.pseudonym(localpart));
+  }
+
+  /**
+   * The correlation the whole redaction rests on: one person, one token, whatever shape of
+   * identifier the call site happened to hold.
+   */
   @Test
   void theSamePersonCarriesTheSameTokenWhetherTheCallSiteHeldTheLocalpartOrTheFullMatrixId() {
     assertThat(redactor.pseudonym("@" + USERNAME + ":matrix.example.com"))
@@ -180,6 +246,10 @@ class MatrixSynapseServiceIdentifierRedactionTest {
         .isEqualTo(redactor.pseudonym("Anna.Beispiel"));
   }
 
+  /**
+   * A token must hide its input, distinguish people, and say plainly when there was no identifier
+   * at all rather than silently colliding with a real one.
+   */
   @Test
   void aPseudonymNeverContainsTheIdentifierAndDiffersBetweenPeople() {
     assertThat(redactor.pseudonym(USERNAME))
@@ -190,10 +260,17 @@ class MatrixSynapseServiceIdentifierRedactionTest {
     assertThat(redactor.pseudonym("  ")).isEqualTo("mx#blank");
   }
 
+  /** Everything the adapter logged during the test, formatted as it would reach the log file. */
   private List<String> logMessages() {
     return logAppender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
   }
 
+  /**
+   * The identifiers in one argument list whose names say they carry a person.
+   *
+   * @param argumentList the argument text of one call, redaction calls already removed
+   * @return the offending identifiers, empty when the call is clean
+   */
   private static List<String> personalIdentifiersIn(String argumentList) {
     var found = new ArrayList<String>();
     var matcher = JAVA_IDENTIFIER.matcher(argumentList);
@@ -206,7 +283,13 @@ class MatrixSynapseServiceIdentifierRedactionTest {
     return found;
   }
 
-  /** Removes {@code redactor.pseudonym(&lt;anything&gt;)} calls, arguments included. */
+  /**
+   * Removes {@code redactor.pseudonym(…)} and {@code redactor.scrub(…)} calls, arguments included,
+   * so that what is left is only what the call site passes unprotected.
+   *
+   * @param text the argument text of one call
+   * @return the same text with redacted arguments replaced by a placeholder
+   */
   private static String stripRedactionCalls(String text) {
     var result = new StringBuilder(text);
     var matcher = REDACTION_CALL.matcher(result);
@@ -218,7 +301,13 @@ class MatrixSynapseServiceIdentifierRedactionTest {
     return result.toString();
   }
 
-  /** The argument text of every call whose opening parenthesis the given pattern matches. */
+  /**
+   * The argument text of every call whose opening parenthesis the given pattern matches.
+   *
+   * @param source the source file, comments and literals already blanked
+   * @param callPattern a pattern whose match ends on the call's opening parenthesis
+   * @return one entry per call site
+   */
   private static List<String> argumentListsOf(String source, Pattern callPattern) {
     var argumentLists = new ArrayList<String>();
     Matcher matcher = callPattern.matcher(source);
@@ -232,6 +321,13 @@ class MatrixSynapseServiceIdentifierRedactionTest {
     return argumentLists;
   }
 
+  /**
+   * The index of the parenthesis closing the one at {@code openIndex}, or -1 when unbalanced.
+   *
+   * @param source the text to scan
+   * @param openIndex the index of the opening parenthesis
+   * @return the index of its match
+   */
   private static int matchingParen(String source, int openIndex) {
     int depth = 0;
     for (int i = openIndex; i < source.length(); i++) {

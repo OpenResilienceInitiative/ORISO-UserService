@@ -77,9 +77,9 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_ROOM_MESSAGES = "/_matrix/client/r0/rooms/{roomId}/messages";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
 
-  // A Matrix user id sitting in a URL path, raw ("@anna:server") or percent-encoded ("%40anna%3A").
-  private static final java.util.regex.Pattern MATRIX_USER_ID_IN_PATH =
-      java.util.regex.Pattern.compile("(?:@|%40)[^/?#]+?(?::|%3A|%3a)[^/?#]+");
+  // The closed-vocabulary error code in a Synapse error body; never the body's free text.
+  private static final java.util.regex.Pattern MATRIX_ERRCODE =
+      java.util.regex.Pattern.compile("\"errcode\"\\s*:\\s*\"([A-Z_]{1,64})\"");
 
   private final MatrixConfig matrixConfig;
   private final RestTemplate restTemplate;
@@ -267,14 +267,14 @@ public class MatrixSynapseService implements MatrixUserClient {
         return reactivateDeletedUser(username, password);
       }
       log.error(
-          "Matrix Error: Could not create user ({}) in Matrix. Status: {}, Response: {}",
+          "Matrix Error: Could not create user ({}) in Matrix. Status: {}, errcode: {}",
           redactor.pseudonym(username),
           ex.getStatusCode(),
-          ex.getResponseBodyAsString());
+          errcodeOf(ex));
       throw new MatrixCreateUserException(
           String.format(
-              "Could not create user (%s) in Matrix: %s",
-              redactor.pseudonym(username), ex.getResponseBodyAsString()));
+              "Could not create user (%s) in Matrix: %s errcode=%s",
+              redactor.pseudonym(username), ex.getStatusCode(), errcodeOf(ex)));
     } catch (Exception ex) {
       log.error(
           "Matrix Error: Could not create user ({}) in Matrix. Reason",
@@ -347,10 +347,13 @@ public class MatrixSynapseService implements MatrixUserClient {
     } catch (MatrixCreateUserException exception) {
       throw exception;
     } catch (Exception exception) {
+      // The throwable itself is not passed: a RestTemplate failure message repeats the request
+      // URL, and this endpoint has the Matrix user id in its path. The scrubbed message keeps the
+      // cause; the stack trace below it would have been RestTemplate boilerplate.
       log.error(
-          "Matrix Error: Could not reactivate deleted user ({})",
+          "Matrix Error: Could not reactivate deleted user ({}). Reason: {}",
           redactor.pseudonym(username),
-          exception);
+          redactor.scrub(exception.toString()));
       throw new MatrixCreateUserException(
           String.format(
               "Could not reactivate deleted Matrix user (%s)", redactor.pseudonym(username)));
@@ -407,7 +410,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.error(
           "Matrix Error: Could not create ADMIN user ({}): {}",
           redactor.pseudonym(username),
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       throw new MatrixCreateUserException(
           String.format(
               "Could not create ADMIN user (%s) in Matrix", redactor.pseudonym(username)));
@@ -469,7 +472,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.warn(
           "Could not check Matrix user existence for {}: {}",
           redactor.pseudonym(matrixUserId),
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return false;
     }
   }
@@ -517,16 +520,16 @@ public class MatrixSynapseService implements MatrixUserClient {
       return responseBody;
     } catch (HttpStatusCodeException ex) {
       log.error(
-          "Matrix Error: Could not create login token for user ({}). Status: {}, Response: {}",
+          "Matrix Error: Could not create login token for user ({}). Status: {}, errcode: {}",
           redactor.pseudonym(matrixUserId),
           ex.getStatusCode(),
-          ex.getResponseBodyAsString());
+          errcodeOf(ex));
       return null;
     } catch (Exception ex) {
       log.error(
           "Matrix Error: Could not create login token for user ({}). Reason: {}",
           redactor.pseudonym(matrixUserId),
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return null;
     }
   }
@@ -627,7 +630,7 @@ public class MatrixSynapseService implements MatrixUserClient {
           "Matrix browser device login failed for user {} and device {}: {}",
           redactor.pseudonym(matrixUserId),
           deviceId,
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return null;
     } finally {
       browserLoginLock.unlock();
@@ -670,7 +673,9 @@ public class MatrixSynapseService implements MatrixUserClient {
           createAdminUser(adminUsername, adminPassword);
           token = loginUser(adminUsername, adminPassword);
         } catch (Exception e) {
-          log.warn("Could not create admin user, trying login again: {}", e.getMessage());
+          log.warn(
+              "Could not create admin user, trying login again: {}",
+              redactor.scrub(e.getMessage()));
           token = loginUser(adminUsername, adminPassword);
         }
       }
@@ -683,7 +688,7 @@ public class MatrixSynapseService implements MatrixUserClient {
 
       return token;
     } catch (Exception e) {
-      log.error("Failed to get admin access token: {}", e.getMessage());
+      log.error("Failed to get admin access token: {}", redactor.scrub(e.getMessage()));
       return null;
     }
   }
@@ -734,7 +739,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.warn(
           "Failed to update Matrix display name for user {}: {}",
           redactor.pseudonym(matrixUserId),
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return false;
     }
   }
@@ -777,7 +782,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.warn(
           "Failed to deactivate Matrix user {}: {}",
           redactor.pseudonym(matrixUserId),
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return false;
     }
   }
@@ -852,7 +857,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.info("Matrix room {} no longer exists, nothing to purge", matrixRoomId);
       return RoomPurgeOutcome.ALREADY_GONE;
     } catch (Exception ex) {
-      log.warn("Failed to purge Matrix room {}: {}", matrixRoomId, ex.getMessage());
+      log.warn("Failed to purge Matrix room {}: {}", matrixRoomId, redactor.scrub(ex.getMessage()));
       return RoomPurgeOutcome.FAILED;
     }
   }
@@ -918,7 +923,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.error(
           "Matrix admin impersonation login failed for user {}: {}",
           redactor.pseudonym(matrixUserId),
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return null;
     }
   }
@@ -973,7 +978,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.error(
           "Matrix Error: Could not login user ({}) in Matrix. Reason: {}",
           redactor.pseudonym(username),
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return null;
     }
   }
@@ -1101,7 +1106,7 @@ public class MatrixSynapseService implements MatrixUserClient {
           "Inviting Matrix admin {} into {} failed: {}",
           redactor.pseudonym(adminMatrixId),
           roomId,
-          e.getMessage());
+          redactor.scrub(e.getMessage()));
     }
     return joinRoom(roomId, adminToken);
   }
@@ -1158,7 +1163,9 @@ public class MatrixSynapseService implements MatrixUserClient {
       return java.util.Optional.of(members.stream().map(String::valueOf).toList());
     } catch (Exception ex) {
       log.warn(
-          "Matrix Error: Could not read members of room {}: {}", matrixRoomId, ex.getMessage());
+          "Matrix Error: Could not read members of room {}: {}",
+          matrixRoomId,
+          redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
   }
@@ -1199,8 +1206,10 @@ public class MatrixSynapseService implements MatrixUserClient {
       return response.getBody();
     } catch (Exception ex) {
       log.error(
-          "Matrix Error: Could not send message to room ({}). Reason: {}", roomId, ex.getMessage());
-      return java.util.Map.of("error", ex.getMessage());
+          "Matrix Error: Could not send message to room ({}). Reason: {}",
+          roomId,
+          redactor.scrub(ex.getMessage()));
+      return java.util.Map.of("error", redactor.scrub(ex.getMessage()));
     }
   }
 
@@ -1230,7 +1239,7 @@ public class MatrixSynapseService implements MatrixUserClient {
           "Matrix Error: Could not read event {} from room {}: {}",
           eventId,
           roomId,
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
   }
@@ -1278,7 +1287,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.error(
           "Matrix Error: Could not get messages from room ({}). Reason: {}",
           roomId,
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return new java.util.ArrayList<>();
     }
   }
@@ -1375,7 +1384,10 @@ public class MatrixSynapseService implements MatrixUserClient {
 
       return java.util.Map.of("messages", new java.util.ArrayList<>(), "next_batch", "");
     } catch (Exception ex) {
-      log.error("Matrix Error: Could not sync room ({}). Reason: {}", roomId, ex.getMessage());
+      log.error(
+          "Matrix Error: Could not sync room ({}). Reason: {}",
+          roomId,
+          redactor.scrub(ex.getMessage()));
       return java.util.Map.of("messages", new java.util.ArrayList<>(), "next_batch", "");
     }
   }
@@ -1420,7 +1432,7 @@ public class MatrixSynapseService implements MatrixUserClient {
         }
       }
     } catch (Exception e) {
-      log.warn("Failed to extract nonce from response: {}", e.getMessage());
+      log.warn("Failed to extract nonce from response: {}", redactor.scrub(e.getMessage()));
     }
     return null;
   }
@@ -1460,7 +1472,8 @@ public class MatrixSynapseService implements MatrixUserClient {
       return Hex.encodeHexString(macBytes);
     } catch (NoSuchAlgorithmException | InvalidKeyException e) {
       log.error("Failed to generate MAC for Matrix user registration", e);
-      throw new MatrixCreateUserException("Failed to generate MAC: " + e.getMessage());
+      throw new MatrixCreateUserException(
+          "Failed to generate MAC: " + redactor.scrub(e.getMessage()));
     }
   }
 
@@ -1536,37 +1549,36 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.error(
           "Matrix Error: Request to {} failed. Reason: {}",
           sanitizeUrlForLog(url),
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return null;
     }
   }
 
   /**
-   * Strips the query string and replaces any Matrix user id embedded in the path (raw or
-   * percent-encoded) with its pseudonym, so a generic request log cannot reintroduce a name that
-   * every explicit call site above takes care to keep out.
+   * Strips the query string and pseudonymises any Matrix user id embedded in the path, so a generic
+   * request log cannot reintroduce a name that every explicit call site above takes care to keep
+   * out.
    */
   private String sanitizeUrlForLog(String url) {
     if (url == null) {
       return "null";
     }
     int queryStart = url.indexOf('?');
-    var path = queryStart >= 0 ? url.substring(0, queryStart) : url;
-    return MATRIX_USER_ID_IN_PATH
-        .matcher(path)
-        .replaceAll(
-            match ->
-                java.util.regex.Matcher.quoteReplacement(
-                    redactor.pseudonym(decodeQuietly(match.group()))));
+    return redactor.scrub(queryStart >= 0 ? url.substring(0, queryStart) : url);
   }
 
-  /** Percent-decoding that degrades to the raw value rather than throwing inside a log call. */
-  private static String decodeQuietly(String value) {
-    try {
-      return java.net.URLDecoder.decode(value, StandardCharsets.UTF_8);
-    } catch (IllegalArgumentException ex) {
-      return value;
-    }
+  /**
+   * The Matrix {@code errcode} of a Synapse error body ({@code M_USER_IN_USE}, {@code M_FORBIDDEN},
+   * …), or {@code "unknown"}.
+   *
+   * <p>Only the code, never the body. A Matrix error body is free text written by the homeserver;
+   * whether it repeats the user id is the homeserver's choice, not ours, and a privacy guarantee
+   * that rests on a third party's wording is not a guarantee. The code is the part that tells an
+   * operator what actually happened, and it is drawn from a closed vocabulary.
+   */
+  private static String errcodeOf(HttpStatusCodeException exception) {
+    var matcher = MATRIX_ERRCODE.matcher(exception.getResponseBodyAsString());
+    return matcher.find() ? matcher.group(1) : "unknown";
   }
 
   /**
@@ -1631,7 +1643,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.error(
           "Error getting joined rooms for user {}: {}",
           redactor.pseudonym(username),
-          e.getMessage());
+          redactor.scrub(e.getMessage()));
       return java.util.Collections.emptyList();
     }
   }
@@ -1685,7 +1697,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.error(
           "Error getting joined rooms for user {}: {}",
           redactor.pseudonym(principalForLog),
-          e.getMessage());
+          redactor.scrub(e.getMessage()));
       return java.util.Collections.emptyList();
     }
   }
@@ -1831,7 +1843,7 @@ public class MatrixSynapseService implements MatrixUserClient {
       log.warn(
           "Matrix presence lookup failed for {}: {}",
           redactor.pseudonym(matrixUserId),
-          ex.getMessage());
+          redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
   }
