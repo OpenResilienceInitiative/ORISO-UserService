@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import java.util.Collections;
 import java.util.List;
 import java.util.Set;
@@ -60,6 +61,8 @@ public class ConsultantAdminFacade {
   private final @NonNull AuthenticatedUser authenticatedUser;
 
   private final @NonNull AgencyService agencyService;
+
+  private final @NonNull ConsultantChatIdentityService consultantChatIdentityService;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
@@ -155,6 +158,21 @@ public class ConsultantAdminFacade {
   public ConsultantAdminResponseDTO updateConsultant(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
     return this.consultantAdminService.updateConsultant(consultantId, updateConsultantDTO);
+  }
+
+  /**
+   * Completes the chat (Matrix) provisioning of a consultant that was created while the chat server
+   * was unreachable (#1194).
+   *
+   * <p>Idempotent: a consultant that already owns a chat identity is returned untouched, so an
+   * administrator can repeat the call without risk.
+   *
+   * @param consultantId the id of the consultant to repair
+   * @return the consultant as it now stands, including its {@code chatIdentityStatus}
+   */
+  public ConsultantAdminResponseDTO repairConsultantChatIdentity(String consultantId) {
+    this.consultantChatIdentityService.provisionMissingChatIdentity(consultantId);
+    return this.consultantAdminService.findConsultantById(consultantId);
   }
 
   /**

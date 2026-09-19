@@ -238,6 +238,17 @@ class UserAdminControllerTest {
   }
 
   @Test
+  void repairConsultantChatIdentity_Should_delegateAndReturnTheRepairedConsultant() {
+    var expected = new ConsultantAdminResponseDTO();
+    when(consultantAdminFacade.repairConsultantChatIdentity("c-1")).thenReturn(expected);
+
+    var response = controller.repairConsultantChatIdentity("c-1");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(expected, response.getBody());
+  }
+
+  @Test
   void getUserIdentities_Should_delegate() {
     var expected = new UserIdentitiesDTO();
     when(userIdentitiesService.getUserIdentities("u-1")).thenReturn(expected);

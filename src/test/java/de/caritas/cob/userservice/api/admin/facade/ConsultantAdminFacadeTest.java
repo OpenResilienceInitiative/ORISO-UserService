@@ -60,6 +60,10 @@ class ConsultantAdminFacadeTest {
 
   @Mock private ConsultantAdminService consultantAdminService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService
+      consultantChatIdentityService;
+
   @Mock private ConsultantAdminFilterService consultantAdminFilterService;
 
   @Mock private ConsultantAgencyAdminService consultantAgencyAdminService;

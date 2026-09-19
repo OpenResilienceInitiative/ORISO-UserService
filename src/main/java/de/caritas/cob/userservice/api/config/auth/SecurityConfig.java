@@ -456,6 +456,16 @@ public class SecurityConfig {
                     HttpMethod.PUT,
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // #1194: repairing a missing chat identity changes the consultant, so it follows
+                // the consultant-update authority rather than the /useradmin/** catch-all, which
+                // only a user admin passes.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/chat-identity",
+                    "/service/useradmin/consultants/{consultantId:"
+                        + UUID_PATTERN
+                        + "}/chat-identity")
+                .hasAnyAuthority(CONSULTANT_UPDATE, USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     HttpMethod.POST,
                     "/useradmin/askers/{askerId:" + UUID_PATTERN + "}/deletion/pause",

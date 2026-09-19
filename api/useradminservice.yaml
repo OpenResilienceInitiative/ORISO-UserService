@@ -232,6 +232,50 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /useradmin/consultants/{consultantId}/chat-identity:
+    post:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Completes the chat (Matrix) provisioning of an existing consultant
+        [Authorization: Role: consultant-admin]
+      description: >-
+        Idempotent repair for a consultant whose chatIdentityStatus is MISSING, i.e. one that was
+        created while the chat server was unreachable. Provisions the missing chat identity and
+        stores it on the consultant. Calling it for a consultant that already has a chat identity
+        changes nothing and answers 200 with chatIdentityStatus = PROVISIONED, so the call is safe
+        to repeat.
+      operationId: repairConsultantChatIdentity
+      parameters:
+        - name: consultantId
+          in: path
+          description: consultant id
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: >-
+            OK - the consultant owns a chat identity, either because this call provisioned one or
+            because it already had one
+          content:
+            'application/hal+json':
+              schema:
+                $ref: '#/components/schemas/ConsultantAdminResponseDTO'
+        400:
+          description: BAD REQUEST - invalid/incomplete request
+        401:
+          description: UNAUTHORIZED - no/invalid role/authorization
+        404:
+          description: NOT FOUND - consultant not found
+        424:
+          description: >-
+            FAILED DEPENDENCY - the chat server could not provision the account; the consultant is
+            unchanged and the call can be repeated
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /useradmin/askers/{askerId}:
     get:
       tags:
@@ -1575,6 +1619,15 @@ components:
           items:
             type: string
             enum: [TENANT_ADMIN, AGENCY_ADMIN]
+        chatIdentityStatus:
+          type: string
+          enum: [PROVISIONED, MISSING]
+          description: >-
+            Whether this consultant owns a chat (Matrix) identity. MISSING means the account
+            exists in the identity provider and the database but chat provisioning did not
+            complete, so the counsellor cannot start or join any counselling room. Repair it
+            with POST /useradmin/consultants/{consultantId}/chat-identity. Absent on responses
+            from older deployments; treat absent as unknown, not as PROVISIONED.
 
     ConsultantTopicDTO:
       type: object

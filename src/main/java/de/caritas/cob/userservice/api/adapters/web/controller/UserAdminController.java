@@ -129,6 +129,23 @@ public class UserAdminController implements UseradminApi {
   }
 
   /**
+   * Completes the chat (Matrix) provisioning of a consultant that was created while the chat server
+   * was unreachable (#1194).
+   *
+   * <p>Idempotent: a consultant that already owns a chat identity is answered with {@code 200} and
+   * an unchanged record, so an administrator may repeat the call. A chat server that is still down
+   * answers {@code 424} and leaves the consultant untouched.
+   *
+   * @param consultantId the id of the consultant to repair (required)
+   * @return {@link ConsultantAdminResponseDTO} carrying the resulting {@code chatIdentityStatus}
+   */
+  @Override
+  public ResponseEntity<ConsultantAdminResponseDTO> repairConsultantChatIdentity(
+      @PathVariable String consultantId) {
+    return ResponseEntity.ok(this.consultantAdminFacade.repairConsultantChatIdentity(consultantId));
+  }
+
+  /**
    * Grants an existing admin user a full functional consultant identity (multi-identity
    * foundation). Mirrors {@link #createConsultant} and returns the created consultant identity.
    *

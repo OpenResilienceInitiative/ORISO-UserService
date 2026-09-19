@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -145,8 +146,10 @@ public class CreateChatFacade {
       String roomName = chatDTO.getTopic();
       String roomAlias = "group_chat_" + sessionId;
 
-      if (consultant.getMatrixUserId() == null || consultant.getMatrixUserId().isBlank()) {
-        throw new InternalServerErrorException("Consultant does not have Matrix credentials");
+      if (!ConsultantChatIdentityService.hasChatIdentity(consultant)) {
+        throw new InternalServerErrorException(
+            ConsultantChatIdentityService.missingChatIdentityMessage(
+                "Consultant", consultant.getId()));
       }
 
       var matrixResponse =

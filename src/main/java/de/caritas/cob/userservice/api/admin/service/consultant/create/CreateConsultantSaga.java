@@ -266,10 +266,21 @@ public class CreateConsultantSaga {
         }
       } else {
         log.warn(
-            "Plain credentials not available from ThreadLocal, skipping Matrix user creation for consultant");
+            "Plain credentials not available from ThreadLocal, skipping Matrix user creation for"
+                + " consultant. The consultant is created without a chat identity and must be"
+                + " repaired via POST /useradmin/consultants/{id}/chat-identity (#1194)");
       }
     } catch (Exception e) {
-      log.error("Matrix user creation failed for consultant, but continuing", e);
+      // Deliberately not fatal (#1194): the integration and E2E suites run without a Synapse at
+      // all, and refusing creation during a chat outage would stop counsellor onboarding. The
+      // consultant is persisted without a chat identity, the response reports
+      // chatIdentityStatus = MISSING, the data-integrity report lists the record, and
+      // POST /useradmin/consultants/{id}/chat-identity repairs it.
+      log.error(
+          "Matrix user creation failed for consultant; continuing without a chat identity. The"
+              + " consultant cannot be used for counselling until it is repaired via POST"
+              + " /useradmin/consultants/{id}/chat-identity",
+          e);
     } finally {
       // Clean up ThreadLocal
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
