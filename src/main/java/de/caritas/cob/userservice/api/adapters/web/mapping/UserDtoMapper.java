@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -26,6 +27,12 @@ import org.springframework.stereotype.Service;
 public class UserDtoMapper {
 
   private static final String DISPLAY_NAME = "displayName";
+
+  private final IdentityPolicy identityPolicy;
+
+  public UserDtoMapper(IdentityPolicy identityPolicy) {
+    this.identityPolicy = identityPolicy;
+  }
 
   @Value("${feature.appointment.enabled}")
   private boolean appointmentFeatureEnabled;
@@ -52,6 +59,19 @@ public class UserDtoMapper {
     }
 
     twoFactorAuthDTO.setIsToEncourage(userData.getEncourage2fa());
+    // Fails closed only where the requirement is known: a null (asker, or a consultant row
+    // predating the column) is "not required", not "blocked".
+    //
+    // Gated on the OTP role policy for the same reason UserAccountControllerDelegate gates
+    // encourage2fa for platform admins: announcing a requirement that enrolment refuses is a
+    // permanent lockout, not a nudge. The client shows a gate it cannot dismiss while every
+    // setup endpoint answers 409 (assertTwoFactorAuthAllowed in
+    // UserTwoFactorAuthControllerDelegate), so the person can never satisfy what they are being
+    // asked for. The stored requirement stays stored: turning the policy on later makes it
+    // effective, which is why the gate sits here and not on the write.
+    twoFactorAuthDTO.setIsRequired(
+        Boolean.TRUE.equals(userData.getTwoFactorRequired())
+            && identityPolicy.isTwoFactorAuthenticationAllowed(userData.getUserRoles()));
     userData.setTwoFactorAuth(twoFactorAuthDTO);
     userData.setE2eEncryptionEnabled(isE2eEncEnabled);
     userData.setIsDisplayNameEditable(

@@ -77,6 +77,7 @@ public class CounsellorInviteProvisioningService {
         throw new IllegalStateException("Consultant provisioning returned no user id");
       }
       consultantId = consultant.getEmbedded().getId();
+      alignRequirementsWithInvite(consultantId, invite);
       invite.setProvisionedUserId(consultantId);
       invite.setUpdateDate(LocalDateTime.now());
       accountInviteRepository.save(invite);
@@ -129,6 +130,37 @@ public class CounsellorInviteProvisioningService {
     }
   }
 
+  /**
+   * Undoes the two create-path defaults that only hold when an administrator chose the credentials.
+   *
+   * <p>{@code CreateConsultantDTOCreationInputAdapter} marks every admin-provisioned counsellor as
+   * owing a second factor and owing a password change, which is right when an administrator picks
+   * the password and hands it over. Neither holds on an invite.
+   *
+   * <p>The second factor: the invite already tracks the requirement — including {@code WAIVED},
+   * which is an administrator deliberately excusing this person. Without this the waiver would be
+   * granted and then silently ignored at first login.
+   *
+   * <p>The password: the counsellor typed it themselves seconds ago and nobody else has ever seen
+   * it. Demanding a replacement puts a screen they cannot dismiss in front of a secret that is
+   * already only theirs.
+   */
+  private void alignRequirementsWithInvite(String consultantId, AccountInvite invite) {
+    var stillOwed = !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());
+    consultantRepository
+        .findByIdAndDeleteDateIsNull(consultantId)
+        .filter(
+            consultant ->
+                !Boolean.valueOf(stillOwed).equals(consultant.getTwoFactorRequired())
+                    || Boolean.TRUE.equals(consultant.getPasswordChangeRequired()))
+        .ifPresent(
+            consultant -> {
+              consultant.setTwoFactorRequired(stillOwed);
+              consultant.setPasswordChangeRequired(false);
+              consultantRepository.save(consultant);
+            });
+  }
+
   private void rollbackPartiallyCreatedConsultant(String consultantId, RuntimeException failure) {
     if (consultantId == null) {
       return;
@@ -156,7 +188,7 @@ public class CounsellorInviteProvisioningService {
         .password(command.password())
         .firstname(invite.getFirstName())
         .lastname(invite.getLastName())
-        .email(invite.getRecipientEmail().trim().toLowerCase())
+        .email(invite.getRecipientEmail().trim().toLowerCase(java.util.Locale.ROOT))
         .formalLanguage(command.formalLanguage())
         .absent(false)
         .tenantId(invite.getTenantId())

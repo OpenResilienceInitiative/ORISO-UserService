@@ -4,6 +4,13 @@ public enum TransactionalStep {
   CREATE_ACCOUNT_IN_KEYCLOAK,
   CREATE_CONSULTANT_IN_MARIADB,
 
+  /**
+   * Chat (Matrix) account provisioning. Consultant creation deliberately does <em>not</em> roll
+   * back on this step (#1194); it names the failed step of the separate repair path, {@code
+   * ConsultantChatIdentityService#provisionMissingChatIdentity}.
+   */
+  CREATE_ACCOUNT_IN_MATRIX,
+
   CREATE_ACCOUNT_IN_CALCOM_OR_APPOINTMENTSERVICE,
 
   SAVE_CONSULTANT_IN_MARIADB,

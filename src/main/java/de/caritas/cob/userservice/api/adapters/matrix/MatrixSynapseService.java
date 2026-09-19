@@ -255,6 +255,75 @@ public class MatrixSynapseService implements MatrixUserClient {
     }
   }
 
+  /**
+   * The full Matrix user id for a localpart the homeserver holds a <em>usable</em> account for, or
+   * {@code null}.
+   *
+   * <p>Reconciliation path for #1194: after a repair created the account and failed to persist the
+   * id, {@code createUser} can only answer {@code M_USER_IN_USE}. This answers what that account
+   * is, so the next attempt can adopt it.
+   *
+   * <p>Deliberately stricter than {@link #userExists}: Synapse answers 200 for a
+   * <em>deactivated</em> user, so "the homeserver knows this localpart" and "this account can be
+   * used" are different questions. Occupancy checks want the first; adoption wants the second,
+   * because attaching a deactivated id produces a consultant that reads PROVISIONED here and is
+   * refused by the homeserver — the exact state the repair exists to remove. Answering that
+   * question here rather than at each caller keeps one authority over what a usable account is.
+   */
+  @Override
+  public String findUserId(String localpart) {
+    if (localpart == null || localpart.isBlank()) {
+      return null;
+    }
+    var matrixUserId =
+        "@" + localpart.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
+    var account = readAdminUser(matrixUserId);
+    if (account.isEmpty()) {
+      return null;
+    }
+    if (Boolean.TRUE.equals(account.get().get("deactivated"))) {
+      log.warn(
+          "The homeserver holds a deactivated account for the requested localpart; it is not"
+              + " offered for adoption");
+      return null;
+    }
+    return matrixUserId;
+  }
+
+  /**
+   * The Synapse admin view of one user, or empty when the homeserver does not have it and when the
+   * lookup could not be performed. Never throws: callers treat empty as "no usable account", which
+   * is the safe answer for both.
+   */
+  private java.util.Optional<java.util.Map<String, Object>> readAdminUser(String matrixUserId) {
+    try {
+      String adminToken = getAdminAccessToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for a Matrix user lookup");
+        return java.util.Optional.empty();
+      }
+      URI url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(headers),
+              java.util.Map.class);
+      @SuppressWarnings("unchecked")
+      java.util.Map<String, Object> body = response.getBody();
+      return java.util.Optional.ofNullable(body);
+    } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
+      return java.util.Optional.empty();
+    } catch (Exception ex) {
+      log.warn("Could not read the Matrix admin view of a user: {}", ex.getMessage());
+      return java.util.Optional.empty();
+    }
+  }
+
   @Override
   public String createUserId(String username, String password, String displayName)
       throws MatrixCreateUserException {

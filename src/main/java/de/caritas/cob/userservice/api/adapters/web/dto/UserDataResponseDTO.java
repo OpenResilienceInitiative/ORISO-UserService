@@ -90,6 +90,16 @@ public class UserDataResponseDTO {
 
   @JsonIgnore private Boolean encourage2fa;
 
+  /** Backs twoFactorAuth.isRequired; not a field of its own on the wire. */
+  @JsonIgnore private Boolean twoFactorRequired;
+
+  /**
+   * The account still carries the password its administrator chose. Unlike the second-factor
+   * requirement this travels as a field of its own: it is a fact about the password, not about a
+   * factor.
+   */
+  private Boolean passwordChangeRequired;
+
   private Boolean magicLinkLoginEnabled;
 
   private Boolean e2eEncryptionEnabled;

@@ -438,6 +438,50 @@ class MatrixSynapseServiceTest {
         .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_ADMIN_TOKEN)));
   }
 
+  // -------------------------------------------------------------------------
+  // findUserId
+  // -------------------------------------------------------------------------
+
+  @Test
+  void findUserIdShouldAnswerTheIdForAnActiveHomeserverAccount() {
+    stubAdminUserLookup(Map.of("deactivated", false));
+
+    assertThat(matrixSynapseService().findUserId("anna.beispiel"))
+        .isEqualTo("@anna.beispiel:matrix.example.com");
+  }
+
+  @Test
+  void findUserIdShouldAnswerNullForADeactivatedHomeserverAccount() {
+    // Synapse answers 200 for a deactivated user, so "the homeserver knows this localpart" is not
+    // the same question as "this account can be used". Offering a deactivated id for adoption
+    // would produce a consultant that reads PROVISIONED here and is refused by the homeserver -
+    // the state the repair exists to remove, manufactured by the repair.
+    stubAdminUserLookup(Map.of("deactivated", true));
+
+    assertThat(matrixSynapseService().findUserId("anna.beispiel")).isNull();
+  }
+
+  @Test
+  void findUserIdShouldAnswerNullWhenTheHomeserverDoesNotKnowTheLocalpart() {
+    matrixConfig.setServerName("matrix.example.com");
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.NOT_FOUND, "Not Found", null, new byte[0], StandardCharsets.UTF_8));
+
+    assertThat(matrixSynapseService().findUserId("anna.beispiel")).isNull();
+  }
+
+  private void stubAdminUserLookup(Map<String, Object> body) {
+    matrixConfig.setServerName("matrix.example.com");
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(body));
+  }
+
   @Test
   void isExpiredShouldTreatEntryAsExpiredOnlyOnceNowReachesExpiry() {
     assertThat(MatrixSynapseService.isExpired(1000L, 999L)).isFalse();
