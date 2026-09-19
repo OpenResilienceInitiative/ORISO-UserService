@@ -18,6 +18,8 @@ import org.springframework.transaction.support.TransactionTemplate;
 /** Each pending intent commits separately before its bounded, serialized provider phase. */
 @Service
 public class GuestJoinProvisioner {
+
+  private static final int STEPS_PER_CANDIDATE = 8;
   private final GuestJoinAttemptRepository attempts;
   private final GuestJoinEligibility eligibility;
   private final GuestIdentityAccount identity;
@@ -44,8 +46,12 @@ public class GuestJoinProvisioner {
   public GuestJoinAttempt provision(GuestJoinCapability capability) {
     InitialDispatch permit = null;
     var tried = new java.util.HashSet<String>();
-    // Includes independently committed reconciliation before either repeated provider write.
-    for (int step = 0; step < 8; step++) {
+    // Eight steps carry one candidate through both provider phases including independently
+    // committed reconciliation before either repeated write. Each replacement starts that over,
+    // so the budget has to cover every candidate the attempt is allowed to try — otherwise a
+    // bounded, well-behaved collision sequence would run out of steps and report itself as an
+    // unknown outcome.
+    for (int step = 0; step < STEPS_PER_CANDIDATE * GuestJoinAttempt.MAX_CANDIDATES; step++) {
       var currentPermit = permit;
       var result =
           Objects.requireNonNull(transaction.execute(status -> advance(capability, currentPermit)));
@@ -58,14 +64,23 @@ public class GuestJoinProvisioner {
         // Matrix collision leaves an owned identity behind and must clean it up first; until that
         // is implemented it stays a conflict.
         var replacement =
-            attempt.getPhase() == Phase.IDENTITY_COLLISION && attempt.mayTryAnotherCandidate()
+            attempt.mayTryAnotherCandidate()
                 ? catalog.nextForAvatar(attempt.getOriginalAvatarKey(), tried)
                 : java.util.Optional.<String>empty();
         if (replacement.isPresent()) {
+          // Matrix refused a name that Keycloak had already granted: that account is ours, and it
+          // has to be verifiably gone before another name is bound. An unknown outcome leaves the
+          // attempt exactly as it is — the recorded provider ID is what lets the next call finish
+          // the removal instead of abandoning an account nobody will ever use or find.
+          releaseOwnedIdentity(attempt);
           transaction.execute(status -> advanceCandidate(capability, replacement.get()));
           permit = null;
           continue;
         }
+        // Giving up must not be cheaper than carrying on: the account this candidate owns is
+        // released here too, or the one case where no further name is available would be the one
+        // case that leaves an account behind.
+        releaseOwnedIdentity(attempt);
         throw new ConflictException("Selected guest name is occupied");
       }
       if (attempt.getPhase() == Phase.MATRIX_READY || attempt.getPhase() == Phase.COMPLETE)
@@ -114,6 +129,16 @@ public class GuestJoinProvisioner {
       case TERMINAL -> throw new ForbiddenException("Guest Join attempt has ended");
     }
     return new Step(attempt, null);
+  }
+
+  /** Removes the account this candidate owns; throws when the outcome is anything but confirmed. */
+  private void releaseOwnedIdentity(GuestJoinAttempt attempt) {
+    if (attempt.getIdentityUserId() == null) return;
+    identity.deleteOwned(
+        attempt.getIdentityUserId(),
+        attempt.actualUsername(),
+        attempt.getTenantId(),
+        attempt.ownershipMarker());
   }
 
   /** Archives the collided candidate and binds the next one, under the attempt's own row lock. */

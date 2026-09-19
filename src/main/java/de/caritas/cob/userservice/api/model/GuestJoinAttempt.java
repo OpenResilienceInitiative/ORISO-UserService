@@ -21,7 +21,7 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor(access = AccessLevel.PROTECTED)
 public class GuestJoinAttempt {
 
-  static final int MAX_CANDIDATES = 3;
+  public static final int MAX_CANDIDATES = 3;
 
   @Id
   @GeneratedValue(strategy = GenerationType.IDENTITY)
