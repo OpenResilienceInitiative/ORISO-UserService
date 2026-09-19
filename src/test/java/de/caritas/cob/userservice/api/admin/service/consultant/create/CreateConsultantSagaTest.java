@@ -7,6 +7,7 @@ import static de.caritas.cob.userservice.api.exception.httpresponses.customheade
 import static de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason.TENANT_LICENSING_NOT_CONFIGURED;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -31,6 +32,8 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
+import de.caritas.cob.userservice.api.helper.MatrixRealNameGuard;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -58,6 +61,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -111,6 +115,12 @@ class CreateConsultantSagaTest {
   @Mock private RollbackFacade rollbackFacade;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private AppointmentService appointmentService;
+
+  // The resolver is the single place that decides which name may reach Matrix (ADR-002 §2), so the
+  // saga tests exercise the real rule instead of a mock that would answer null.
+  @Spy
+  private ConsultantDisplayNameResolver consultantDisplayNameResolver =
+      new ConsultantDisplayNameResolver();
 
   @BeforeEach
   void setUp() {
@@ -580,6 +590,69 @@ class CreateConsultantSagaTest {
         ex.getCustomHttpHeaders().get("X-Reason").get(0),
         is("DISTRIBUTED_TRANSACTION_FAILED_ON_STEP_UPDATE_USER_PASSWORD_IN_KEYCLOAK"));
     verify(rollbackFacade).rollbackConsultantAccount(any(Consultant.class));
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1200: the Matrix displayname is never the counsellor's real name.
+  // The advice seeker shares the room and reads every member's displayname from /joined_members.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createNewConsultant_Should_provisionMatrixWithThePublicDisplayName() throws Exception {
+    stubHappyPath();
+    givenMatrixProvisioningIsReachable();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setDisplayName("Frau M.");
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    MatrixRealNameGuard.assertNoRealNameReachedMatrix(matrixSynapseService, "First", "Last");
+    assertThat(capturedMatrixDisplayName(), is("Frau M."));
+  }
+
+  @Test
+  void createNewConsultant_Should_provisionMatrixWithTheUsername_When_noDisplayNameIsSet()
+      throws Exception {
+    stubHappyPath();
+    givenMatrixProvisioningIsReachable();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    MatrixRealNameGuard.assertNoRealNameReachedMatrix(matrixSynapseService, "First", "Last");
+    // The Matrix ID already carries the username, so this adds no new information.
+    assertThat(capturedMatrixDisplayName(), is(VALID_USERNAME));
+    assertThat(capturedMatrixDisplayName(), is(not("First Last")));
+  }
+
+  @Test
+  void createNewConsultant_Should_stillSucceed_When_matrixProvisioningFails() throws Exception {
+    stubHappyPath();
+    PlainCredentialsHolder.set(VALID_USERNAME, null);
+    when(userHelper.getRandomPassword()).thenReturn("MatrixPass1!");
+    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
+        .thenThrow(new RuntimeException("synapse down"));
+
+    var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getMatrixUserId(), is(nullValue()));
+    verify(rollbackFacade, never()).rollbackConsultantAccount(any(Consultant.class));
+  }
+
+  private void givenMatrixProvisioningIsReachable() throws Exception {
+    PlainCredentialsHolder.set(VALID_USERNAME, null);
+    when(userHelper.getRandomPassword()).thenReturn("MatrixPass1!");
+    when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
+        .thenReturn("@" + VALID_USERNAME + ":matrix.oriso.org");
+  }
+
+  private String capturedMatrixDisplayName() throws Exception {
+    ArgumentCaptor<String> displayNameCaptor = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService)
+        .createUserId(anyString(), anyString(), displayNameCaptor.capture());
+    return displayNameCaptor.getValue();
   }
 
   private void stubHappyPath() throws Exception {
