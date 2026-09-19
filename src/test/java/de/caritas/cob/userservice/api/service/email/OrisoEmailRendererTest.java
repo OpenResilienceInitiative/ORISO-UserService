@@ -137,6 +137,72 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void rendersEveryCallOccasionInEveryToneFromNativeResources() {
+    Map<String, Map<OrisoEmailRenderer.Tone, String>> subjects =
+        Map.of(
+            "anruf-erinnerung",
+                Map.of(
+                    OrisoEmailRenderer.Tone.DE_FORMAL, "Eine Sitzung beginnt bald",
+                    OrisoEmailRenderer.Tone.DE_INFORMAL, "Eine Sitzung beginnt bald",
+                    OrisoEmailRenderer.Tone.EN, "A session is starting soon"),
+            "anruf-einladung",
+                Map.of(
+                    OrisoEmailRenderer.Tone.DE_FORMAL, "Sie wurden zu einer Sitzung eingeladen",
+                    OrisoEmailRenderer.Tone.DE_INFORMAL, "Du wurdest zu einer Sitzung eingeladen",
+                    OrisoEmailRenderer.Tone.EN, "You have been invited to a session"),
+            "anruf-verpasst",
+                Map.of(
+                    OrisoEmailRenderer.Tone.DE_FORMAL, "Sie haben einen Anruf verpasst",
+                    OrisoEmailRenderer.Tone.DE_INFORMAL, "Du hast einen Anruf verpasst",
+                    OrisoEmailRenderer.Tone.EN, "You missed a call"));
+
+    for (var occasion : subjects.entrySet()) {
+      for (var toneAndSubject : occasion.getValue().entrySet()) {
+        Map<String, String> values = brand();
+        values.put("callUrl", "https://example.org/calls/open?room=alpha&via=matrix");
+
+        var email = renderer.render(occasion.getKey(), toneAndSubject.getKey(), values);
+
+        assertThat(email.subject()).isEqualTo(toneAndSubject.getValue()).doesNotContain("{{");
+        assertThat(email.html())
+            .contains("https://example.org/calls/open?room=alpha&amp;via=matrix")
+            .contains("https://example.org/settings/notifications?mail=" + occasion.getKey())
+            .doesNotContain("{{");
+        assertThat(email.text())
+            .contains("https://example.org/calls/open?room=alpha&via=matrix")
+            .contains("https://example.org/settings/notifications?mail=" + occasion.getKey())
+            .doesNotContain("{{");
+      }
+    }
+  }
+
+  @Test
+  void existingAppointmentStillRendersCompletelyInEveryTone() {
+    for (OrisoEmailRenderer.Tone tone : OrisoEmailRenderer.Tone.values()) {
+      Map<String, String> values = brand();
+      values.put("appointmentDate", "4 August 2026");
+      values.put("appointmentTime", "14:30");
+      values.put("appointmentType", "Video call");
+      values.put("locationName", "Online counselling");
+      values.put("locationAddress", "Secure account");
+      values.put("appointmentUrl", "https://example.org/appointments/42?view=detail&from=mail");
+      values.put("mapUrl", "https://example.org/map?q=mainz&zoom=12");
+
+      var email = renderer.render("termin", tone, values);
+
+      assertThat(email.subject()).contains("4 August 2026").doesNotContain("{{");
+      assertThat(email.html())
+          .contains("https://example.org/appointments/42?view=detail&amp;from=mail")
+          .contains("https://example.org/settings/notifications?mail=termin")
+          .doesNotContain("{{");
+      assertThat(email.text())
+          .contains("https://example.org/appointments/42?view=detail&from=mail")
+          .contains("https://example.org/settings/notifications?mail=termin")
+          .doesNotContain("{{");
+    }
+  }
+
+  @Test
   void doesNotDecorateALinkASecurityMailNeverCarries() {
     Map<String, String> values = brand();
     values.put("loginUrl", "https://example.org/login");
