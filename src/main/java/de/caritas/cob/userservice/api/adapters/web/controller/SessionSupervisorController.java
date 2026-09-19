@@ -141,7 +141,6 @@ public class SessionSupervisorController {
     supervisorAddedEmailNotificationService.notifySupervisorAdded(
         supervisor.getSession() != null ? supervisor.getSession().getUser() : null,
         supervisor.getSupervisorConsultant(),
-        supervisorDisplayName,
         supervisor.getSession() != null ? supervisor.getSession().getId() : null,
         TenantContext.getCurrentTenantData(),
         accessToken);
@@ -195,7 +194,6 @@ public class SessionSupervisorController {
                       supervisorAddedEmailNotificationService.notifySupervisorRemoved(
                           session.getUser(),
                           item.getSupervisorConsultant(),
-                          supervisorDisplayName,
                           session.getId(),
                           TenantContext.getCurrentTenantData(),
                           accessToken));

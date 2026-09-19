@@ -488,9 +488,12 @@ public class ConsultantUpdateServiceTest {
   }
 
   @Test
-  public void updateConsultant_Should_NotFallBackToTheRealName_When_NoPseudonymIsSet() {
+  public void
+      updateConsultant_Should_NotNotifyTheAdviceSeeker_When_NoPseudonymIsSetAndOnlyTheRealNameChanges() {
     // With no display name stored, the published name is the username -- which does not move when
-    // the real name does, so there is still nothing to announce and nothing to leak.
+    // the real name does, so there is still nothing to announce. Asserting only "no real name
+    // reached the advice seeker" here would be vacuous: nothing reaches them at all. The absence
+    // of the notification is the claim, so that is what is asserted.
     Consultant consultant = matrixEnabledConsultant(null);
     when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
     when(this.consultantService.saveConsultant(any()))
@@ -503,9 +506,56 @@ public class ConsultantUpdateServiceTest {
 
     this.consultantUpdateService.updateConsultant("counsellor-1", rename);
 
-    assertNoRealNameReachedTheAdviceSeeker("Angela", "Musterfrau");
-    assertNoRealNameReachedTheAdviceSeeker("Old", "Name");
     Mockito.verifyNoInteractions(this.eventNotificationService);
+  }
+
+  @Test
+  public void
+      updateConsultant_Should_NotNameTheCounsellor_When_ThePseudonymIsClearedToTheUsername() {
+    // The no-pseudonym case where a notification IS emitted: clearing the display name moves the
+    // published name from "Frau Alt." to the username, so the advice seeker is told -- and the
+    // guard below then has real invocations to inspect rather than an empty log.
+    Consultant consultant = matrixEnabledConsultant("Frau Alt.");
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    Session openCase = sessionOfAdviceSeeker("asker-1");
+    when(this.sessionRepository.findByConsultantAndStatusIn(eq(consultant), any()))
+        .thenReturn(List.of(openCase));
+    UpdateAdminConsultantDTO clearPseudonym = renameTo("Angela", "Musterfrau");
+    clearPseudonym.setDisplayName("");
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", clearPseudonym);
+
+    verify(this.eventNotificationService)
+        .createCounselorRenamedNotification(any(Session.class), eq("asker-1"));
+    assertNoRealNameReachedTheAdviceSeeker("Angela", "Musterfrau");
+    assertNoRealNameReachedTheAdviceSeeker("Frau", "Alt");
+  }
+
+  @Test
+  public void updateConsultant_Should_NotifyTheAdviceSeeker_When_ONLY_ThePseudonymChanges() {
+    // The gate, pinned on its own. Every other rename test here also moves the real name, which
+    // sets identityDataChanged -- so re-gating the emission on that flag would pass them all. This
+    // one touches nothing but the display name, and identityDataChanged never looks at it.
+    Consultant consultant = matrixEnabledConsultant("Frau Alt.");
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    Session openCase = sessionOfAdviceSeeker("asker-1");
+    when(this.sessionRepository.findByConsultantAndStatusIn(eq(consultant), any()))
+        .thenReturn(List.of(openCase));
+    // Same first name, last name and e-mail as the stored consultant: no identity field moves.
+    UpdateAdminConsultantDTO pseudonymOnly = renameTo("Old", "Name");
+    pseudonymOnly.setDisplayName("Frau Neu.");
+    pseudonymOnly.setAbsent(consultant.isAbsent());
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", pseudonymOnly);
+
+    verify(this.eventNotificationService)
+        .createCounselorRenamedNotification(any(Session.class), eq("asker-1"));
+    verify(this.keycloakService, Mockito.never())
+        .updateProfile(anyString(), any(IdentityProfileUpdate.class));
   }
 
   /**

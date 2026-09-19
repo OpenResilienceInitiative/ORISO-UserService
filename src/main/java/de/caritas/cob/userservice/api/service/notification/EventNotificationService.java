@@ -470,33 +470,34 @@ public class EventNotificationService {
   @Transactional
   public void createMessageNotificationFromRoom(
       String roomId, String senderUserId, String messagePreview) {
-    createMessageNotificationFromRoom(roomId, senderUserId, messagePreview, false, null, null);
+    createMessageNotificationFromRoom(roomId, senderUserId, messagePreview, false, null);
   }
 
   @Transactional
   public void createMessageNotificationFromRoom(
       String roomId, String senderUserId, PrivacyEnvelope envelope) {
-    createMessageNotificationFromRoom(roomId, senderUserId, null, false, null, envelope);
+    createMessageNotificationFromRoom(roomId, senderUserId, null, false, envelope);
   }
 
   @Transactional
   public void createMessageNotificationFromRoom(
-      String roomId,
-      String senderUserId,
-      String messagePreview,
-      boolean supervisorMessage,
-      String senderDisplayName) {
+      String roomId, String senderUserId, String messagePreview, boolean supervisorMessage) {
     createMessageNotificationFromRoom(
-        roomId, senderUserId, messagePreview, supervisorMessage, senderDisplayName, null);
+        roomId, senderUserId, messagePreview, supervisorMessage, null);
   }
 
+  /**
+   * ADR-002 §2 / ORISO-UserService#1201: there is deliberately no {@code senderDisplayName}
+   * parameter. This notification is addressed to the other party, and the sender's name is not the
+   * sender's to choose: {@code senderUserId} comes from the authenticated principal, so the server
+   * can always look the sender up and apply the publication rule itself.
+   */
   @Transactional
   public void createMessageNotificationFromRoom(
       String roomId,
       String senderUserId,
       String messagePreview,
       boolean supervisorMessage,
-      String senderDisplayName,
       PrivacyEnvelope envelope) {
     if (roomId == null || roomId.isBlank()) {
       return;
@@ -511,7 +512,7 @@ public class EventNotificationService {
     }
 
     Session session = sessionOpt.get();
-    String senderLabel = resolveSenderName(senderUserId, senderDisplayName);
+    String senderLabel = resolveSenderName(senderUserId);
     String text = buildMessageNotificationText(senderLabel, envelope);
     String contentClass = envelope != null ? envelope.getContentClass() : null;
     String matrixEventId = envelope != null ? envelope.getMessageId() : null;
@@ -554,14 +555,14 @@ public class EventNotificationService {
   public void createThreadReplyNotificationFromRoom(
       String roomId, String senderUserId, String threadRootId, PrivacyEnvelope envelope) {
     createThreadReplyNotificationFromRoom(
-        roomId, senderUserId, null, threadRootId, false, null, null, envelope);
+        roomId, senderUserId, null, threadRootId, false, null, envelope);
   }
 
   @Transactional
   public void createThreadReplyNotificationFromRoom(
       String roomId, String senderUserId, String messagePreview, String threadRootId) {
     createThreadReplyNotificationFromRoom(
-        roomId, senderUserId, messagePreview, threadRootId, false, null, null, null);
+        roomId, senderUserId, messagePreview, threadRootId, false, null, null);
   }
 
   @Transactional
@@ -571,7 +572,6 @@ public class EventNotificationService {
       String messagePreview,
       String threadRootId,
       boolean supervisorMessage,
-      String senderDisplayName,
       String threadParentPreview) {
     createThreadReplyNotificationFromRoom(
         roomId,
@@ -579,11 +579,11 @@ public class EventNotificationService {
         messagePreview,
         threadRootId,
         supervisorMessage,
-        senderDisplayName,
         threadParentPreview,
         null);
   }
 
+  /** No {@code senderDisplayName} parameter, for the reason given on the message variant. */
   @Transactional
   public void createThreadReplyNotificationFromRoom(
       String roomId,
@@ -591,7 +591,6 @@ public class EventNotificationService {
       String messagePreview,
       String threadRootId,
       boolean supervisorMessage,
-      String senderDisplayName,
       String threadParentPreview,
       PrivacyEnvelope envelope) {
     if (roomId == null || roomId.isBlank()) {
@@ -607,7 +606,7 @@ public class EventNotificationService {
     }
 
     Session session = sessionOpt.get();
-    String senderLabel = resolveSenderName(senderUserId, senderDisplayName);
+    String senderLabel = resolveSenderName(senderUserId);
     String text = buildThreadReplyNotificationText(senderLabel, envelope);
     String contentClass = envelope != null ? envelope.getContentClass() : null;
     String matrixEventId = envelope != null ? envelope.getMessageId() : null;
@@ -969,16 +968,18 @@ public class EventNotificationService {
         .build();
   }
 
+  /**
+   * The name a notification may use for whoever sent the message.
+   *
+   * <p>ADR-002 §2 / ORISO-UserService#1201: this used to accept a {@code senderDisplayName} from
+   * the caller and return it unchanged whenever it was non-blank and did not look encoded. The only
+   * caller that ever supplied one was the REST controller, straight out of the request body — so a
+   * client decided what a <em>third party</em> would be told the sender is called, and the app in
+   * fact sent {@code displayName || userName || firstName + " " + lastName} there. The override is
+   * gone: the sender's id comes from the authenticated principal, so the server looks the sender up
+   * and applies the rule itself. An unidentifiable sender is "Someone", not whatever was posted.
+   */
   private String resolveSenderName(String senderUserId) {
-    return resolveSenderName(senderUserId, null);
-  }
-
-  private String resolveSenderName(String senderUserId, String senderDisplayName) {
-    if (senderDisplayName != null
-        && !senderDisplayName.isBlank()
-        && !looksEncoded(senderDisplayName)) {
-      return senderDisplayName;
-    }
     if (senderUserId == null || senderUserId.isBlank()) {
       return "Someone";
     }

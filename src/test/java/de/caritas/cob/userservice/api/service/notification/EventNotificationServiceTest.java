@@ -1152,9 +1152,9 @@ class EventNotificationServiceTest {
             .build();
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "someone-else", null, false, "Someone", envelope);
+        "!room-1:matrix.example", "someone-else", null, false, envelope);
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "someone-else", null, false, "Someone", envelope);
+        "!room-1:matrix.example", "someone-else", null, false, envelope);
 
     verify(deduplicationWriter, times(1)).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getDeduplicationKey()).isEqualTo("message.new:$evt-1");
@@ -1180,7 +1180,7 @@ class EventNotificationServiceTest {
             .build();
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "someone-else", null, false, "Someone", envelope);
+        "!room-1:matrix.example", "someone-else", null, false, envelope);
 
     verify(eventNotificationRepository).save(any());
     verify(deduplicationWriter, never()).persistInNewTransaction(any());
@@ -1333,19 +1333,27 @@ class EventNotificationServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void resolveSenderName_usesDisplayNameWhenNotEncoded() {
+  void resolveSenderName_resolvesTheSenderFromTheDatabaseRatherThanFromTheCaller() {
+    // #1201: this test asserted that a caller-supplied "Alice Consultant" reached the stored row.
+    // The parameter it used is gone -- the server identifies the sender itself. The end-to-end
+    // proof that a client cannot smuggle a name in through the REST body lives in
+    // EventNotificationControllerTest.
     Session session = sessionMock();
     User user = mock(User.class);
     when(user.getUserId()).thenReturn("asker-1");
     when(session.getUser()).thenReturn(user);
     when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
         .thenReturn(Optional.of(session));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("sender-id"))
+        .thenReturn(Optional.of(counsellorWithoutPseudonym()));
 
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender-id", "msg", false, "Alice Consultant");
+        "!room-1:matrix.example", "sender-id", "msg", false);
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
-    assertThat(eventCaptor.getValue().getParams()).contains("Alice Consultant");
+    assertThat(eventCaptor.getValue().getParams())
+        .contains("beraterin1")
+        .doesNotContain("Angela", "Musterfrau");
   }
 
   @Test
@@ -1531,13 +1539,7 @@ class EventNotificationServiceTest {
     when(identityTombstoneService.resolveDisplayLabel("sender")).thenReturn(Optional.empty());
 
     eventNotificationService.createThreadReplyNotificationFromRoom(
-        "!room-1:matrix.example",
-        "sender",
-        "my reply text",
-        "thread-1",
-        false,
-        null,
-        "parent message");
+        "!room-1:matrix.example", "sender", "my reply text", "thread-1", false, "parent message");
 
     verify(eventNotificationRepository).save(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();
@@ -1799,7 +1801,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope imageEnvelope =
         PrivacyEnvelope.builder().messageId("m1").contentClass("IMAGE").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", null, false, null, imageEnvelope);
+        "!room-1:matrix.example", "sender", null, false, imageEnvelope);
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("image");
@@ -1821,7 +1823,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope fileEnvelope =
         PrivacyEnvelope.builder().messageId("m2").contentClass("FILE").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", null, false, null, fileEnvelope);
+        "!room-1:matrix.example", "sender", null, false, fileEnvelope);
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("file");
@@ -1843,7 +1845,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope audioEnvelope =
         PrivacyEnvelope.builder().messageId("m3").contentClass("AUDIO").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", null, false, null, audioEnvelope);
+        "!room-1:matrix.example", "sender", null, false, audioEnvelope);
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("audio message");
@@ -1865,7 +1867,7 @@ class EventNotificationServiceTest {
     PrivacyEnvelope videoEnvelope =
         PrivacyEnvelope.builder().messageId("m4").contentClass("VIDEO").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", null, false, null, videoEnvelope);
+        "!room-1:matrix.example", "sender", null, false, videoEnvelope);
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     assertThat(eventCaptor.getValue().getText()).contains("video message");
@@ -1917,7 +1919,7 @@ class EventNotificationServiceTest {
 
     PrivacyEnvelope envelope = PrivacyEnvelope.builder().messageId("evt-123").build();
     eventNotificationService.createMessageNotificationFromRoom(
-        "!room-1:matrix.example", "sender", null, false, null, envelope);
+        "!room-1:matrix.example", "sender", null, false, envelope);
 
     verify(deduplicationWriter).persistInNewTransaction(eventCaptor.capture());
     String text = eventCaptor.getValue().getText();

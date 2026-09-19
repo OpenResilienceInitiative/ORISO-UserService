@@ -97,7 +97,7 @@ class SessionSupervisorControllerTest {
   }
 
   @Test
-  void addSupervisor_optionalDataMissing_noThrowAndNeverFallsBackToTheRealName() {
+  void addSupervisor_optionalDataMissing_noThrowAndNoAdviceSeekerNotification() {
     // Business reason: notification side effects must not crash when optional user/session data is
     // absent.
     var request = new SessionSupervisorController.AddSupervisorRequestDTO();
@@ -121,15 +121,13 @@ class SessionSupervisorControllerTest {
     assertEquals(HttpStatus.CREATED, response.getStatusCode());
     verify(eventNotificationService, never())
         .createSupervisorAddedNotification(any(), any(), any());
-    // #1201: this asserted eq("Fallback Name") -- the supervisor's real name -- before.
+    // #1201: this used to assert on notifySupervisorAdded's `supervisorDisplayName`, a parameter
+    // nothing ever read -- so it guarded nothing observable while looking like a privacy check.
+    // The parameter is gone; what this test is actually about is that a session without a user
+    // produces no advice-seeker notification and no crash. The real-name guarantee is pinned by
+    // the two tests below, on the sink that is actually observable.
     verify(supervisorAddedEmailNotificationService)
-        .notifySupervisorAdded(
-            eq(null),
-            any(Consultant.class),
-            eq("Fallback Full Name"),
-            eq(77L),
-            eq(null),
-            eq("token"));
+        .notifySupervisorAdded(eq(null), any(Consultant.class), eq(77L), eq(null), eq("token"));
   }
 
   @Test
@@ -152,12 +150,7 @@ class SessionSupervisorControllerTest {
         .createSupervisorRemovedNotification(any(), eq("u-2"), eq("Supervisor Display"));
     verify(supervisorAddedEmailNotificationService)
         .notifySupervisorRemoved(
-            any(User.class),
-            any(Consultant.class),
-            eq("Supervisor Display"),
-            eq(77L),
-            eq(null),
-            eq("token"));
+            any(User.class), any(Consultant.class), eq(77L), eq(null), eq("token"));
   }
 
   // ---------------------------------------------------------------------------
@@ -202,8 +195,6 @@ class SessionSupervisorControllerTest {
     var supervisor = supervisor(id, "sup-1", "added-by", null, "unused", sessionOwner);
     supervisor.getSupervisorConsultant().setDisplayName(null);
     supervisor.getSupervisorConsultant().setUsername("beraterin1");
-    supervisor.getSupervisorConsultant().setFirstName("Angela");
-    supervisor.getSupervisorConsultant().setLastName("Musterfrau");
     return supervisor;
   }
 
@@ -222,7 +213,7 @@ class SessionSupervisorControllerTest {
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(sessionSupervisorFacade).removeSupervisor(91L, 999L, current);
     verify(supervisorAddedEmailNotificationService, never())
-        .notifySupervisorRemoved(any(), any(), any(), any(), any(), any());
+        .notifySupervisorRemoved(any(), any(), any(), any(), any());
   }
 
   @Test
@@ -364,8 +355,10 @@ class SessionSupervisorControllerTest {
             .build();
     var supervisor = consultant(supervisorId, displayName != null ? displayName : fullName);
     supervisor.setDisplayName(displayName);
-    supervisor.setFirstName("Fallback");
-    supervisor.setLastName("Name");
+    // Unmistakably different from every pseudonym in this class, so an assertion that the real
+    // name is absent cannot pass by accident on a shared word.
+    supervisor.setFirstName("Angela");
+    supervisor.setLastName("Musterfrau");
     var addedBy = consultant(addedById, "Adder");
     return SessionSupervisor.builder()
         .id(id)
