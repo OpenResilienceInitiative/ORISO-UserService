@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.admin.service.consultant.update;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.Assert.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
@@ -18,6 +19,8 @@ import de.caritas.cob.userservice.api.admin.service.consultant.validation.Consul
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
+import de.caritas.cob.userservice.api.helper.MatrixRealNameGuard;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -34,6 +37,7 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
@@ -59,6 +63,12 @@ public class ConsultantUpdateServiceTest {
 
   @Mock
   private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
+
+  // The real rule, not a mock: ConsultantDisplayNameResolver is the single place that decides
+  // which name may reach Matrix (ADR-002 §2).
+  @Spy
+  private ConsultantDisplayNameResolver consultantDisplayNameResolver =
+      new ConsultantDisplayNameResolver();
 
   @Test
   public void
@@ -338,6 +348,89 @@ public class ConsultantUpdateServiceTest {
         .updateProfile(anyString(), any(IdentityProfileUpdate.class));
     verify(this.consultantService, Mockito.never()).saveConsultant(any());
     verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1200: renaming a counsellor must not push the real name to Matrix.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void updateConsultant_Should_pushThePublicDisplayNameToMatrix_When_theRealNameChanges() {
+    Consultant consultant = matrixEnabledConsultant("Frau M.");
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    UpdateAdminConsultantDTO rename = renameTo("Angela", "Musterfrau");
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", rename);
+
+    ArgumentCaptor<String> displayName = ArgumentCaptor.forClass(String.class);
+    verify(this.matrixSynapseService)
+        .updateUserDisplayName(eq("@beraterin1:matrix.oriso.org"), displayName.capture());
+    MatrixRealNameGuard.assertNoRealNameReachedMatrix(
+        this.matrixSynapseService, "Angela", "Musterfrau");
+    assertThat(displayName.getValue()).isEqualTo("Frau M.");
+  }
+
+  @Test
+  public void updateConsultant_Should_fallBackToTheUsername_When_noPublicDisplayNameIsSet() {
+    Consultant consultant = matrixEnabledConsultant(null);
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    UpdateAdminConsultantDTO rename = renameTo("Angela", "Musterfrau");
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", rename);
+
+    ArgumentCaptor<String> displayName = ArgumentCaptor.forClass(String.class);
+    verify(this.matrixSynapseService)
+        .updateUserDisplayName(eq("@beraterin1:matrix.oriso.org"), displayName.capture());
+    MatrixRealNameGuard.assertNoRealNameReachedMatrix(
+        this.matrixSynapseService, "Angela", "Musterfrau");
+    assertThat(displayName.getValue()).isEqualTo("beraterin1");
+  }
+
+  @Test
+  public void updateConsultant_Should_notFail_When_theMatrixDisplayNameUpdateFails() {
+    Consultant consultant = matrixEnabledConsultant("Frau M.");
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    doThrow(new RuntimeException("synapse down"))
+        .when(this.matrixSynapseService)
+        .updateUserDisplayName(anyString(), anyString());
+    UpdateAdminConsultantDTO rename = renameTo("Angela", "Musterfrau");
+
+    Consultant updated = this.consultantUpdateService.updateConsultant("counsellor-1", rename);
+
+    assertThat(updated).isNotNull();
+    assertThat(updated.getFirstName()).isEqualTo("Angela");
+    verify(this.consultantService).saveConsultant(any());
+  }
+
+  /** A counsellor whose Matrix account exists; username is the ADR-002 fallback source. */
+  private Consultant matrixEnabledConsultant(String publicDisplayName) {
+    Consultant consultant = consultantWithId("counsellor-1");
+    consultant.setUsername("beraterin1");
+    consultant.setDisplayName(publicDisplayName);
+    consultant.setInternalDisplayName(null);
+    consultant.setMatrixUserId("@beraterin1:matrix.oriso.org");
+    consultant.setFirstName("Old");
+    consultant.setLastName("Name");
+    consultant.setEmail("old@address.de");
+    return consultant;
+  }
+
+  private UpdateAdminConsultantDTO renameTo(String firstname, String lastname) {
+    UpdateAdminConsultantDTO dto = new EasyRandom().nextObject(UpdateAdminConsultantDTO.class);
+    dto.setIsGroupchatConsultant(null);
+    dto.setAssignedSupervisorId(null);
+    dto.setDisplayName(null);
+    dto.setInternalDisplayName(null);
+    dto.setFirstname(firstname);
+    dto.setLastname(lastname);
+    dto.setEmail("old@address.de");
+    return dto;
   }
 
   private void keepDisplayNameUnchanged(

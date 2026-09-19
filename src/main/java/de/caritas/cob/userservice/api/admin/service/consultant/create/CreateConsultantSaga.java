@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransac
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
@@ -75,6 +76,7 @@ public class CreateConsultantSaga {
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull TenantAdminService tenantAdminService;
   private final @NonNull MatrixUserClient matrixUserClient;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
@@ -246,13 +248,16 @@ public class CreateConsultantSaga {
         String matrixPassword = userHelper.getRandomPassword();
         log.info(
             "Creating Matrix consultant user with plain username: '{}'", plainCreds.getUsername());
+        // ADR-002 §2 / #1200: the Synapse displayname is readable by every member of a shared
+        // room via /joined_members, the advice seeker included — so it must never be the real
+        // name. ConsultantDisplayNameResolver is the single place that decides which name may go
+        // there; the saga only hands it the inputs.
+        String matrixDisplayName =
+            consultantDisplayNameResolver.resolveMatrixDisplayName(
+                consultantCreationInput.getDisplayName(), plainCreds.getUsername());
         matrixUserId =
             matrixUserClient.createUserId(
-                plainCreds.getUsername(),
-                matrixPassword,
-                consultantCreationInput.getFirstName()
-                    + " "
-                    + consultantCreationInput.getLastName());
+                plainCreds.getUsername(), matrixPassword, matrixDisplayName);
 
         if (matrixUserId != null) {
           log.info(
