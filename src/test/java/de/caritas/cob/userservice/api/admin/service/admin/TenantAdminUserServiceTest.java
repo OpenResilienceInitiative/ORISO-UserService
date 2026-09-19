@@ -461,6 +461,63 @@ class TenantAdminUserServiceTest {
   }
 
   @Test
+  void updateTenantAdmin_Should_RejectForeignTenantId_WhenCallerIsTenantScoped() {
+    // given a tenant admin of tenant 9 trying to move one of its own admins to tenant 7.
+    // The target admin is in the caller's tenant, so the current-tenant guard passes and only
+    // the requested tenant id can stop this.
+    UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    dto.setTenantId(7);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+
+    // when, then
+    assertThatThrownBy(() -> tenantAdminUserService.updateTenantAdmin("own-admin", dto))
+        .isInstanceOf(ForbiddenException.class)
+        .hasMessage("Admin accounts can only be created for the tenant of the calling admin");
+    Mockito.verifyNoInteractions(updateAdminService);
+  }
+
+  @Test
+  void updateTenantAdmin_Should_AllowOwnTenantId_WhenCallerIsTenantScoped() {
+    // given
+    UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    dto.setTenantId(9);
+    Admin ownAdmin = tenantAdmin("own-admin", 9L);
+    when(retrieveAdminService.findAdmin("own-admin", Admin.AdminType.TENANT)).thenReturn(ownAdmin);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(updateAdminService.updateTenantAdmin("own-admin", dto)).thenReturn(ownAdmin);
+    when(tenantService.getRestrictedTenantData(9L))
+        .thenReturn(new RestrictedTenantDTO().subdomain("tenant-nine"));
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.updateTenantAdmin("own-admin", dto);
+
+    // then
+    Mockito.verify(updateAdminService).updateTenantAdmin("own-admin", dto);
+    assertThat(response.getEmbedded().getTenantId()).isEqualTo("9");
+  }
+
+  @Test
+  void updateTenantAdmin_Should_AllowForeignTenantId_WhenCallerIsPlatformAdmin() {
+    // given
+    UpdateTenantAdminDTO dto = new EasyRandom().nextObject(UpdateTenantAdminDTO.class);
+    dto.setTenantId(7);
+    Admin movedAdmin = tenantAdmin("moved-admin", 7L);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(updateAdminService.updateTenantAdmin("moved-admin", dto)).thenReturn(movedAdmin);
+    when(tenantService.getRestrictedTenantData(7L))
+        .thenReturn(new RestrictedTenantDTO().subdomain("tenant-seven"));
+
+    // when
+    AdminResponseDTO response = tenantAdminUserService.updateTenantAdmin("moved-admin", dto);
+
+    // then
+    Mockito.verify(updateAdminService).updateTenantAdmin("moved-admin", dto);
+    assertThat(response.getEmbedded().getTenantId()).isEqualTo("7");
+  }
+
+  @Test
   void deleteTenantAdmin_Should_ThrowForbidden_WhenCallerIsInForeignTenant() {
     Admin foreignAdmin = tenantAdmin("foreign-admin", 1L);
     when(retrieveAdminService.findAdmin("foreign-admin", Admin.AdminType.TENANT))

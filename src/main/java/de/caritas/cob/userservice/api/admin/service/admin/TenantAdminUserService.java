@@ -62,6 +62,9 @@ public class TenantAdminUserService {
 
   private void validateUpdateAdmin(UpdateTenantAdminDTO updateTenantAdminDTO) {
     validateTenantId(updateTenantAdminDTO.getTenantId());
+    // The requested tenant gets the same ownership check as the create path.
+    AdminTenantOwnershipValidator.assertCallerMayCreateAdminForTenant(
+        authenticatedUser, updateTenantAdminDTO.getTenantId());
   }
 
   private void validateTenantId(Integer inputTenantId) {
