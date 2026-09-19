@@ -47,14 +47,14 @@ class GuestIdentityHttpTest {
   @Import({
     SecurityConfig.class,
     RoleAuthorizationAuthorityMapper.class,
+    GuestIdentityHttpTest.SuggestionEndpoint.class,
     IdentitySuggestionControllerDelegate.class,
     GuestIdentitySuggestionService.class,
     GuestIdentityCatalog.class,
     GuestUsernameAvailability.class,
     AgencyInviteLinkController.class,
     AgencyInviteLinkService.class,
-    ApiResponseEntityExceptionHandler.class,
-    GuestIdentityHttpTest.ContractImplementor.class
+    ApiResponseEntityExceptionHandler.class
   })
   static class Config {
     @Bean
@@ -76,23 +76,25 @@ class GuestIdentityHttpTest {
   }
 
   /**
-   * Stands in for the application's {@code UsersApi} implementor. The generated contract maps the
-   * suggestion path itself, so a context without it cannot show which handler the running service
-   * picks.
+   * Exercises the delegate over real HTTP. It deliberately maps the path the plain way, without the
+   * generated contract's consumes/produces conditions, so that it stays harmless if another
+   * integration context ever scans it: the generated mapping is the more specific one and wins.
+   * That the production controller really overrides the generated operation is guarded separately
+   * by GeneratedContractOverrideTest.
    */
   @org.springframework.web.bind.annotation.RestController
   @lombok.RequiredArgsConstructor
-  static class ContractImplementor
-      implements de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi {
+  static class SuggestionEndpoint {
     private final IdentitySuggestionControllerDelegate delegate;
 
-    @Override
+    @org.springframework.web.bind.annotation.PostMapping("/users/identity-suggestions")
     public org.springframework.http.ResponseEntity<
             java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.GuestIdentitySuggestion>>
-        suggestGuestIdentities(
-            de.caritas.cob.userservice.api.adapters.web.dto.GuestIdentitySuggestionRequest
-                guestIdentitySuggestionRequest) {
-      return delegate.suggestGuestIdentities(guestIdentitySuggestionRequest);
+        suggest(
+            @org.springframework.web.bind.annotation.RequestBody(required = false)
+                de.caritas.cob.userservice.api.adapters.web.dto.GuestIdentitySuggestionRequest
+                    request) {
+      return delegate.suggestGuestIdentities(request);
     }
   }
 
@@ -129,17 +131,6 @@ class GuestIdentityHttpTest {
         .andExpect(jsonPath("$[0].avatarKey").isString())
         .andExpect(jsonPath("$[0].accessToken").doesNotExist());
     verifyNoInteractions(links, provisioning, agencies);
-  }
-
-  @Test
-  void theGeneratedUsersContractServesSuggestionsRatherThanAnUnimplementedStub() throws Exception {
-    when(identityProvider.isUsernameAvailable(anyString())).thenReturn(true);
-    mvc.perform(
-            post("/users/identity-suggestions")
-                .contentType("application/json")
-                .content("{\"locale\":\"de\",\"count\":4,\"exclude\":[]}"))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.length()").value(4));
   }
 
   @Test
