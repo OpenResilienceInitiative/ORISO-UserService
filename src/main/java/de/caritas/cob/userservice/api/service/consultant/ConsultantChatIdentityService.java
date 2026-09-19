@@ -4,6 +4,7 @@ import static com.google.common.collect.Lists.newArrayList;
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.admin.service.consultant.TransactionalStep;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionInfo;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -181,13 +182,46 @@ public class ConsultantChatIdentityService {
           lookupFailure);
     }
     if (isBlank(existing)) {
+      // Also the answer for an account the homeserver has deactivated: MatrixUserClient refuses to
+      // offer one for adoption, because attaching it would show PROVISIONED here and be refused by
+      // the homeserver — the state this repair exists to remove, manufactured by the repair.
       throw chatServerFailed(cause, consultant);
     }
+    assertNotHeldByAnotherConsultant(existing, consultant);
     log.warn(
         "Adopting the chat account that already exists for consultant {}; an earlier repair"
             + " provisioned it without storing it",
         consultant.getId());
     return existing;
+  }
+
+  /**
+   * Adoption keys on the localpart, which is not unique over time: this table's uniqueness is by
+   * username among non-deleted rows, so a soft-deleted consultant frees their username while still
+   * owning the chat account behind it. Whoever takes that username next would otherwise inherit
+   * their rooms and their counselling history, and the two rows would share one {@code
+   * matrixUserId} — which is what makes {@code findByMatrixUserIdAndDeleteDateIsNull} throw
+   * afterwards. Refusing is the only safe answer: an administrator has to decide which account the
+   * chat identity belongs to.
+   */
+  private void assertNotHeldByAnotherConsultant(String matrixUserId, Consultant consultant) {
+    var heldByAnother =
+        consultantRepository.findByMatrixUserId(matrixUserId).stream()
+            .anyMatch(other -> !consultant.getId().equals(other.getId()));
+    if (!heldByAnother) {
+      return;
+    }
+    log.error(
+        "Refusing to repair the chat identity of consultant {}: the chat account behind this"
+            + " username is already held by another consultant. Adopting it would hand this"
+            + " consultant that colleague's rooms and history. Resolve the collision before"
+            + " repeating the repair",
+        consultant.getId());
+    throw new ConflictException(
+        String.format(
+            "The chat account for consultant %s is already held by another consultant; it cannot"
+                + " be adopted",
+            consultant.getId()));
   }
 
   private DistributedTransactionException chatServerFailed(Exception cause, Consultant consultant) {

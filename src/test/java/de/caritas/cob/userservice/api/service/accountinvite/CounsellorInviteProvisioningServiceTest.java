@@ -273,21 +273,41 @@ class CounsellorInviteProvisioningServiceTest {
   void aWaivedInviteClearsTheSecondFactorRequirementTheCreatePathSet() {
     // An administrator excused this counsellor on the invite. Without this the
     // waiver would be granted and then silently ignored at first login.
-    Consultant provisioned = provisionWithTwoFactorStatus(TwoFactorGateStatus.WAIVED);
+    Consultant provisioned = provisionWith(TwoFactorGateStatus.WAIVED, true);
 
     assertThat(provisioned.getTwoFactorRequired()).isFalse();
     verify(consultantRepository).save(provisioned);
   }
 
   @Test
+  void anInviteeIsNotAskedToReplaceThePasswordTheyJustChose() {
+    // CreateConsultantDTOCreationInputAdapter.isPasswordChangeRequired() is unconditionally true,
+    // which is right when an administrator types the password and hands it over. Here the
+    // counsellor typed it themselves and nobody else has ever seen it, so the non-dismissible
+    // "replace your password" screen is asking them to replace their own secret with another one.
+    Consultant provisioned = provisionWith(TwoFactorGateStatus.PENDING_SETUP, true);
+
+    assertThat(provisioned.getPasswordChangeRequired()).isFalse();
+    verify(consultantRepository).save(provisioned);
+  }
+
+  @Test
   void aPendingInviteLeavesTheSecondFactorRequirementInPlace() {
-    Consultant provisioned = provisionWithTwoFactorStatus(TwoFactorGateStatus.PENDING_SETUP);
+    Consultant provisioned = provisionWith(TwoFactorGateStatus.PENDING_SETUP, true);
 
     assertThat(provisioned.getTwoFactorRequired()).isTrue();
+  }
+
+  @Test
+  void nothingIsWritten_When_neitherRequirementNeedsCorrecting() {
+    Consultant provisioned = provisionWith(TwoFactorGateStatus.PENDING_SETUP, false);
+
+    assertThat(provisioned.getTwoFactorRequired()).isTrue();
+    assertThat(provisioned.getPasswordChangeRequired()).isFalse();
     verify(consultantRepository, org.mockito.Mockito.never()).save(any(Consultant.class));
   }
 
-  private Consultant provisionWithTwoFactorStatus(TwoFactorGateStatus status) {
+  private Consultant provisionWith(TwoFactorGateStatus status, boolean passwordChangeRequired) {
     AccountInvite invite = activeCounsellorInvite();
     invite.setTwoFactorStatus(status);
     // The admin create path has already marked it required by the time we look.
@@ -299,6 +319,7 @@ class CounsellorInviteProvisioningServiceTest {
             .lastName("Simpson")
             .email("lisa.simpson@oriso.org")
             .twoFactorRequired(true)
+            .passwordChangeRequired(passwordChangeRequired)
             .build();
     when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))

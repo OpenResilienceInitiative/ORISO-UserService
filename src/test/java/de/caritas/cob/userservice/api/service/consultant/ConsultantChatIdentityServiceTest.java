@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
@@ -257,6 +258,56 @@ class ConsultantChatIdentityServiceTest {
   }
 
   @Test
+  void provisionMissingChatIdentity_Should_refuseToAdopt_When_anotherConsultantAlreadyHoldsIt()
+      throws Exception {
+    // Uniqueness on this table is findByUsernameAndDeleteDateIsNull, so a soft-deleted colleague
+    // can leave their username free while still owning the chat account behind it. Adopting on the
+    // localpart alone would hand this consultant that colleague's rooms and history, and would put
+    // two rows on one matrixUserId — which is what makes findByMatrixUserIdAndDeleteDateIsNull
+    // throw NonUniqueResultException afterwards.
+    var colleague = new Consultant();
+    colleague.setId("6f2e9a41-0000-4000-8000-1a2b3c4d5e6f");
+    colleague.setMatrixUserId("@anna.beispiel:matrix.local");
+
+    when(consultantChatIdentityWriter.find(CONSULTANT_ID))
+        .thenReturn(Optional.of(incompleteConsultant));
+    when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
+    when(matrixUserClient.createUserId(anyString(), anyString(), any()))
+        .thenThrow(new MatrixCreateUserException("Matrix user is already active"));
+    when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
+    when(consultantRepository.findByMatrixUserId("@anna.beispiel:matrix.local"))
+        .thenReturn(List.of(colleague));
+
+    assertThatThrownBy(
+            () -> consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID))
+        .isInstanceOf(ConflictException.class)
+        .hasMessageContaining(CONSULTANT_ID);
+
+    verify(consultantChatIdentityWriter, never()).attachChatIdentity(anyString(), anyString());
+  }
+
+  @Test
+  void provisionMissingChatIdentity_Should_adopt_When_noOtherConsultantHoldsTheAccount()
+      throws Exception {
+    when(consultantChatIdentityWriter.find(CONSULTANT_ID))
+        .thenReturn(Optional.of(incompleteConsultant));
+    when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
+    when(matrixUserClient.createUserId(anyString(), anyString(), any()))
+        .thenThrow(new MatrixCreateUserException("Matrix user is already active"));
+    when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
+    when(consultantRepository.findByMatrixUserId("@anna.beispiel:matrix.local"))
+        .thenReturn(List.of());
+    when(consultantChatIdentityWriter.attachChatIdentity(
+            CONSULTANT_ID, "@anna.beispiel:matrix.local"))
+        .thenReturn(incompleteConsultant);
+
+    consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID);
+
+    verify(consultantChatIdentityWriter)
+        .attachChatIdentity(CONSULTANT_ID, "@anna.beispiel:matrix.local");
+  }
+
+  @Test
   void provisionMissingChatIdentity_Should_stillFail_When_matrixThrowsAndNoAccountExists()
       throws Exception {
     when(consultantChatIdentityWriter.find(CONSULTANT_ID))
@@ -289,6 +340,46 @@ class ConsultantChatIdentityServiceTest {
             ConsultantChatIdentityService.class.getAnnotation(
                 org.springframework.transaction.annotation.Transactional.class))
         .isNull();
+  }
+
+  @Test
+  void noCallerOfTheRepairMayWrapItInADatabaseTransaction() throws java.io.IOException {
+    // Reflection on this class alone cannot see the other half of the hazard: a @Transactional
+    // *caller* puts the Synapse call back inside a transaction just as effectively, and nothing
+    // in this class would change. Correct today (ConsultantAdminFacade.repairConsultantChatIdentity
+    // is unannotated) but previously undefended, so it is asserted from the caller's source.
+    var callSites = new java.util.ArrayList<String>();
+    try (var paths = java.nio.file.Files.walk(java.nio.file.Path.of("src/main/java"))) {
+      for (var path : paths.filter(java.nio.file.Files::isRegularFile).toList()) {
+        if (!path.toString().endsWith(".java")
+            || path.getFileName().toString().equals("ConsultantChatIdentityService.java")) {
+          continue;
+        }
+        var lines = java.nio.file.Files.readAllLines(path);
+        for (int i = 0; i < lines.size(); i++) {
+          if (!lines.get(i).contains("provisionMissingChatIdentity(")
+              || lines.get(i).strip().startsWith("*")) {
+            continue;
+          }
+          callSites.add(path + ":" + (i + 1));
+          // The enclosing member starts after the previous member's closing brace.
+          int start = i;
+          while (start > 0 && !lines.get(start - 1).equals("  }")) {
+            start--;
+          }
+          var enclosingMember = String.join("\n", lines.subList(start, i + 1));
+          assertThat(enclosingMember)
+              .as("the method calling the repair at %s:%d must not be transactional", path, i + 1)
+              .doesNotContain("@Transactional");
+          assertThat(lines.stream().anyMatch(line -> line.startsWith("@Transactional")))
+              .as("the class calling the repair at %s must not be transactional", path)
+              .isFalse();
+        }
+      }
+    }
+
+    // Guard against a vacuous pass: if nobody calls the repair any more, this test is meaningless.
+    assertThat(callSites).as("call sites of provisionMissingChatIdentity").isNotEmpty();
   }
 
   @Test

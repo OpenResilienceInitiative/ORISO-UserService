@@ -191,6 +191,46 @@ class GrantConsultantIdentityServiceTest {
   }
 
   @Test
+  void requireASecondFactor_When_anAdminIsPromotedToConsultant() throws Exception {
+    // The create path marks every admin-provisioned counsellor as owing a second factor
+    // (CreateConsultantDTOCreationInputAdapter). This path grants the same role over the same
+    // kind of account, so leaving twoFactorRequired at its builder default would mean a
+    // counsellor who logs in without one while a freshly created colleague cannot.
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    stubHappyMatrix();
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
+
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getTwoFactorRequired(), is(true));
+  }
+
+  @Test
+  void leaveThePasswordChangeRequirementUnset_When_anAdminIsPromoted() throws Exception {
+    // No new password is chosen on this path, so demanding a replacement would ask the admin to
+    // replace a password that is already theirs.
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    stubHappyMatrix();
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
+
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getPasswordChangeRequired(), is(false));
+  }
+
+  @Test
   void throwBadRequestBeforeRoles_When_topicsAreNotCoveredBySelectedAgencies() throws Exception {
     dto.setTopicIds(List.of(99L));
     when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));

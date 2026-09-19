@@ -401,6 +401,7 @@ class UserControllerE2EIT {
     givenAValidConsultant();
     givenConsultantHasDisplayName();
     givenConsultantAvailability(false);
+    givenConsultantOwesASecondFactorAndAPasswordChange();
     givenKeycloakRespondsOtpByAppHasBeenSetup(consultant.getUsername());
     var consultantAgency = consultant.getConsultantAgencies().iterator().next();
     var displayName = usernameTranscoder.decodeUsername(consultant.getDisplayName());
@@ -445,6 +446,11 @@ class UserControllerE2EIT {
         .andExpect(jsonPath("twoFactorAuth.qrCode", is(nullValue())))
         .andExpect(jsonPath("twoFactorAuth.type", is("APP")))
         .andExpect(jsonPath("twoFactorAuth.isToEncourage", is(consultant.getEncourage2fa())))
+        // Pinned at the wire, not on the Java object: the browser gates on these two and both
+        // have been wrong in a shipped payload before. isRequired is only ever true while the OTP
+        // role policy permits enrolment (this class sets otp-allowed-for-consultants=true).
+        .andExpect(jsonPath("twoFactorAuth.isRequired", is(true)))
+        .andExpect(jsonPath("passwordChangeRequired", is(true)))
         .andExpect(jsonPath("absent", is(consultant.isAbsent())))
         .andExpect(jsonPath("available", is(false)))
         .andExpect(jsonPath("formalLanguage", is(consultant.isLanguageFormal())))
@@ -1972,6 +1978,12 @@ class UserControllerE2EIT {
     when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
+  }
+
+  private void givenConsultantOwesASecondFactorAndAPasswordChange() {
+    consultant.setTwoFactorRequired(true);
+    consultant.setPasswordChangeRequired(true);
+    consultant = consultantRepository.save(consultant);
   }
 
   private void givenConsultantHasDisplayName() {
