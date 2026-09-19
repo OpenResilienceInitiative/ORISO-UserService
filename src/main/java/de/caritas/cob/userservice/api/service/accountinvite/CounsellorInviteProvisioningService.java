@@ -178,7 +178,7 @@ public class CounsellorInviteProvisioningService {
         .password(command.password())
         .firstname(invite.getFirstName())
         .lastname(invite.getLastName())
-        .email(invite.getRecipientEmail().trim().toLowerCase())
+        .email(invite.getRecipientEmail().trim().toLowerCase(java.util.Locale.ROOT))
         .formalLanguage(command.formalLanguage())
         .absent(false)
         .tenantId(invite.getTenantId())

@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
@@ -392,27 +393,41 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void createNewConsultant_Should_persistTheConsultant_When_matrixProvisioningDidNotHappen()
+  void createNewConsultant_Should_persistTheConsultant_When_matrixProvisioningFails()
       throws Exception {
-    // Renamed from ..._Should_continueWithoutMatrixIdentity_When_plainCredentialsAreUnavailable,
-    // which described a scenario it never set up: stubHappyPath populates
-    // PlainCredentialsHolder through stubKeycloakUserCreation, so the credentials are in
-    // fact available here. The null it asserts comes from the Matrix mock nobody stubs.
-    //
-    // The behaviour itself is deliberate, not an oversight. Creation tolerates Matrix
-    // being unavailable: the whole integration suite and the E2E suite run without a
-    // Synapse, and every creation there succeeds. Making this fatal turned 10 of them red.
-    //
-    // What is NOT settled is that the administrator is told the account was created while
-    // it has no chat identity, and CreateChatFacade, TeamDiscussionFacade,
-    // SessionSupervisorFacade and DirectSessionMatrixRoomService all refuse to act on such
-    // a record. Making that state visible and repairable, rather than fatal, is tracked
-    // separately.
+    // The tolerance this asserts is deliberate: the integration suite and the E2E suite run
+    // without a Synapse, and making a chat outage fatal turned 10 of them red. What the previous
+    // version of this test did NOT do was exercise it - and for a sharper reason than the review
+    // supposed. The saga reads PlainCredentialsHolder BEFORE createKeycloakUser populates it, so
+    // with the holder unset the Matrix branch is skipped entirely and the mock is never touched:
+    // the test asserted the tolerance without the saga ever attempting to provision. Seeding the
+    // holder the way UserAdminController does is what makes the failure branch reachable at all.
     stubHappyPath();
+    PlainCredentialsHolder.set(VALID_USERNAME, null);
+    when(matrixSynapseService.createUserId(any(), any(), any()))
+        .thenThrow(new MatrixCreateUserException("Synapse is unreachable"));
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
 
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    verify(matrixSynapseService).createUserId(any(), any(), any());
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
+    verify(rollbackFacade, never()).rollbackConsultantAccount(any(Consultant.class));
+  }
+
+  @Test
+  void createNewConsultant_Should_persistTheConsultant_When_matrixAnswersWithoutAUserId()
+      throws Exception {
+    stubHappyPath();
+    PlainCredentialsHolder.set(VALID_USERNAME, null);
+    when(matrixSynapseService.createUserId(any(), any(), any())).thenReturn(null);
+
+    var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    verify(matrixSynapseService).createUserId(any(), any(), any());
     ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
     verify(consultantService).saveConsultant(consultantCaptor.capture());
     assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));

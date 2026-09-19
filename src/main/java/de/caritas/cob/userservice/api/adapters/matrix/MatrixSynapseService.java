@@ -255,6 +255,24 @@ public class MatrixSynapseService implements MatrixUserClient {
     }
   }
 
+  /**
+   * The full Matrix user id for a localpart that the homeserver already knows, or {@code null}.
+   *
+   * <p>Reconciliation path for #1194: after a repair created the account and failed to persist the
+   * id, {@code createUser} can only answer {@code M_USER_IN_USE}. This answers what that account
+   * is, so the next attempt can adopt it.
+   */
+  @Override
+  public String findUserId(String localpart) {
+    if (localpart == null || localpart.isBlank()) {
+      return null;
+    }
+    if (!userExists(localpart)) {
+      return null;
+    }
+    return "@" + localpart.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
+  }
+
   @Override
   public String createUserId(String username, String password, String displayName)
       throws MatrixCreateUserException {

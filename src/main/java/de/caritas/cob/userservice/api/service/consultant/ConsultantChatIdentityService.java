@@ -18,7 +18,6 @@ import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Everything about the chat (Matrix) identity of an <em>existing</em> consultant: whether it is
@@ -39,6 +38,7 @@ public class ConsultantChatIdentityService {
   private static final String REPAIR_TRANSACTION = "repairConsultantChatIdentity";
 
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull ConsultantChatIdentityWriter consultantChatIdentityWriter;
   private final @NonNull MatrixUserClient matrixUserClient;
   private final @NonNull UserHelper userHelper;
 
@@ -98,11 +98,10 @@ public class ConsultantChatIdentityService {
    * @throws DistributedTransactionException (424) if the chat server could not provision the
    *     account
    */
-  @Transactional
   public Consultant provisionMissingChatIdentity(String consultantId) {
     var consultant =
-        consultantRepository
-            .findByIdAndDeleteDateIsNull(consultantId)
+        consultantChatIdentityWriter
+            .find(consultantId)
             .orElseThrow(
                 () -> new NotFoundException("Consultant with id %s does not exist", consultantId));
 
@@ -111,34 +110,84 @@ public class ConsultantChatIdentityService {
       return consultant;
     }
 
-    var plainUsername = usernameTranscoder.decodeUsername(consultant.getUsername());
+    // Outside every database transaction, deliberately. See the class javadoc.
+    var matrixUserId = provisionOrAdopt(consultant);
+
+    try {
+      var repaired = consultantChatIdentityWriter.attachChatIdentity(consultantId, matrixUserId);
+      log.info("Repaired the chat identity of consultant {}", repaired.getId());
+      return repaired;
+    } catch (Exception e) {
+      // Compensation is not deletion here: the chat account is valid and correct, only unreferenced
+      // for the moment. Destroying it would throw away the counsellor's future room membership for
+      // a transient database fault. The reconciliation is the retry, which adopts this very
+      // account through provisionOrAdopt instead of trying to mint it again - that is what keeps
+      // this interleaving recoverable rather than terminal.
+      log.error(
+          "Chat identity for consultant {} was provisioned but could not be stored. The chat"
+              + " account exists and is unreferenced; repeat the repair and it will be adopted"
+              + " rather than provisioned again",
+          consultantId,
+          e);
+      throw new DistributedTransactionException(
+          e,
+          DistributedTransactionInfo.builder()
+              .name(REPAIR_TRANSACTION)
+              .completedTransactionalOperations(
+                  newArrayList(TransactionalStep.CREATE_ACCOUNT_IN_MATRIX))
+              .failedStep(TransactionalStep.SAVE_CONSULTANT_IN_MARIADB)
+              .build());
+    }
+  }
+
+  /**
+   * Mints the chat account, or adopts the one a previous attempt left behind.
+   *
+   * <p>The homeserver refuses to mint the same localpart twice, so without this a single failed
+   * write after a successful provisioning would make the consultant permanently unrepairable - the
+   * repair tool would manufacture exactly the state it exists to remove.
+   */
+  private String provisionOrAdopt(Consultant consultant) {
+    var localpart = usernameTranscoder.decodeUsername(consultant.getUsername());
     String matrixUserId;
     try {
       matrixUserId =
           matrixUserClient.createUserId(
-              plainUsername,
+              localpart,
               userHelper.getRandomPassword(),
               consultant.getFirstName() + " " + consultant.getLastName());
     } catch (Exception e) {
-      throw chatServerFailed(e, consultant);
+      matrixUserId = adoptExisting(consultant, e);
     }
 
     if (isBlank(matrixUserId)) {
-      // Synapse answering without a user_id is the same hole as Synapse throwing: nothing was
-      // provisioned, so the record must stay untouched and the administrator must be told.
-      throw chatServerFailed(
-          new MatrixCreateUserException(
-              String.format("Matrix answered without a user_id for user (%s)", plainUsername)),
-          consultant);
+      // Synapse answering without a user_id is the same hole as Synapse throwing.
+      matrixUserId =
+          adoptExisting(
+              consultant, new MatrixCreateUserException("Matrix answered without a user_id"));
     }
+    return matrixUserId;
+  }
 
-    consultant.setMatrixUserId(matrixUserId);
-    var repaired = consultantRepository.save(consultant);
-    log.info(
-        "Repaired the chat identity of consultant {}: Matrix ID {}",
-        repaired.getId(),
-        repaired.getMatrixUserId());
-    return repaired;
+  private String adoptExisting(Consultant consultant, Exception cause) {
+    var localpart = usernameTranscoder.decodeUsername(consultant.getUsername());
+    String existing = null;
+    try {
+      existing = matrixUserClient.findUserId(localpart);
+    } catch (Exception lookupFailure) {
+      log.warn(
+          "Could not establish whether a chat account already exists for consultant {}",
+          consultant.getId(),
+          lookupFailure);
+    }
+    if (isBlank(existing)) {
+      throw chatServerFailed(cause, consultant);
+    }
+    log.warn(
+        "Adopting the chat account that already exists for consultant {}; an earlier repair"
+            + " provisioned it without storing it",
+        consultant.getId());
+    return existing;
   }
 
   private DistributedTransactionException chatServerFailed(Exception cause, Consultant consultant) {

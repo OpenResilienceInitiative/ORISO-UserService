@@ -50,6 +50,9 @@ class ConsultantChatIdentityRepairIT {
   private static final String VALID_USERNAME = "chatlessUsername";
   private static final String VALID_EMAILADDRESS = "chatless@emailaddress.de";
   private static final String MATRIX_USER_ID = "@chatlessusername:matrix.local";
+  private static final String ORPHAN_USERNAME = "orphanUsername";
+  private static final String ORPHAN_EMAIL = "orphan@emailaddress.de";
+  private static final String ORPHAN_MATRIX_USER_ID = "@orphanusername:matrix.local";
   private static final long TENANT_ID = 1L;
 
   @Autowired private CreateConsultantSaga createConsultantSaga;
@@ -72,8 +75,11 @@ class ConsultantChatIdentityRepairIT {
     ReflectionTestUtils.setField(createConsultantSaga, "appointmentFeatureEnabled", false);
     when(tenantService.getRestrictedTenantDataFresh(org.mockito.ArgumentMatchers.anyLong()))
         .thenReturn(de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures.tenant());
-    when(keycloakService.createUser(any(), anyString(), any()))
-        .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
+    // EasyRandom's default seed is fixed, so a per-test random CreatedIdentity would hand both
+    // tests the same Keycloak id and the second would find the first one's consultant row.
+    var createdIdentity = easyRandom.nextObject(CreatedIdentity.class);
+    createdIdentity.setUserId(java.util.UUID.randomUUID().toString());
+    when(keycloakService.createUser(any(), anyString(), any())).thenReturn(createdIdentity);
     when(tenantAdminService.getTenantById(TENANT_ID))
         .thenReturn(new TenantDTO().settings(new Settings().featureGroupChatV2Enabled(false)));
   }
@@ -136,11 +142,54 @@ class ConsultantChatIdentityRepairIT {
         .isEqualTo(MATRIX_USER_ID);
   }
 
+  /**
+   * The recovery half, against the real persistence: a previous repair provisioned the chat account
+   * and failed before storing the id, so the homeserver now refuses to mint the same user. The
+   * repair must adopt what is already there instead of leaving the consultant unrepairable.
+   */
+  @Test
+  void aChatAccountLeftBehindByAFailedRepair_Should_beAdoptedByTheNextAttempt() throws Exception {
+    when(matrixSynapseService.createUserId(anyString(), anyString(), any())).thenReturn(null);
+    PlainCredentialsHolder.set(ORPHAN_USERNAME, null);
+    var created =
+        this.createConsultantSaga.createNewConsultant(
+            newConsultantInput(ORPHAN_USERNAME, ORPHAN_EMAIL));
+    var consultantId = created.getEmbedded().getId();
+    assertThat(
+            consultantRepository
+                .findByIdAndDeleteDateIsNull(consultantId)
+                .orElseThrow()
+                .getMatrixUserId())
+        .isNull();
+
+    // the homeserver already holds the account an earlier attempt created
+    when(matrixSynapseService.createUserId(anyString(), anyString(), any()))
+        .thenThrow(
+            new de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException(
+                "Matrix user is already active"));
+    when(matrixSynapseService.findUserId(ORPHAN_USERNAME)).thenReturn(ORPHAN_MATRIX_USER_ID);
+
+    consultantChatIdentityService.provisionMissingChatIdentity(consultantId);
+
+    assertThat(
+            consultantRepository
+                .findByIdAndDeleteDateIsNull(consultantId)
+                .orElseThrow()
+                .getMatrixUserId())
+        .isEqualTo(ORPHAN_MATRIX_USER_ID);
+  }
+
   private CreateConsultantDTO newConsultantInput() {
+    return newConsultantInput(VALID_USERNAME, VALID_EMAILADDRESS);
+  }
+
+  private CreateConsultantDTO newConsultantInput(String username, String email) {
     CreateConsultantDTO createConsultantDTO = this.easyRandom.nextObject(CreateConsultantDTO.class);
     createConsultantDTO.setTenantId(TENANT_ID);
-    createConsultantDTO.setUsername(VALID_USERNAME);
-    createConsultantDTO.setEmail(VALID_EMAILADDRESS);
+    createConsultantDTO.setUsername(username);
+    createConsultantDTO.setEmail(email);
+    // EasyRandom's seed is fixed, so without this both tests would claim the same public slug.
+    createConsultantDTO.setPublicSlug(username.toLowerCase(java.util.Locale.ROOT) + "-slug");
     createConsultantDTO.setIsGroupchatConsultant(false);
     return createConsultantDTO;
   }

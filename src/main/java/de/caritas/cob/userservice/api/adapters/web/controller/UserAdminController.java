@@ -45,6 +45,7 @@ import jakarta.validation.Valid;
 import java.net.URLDecoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -122,7 +123,7 @@ public class UserAdminController implements UseradminApi {
     de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.set(
         createConsultantDTO.getUsername(), null);
 
-    createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase());
+    createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
     var consultant = consultantAdminFacade.createNewConsultant(createConsultantDTO);
 
     return ResponseEntity.ok(consultant);
@@ -302,7 +303,7 @@ public class UserAdminController implements UseradminApi {
   private ConsultantAdminResponseDTO performUpdate(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
     if (updateConsultantDTO.getEmail() != null) {
-      updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase());
+      updateConsultantDTO.setEmail(updateConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
     }
     return consultantAdminFacade.updateConsultant(consultantId, updateConsultantDTO);
   }
@@ -411,7 +412,7 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminResponseDTO> createTenantAdmin(CreateAdminDTO createAgencyAdminDTO) {
-    createAgencyAdminDTO.setEmail(createAgencyAdminDTO.getEmail().toLowerCase());
+    createAgencyAdminDTO.setEmail(createAgencyAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = adminUserFacade.createNewTenantAdmin(createAgencyAdminDTO);
 
     return ResponseEntity.ok(admin);
@@ -422,7 +423,7 @@ public class UserAdminController implements UseradminApi {
     // Same normalisation as every sibling here. Without it this was the one account path
     // that stored the address as typed, so the same person could end up with two
     // differently-cased identities depending on which screen created them.
-    createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase());
+    createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     return ResponseEntity.ok(this.adminUserFacade.createNewAgencyAdmin(createAdminDTO));
   }
 
@@ -469,7 +470,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<AdminResponseDTO> updateAgencyAdmin(
       final String adminId, UpdateAgencyAdminDTO updateAgencyAdminDTO) {
-    updateAgencyAdminDTO.setEmail(updateAgencyAdminDTO.getEmail().toLowerCase());
+    updateAgencyAdminDTO.setEmail(updateAgencyAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = adminUserFacade.updateAgencyAdmin(adminId, updateAgencyAdminDTO);
 
     return new ResponseEntity<>(admin, HttpStatus.OK);
@@ -478,7 +479,7 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<AdminResponseDTO> updateTenantAdmin(
       final String adminId, UpdateTenantAdminDTO updateTenantAdminDTO) {
-    updateTenantAdminDTO.setEmail(updateTenantAdminDTO.getEmail().toLowerCase());
+    updateTenantAdminDTO.setEmail(updateTenantAdminDTO.getEmail().toLowerCase(Locale.ROOT));
     var admin = adminUserFacade.updateTenantAdmin(adminId, updateTenantAdminDTO);
 
     return new ResponseEntity<>(admin, HttpStatus.OK);

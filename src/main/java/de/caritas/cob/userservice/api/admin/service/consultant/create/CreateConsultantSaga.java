@@ -244,8 +244,10 @@ public class CreateConsultantSaga {
     try {
       if (plainCreds != null && plainCreds.getUsername() != null) {
         String matrixPassword = userHelper.getRandomPassword();
-        log.info(
-            "Creating Matrix consultant user with plain username: '{}'", plainCreds.getUsername());
+        // Privacy: the Matrix localpart and the resulting Matrix ID are user identifiers, and
+        // application logs are aggregated, retained and backed up. Only the internal consultant id
+        // (the Keycloak id this row is built from) and the outcome go into the log.
+        log.info("Provisioning the chat account of consultant {}", keycloakUserId);
         matrixUserId =
             matrixUserClient.createUserId(
                 plainCreds.getUsername(),
@@ -255,20 +257,22 @@ public class CreateConsultantSaga {
                     + consultantCreationInput.getLastName());
 
         if (matrixUserId != null) {
-          log.info(
-              "Successfully created Matrix user for consultant '{}' → Matrix ID: {}",
-              plainCreds.getUsername(),
-              matrixUserId);
+          log.info("Provisioned the chat account of consultant {}", keycloakUserId);
         } else {
           log.warn(
-              "Matrix user creation response missing user_id for consultant: {}",
-              plainCreds.getUsername());
+              "Chat account provisioning for consultant {} answered without a user_id; the"
+                  + " consultant is created without a chat identity and must be repaired via POST"
+                  + " /useradmin/consultants/{}/chat-identity (#1194)",
+              keycloakUserId,
+              keycloakUserId);
         }
       } else {
         log.warn(
-            "Plain credentials not available from ThreadLocal, skipping Matrix user creation for"
-                + " consultant. The consultant is created without a chat identity and must be"
-                + " repaired via POST /useradmin/consultants/{id}/chat-identity (#1194)");
+            "Plain credentials not available from ThreadLocal, skipping chat account provisioning"
+                + " for consultant {}. The consultant is created without a chat identity and must"
+                + " be repaired via POST /useradmin/consultants/{}/chat-identity (#1194)",
+            keycloakUserId,
+            keycloakUserId);
       }
     } catch (Exception e) {
       // Deliberately not fatal (#1194): the integration and E2E suites run without a Synapse at
@@ -277,9 +281,11 @@ public class CreateConsultantSaga {
       // chatIdentityStatus = MISSING, the data-integrity report lists the record, and
       // POST /useradmin/consultants/{id}/chat-identity repairs it.
       log.error(
-          "Matrix user creation failed for consultant; continuing without a chat identity. The"
-              + " consultant cannot be used for counselling until it is repaired via POST"
-              + " /useradmin/consultants/{id}/chat-identity",
+          "Chat account provisioning failed for consultant {}; continuing without a chat identity."
+              + " The consultant cannot be used for counselling until it is repaired via POST"
+              + " /useradmin/consultants/{}/chat-identity",
+          keycloakUserId,
+          keycloakUserId,
           e);
     } finally {
       // Clean up ThreadLocal
