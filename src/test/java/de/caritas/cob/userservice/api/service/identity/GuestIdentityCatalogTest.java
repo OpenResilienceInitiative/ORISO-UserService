@@ -18,6 +18,31 @@ class GuestIdentityCatalogTest {
   }
 
   @Test
+  void spanishDiaeresisLosesItsDotsInsteadOfBecomingAGermanUmlaut() {
+    // ü in Pingüino marks a spoken u after g. Spelling it "ue" the German way invents a syllable
+    // and hands the guest a name their own language does not contain.
+    assertThat(
+            GuestIdentityCatalog.identityFor("es", "Pingüino", "penguin.svg", "Mika", 1234)
+                .username())
+        .isEqualTo("pinguino_mika_1234");
+    assertThat(
+            GuestIdentityCatalog.identityFor("es", "Cigüeña", "stork.svg", "Mika", 1234).username())
+        .isEqualTo("ciguena_mika_1234");
+  }
+
+  @Test
+  void germanKeepsSpellingItsUmlautsOut() {
+    assertThat(
+            GuestIdentityCatalog.identityFor("de", "Hündchen", "puppy.svg", "Mika", 1234)
+                .username())
+        .isEqualTo("huendchen_mika_1234");
+    assertThat(
+            GuestIdentityCatalog.identityFor("de", "Kätzchen", "kitten.svg", "Mika", 1234)
+                .username())
+        .isEqualTo("kaetzchen_mika_1234");
+  }
+
+  @Test
   void cyrillicAnimalLabelRetainsTheSelectedAvatarStem() {
     assertThat(GuestIdentityCatalog.identityFor("Сова", "owl.svg", "Mika", 1234))
         .isEqualTo(new GuestIdentitySuggestion("owl_mika_1234", "owl_mika_1234", "owl.svg"));
