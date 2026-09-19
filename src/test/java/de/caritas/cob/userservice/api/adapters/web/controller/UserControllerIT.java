@@ -410,6 +410,11 @@ class UserControllerIT {
   @MockitoBean private AdminUserFacade adminUserFacade;
 
   @MockitoBean
+  private de.caritas.cob.userservice.api.adapters.web.controller
+          .IdentitySuggestionControllerDelegate
+      identitySuggestionControllerDelegate;
+
+  @MockitoBean
   @SuppressWarnings("unused")
   private MagicLinkLoginService magicLinkLoginService;
 
