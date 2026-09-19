@@ -10,13 +10,7 @@ import org.springframework.context.annotation.*;
 import org.springframework.security.oauth2.jwt.JwtDecoder;
 import org.springframework.web.servlet.config.annotation.EnableWebMvc;
 
-/**
- * Real HTTP/security wiring; the parent test supplies its real transactional Join service.
- *
- * <p>{@link ContractImplementor} stands in for the application's {@code UsersApi} implementor. The
- * generated contract maps the Join path itself, so a context without it cannot show which handler
- * the running service actually picks.
- */
+/** Real HTTP/security wiring; the parent test supplies its real transactional Join service. */
 @TestConfiguration
 @EnableWebMvc
 @Import({
@@ -24,23 +18,30 @@ import org.springframework.web.servlet.config.annotation.EnableWebMvc;
   RoleAuthorizationAuthorityMapper.class,
   GuestJoinControllerDelegate.class,
   ApiResponseEntityExceptionHandler.class,
-  GuestJoinHttpTestConfig.ContractImplementor.class
+  GuestJoinHttpTestConfig.JoinEndpoint.class
 })
 class GuestJoinHttpTestConfig {
 
+  /**
+   * Exercises the delegate over real HTTP. It maps the path the plain way, without the generated
+   * contract's consumes/produces conditions, so it stays harmless if another integration context
+   * ever scans it: the generated mapping is the more specific one and wins. That the production
+   * controller really overrides the generated operation is guarded by
+   * GeneratedContractOverrideTest.
+   */
   @org.springframework.web.bind.annotation.RestController
   @lombok.RequiredArgsConstructor
-  static class ContractImplementor
-      implements de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi {
+  static class JoinEndpoint {
     private final GuestJoinControllerDelegate delegate;
 
-    @Override
+    @org.springframework.web.bind.annotation.PostMapping("/users/invitelinks/{token}/join")
     public org.springframework.http.ResponseEntity<
             de.caritas.cob.userservice.api.adapters.web.dto.GuestJoinResponse>
-        joinGuestInvitation(
-            String token,
-            de.caritas.cob.userservice.api.adapters.web.dto.GuestJoinRequest guestJoinRequest) {
-      return delegate.joinGuestInvitation(token, guestJoinRequest);
+        join(
+            @org.springframework.web.bind.annotation.PathVariable String token,
+            @org.springframework.web.bind.annotation.RequestBody(required = false)
+                de.caritas.cob.userservice.api.adapters.web.dto.GuestJoinRequest request) {
+      return delegate.joinGuestInvitation(token, request);
     }
   }
 

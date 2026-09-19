@@ -420,6 +420,10 @@ class UserControllerIT {
       identitySuggestionControllerDelegate;
 
   @MockitoBean
+  private de.caritas.cob.userservice.api.adapters.web.controller.GuestJoinControllerDelegate
+      guestJoinControllerDelegate;
+
+  @MockitoBean
   @SuppressWarnings("unused")
   private MagicLinkLoginService magicLinkLoginService;
 
