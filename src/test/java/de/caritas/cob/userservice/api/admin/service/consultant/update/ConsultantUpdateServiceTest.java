@@ -22,6 +22,8 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.MatrixRealNameGuard;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
@@ -433,6 +435,104 @@ public class ConsultantUpdateServiceTest {
     // No identity field moved, so nothing else may be pushed on the identity side.
     verify(this.keycloakService, Mockito.never())
         .updateProfile(anyString(), any(IdentityProfileUpdate.class));
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1201: the counselor.renamed timeline entry is pushed to the ADVICE SEEKER,
+  // so it must carry no real name at all -- neither the old one nor the new one. And what the
+  // advice seeker is told about is the name THEY see, so the trigger is a change of the published
+  // pseudonym, not of the counsellor's real name.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  public void
+      updateConsultant_Should_NotifyTheAdviceSeekerWithoutAnyName_When_ThePseudonymChanges() {
+    Consultant consultant = matrixEnabledConsultant("Frau Alt.");
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    Session openCase = sessionOfAdviceSeeker("asker-1");
+    when(this.sessionRepository.findByConsultantAndStatusIn(eq(consultant), any()))
+        .thenReturn(List.of(openCase));
+    UpdateAdminConsultantDTO rename = renameTo("Angela", "Musterfrau");
+    rename.setDisplayName("Frau Neu.");
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", rename);
+
+    verify(this.eventNotificationService)
+        .createCounselorRenamedNotification(any(Session.class), eq("asker-1"));
+    assertNoRealNameReachedTheAdviceSeeker("Angela", "Musterfrau");
+    assertNoRealNameReachedTheAdviceSeeker("Frau", "Alt");
+  }
+
+  @Test
+  public void updateConsultant_Should_NotNotifyTheAdviceSeeker_When_OnlyTheRealNameChanges() {
+    // The advice seeker never saw the real name, so a real-name edit changes nothing for them.
+    // Notifying here would announce that something they cannot see has moved -- and, before this
+    // fix, would have spelled both real names out to explain it.
+    Consultant consultant = matrixEnabledConsultant("Frau M.");
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    // An open case with an advice seeker in it, so a notification would have somewhere to go:
+    // without this the assertion below would hold for the wrong reason.
+    Session openCase = sessionOfAdviceSeeker("asker-1");
+    Mockito.lenient()
+        .when(this.sessionRepository.findByConsultantAndStatusIn(eq(consultant), any()))
+        .thenReturn(List.of(openCase));
+    UpdateAdminConsultantDTO rename = renameTo("Angela", "Musterfrau");
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", rename);
+
+    Mockito.verifyNoInteractions(this.eventNotificationService);
+  }
+
+  @Test
+  public void updateConsultant_Should_NotFallBackToTheRealName_When_NoPseudonymIsSet() {
+    // With no display name stored, the published name is the username -- which does not move when
+    // the real name does, so there is still nothing to announce and nothing to leak.
+    Consultant consultant = matrixEnabledConsultant(null);
+    when(this.consultantService.getConsultant("counsellor-1")).thenReturn(Optional.of(consultant));
+    when(this.consultantService.saveConsultant(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    Session openCase = sessionOfAdviceSeeker("asker-1");
+    Mockito.lenient()
+        .when(this.sessionRepository.findByConsultantAndStatusIn(eq(consultant), any()))
+        .thenReturn(List.of(openCase));
+    UpdateAdminConsultantDTO rename = renameTo("Angela", "Musterfrau");
+
+    this.consultantUpdateService.updateConsultant("counsellor-1", rename);
+
+    assertNoRealNameReachedTheAdviceSeeker("Angela", "Musterfrau");
+    assertNoRealNameReachedTheAdviceSeeker("Old", "Name");
+    Mockito.verifyNoInteractions(this.eventNotificationService);
+  }
+
+  /**
+   * Lenient on purpose: two of the tests below stub an open case precisely so that "no
+   * notification" cannot pass for the wrong reason, and in those the repository is never reached.
+   */
+  private Session sessionOfAdviceSeeker(String userId) {
+    User adviceSeeker = Mockito.mock(User.class);
+    Mockito.lenient().when(adviceSeeker.getUserId()).thenReturn(userId);
+    Session session = Mockito.mock(Session.class);
+    Mockito.lenient().when(session.getUser()).thenReturn(adviceSeeker);
+    return session;
+  }
+
+  /**
+   * Asserts on the whole invocation log of the notification service rather than on one expected
+   * argument, so a NEW advice-seeker notification added next to this one cannot reintroduce the
+   * leak unnoticed.
+   */
+  private void assertNoRealNameReachedTheAdviceSeeker(String firstName, String lastName) {
+    for (var invocation : Mockito.mockingDetails(this.eventNotificationService).getInvocations()) {
+      for (Object argument : invocation.getArguments()) {
+        String rendered = String.valueOf(argument);
+        assertThat(rendered).doesNotContain(firstName);
+        assertThat(rendered).doesNotContain(lastName);
+      }
+    }
   }
 
   /** A counsellor whose Matrix account exists; username is the ADR-002 fallback source. */

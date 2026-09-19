@@ -4,6 +4,7 @@ import static java.util.Objects.nonNull;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.EventNotification;
 import de.caritas.cob.userservice.api.model.Session;
@@ -56,6 +57,7 @@ public class EventNotificationService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
   private volatile LongSupplier monotonicNanos = System::nanoTime;
@@ -147,26 +149,32 @@ public class EventNotificationService {
         session.getTenantId());
   }
 
+  /**
+   * ADR-002 §2 / ORISO-UserService#1201: the recipient of this entry is the <b>advice seeker</b>,
+   * so it carries no counsellor name — neither the previous one nor the current one.
+   *
+   * <p>It took two names before. Naming both is a wider disclosure than the rename itself: it
+   * publishes a rename <em>history</em>, and when no pseudonym was stored those two names were the
+   * counsellor's real name, old and new. The advice seeker's actual question is only "why is this
+   * person suddenly called something else", which the neutral sentence answers; the current name is
+   * already visible in the room, so repeating it here adds nothing and costs the guarantee.
+   *
+   * <p>The names are absent from the signature, not merely unused, so a caller cannot pass one.
+   */
   @Transactional
-  public void createCounselorRenamedNotification(
-      Session session, String recipientUserId, String oldDisplayName, String newDisplayName) {
+  public void createCounselorRenamedNotification(Session session, String recipientUserId) {
     if (session == null || recipientUserId == null || recipientUserId.isBlank()) {
       return;
     }
-    String previous = safeValue(oldDisplayName, "your counselor");
-    String updated = safeValue(newDisplayName, "your counselor");
-    String changedAt = LocalDateTime.now(ZoneOffset.UTC).toString();
     Map<String, Object> params = baseParams(session);
-    params.put("oldName", previous);
-    params.put("newName", updated);
+    params.put("changedAt", LocalDateTime.now(ZoneOffset.UTC).toString());
     createEvent(
         recipientUserId,
         "counselor.renamed",
         CATEGORY_SYSTEM,
         "Counselor name updated",
         String.format(
-            "Your counselor display name changed from \"%s\" to \"%s\" at %s UTC.",
-            previous, updated, changedAt),
+            "The name shown for your counselor in chat #%s has changed.", session.getId()),
         serializeParams(params),
         buildSessionActionPath(session),
         session.getId(),
@@ -993,26 +1001,24 @@ public class EventNotificationService {
         .orElse("Someone");
   }
 
+  /**
+   * The counsellor name that may appear in a notification.
+   *
+   * <p>ADR-002 §2 / #1201: every caller of this feeds an <b>advice seeker</b> — the {@code
+   * inquiry.accepted} entry, the message notification and the thread-reply notification — so the
+   * real name is not an option here. It used to be: the ladder read {@code displayName ?? fullName
+   * ?? username}, and the middle rung meant that for every counsellor with no stored pseudonym the
+   * "fallback" was silently their real name.
+   *
+   * <p>The decision itself belongs to {@link ConsultantDisplayNameResolver}, the single place that
+   * knows which name may be published, so it is delegated rather than restated.
+   */
   private String resolveConsultantName(Consultant consultant) {
     if (consultant == null) {
       return "Counselor";
     }
-    if (consultant.getDisplayName() != null
-        && !consultant.getDisplayName().isBlank()
-        && !looksEncoded(consultant.getDisplayName())) {
-      return consultant.getDisplayName();
-    }
-    if (consultant.getFullName() != null
-        && !consultant.getFullName().isBlank()
-        && !looksEncoded(consultant.getFullName())) {
-      return consultant.getFullName();
-    }
-    if (consultant.getUsername() != null
-        && !consultant.getUsername().isBlank()
-        && !looksEncoded(consultant.getUsername())) {
-      return consultant.getUsername();
-    }
-    return "Counselor";
+    return safeValue(
+        consultantDisplayNameResolver.resolveMatrixDisplayName(consultant), "Counselor");
   }
 
   private String buildMessageNotificationText(String senderLabel, PrivacyEnvelope envelope) {

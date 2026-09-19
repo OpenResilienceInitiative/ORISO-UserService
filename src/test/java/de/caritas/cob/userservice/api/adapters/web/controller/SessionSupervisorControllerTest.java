@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.SessionSupervisor;
@@ -52,7 +53,8 @@ class SessionSupervisorControllerTest {
             userAccountService,
             eventNotificationService,
             supervisorAddedEmailNotificationService,
-            sessionService);
+            sessionService,
+            new ConsultantDisplayNameResolver());
   }
 
   @Test
@@ -95,7 +97,7 @@ class SessionSupervisorControllerTest {
   }
 
   @Test
-  void addSupervisor_optionalDataMissing_noThrowAndUsesFullNameFallback() {
+  void addSupervisor_optionalDataMissing_noThrowAndNeverFallsBackToTheRealName() {
     // Business reason: notification side effects must not crash when optional user/session data is
     // absent.
     var request = new SessionSupervisorController.AddSupervisorRequestDTO();
@@ -119,9 +121,15 @@ class SessionSupervisorControllerTest {
     assertEquals(HttpStatus.CREATED, response.getStatusCode());
     verify(eventNotificationService, never())
         .createSupervisorAddedNotification(any(), any(), any());
+    // #1201: this asserted eq("Fallback Name") -- the supervisor's real name -- before.
     verify(supervisorAddedEmailNotificationService)
         .notifySupervisorAdded(
-            eq(null), any(Consultant.class), eq("Fallback Name"), eq(77L), eq(null), eq("token"));
+            eq(null),
+            any(Consultant.class),
+            eq("Fallback Full Name"),
+            eq(77L),
+            eq(null),
+            eq("token"));
   }
 
   @Test
@@ -150,6 +158,53 @@ class SessionSupervisorControllerTest {
             eq(77L),
             eq(null),
             eq("token"));
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1201: both supervisor entries are addressed to the advice seeker
+  // (session.getUser()), so neither may name the colleague who joined or left their case.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void addSupervisor_Should_NotFallBackToTheRealName_When_TheSupervisorHasNoPseudonym() {
+    var request = new SessionSupervisorController.AddSupervisorRequestDTO();
+    request.setSupervisorConsultantId("sup-1");
+    var current = consultant("current-1", "Current");
+    var created = supervisorWithoutPseudonym(17L, user("u-1"));
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(authenticatedUser.getAccessToken()).thenReturn("token");
+    when(sessionSupervisorFacade.addSupervisor(57L, "sup-1", current, null, null))
+        .thenReturn(created);
+
+    controller.addSupervisor(57L, request);
+
+    verify(eventNotificationService)
+        .createSupervisorAddedNotification(any(), eq("u-1"), eq("beraterin1"));
+  }
+
+  @Test
+  void removeSupervisor_Should_NotFallBackToTheRealName_When_TheSupervisorHasNoPseudonym() {
+    var current = consultant("current-1", "Current");
+    var existing = supervisorWithoutPseudonym(21L, user("u-2"));
+    when(userAccountService.retrieveValidatedConsultant()).thenReturn(current);
+    when(authenticatedUser.getAccessToken()).thenReturn("token");
+    when(sessionSupervisorFacade.getSupervisors(92L)).thenReturn(List.of(existing));
+    when(sessionService.getSession(92L)).thenReturn(Optional.of(existing.getSession()));
+
+    controller.removeSupervisor(92L, 21L);
+
+    verify(eventNotificationService)
+        .createSupervisorRemovedNotification(any(), eq("u-2"), eq("beraterin1"));
+  }
+
+  /** A supervisor with a real name and no stored pseudonym — the fallback case that leaked. */
+  private SessionSupervisor supervisorWithoutPseudonym(Long id, User sessionOwner) {
+    var supervisor = supervisor(id, "sup-1", "added-by", null, "unused", sessionOwner);
+    supervisor.getSupervisorConsultant().setDisplayName(null);
+    supervisor.getSupervisorConsultant().setUsername("beraterin1");
+    supervisor.getSupervisorConsultant().setFirstName("Angela");
+    supervisor.getSupervisorConsultant().setLastName("Musterfrau");
+    return supervisor;
   }
 
   @Test
