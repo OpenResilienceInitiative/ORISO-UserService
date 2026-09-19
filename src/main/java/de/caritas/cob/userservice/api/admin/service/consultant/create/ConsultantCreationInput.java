@@ -31,6 +31,17 @@ interface ConsultantCreationInput {
     return false;
   }
 
+  /**
+   * Whether the created counsellor must replace their password before using the account.
+   *
+   * <p>Defaults to false so a creation path has to opt in. The bulk import inherits that default:
+   * imported counsellors keep a password they already had, so there is no administrator-chosen
+   * secret to replace.
+   */
+  default boolean isPasswordChangeRequired() {
+    return false;
+  }
+
   default String getPublicSlug() {
     return null;
   }

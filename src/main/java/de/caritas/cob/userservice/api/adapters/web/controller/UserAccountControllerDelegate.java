@@ -270,8 +270,27 @@ class UserAccountControllerDelegate {
       var message = String.format("Could not update password of user %s", userId);
       throw new InternalServerErrorException(message);
     }
+    clearPasswordChangeRequirement(userId);
 
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  /**
+   * Opens the account-setup gate once the counsellor's password is their own.
+   *
+   * <p>Only reached after the change actually succeeded, so a failed attempt leaves the requirement
+   * standing. Accounts without a consultant row (askers, admins) have nothing to clear, which is
+   * not an error, and an account that owed nothing is not written to.
+   */
+  private void clearPasswordChangeRequirement(String userId) {
+    consultantService
+        .getConsultant(userId)
+        .filter(consultant -> Boolean.TRUE.equals(consultant.getPasswordChangeRequired()))
+        .ifPresent(
+            consultant -> {
+              consultant.setPasswordChangeRequired(false);
+              consultantService.saveConsultant(consultant);
+            });
   }
 
   ResponseEntity<Void> updateKey(MasterKeyDTO masterKey) {

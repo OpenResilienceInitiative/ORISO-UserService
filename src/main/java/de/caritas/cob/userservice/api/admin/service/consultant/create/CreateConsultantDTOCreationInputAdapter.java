@@ -61,6 +61,18 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   }
 
   /**
+   * Whether the created counsellor must replace their password before using the account.
+   *
+   * <p>Always true on this path, for the same reason as the second factor: the password in this
+   * payload was typed by an administrator and reaches the counsellor over some other channel. A
+   * second factor protects the account; only replacing the password makes it theirs.
+   */
+  @Override
+  public boolean isPasswordChangeRequired() {
+    return true;
+  }
+
+  /**
    * Provides the first name.
    *
    * @return the first name

@@ -179,6 +179,20 @@ class CreateConsultantSagaTest {
   }
 
   @Test
+  void createNewConsultant_Should_persistThePasswordChangeRequirement() throws Exception {
+    // The administrator chose this password and passed it on, so it is a shared
+    // secret until the counsellor replaces it.
+    stubHappyPath();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(captured.getValue().getPasswordChangeRequired(), is(true));
+  }
+
+  @Test
   void createNewConsultant_Should_persistTheAvatarChoice() throws Exception {
     stubHappyPath();
     CreateConsultantDTO dto = validCreateConsultantDto();
@@ -435,6 +449,20 @@ class CreateConsultantSagaTest {
             importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
 
     assertThat(consultant.getTwoFactorRequired(), is(false));
+  }
+
+  @Test
+  void createNewConsultant_Should_notRequireAPasswordChange_When_importingConsultants()
+      throws Exception {
+    ImportRecord importRecord = validImportRecord();
+    stubHappyPath();
+    when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
+
+    Consultant consultant =
+        createConsultantSaga.createNewConsultant(
+            importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
+
+    assertThat(consultant.getPasswordChangeRequired(), is(false));
   }
 
   @Test

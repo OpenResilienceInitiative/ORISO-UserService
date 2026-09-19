@@ -76,6 +76,19 @@ class UserDtoMapperTest {
   }
 
   @Test
+  void userDataOf_Should_leaveThePasswordChangeRequirementUntouched() {
+    // It travels on UserDataResponseDTO itself, not under twoFactorAuth: it is a
+    // fact about the password, not about a factor.
+    var userData = new UserDataResponseDTO();
+    userData.setUserRoles(Set.of(UserRole.CONSULTANT.getValue()));
+    userData.setPasswordChangeRequired(true);
+
+    var result = mapper.userDataOf(userData, null, true, true);
+
+    assertThat(result.getPasswordChangeRequired()).isTrue();
+  }
+
+  @Test
   void mapOf_Should_ReturnEmpty_When_GeneratedPatchDtoContainsOnlyDefaultEmptyCollections() {
     assertThat(mapper.mapOf(new PatchUserDTO(), authenticatedUser)).isEmpty();
   }

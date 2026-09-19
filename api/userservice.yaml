@@ -2855,6 +2855,14 @@ components:
             type: string
         twoFactorAuth:
           $ref: "#/components/schemas/TwoFactorAuthDTO"
+        passwordChangeRequired:
+          type: boolean
+          example: true
+          default: false
+          description: >-
+            indicates that the account still carries the password its
+            administrator chose and may not be used until the user has
+            replaced it.
         consultingTypes:
           $ref: "#/components/schemas/ConsultingTypeMap"
         hasAnonymousConversations:

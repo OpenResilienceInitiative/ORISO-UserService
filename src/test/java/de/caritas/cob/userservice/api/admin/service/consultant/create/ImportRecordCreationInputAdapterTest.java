@@ -57,4 +57,16 @@ class ImportRecordCreationInputAdapterTest {
 
     assertThat(input.isTwoFactorRequired(), is(false));
   }
+
+  @Test
+  void isPasswordChangeRequired_Should_beFalse_When_consultantsAreBulkImported() {
+    // Imported counsellors keep the password they already had; there is no
+    // administrator-chosen secret to replace.
+    ImportRecord importRecord = new ImportRecord();
+    importRecord.setUsername("plainUsername");
+
+    ConsultantCreationInput input = new ImportRecordCreationInputAdapter(importRecord);
+
+    assertThat(input.isPasswordChangeRequired(), is(false));
+  }
 }

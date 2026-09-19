@@ -291,6 +291,21 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Builder.Default
   private Boolean twoFactorRequired = false;
 
+  /**
+   * Whether this counsellor must replace their password before using the account.
+   *
+   * <p>Set for counsellors whose login was provisioned through the admin API: the administrator
+   * chooses the initial password and passes it on out of band, so it is a secret shared with at
+   * least one other person, over at least one other channel. Cleared when the counsellor changes
+   * it. Defaults to false so it never applies retroactively.
+   */
+  @Column(
+      name = "password_change_required",
+      nullable = false,
+      columnDefinition = "bit default false")
+  @Builder.Default
+  private Boolean passwordChangeRequired = false;
+
   @Column(
       name = "magic_link_login_enabled",
       nullable = false,

@@ -462,6 +462,7 @@ public class CreateConsultantSaga {
             .matrixUserId(matrixUserId)
             .encourage2fa(true)
             .twoFactorRequired(consultantCreationInput.isTwoFactorRequired())
+            .passwordChangeRequired(consultantCreationInput.isPasswordChangeRequired())
             .magicLinkLoginEnabled(false)
             .notifyEnquiriesRepeating(true)
             .notifyNewChatMessageFromAdviceSeeker(true)
