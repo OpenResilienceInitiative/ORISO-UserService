@@ -77,6 +77,7 @@ public class CounsellorInviteProvisioningService {
         throw new IllegalStateException("Consultant provisioning returned no user id");
       }
       consultantId = consultant.getEmbedded().getId();
+      alignTwoFactorRequirementWithInvite(consultantId, invite);
       invite.setProvisionedUserId(consultantId);
       invite.setUpdateDate(LocalDateTime.now());
       accountInviteRepository.save(invite);
@@ -127,6 +128,27 @@ public class CounsellorInviteProvisioningService {
     } else {
       TenantContext.setCurrentTenantData(tenantData);
     }
+  }
+
+  /**
+   * Lets the invite's own second-factor gate decide, not the create path's default.
+   *
+   * <p>{@code CreateConsultantDTOCreationInputAdapter} marks every admin-provisioned counsellor as
+   * owing a second factor, which is right when an administrator picks the password and hands it
+   * over. Here the counsellor chooses their own password and the invite already tracks the
+   * requirement — including {@code WAIVED}, which is an administrator deliberately excusing this
+   * person. Without this the waiver would be granted and then silently ignored at first login.
+   */
+  private void alignTwoFactorRequirementWithInvite(String consultantId, AccountInvite invite) {
+    var stillOwed = !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());
+    consultantRepository
+        .findByIdAndDeleteDateIsNull(consultantId)
+        .filter(consultant -> !Boolean.valueOf(stillOwed).equals(consultant.getTwoFactorRequired()))
+        .ifPresent(
+            consultant -> {
+              consultant.setTwoFactorRequired(stillOwed);
+              consultantRepository.save(consultant);
+            });
   }
 
   private void rollbackPartiallyCreatedConsultant(String consultantId, RuntimeException failure) {

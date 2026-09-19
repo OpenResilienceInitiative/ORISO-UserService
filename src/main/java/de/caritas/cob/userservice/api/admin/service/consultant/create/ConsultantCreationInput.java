@@ -20,6 +20,17 @@ interface ConsultantCreationInput {
 
   String getEmail();
 
+  /**
+   * Whether the created counsellor must establish a second factor before using the account.
+   *
+   * <p>Defaults to false so a creation path has to opt in. The bulk import inherits that default on
+   * purpose: it carries counsellors who already exist elsewhere into this system, and locking them
+   * out of a migrated tenant is not what "new account" means.
+   */
+  default boolean isTwoFactorRequired() {
+    return false;
+  }
+
   default String getPublicSlug() {
     return null;
   }

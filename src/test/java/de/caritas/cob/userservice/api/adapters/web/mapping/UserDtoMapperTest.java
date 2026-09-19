@@ -53,6 +53,29 @@ class UserDtoMapperTest {
   }
 
   @Test
+  void userDataOf_Should_exposeTheSecondFactorRequirement() {
+    var userData = new UserDataResponseDTO();
+    userData.setUserRoles(Set.of(UserRole.CONSULTANT.getValue()));
+    userData.setTwoFactorRequired(true);
+
+    var result = mapper.userDataOf(userData, null, true, true);
+
+    assertThat(result.getTwoFactorAuth().getIsRequired()).isTrue();
+  }
+
+  @Test
+  void userDataOf_Should_treatAnUnknownRequirementAsNotRequired() {
+    // Askers and consultant rows predating the column carry null. Turning that into
+    // "blocked" would gate people the rule was never about.
+    var userData = new UserDataResponseDTO();
+    userData.setUserRoles(Set.of(UserRole.USER.getValue()));
+
+    var result = mapper.userDataOf(userData, null, true, true);
+
+    assertThat(result.getTwoFactorAuth().getIsRequired()).isFalse();
+  }
+
+  @Test
   void mapOf_Should_ReturnEmpty_When_GeneratedPatchDtoContainsOnlyDefaultEmptyCollections() {
     assertThat(mapper.mapOf(new PatchUserDTO(), authenticatedUser)).isEmpty();
   }

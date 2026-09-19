@@ -52,6 +52,9 @@ public class UserDtoMapper {
     }
 
     twoFactorAuthDTO.setIsToEncourage(userData.getEncourage2fa());
+    // Fails closed only where the requirement is known: a null (asker, or a consultant row
+    // predating the column) is "not required", not "blocked".
+    twoFactorAuthDTO.setIsRequired(Boolean.TRUE.equals(userData.getTwoFactorRequired()));
     userData.setTwoFactorAuth(twoFactorAuthDTO);
     userData.setE2eEncryptionEnabled(isE2eEncEnabled);
     userData.setIsDisplayNameEditable(

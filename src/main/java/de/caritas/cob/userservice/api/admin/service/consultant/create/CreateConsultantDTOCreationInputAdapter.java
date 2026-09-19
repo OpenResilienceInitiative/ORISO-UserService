@@ -48,6 +48,19 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   }
 
   /**
+   * Whether the created counsellor must set up a second factor before using the account.
+   *
+   * <p>Always true on this path. Everything reaching this adapter was provisioned through the admin
+   * API: an administrator chooses the initial password and passes it to the counsellor out of band,
+   * so that password is not a secret only the counsellor holds. A second factor is what makes the
+   * account theirs again (ORISO-Admin#955, ORISO-Frontend#1402).
+   */
+  @Override
+  public boolean isTwoFactorRequired() {
+    return true;
+  }
+
+  /**
    * Provides the first name.
    *
    * @return the first name

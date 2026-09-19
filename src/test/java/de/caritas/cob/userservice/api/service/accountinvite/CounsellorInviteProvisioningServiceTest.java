@@ -269,6 +269,53 @@ class CounsellorInviteProvisioningServiceTest {
     verify(counsellorAgencyAdminGrantService).grantAgencyAdmin("created-consultant", 275L, invite);
   }
 
+  @Test
+  void aWaivedInviteClearsTheSecondFactorRequirementTheCreatePathSet() {
+    // An administrator excused this counsellor on the invite. Without this the
+    // waiver would be granted and then silently ignored at first login.
+    Consultant provisioned = provisionWithTwoFactorStatus(TwoFactorGateStatus.WAIVED);
+
+    assertThat(provisioned.getTwoFactorRequired()).isFalse();
+    verify(consultantRepository).save(provisioned);
+  }
+
+  @Test
+  void aPendingInviteLeavesTheSecondFactorRequirementInPlace() {
+    Consultant provisioned = provisionWithTwoFactorStatus(TwoFactorGateStatus.PENDING_SETUP);
+
+    assertThat(provisioned.getTwoFactorRequired()).isTrue();
+    verify(consultantRepository, org.mockito.Mockito.never()).save(any(Consultant.class));
+  }
+
+  private Consultant provisionWithTwoFactorStatus(TwoFactorGateStatus status) {
+    AccountInvite invite = activeCounsellorInvite();
+    invite.setTwoFactorStatus(status);
+    // The admin create path has already marked it required by the time we look.
+    Consultant provisioned =
+        Consultant.builder()
+            .id("created-consultant")
+            .username("invited-counsellor")
+            .firstName("Lisa")
+            .lastName("Simpson")
+            .email("lisa.simpson@oriso.org")
+            .twoFactorRequired(true)
+            .build();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(
+            new ConsultantAdminResponseDTO()
+                .embedded(new ConsultantDTO().id("created-consultant")));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("created-consultant"))
+        .thenReturn(Optional.of(provisioned));
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant")).thenReturn(invite);
+
+    service.acceptInvite(
+        "raw-token",
+        new ProvisionCounsellorCommand("invited-counsellor", "test-password", true, null));
+
+    return provisioned;
+  }
+
   private static AccountInvite activeCounsellorInvite() {
     return AccountInvite.builder()
         .targetRole(AccountInviteTargetRole.COUNSELLOR)

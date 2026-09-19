@@ -90,6 +90,9 @@ public class UserDataResponseDTO {
 
   @JsonIgnore private Boolean encourage2fa;
 
+  /** Backs twoFactorAuth.isRequired; not a field of its own on the wire. */
+  @JsonIgnore private Boolean twoFactorRequired;
+
   private Boolean magicLinkLoginEnabled;
 
   private Boolean e2eEncryptionEnabled;

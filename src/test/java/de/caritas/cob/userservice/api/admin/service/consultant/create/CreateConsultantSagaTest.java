@@ -165,6 +165,20 @@ class CreateConsultantSagaTest {
   }
 
   @Test
+  void createNewConsultant_Should_persistTheSecondFactorRequirement() throws Exception {
+    // The admin API is the "an administrator picks the password and hands it over"
+    // path, so the counsellor owes a second factor before the account is usable.
+    stubHappyPath();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(captured.getValue().getTwoFactorRequired(), is(true));
+  }
+
+  @Test
   void createNewConsultant_Should_persistTheAvatarChoice() throws Exception {
     stubHappyPath();
     CreateConsultantDTO dto = validCreateConsultantDto();
@@ -405,6 +419,22 @@ class CreateConsultantSagaTest {
         "LOGIN_PASSWORD", consultant.getChatRecoveryMode());
     org.junit.jupiter.api.Assertions.assertEquals(3L, consultant.getChatRecoveryPolicyRevision());
     verify(identityPasswordUpdater).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
+  }
+
+  @Test
+  void createNewConsultant_Should_notRequireASecondFactor_When_importingConsultants()
+      throws Exception {
+    // Imported counsellors already exist elsewhere; the import is a move, not a new
+    // account, so it must not gate a whole migrated tenant at the next login.
+    ImportRecord importRecord = validImportRecord();
+    stubHappyPath();
+    when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
+
+    Consultant consultant =
+        createConsultantSaga.createNewConsultant(
+            importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
+
+    assertThat(consultant.getTwoFactorRequired(), is(false));
   }
 
   @Test
