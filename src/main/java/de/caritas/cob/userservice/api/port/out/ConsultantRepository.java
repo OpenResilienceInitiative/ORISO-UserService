@@ -37,6 +37,28 @@ public interface ConsultantRepository
 
   Optional<Consultant> findByMatrixUserIdAndDeleteDateIsNull(String matrixUserId);
 
+  /**
+   * Every consultant row referencing the given chat (Matrix) identity, <em>including soft-deleted
+   * ones</em>. Uniqueness here is by username, so a soft-deleted consultant keeps owning their chat
+   * account while freeing the username — the repair has to see that row or it would adopt a
+   * colleague's rooms.
+   *
+   * @param matrixUserId the full Matrix user id
+   * @return the rows holding it, empty when it is free
+   */
+  List<Consultant> findByMatrixUserId(String matrixUserId);
+
+  /**
+   * Every active consultant that owns no chat (Matrix) identity. Such a record looks complete to an
+   * administrator but is refused by every counselling room operation.
+   *
+   * @return the consultants whose {@code matrixUserId} is null or blank
+   */
+  @Query(
+      "SELECT c FROM Consultant c WHERE c.deleteDate IS NULL "
+          + "AND (c.matrixUserId IS NULL OR TRIM(c.matrixUserId) = '')")
+  List<Consultant> findWithoutChatIdentity();
+
   List<Consultant> findByConsultantAgenciesAgencyIdInAndDeleteDateIsNull(List<Long> agencyIds);
 
   List<Consultant> findByConsultantAgenciesAgencyIdAndDeleteDateIsNull(Long agencyId);

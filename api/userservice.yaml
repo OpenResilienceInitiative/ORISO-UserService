@@ -2933,6 +2933,14 @@ components:
             type: string
         twoFactorAuth:
           $ref: "#/components/schemas/TwoFactorAuthDTO"
+        passwordChangeRequired:
+          type: boolean
+          example: true
+          default: false
+          description: >-
+            indicates that the account still carries the password its
+            administrator chose and may not be used until the user has
+            replaced it.
         consultingTypes:
           $ref: "#/components/schemas/ConsultingTypeMap"
         hasAnonymousConversations:
@@ -3488,6 +3496,15 @@ components:
           default: true
           nullable: false
           description: indicates if 2FA is supposed to be encouraged
+        isRequired:
+          type: boolean
+          example: true
+          default: false
+          nullable: false
+          description: >-
+            indicates that the account may not be used until a second factor is
+            active. Set for counsellors whose login was provisioned by an
+            administrator, who chooses the initial password and hands it over.
 
     EmailNotificationsDTO:
       type: object

@@ -244,8 +244,10 @@ public class CreateConsultantSaga {
     try {
       if (plainCreds != null && plainCreds.getUsername() != null) {
         String matrixPassword = userHelper.getRandomPassword();
-        log.info(
-            "Creating Matrix consultant user with plain username: '{}'", plainCreds.getUsername());
+        // Privacy: the Matrix localpart and the resulting Matrix ID are user identifiers, and
+        // application logs are aggregated, retained and backed up. Only the internal consultant id
+        // (the Keycloak id this row is built from) and the outcome go into the log.
+        log.info("Provisioning the chat account of consultant {}", keycloakUserId);
         matrixUserId =
             matrixUserClient.createUserId(
                 plainCreds.getUsername(),
@@ -255,21 +257,33 @@ public class CreateConsultantSaga {
                     + consultantCreationInput.getLastName());
 
         if (matrixUserId != null) {
-          log.info(
-              "Successfully created Matrix user for consultant '{}' → Matrix ID: {}",
-              plainCreds.getUsername(),
-              matrixUserId);
+          log.info("Provisioned the chat account of consultant {}", keycloakUserId);
         } else {
           log.warn(
-              "Matrix user creation response missing user_id for consultant: {}",
-              plainCreds.getUsername());
+              "Chat account provisioning for consultant {} answered without a user_id; the"
+                  + " consultant is created without a chat identity and must be repaired via POST"
+                  + " /useradmin/consultants/{}/chat-identity (#1194)",
+              keycloakUserId,
+              keycloakUserId);
         }
       } else {
         log.warn(
-            "Plain credentials not available from ThreadLocal, skipping Matrix user creation for consultant");
+            "Plain credentials not available from ThreadLocal, skipping chat account provisioning"
+                + " for consultant {}. The consultant is created without a chat identity and must"
+                + " be repaired via POST /useradmin/consultants/{}/chat-identity (#1194)",
+            keycloakUserId,
+            keycloakUserId);
       }
     } catch (Exception e) {
-      log.error("Matrix user creation failed for consultant, but continuing", e);
+      // Not fatal: a chat outage must not stop onboarding. The consultant is stored with
+      // chatIdentityStatus = MISSING and repaired via POST .../consultants/{id}/chat-identity.
+      log.error(
+          "Chat account provisioning failed for consultant {}; continuing without a chat identity."
+              + " The consultant cannot be used for counselling until it is repaired via POST"
+              + " /useradmin/consultants/{}/chat-identity",
+          keycloakUserId,
+          keycloakUserId,
+          e);
     } finally {
       // Clean up ThreadLocal
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
@@ -461,6 +475,8 @@ public class CreateConsultantSaga {
             .teamConsultant(consultantCreationInput.isTeamConsultant())
             .matrixUserId(matrixUserId)
             .encourage2fa(true)
+            .twoFactorRequired(consultantCreationInput.isTwoFactorRequired())
+            .passwordChangeRequired(consultantCreationInput.isPasswordChangeRequired())
             .magicLinkLoginEnabled(false)
             .notifyEnquiriesRepeating(true)
             .notifyNewChatMessageFromAdviceSeeker(true)
@@ -477,7 +493,7 @@ public class CreateConsultantSaga {
             .build();
 
     consultant.replaceTopics(consultantCreationInput.getTopicIds());
-    // #1046: normalised in one shared place so a half avatar choice can never be persisted.
+    // Normalised in one shared place so a half avatar choice can never be persisted.
     ConsultantAvatars.apply(
         consultant,
         ConsultantAvatarKind.fromNameOrNull(consultantCreationInput.getAvatarKind()),

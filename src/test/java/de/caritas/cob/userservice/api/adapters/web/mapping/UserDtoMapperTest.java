@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
+import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -29,11 +30,13 @@ class UserDtoMapperTest {
 
   @Mock private AuthenticatedUser authenticatedUser;
 
+  @Mock private IdentityPolicy identityPolicy;
+
   private UserDtoMapper mapper;
 
   @BeforeEach
   void setUp() {
-    mapper = new UserDtoMapper();
+    mapper = new UserDtoMapper(identityPolicy);
     ReflectionTestUtils.setField(mapper, "appointmentFeatureEnabled", true);
   }
 
@@ -50,6 +53,61 @@ class UserDtoMapperTest {
     assertThat(result.getE2eEncryptionEnabled()).isTrue();
     assertThat(result.getIsDisplayNameEditable()).isTrue();
     assertThat(result.getAppointmentFeatureEnabled()).isTrue();
+  }
+
+  @Test
+  void userDataOf_Should_exposeTheSecondFactorRequirement() {
+    var userData = new UserDataResponseDTO();
+    userData.setUserRoles(Set.of(UserRole.CONSULTANT.getValue()));
+    userData.setTwoFactorRequired(true);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(Set.of(UserRole.CONSULTANT.getValue())))
+        .thenReturn(true);
+
+    var result = mapper.userDataOf(userData, null, true, true);
+
+    assertThat(result.getTwoFactorAuth().getIsRequired()).isTrue();
+  }
+
+  @Test
+  void userDataOf_Should_notAnnounceARequirementTheRolePolicyForbidsEnrolmentFor() {
+    // identity.otp-allowed-for-consultants defaults to false. Announcing the requirement anyway
+    // locks the counsellor out for good: the Frontend shows a gate that cannot be dismissed while
+    // every enrolment endpoint answers 409 (assertTwoFactorAuthAllowed). Same deadlock that
+    // UserAccountControllerDelegate already documents and guards for platform admins.
+    var userData = new UserDataResponseDTO();
+    userData.setUserRoles(Set.of(UserRole.CONSULTANT.getValue()));
+    userData.setTwoFactorRequired(true);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(Set.of(UserRole.CONSULTANT.getValue())))
+        .thenReturn(false);
+
+    var result = mapper.userDataOf(userData, null, true, true);
+
+    assertThat(result.getTwoFactorAuth().getIsRequired()).isFalse();
+  }
+
+  @Test
+  void userDataOf_Should_treatAnUnknownRequirementAsNotRequired() {
+    // Askers and consultant rows predating the column carry null. Turning that into
+    // "blocked" would gate people the rule was never about.
+    var userData = new UserDataResponseDTO();
+    userData.setUserRoles(Set.of(UserRole.USER.getValue()));
+
+    var result = mapper.userDataOf(userData, null, true, true);
+
+    assertThat(result.getTwoFactorAuth().getIsRequired()).isFalse();
+  }
+
+  @Test
+  void userDataOf_Should_leaveThePasswordChangeRequirementUntouched() {
+    // It travels on UserDataResponseDTO itself, not under twoFactorAuth: it is a
+    // fact about the password, not about a factor.
+    var userData = new UserDataResponseDTO();
+    userData.setUserRoles(Set.of(UserRole.CONSULTANT.getValue()));
+    userData.setPasswordChangeRequired(true);
+
+    var result = mapper.userDataOf(userData, null, true, true);
+
+    assertThat(result.getPasswordChangeRequired()).isTrue();
   }
 
   @Test

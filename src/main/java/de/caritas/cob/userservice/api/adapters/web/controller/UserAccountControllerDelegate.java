@@ -108,7 +108,7 @@ class UserAccountControllerDelegate {
       enrichConsultantAvailability(partialUserData);
     } else if (isTenantAdmin() || isAgencyAdmin()) {
       // A Beratungsstellen-Admin needs their assigned agencies so the Admin UI can land them on
-      // their own agency (ORISO-UserService#1101). The tenant-admin branch stays Keycloak-only.
+      // their own agency. The tenant-admin branch stays Keycloak-only.
       partialUserData =
           isTenantAdmin()
               ? keycloakUserDataProvider.retrieveAuthenticatedUserData()
@@ -270,8 +270,25 @@ class UserAccountControllerDelegate {
       var message = String.format("Could not update password of user %s", userId);
       throw new InternalServerErrorException(message);
     }
+    clearPasswordChangeRequirement(userId);
 
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  /**
+   * Opens the account-setup gate once the counsellor's password is their own. Only reached after a
+   * successful change, so a failed attempt leaves the requirement standing. Accounts without a
+   * consultant row have nothing to clear, which is not an error.
+   */
+  private void clearPasswordChangeRequirement(String userId) {
+    consultantService
+        .getConsultant(userId)
+        .filter(consultant -> Boolean.TRUE.equals(consultant.getPasswordChangeRequired()))
+        .ifPresent(
+            consultant -> {
+              consultant.setPasswordChangeRequired(false);
+              consultantService.saveConsultant(consultant);
+            });
   }
 
   ResponseEntity<Void> updateKey(MasterKeyDTO masterKey) {

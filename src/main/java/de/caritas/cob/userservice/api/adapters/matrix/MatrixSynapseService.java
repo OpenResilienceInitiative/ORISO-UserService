@@ -256,6 +256,64 @@ public class MatrixSynapseService implements MatrixUserClient {
     }
   }
 
+  /**
+   * The full Matrix user id for a localpart with a <em>usable</em> account, or {@code null}.
+   * Stricter than {@link #userExists}, which answers 200 for a deactivated user too: occupancy
+   * checks want that one, adoption wants this.
+   */
+  @Override
+  public String findUserId(String localpart) {
+    if (localpart == null || localpart.isBlank()) {
+      return null;
+    }
+    var matrixUserId =
+        "@" + localpart.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
+    var account = readAdminUser(matrixUserId);
+    if (account.isEmpty()) {
+      return null;
+    }
+    if (Boolean.TRUE.equals(account.get().get("deactivated"))) {
+      log.warn(
+          "The homeserver holds a deactivated account for the requested localpart; it is not"
+              + " offered for adoption");
+      return null;
+    }
+    return matrixUserId;
+  }
+
+  /**
+   * The Synapse admin view of one user, or empty when the homeserver does not have it or the lookup
+   * failed. Never throws: empty means "no usable account", which is safe for both cases.
+   */
+  private java.util.Optional<java.util.Map<String, Object>> readAdminUser(String matrixUserId) {
+    try {
+      String adminToken = getAdminAccessToken();
+      if (adminToken == null) {
+        log.warn("Could not get admin token for a Matrix user lookup");
+        return java.util.Optional.empty();
+      }
+      URI url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<>(headers),
+              java.util.Map.class);
+      @SuppressWarnings("unchecked")
+      java.util.Map<String, Object> body = response.getBody();
+      return java.util.Optional.ofNullable(body);
+    } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
+      return java.util.Optional.empty();
+    } catch (Exception ex) {
+      log.warn("Could not read the Matrix admin view of a user: {}", ex.getMessage());
+      return java.util.Optional.empty();
+    }
+  }
+
   @Override
   public String createUserId(String username, String password, String displayName)
       throws MatrixCreateUserException {

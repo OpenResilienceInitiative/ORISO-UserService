@@ -150,11 +150,18 @@ public class GrantConsultantIdentityService {
         return matrixUserId;
       }
       log.warn(
-          "Matrix user creation response missing user_id while granting consultant identity to admin {}",
+          "Chat account provisioning answered without a user_id while granting consultant identity"
+              + " to admin {}; the consultant is created without a chat identity and must be"
+              + " repaired via POST /useradmin/consultants/{}/chat-identity (#1194)",
+          admin.getId(),
           admin.getId());
     } catch (Exception e) {
       log.error(
-          "Matrix user creation failed while granting consultant identity to admin {}, but continuing",
+          "Chat account provisioning failed while granting consultant identity to admin {};"
+              + " continuing without a chat identity. The consultant cannot be used for"
+              + " counselling until it is repaired via POST"
+              + " /useradmin/consultants/{}/chat-identity (#1194)",
+          admin.getId(),
           admin.getId(),
           e);
     }
@@ -187,6 +194,9 @@ public class GrantConsultantIdentityService {
             .teamConsultant(false)
             .matrixUserId(matrixUserId)
             .encourage2fa(true)
+            // Same kind of account as the admin create path, so it owes the same second factor.
+            // passwordChangeRequired stays false: no new password is chosen here.
+            .twoFactorRequired(true)
             .magicLinkLoginEnabled(false)
             .notifyEnquiriesRepeating(true)
             .notifyNewChatMessageFromAdviceSeeker(true)
