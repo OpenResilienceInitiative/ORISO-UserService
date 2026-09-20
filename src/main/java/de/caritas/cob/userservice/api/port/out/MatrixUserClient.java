@@ -9,6 +9,21 @@ public interface MatrixUserClient {
       throws MatrixCreateUserException;
 
   /**
+   * Mints a chat account, refusing rather than reactivating one the homeserver already holds. For
+   * callers that repair an existing consultant: {@link #createUserId} answers a taken localpart by
+   * reactivating the account behind it, and a localpart is only unique at a point in time, so that
+   * account may belong to somebody else.
+   *
+   * @param username the localpart to mint
+   * @param password the initial password
+   * @param displayName the chat display name
+   * @return the full Matrix user id of the account just minted
+   * @throws MatrixCreateUserException when the homeserver refuses, the localpart included
+   */
+  String createUserIdWithoutReactivation(String username, String password, String displayName)
+      throws MatrixCreateUserException;
+
+  /**
    * Returns true for an existing account and false only for confirmed absence. Implementations must
    * fail when availability cannot be determined.
    */

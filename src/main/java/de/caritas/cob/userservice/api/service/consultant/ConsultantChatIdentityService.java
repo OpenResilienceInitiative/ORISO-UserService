@@ -101,6 +101,8 @@ public class ConsultantChatIdentityService {
 
     // Outside every database transaction, deliberately. See the class javadoc.
     var matrixUserId = provisionOrAdopt(consultant);
+    // On the id that is about to be stored, whichever path produced it.
+    assertNotHeldByAnotherConsultant(matrixUserId, consultant);
 
     try {
       var repaired = consultantChatIdentityWriter.attachChatIdentity(consultantId, matrixUserId);
@@ -130,13 +132,16 @@ public class ConsultantChatIdentityService {
    * Mints the chat account, or adopts the one a previous attempt left behind. The homeserver
    * refuses to mint the same localpart twice, so without this a failed write would leave the
    * consultant permanently unrepairable.
+   *
+   * <p>Minting must not reactivate: a localpart is unique only at a point in time, so an account
+   * the homeserver still holds for it may belong to a soft-deleted colleague.
    */
   private String provisionOrAdopt(Consultant consultant) {
     var localpart = usernameTranscoder.decodeUsername(consultant.getUsername());
     String matrixUserId;
     try {
       matrixUserId =
-          matrixUserClient.createUserId(
+          matrixUserClient.createUserIdWithoutReactivation(
               localpart,
               userHelper.getRandomPassword(),
               consultant.getFirstName() + " " + consultant.getLastName());
@@ -168,7 +173,6 @@ public class ConsultantChatIdentityService {
       // Also covers a deactivated account: MatrixUserClient does not offer one for adoption.
       throw chatServerFailed(cause, consultant);
     }
-    assertNotHeldByAnotherConsultant(existing, consultant);
     log.warn(
         "Adopting the chat account that already exists for consultant {}; an earlier repair"
             + " provisioned it without storing it",

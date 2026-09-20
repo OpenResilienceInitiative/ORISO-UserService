@@ -218,6 +218,12 @@ public class MatrixSynapseService implements MatrixUserClient {
    */
   public ResponseEntity<MatrixCreateUserResponseDTO> createUser(
       String username, String password, String displayName) throws MatrixCreateUserException {
+    return createUser(username, password, displayName, true);
+  }
+
+  private ResponseEntity<MatrixCreateUserResponseDTO> createUser(
+      String username, String password, String displayName, boolean reactivateReserved)
+      throws MatrixCreateUserException {
 
     try {
       // First, get a nonce from Matrix
@@ -258,6 +264,10 @@ public class MatrixSynapseService implements MatrixUserClient {
       return response;
     } catch (HttpClientErrorException ex) {
       if (isReservedMatrixUserId(ex)) {
+        if (!reactivateReserved) {
+          throw new MatrixCreateUserException(
+              "The homeserver already holds an account for this localpart; it was not reactivated");
+        }
         return reactivateDeletedUser(username, password);
       }
       log.error(
@@ -332,7 +342,8 @@ public class MatrixSynapseService implements MatrixUserClient {
     } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
       return java.util.Optional.empty();
     } catch (Exception ex) {
-      log.warn("Could not read the Matrix admin view of a user: {}", ex.getMessage());
+      log.warn(
+          "Could not read the Matrix admin view of a user: {}", redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
   }
@@ -340,7 +351,16 @@ public class MatrixSynapseService implements MatrixUserClient {
   @Override
   public String createUserId(String username, String password, String displayName)
       throws MatrixCreateUserException {
-    var response = createUser(username, password, displayName);
+    return userIdOf(createUser(username, password, displayName, true));
+  }
+
+  @Override
+  public String createUserIdWithoutReactivation(
+      String username, String password, String displayName) throws MatrixCreateUserException {
+    return userIdOf(createUser(username, password, displayName, false));
+  }
+
+  private static String userIdOf(ResponseEntity<MatrixCreateUserResponseDTO> response) {
     return response == null || response.getBody() == null ? null : response.getBody().getUserId();
   }
 
