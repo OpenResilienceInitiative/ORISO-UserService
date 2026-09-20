@@ -1478,9 +1478,33 @@ components:
           type: integer
           format: int64
           minimum: 0
+    AccountInactivitySettings:
+      type: object
+      description: Platform creation defaults only. Existing people retain their assigned months.
+      required: [askerMonths, consultantMonths, otherMonths, revision]
+      properties:
+        askerMonths:
+          type: integer
+          format: int32
+          minimum: 1
+        consultantMonths:
+          type: integer
+          format: int32
+          minimum: 1
+        otherMonths:
+          type: integer
+          format: int32
+          minimum: 1
+        revision:
+          type: integer
+          format: int64
+          minimum: 0
+
     TenantAdminControls:
       type: object
       properties:
+        accountInactivitySettings:
+          $ref: '#/components/schemas/AccountInactivitySettings'
         chatRecoverySettings:
           $ref: '#/components/schemas/ChatRecoverySettings'
         permissionsPageEnabled:

@@ -55,6 +55,7 @@ public class HttpTenantFilter extends OncePerRequestFilter {
         "/swagger-ui.html",
         "/favicon.ico",
         MATRIX_RTC_CALL_POLICY_PATH,
+        "/internal/matrixrtc/media-access",
         "/users/askers/new",
         "/users/magic-link/",
         "/users/invitelinks/",

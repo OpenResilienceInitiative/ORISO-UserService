@@ -238,6 +238,19 @@ class TeamDiscussionFacadeTest {
   @Import({SecurityConfig.class, ApiResponseEntityExceptionHandler.class})
   static class TeamHttpSecurityFixture {
     @Bean
+    de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+        accountInactivityService() {
+      // Account-inactivity gate (UserService #1175): these callers are active.
+      var inactivity =
+          org.mockito.Mockito.mock(
+              de.caritas.cob.userservice.api.workflow.accountinactivity.AccountInactivityService
+                  .class);
+      when(inactivity.admit(org.mockito.ArgumentMatchers.any(), org.mockito.ArgumentMatchers.any()))
+          .thenReturn(true);
+      return inactivity;
+    }
+
+    @Bean
     CsrfSecurityProperties csrfSecurityProperties() {
       var properties = new CsrfSecurityProperties();
       var whitelist = new CsrfSecurityProperties.Whitelist();

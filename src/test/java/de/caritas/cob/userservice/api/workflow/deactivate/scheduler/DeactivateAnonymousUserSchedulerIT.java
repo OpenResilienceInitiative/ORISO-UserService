@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.testConfig.ApiControllerTestConfig;
 import de.caritas.cob.userservice.api.testConfig.KeycloakTestConfig;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
+import de.caritas.cob.userservice.api.testHelper.AccountInactivityPolicyHttpFixture;
 import de.caritas.cob.userservice.api.testHelper.ChatRecoveryPolicyFixtures;
 import java.time.LocalDateTime;
 import org.junit.jupiter.api.AfterEach;
@@ -40,7 +41,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Import({KeycloakTestConfig.class, ApiControllerTestConfig.class})
-class DeactivateAnonymousUserSchedulerIT {
+class DeactivateAnonymousUserSchedulerIT extends AccountInactivityPolicyHttpFixture {
 
   private static final String TASK_NAME = "anonymous-user-deactivation";
 

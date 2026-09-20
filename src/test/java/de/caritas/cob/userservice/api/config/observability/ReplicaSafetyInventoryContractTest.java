@@ -44,6 +44,8 @@ class ReplicaSafetyInventoryContractTest {
           "group-chat-reminder-scheduler",
           "inactive-account-notification-scheduler",
           "account-deletion-scheduler",
+          "account-inactivity-expiry",
+          "account-inactivity-bootstrap",
           "anonymous-deletion-scheduler",
           "registered-only-deletion-scheduler",
           "handshake-expiry-scheduler",

@@ -43,10 +43,12 @@ class HttpTenantFilterTest {
     Mockito.verifyNoInteractions(tenantResolverService);
   }
 
-  @Test
-  void matrixRtcPolicyEndpointDoesNotRequireBrowserTenantContext()
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"/internal/matrixrtc/call-policy", "/internal/matrixrtc/media-access"})
+  void matrixRtcPolicyEndpointDoesNotRequireBrowserTenantContext(String path)
       throws ServletException, IOException {
-    Mockito.when(request.getRequestURI()).thenReturn("/internal/matrixrtc/call-policy");
+    Mockito.when(request.getRequestURI()).thenReturn(path);
 
     httpTenantFilter.doFilterInternal(request, response, filterChain);
 

@@ -57,7 +57,9 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-TenantService
-        ref: ${{ github.event_name == 'pull_request' && '70ea3009559b66f102bb0cb9f800d29cc7cfcdd2' || 'pre-dev' }}
+        # TenantService dev HEAD: the merge of ORISO-TenantService#257, which added
+        # tenantAdminControls.accountInactivitySettings that this branch's consumer specs read.
+        ref: ${{ github.event_name == 'pull_request' && '7a9fc19d538b80bad8f8ae609cbd34343d996074' || 'pre-dev' }}
         path: .providers/tenant
         persist-credentials: false
 

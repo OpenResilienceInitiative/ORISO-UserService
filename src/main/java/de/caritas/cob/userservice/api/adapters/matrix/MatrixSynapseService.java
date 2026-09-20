@@ -785,6 +785,76 @@ public class MatrixSynapseService implements MatrixUserClient {
     }
   }
 
+  /**
+   * Reversibly blocks authenticated access, including existing Matrix sessions, without erasing
+   * account data or encryption keys. Confirm existence before PUT because Synapse's user endpoint
+   * otherwise creates an account. Completion requires a fresh read of the persisted lock state.
+   */
+  public boolean setAccountSuspended(String matrixUserId, boolean suspended) {
+    try {
+      String token = getAdminToken();
+      if (token == null) return false;
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_synapse/admin/v2/users/{userId}",
+              java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setContentType(MediaType.APPLICATION_JSON);
+      headers.setBearerAuth(token);
+      var read = new HttpEntity<Void>(headers);
+      var existing =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, read, java.util.Map.class);
+      if (existing.getBody() == null) return false;
+      if (!Boolean.valueOf(suspended).equals(existing.getBody().get("locked"))) {
+        var response =
+            restTemplate.exchange(
+                url,
+                org.springframework.http.HttpMethod.PUT,
+                new HttpEntity<>(java.util.Map.of("locked", suspended), headers),
+                java.util.Map.class);
+        if (response.getStatusCode().value() != 200) return false;
+      }
+      var confirmed =
+          restTemplate.exchange(
+              url, org.springframework.http.HttpMethod.GET, read, java.util.Map.class);
+      return confirmed.getBody() != null
+          && Boolean.valueOf(suspended).equals(confirmed.getBody().get("locked"));
+    } catch (Exception failure) {
+      log.warn(
+          "Matrix account lock could not be confirmed: type={}",
+          failure.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  /** Reads the reversible access lock without creating or modifying a Matrix identity. */
+  public java.util.Optional<Boolean> getAccountLocked(String matrixUserId) {
+    try {
+      String token = getAdminToken();
+      if (token == null) return java.util.Optional.empty();
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              "/_synapse/admin/v2/users/{userId}",
+              java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(token);
+      var response =
+          restTemplate.exchange(
+              url,
+              org.springframework.http.HttpMethod.GET,
+              new HttpEntity<Void>(headers),
+              java.util.Map.class);
+      if (response.getBody() != null && response.getBody().get("locked") instanceof Boolean locked)
+        return java.util.Optional.of(locked);
+      return java.util.Optional.empty();
+    } catch (Exception failure) {
+      return java.util.Optional.empty();
+    }
+  }
+
   /** Outcome of a Synapse room purge, distinguishing "already gone" from a genuine failure. */
   public enum RoomPurgeOutcome {
     /** Synapse accepted the purge. */
