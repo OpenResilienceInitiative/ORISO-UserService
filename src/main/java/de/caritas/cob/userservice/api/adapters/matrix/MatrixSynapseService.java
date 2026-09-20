@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixInviteUserRespon
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixLoginRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixPasswordUpdateRequestDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.dto.MatrixReactivateUserRequestDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
@@ -468,6 +469,57 @@ public class MatrixSynapseService implements MatrixUserClient {
           redactor.scrub(ex.getMessage()));
       return false;
     }
+  }
+
+  /**
+   * Checks user occupancy without interpreting dependency failures as an available username.
+   * Returns false only for a confirmed 404 from the user lookup, true for a successful response,
+   * and throws when occupancy cannot be determined. Existing best-effort callers retain {@link
+   * #userExists(String)} semantics.
+   */
+  public boolean userExistsStrict(String localpart) {
+    if (localpart == null || localpart.isBlank()) {
+      throw new IllegalArgumentException("Matrix localpart must not be blank");
+    }
+    try {
+      // Anonymous availability requests must never invoke login or account bootstrap.
+      String adminToken = matrixConfig.getAvailabilityAdminAccessToken();
+      if (adminToken == null
+          || adminToken.isBlank()
+          || matrixConfig.getServerName() == null
+          || matrixConfig.getServerName().isBlank()) {
+        throw new ServiceUnavailableException("Matrix user availability could not be determined");
+      }
+      String matrixUserId =
+          "@" + localpart.toLowerCase(java.util.Locale.ROOT) + ":" + matrixConfig.getServerName();
+      URI url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig, ENDPOINT_UPDATE_USER_ADMIN, java.util.Map.of("userId", matrixUserId));
+      var headers = new HttpHeaders();
+      headers.setBearerAuth(adminToken);
+      try {
+        var response =
+            restTemplate.exchange(
+                url,
+                org.springframework.http.HttpMethod.GET,
+                new HttpEntity<>(headers),
+                String.class);
+        if (response.getStatusCode().is2xxSuccessful()) {
+          return true;
+        }
+        if (response.getStatusCode().value() == 404) {
+          return false;
+        }
+      } catch (HttpStatusCodeException exception) {
+        if (exception.getStatusCode().value() == 404) {
+          return false;
+        }
+      }
+    } catch (RuntimeException exception) {
+      // Do not log upstream exceptions: URLs and messages may contain credentials.
+      throw new ServiceUnavailableException("Matrix user availability could not be determined");
+    }
+    throw new ServiceUnavailableException("Matrix user availability could not be determined");
   }
 
   /**
