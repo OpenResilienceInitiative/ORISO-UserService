@@ -319,6 +319,54 @@ class CaseHandoverServiceTest {
     }
   }
 
+  /**
+   * #1131 acceptance: an admin picks Opt-Out and a non-default duration, saves, reloads. Both
+   * values have to survive the write-through and come back on the response the card re-reads.
+   */
+  @Test
+  void updateReasonPolicies_persistsAChangedDurationAndReturnsItOnTheSameResponse() {
+    when(caseHandoverPolicyCacheService.updateEffective(eq(7L), any()))
+        .thenAnswer(invocation -> invocation.getArgument(1));
+    TenantContext.setCurrentTenant(7L);
+    try {
+      var updated =
+          caseHandoverService.updateReasonPolicies(
+              List.of(
+                  CaseHandoverService.CaseHandoverReason.builder()
+                      .code("COUNSELLOR_ASKED_FOR_ADVICE")
+                      .label("Rat benötigt")
+                      .enabled(true)
+                      .accessAllowed(true)
+                      .clientConsent(CaseHandoverConsentMode.OPT_OUT)
+                      .clientConsentMode("SUGGESTED")
+                      .clientConsentRequired(false)
+                      .maxAccessDurationMinutes(90)
+                      .build()));
+
+      ArgumentCaptor<
+              de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                  .CaseHandoverPolicies>
+          written =
+              ArgumentCaptor.forClass(
+                  de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                      .CaseHandoverPolicies.class);
+      verify(caseHandoverPolicyCacheService).updateEffective(eq(7L), written.capture());
+      var advice = written.getValue().getReasons().get("COUNSELLOR_ASKED_FOR_ADVICE");
+      assertEquals(90, advice.getMaxAccessDurationMinutes().getValue());
+
+      var response =
+          updated.stream()
+              .filter(reason -> "COUNSELLOR_ASKED_FOR_ADVICE".equals(reason.getCode()))
+              .findFirst()
+              .orElseThrow();
+      assertEquals(90, response.getMaxAccessDurationMinutes());
+      assertEquals(CaseHandoverConsentMode.OPT_OUT, response.getClientConsent());
+      assertEquals("SUGGESTED", response.getClientConsentMode());
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
   @Test
   void updateReasonPolicies_rejectsUnknownPolicyMode() {
     TenantContext.setCurrentTenant(7L);

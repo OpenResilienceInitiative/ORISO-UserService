@@ -141,6 +141,17 @@ public class UserController implements UsersApi {
   private final @NotNull ChatOccurrenceCommandService chatOccurrenceCommandService;
   private final @NotNull GroupChatRoleService groupChatRoleService;
   private final @NotNull AuthenticatedUser authenticatedUser;
+  private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
+
+  @Override
+  public ResponseEntity<
+          java.util.List<de.caritas.cob.userservice.api.adapters.web.dto.GuestIdentitySuggestion>>
+      suggestGuestIdentities(
+          de.caritas.cob.userservice.api.adapters.web.dto.GuestIdentitySuggestionRequest
+              guestIdentitySuggestionRequest) {
+    return identitySuggestionControllerDelegate.suggestGuestIdentities(
+        guestIdentitySuggestionRequest);
+  }
 
   @Override
   public ResponseEntity<Void> userExists(String username) {

@@ -188,6 +188,10 @@ public class SecurityConfig {
                     "/swagger-ui.html",
                     "/webjars/**")
                 .permitAll()
+                .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
+                .permitAll()
+                .requestMatchers(HttpMethod.POST, "/users/identity-suggestions")
+                .permitAll()
                 // This cluster-internal endpoint authenticates with its own dedicated shared
                 // secret because the MatrixRTC gateway is not a Keycloak user. The controller
                 // rejects a missing or invalid secret in constant time.

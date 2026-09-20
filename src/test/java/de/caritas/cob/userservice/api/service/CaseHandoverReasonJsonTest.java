@@ -66,6 +66,37 @@ class CaseHandoverReasonJsonTest {
     assertNull(reasons.get(2).getClientConsent());
   }
 
+  /**
+   * The Admin re-sends the whole list it last read, so every reason still carries the {@code
+   * clientConsentMode} string from the previous GET — positioned after {@code clientConsent},
+   * because that is the DTO's field order. The freshly chosen policy object must win over that
+   * stale echo; otherwise switching a reason to "enforced" saves as "suggested".
+   */
+  @Test
+  void typedPolicyModeWinsOverTheStaleModeEchoedBackByTheAdmin() {
+    String adminPayload =
+        "{\"code\":\"COUNSELLOR_ASKED_FOR_ADVICE\",\"label\":\"x\","
+            + "\"clientConsent\":{\"value\":\"OPT_OUT\",\"mode\":\"ENFORCED\"},"
+            + "\"clientConsentMode\":\"SUGGESTED\",\"clientConsentRequired\":false}";
+
+    CaseHandoverReason reason = MAPPER.readValue(adminPayload, CaseHandoverReason.class);
+
+    assertEquals(CaseHandoverConsentMode.OPT_OUT, reason.getClientConsent());
+    assertEquals("ENFORCED", reason.getClientConsentMode());
+  }
+
+  @Test
+  void bareConsentStringStillTakesTheSeparatelySentMode() {
+    String payload =
+        "{\"code\":\"COUNSELLOR_ON_HOLIDAY\",\"label\":\"x\",\"clientConsent\":\"NONE\","
+            + "\"clientConsentMode\":\"ENFORCED\"}";
+
+    CaseHandoverReason reason = MAPPER.readValue(payload, CaseHandoverReason.class);
+
+    assertEquals(CaseHandoverConsentMode.NONE, reason.getClientConsent());
+    assertEquals("ENFORCED", reason.getClientConsentMode());
+  }
+
   @Test
   void rejectsUnknownConsentValue() {
     String payload = "{\"code\":\"A\",\"label\":\"a\",\"clientConsent\":{\"value\":\"MAYBE\"}}";

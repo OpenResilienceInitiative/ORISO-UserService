@@ -8,6 +8,12 @@ public interface MatrixUserClient {
   String createUserId(String username, String password, String displayName)
       throws MatrixCreateUserException;
 
+  /**
+   * Returns true for an existing account and false only for confirmed absence. Implementations must
+   * fail when availability cannot be determined.
+   */
+  boolean userExistsStrict(String username);
+
   boolean updateUserDisplayName(String matrixUserId, String displayName);
 
   /**
