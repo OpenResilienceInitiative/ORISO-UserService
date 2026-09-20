@@ -256,19 +256,9 @@ public class MatrixSynapseService implements MatrixUserClient {
   }
 
   /**
-   * The full Matrix user id for a localpart the homeserver holds a <em>usable</em> account for, or
-   * {@code null}.
-   *
-   * <p>Reconciliation path for #1194: after a repair created the account and failed to persist the
-   * id, {@code createUser} can only answer {@code M_USER_IN_USE}. This answers what that account
-   * is, so the next attempt can adopt it.
-   *
-   * <p>Deliberately stricter than {@link #userExists}: Synapse answers 200 for a
-   * <em>deactivated</em> user, so "the homeserver knows this localpart" and "this account can be
-   * used" are different questions. Occupancy checks want the first; adoption wants the second,
-   * because attaching a deactivated id produces a consultant that reads PROVISIONED here and is
-   * refused by the homeserver — the exact state the repair exists to remove. Answering that
-   * question here rather than at each caller keeps one authority over what a usable account is.
+   * The full Matrix user id for a localpart with a <em>usable</em> account, or {@code null}.
+   * Stricter than {@link #userExists}, which answers 200 for a deactivated user too: occupancy
+   * checks want that one, adoption wants this.
    */
   @Override
   public String findUserId(String localpart) {
@@ -291,9 +281,8 @@ public class MatrixSynapseService implements MatrixUserClient {
   }
 
   /**
-   * The Synapse admin view of one user, or empty when the homeserver does not have it and when the
-   * lookup could not be performed. Never throws: callers treat empty as "no usable account", which
-   * is the safe answer for both.
+   * The Synapse admin view of one user, or empty when the homeserver does not have it or the lookup
+   * failed. Never throws: empty means "no usable account", which is safe for both cases.
    */
   private java.util.Optional<java.util.Map<String, Object>> readAdminUser(String matrixUserId) {
     try {

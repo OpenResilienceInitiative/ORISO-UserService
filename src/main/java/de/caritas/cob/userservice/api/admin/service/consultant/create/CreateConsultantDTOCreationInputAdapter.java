@@ -48,12 +48,9 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   }
 
   /**
-   * Whether the created counsellor must set up a second factor before using the account.
-   *
-   * <p>Always true on this path. Everything reaching this adapter was provisioned through the admin
-   * API: an administrator chooses the initial password and passes it to the counsellor out of band,
-   * so that password is not a secret only the counsellor holds. A second factor is what makes the
-   * account theirs again (ORISO-Admin#955, ORISO-Frontend#1402).
+   * Whether the created counsellor must set up a second factor. Always true here: an administrator
+   * chooses the initial password and passes it out of band, so it is not a secret only the
+   * counsellor holds.
    */
   @Override
   public boolean isTwoFactorRequired() {
@@ -61,11 +58,8 @@ public class CreateConsultantDTOCreationInputAdapter implements ConsultantCreati
   }
 
   /**
-   * Whether the created counsellor must replace their password before using the account.
-   *
-   * <p>Always true on this path, for the same reason as the second factor: the password in this
-   * payload was typed by an administrator and reaches the counsellor over some other channel. A
-   * second factor protects the account; only replacing the password makes it theirs.
+   * Whether the created counsellor must replace their password. Always true here, for the same
+   * reason as the second factor: the password was typed by an administrator.
    */
   @Override
   public boolean isPasswordChangeRequired() {

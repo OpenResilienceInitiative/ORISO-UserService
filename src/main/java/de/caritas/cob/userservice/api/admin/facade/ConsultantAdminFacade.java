@@ -161,11 +161,8 @@ public class ConsultantAdminFacade {
   }
 
   /**
-   * Completes the chat (Matrix) provisioning of a consultant that was created while the chat server
-   * was unreachable (#1194).
-   *
-   * <p>Idempotent: a consultant that already owns a chat identity is returned untouched, so an
-   * administrator can repeat the call without risk.
+   * Completes the chat (Matrix) provisioning of a consultant created while the chat server was
+   * unreachable. Idempotent: one that already owns a chat identity is returned untouched.
    *
    * @param consultantId the id of the consultant to repair
    * @return the consultant as it now stands, including its {@code chatIdentityStatus}

@@ -132,18 +132,8 @@ public class CounsellorInviteProvisioningService {
 
   /**
    * Undoes the two create-path defaults that only hold when an administrator chose the credentials.
-   *
-   * <p>{@code CreateConsultantDTOCreationInputAdapter} marks every admin-provisioned counsellor as
-   * owing a second factor and owing a password change, which is right when an administrator picks
-   * the password and hands it over. Neither holds on an invite.
-   *
-   * <p>The second factor: the invite already tracks the requirement — including {@code WAIVED},
-   * which is an administrator deliberately excusing this person. Without this the waiver would be
-   * granted and then silently ignored at first login.
-   *
-   * <p>The password: the counsellor typed it themselves seconds ago and nobody else has ever seen
-   * it. Demanding a replacement puts a screen they cannot dismiss in front of a secret that is
-   * already only theirs.
+   * The invite already tracks the second-factor requirement, including {@code WAIVED}, and the
+   * counsellor typed their own password seconds ago.
    */
   private void alignRequirementsWithInvite(String consultantId, AccountInvite invite) {
     var stillOwed = !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());

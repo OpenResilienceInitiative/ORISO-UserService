@@ -11,14 +11,10 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * The only MariaDB writes of the chat-identity repair, each in a transaction of its own.
- *
- * <p>This exists so the Synapse call can sit <em>outside</em> any database transaction (#1194).
- * Provisioning from inside one is the defect the repair was written to cure: Matrix succeeds, the
- * commit then fails, and the rollback leaves an orphaned chat account behind that no later attempt
- * can turn into a repaired consultant. It is a separate bean rather than a method on the service
- * because Spring's transaction proxy does not intercept self-invocation, so {@code REQUIRES_NEW} on
- * a sibling method of the same class would silently do nothing.
+ * The only MariaDB writes of the chat-identity repair, each in a transaction of its own, so the
+ * Synapse call can sit <em>outside</em> any transaction. A separate bean rather than a method on
+ * the service because Spring's proxy does not intercept self-invocation, so {@code REQUIRES_NEW} on
+ * a sibling method would silently do nothing.
  */
 @Component
 @RequiredArgsConstructor
@@ -39,11 +35,9 @@ public class ConsultantChatIdentityWriter {
   }
 
   /**
-   * Stores a provisioned chat identity, in a transaction that contains nothing else.
-   *
-   * <p>Write-side idempotence: the consultant is re-read inside this transaction and an identity
-   * that appeared meanwhile is kept, so two repairs racing each other cannot overwrite one another
-   * and the second is a no-op rather than a second truth.
+   * Stores a provisioned chat identity, in a transaction that contains nothing else. The consultant
+   * is re-read inside it and an identity that appeared meanwhile is kept, so two racing repairs
+   * cannot overwrite one another.
    *
    * @param consultantId the consultant to complete
    * @param matrixUserId the provisioned chat identity

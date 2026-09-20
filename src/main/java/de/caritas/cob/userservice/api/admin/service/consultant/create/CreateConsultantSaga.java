@@ -275,11 +275,8 @@ public class CreateConsultantSaga {
             keycloakUserId);
       }
     } catch (Exception e) {
-      // Deliberately not fatal: the integration and E2E suites run without a Synapse at all,
-      // and refusing creation during a chat outage would stop counsellor onboarding. The
-      // consultant is persisted without a chat identity, the response reports
-      // chatIdentityStatus = MISSING, the data-integrity report lists the record, and
-      // POST /useradmin/consultants/{id}/chat-identity repairs it.
+      // Not fatal: a chat outage must not stop onboarding. The consultant is stored with
+      // chatIdentityStatus = MISSING and repaired via POST .../consultants/{id}/chat-identity.
       log.error(
           "Chat account provisioning failed for consultant {}; continuing without a chat identity."
               + " The consultant cannot be used for counselling until it is repaired via POST"

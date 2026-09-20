@@ -276,11 +276,9 @@ class UserAccountControllerDelegate {
   }
 
   /**
-   * Opens the account-setup gate once the counsellor's password is their own.
-   *
-   * <p>Only reached after the change actually succeeded, so a failed attempt leaves the requirement
-   * standing. Accounts without a consultant row (askers, admins) have nothing to clear, which is
-   * not an error, and an account that owed nothing is not written to.
+   * Opens the account-setup gate once the counsellor's password is their own. Only reached after a
+   * successful change, so a failed attempt leaves the requirement standing. Accounts without a
+   * consultant row have nothing to clear, which is not an error.
    */
   private void clearPasswordChangeRequirement(String userId) {
     consultantService

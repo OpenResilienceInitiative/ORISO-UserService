@@ -130,12 +130,11 @@ public class UserAdminController implements UseradminApi {
   }
 
   /**
-   * Completes the chat (Matrix) provisioning of a consultant that was created while the chat server
-   * was unreachable (#1194).
+   * Completes the chat (Matrix) provisioning of a consultant created while the chat server was
+   * unreachable.
    *
-   * <p>Idempotent: a consultant that already owns a chat identity is answered with {@code 200} and
-   * an unchanged record, so an administrator may repeat the call. A chat server that is still down
-   * answers {@code 424} and leaves the consultant untouched.
+   * <p>Idempotent: a consultant that already owns a chat identity is answered {@code 200} and left
+   * unchanged. A chat server that is still down answers {@code 424}.
    *
    * @param consultantId the id of the consultant to repair (required)
    * @return {@link ConsultantAdminResponseDTO} carrying the resulting {@code chatIdentityStatus}

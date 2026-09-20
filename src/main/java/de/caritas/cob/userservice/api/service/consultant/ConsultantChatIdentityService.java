@@ -22,14 +22,8 @@ import org.springframework.stereotype.Service;
 
 /**
  * Everything about the chat (Matrix) identity of an <em>existing</em> consultant: whether it is
- * there, who is missing one, and how to complete it afterwards.
- *
- * <p>Why this exists (#1194): {@code CreateConsultantSaga} deliberately keeps creating a consultant
- * when the chat server cannot be reached — the integration and E2E suites run without a Synapse at
- * all, and refusing creation during a chat outage would stop counsellor onboarding. The cost of
- * that carried decision is a record that looks complete and is refused by every counselling room
- * operation. This service is the other half of the bargain: the state is findable and it can be
- * repaired without a database session.
+ * there, who is missing one, and how to complete it afterwards. Creation deliberately succeeds
+ * without one when the chat server is unreachable; this is the other half of that bargain.
  */
 @Service
 @RequiredArgsConstructor
@@ -58,11 +52,7 @@ public class ConsultantChatIdentityService {
 
   /**
    * The message every caller that has to refuse a consultant without a chat identity should use.
-   *
-   * <p>#1194: the four facades that need one used to say "does not have Matrix credentials", which
-   * reads like a misconfigured account. It is not: the account was created while the chat server
-   * was unreachable, and there is a repair for it. Naming both turns an unexplained 4xx/5xx into
-   * something an administrator can act on.
+   * Names the cause and the repair, so an administrator can act on it.
    *
    * @param who what the consultant is in this operation, e.g. "Consultant" or "Supervisor"
    * @param consultantId the id of the consultant that owns no chat identity
@@ -88,10 +78,8 @@ public class ConsultantChatIdentityService {
   /**
    * Completes the chat provisioning of an existing consultant.
    *
-   * <p>Idempotent by construction: a consultant that already owns a chat identity is returned
-   * unchanged and the chat server is not called at all, so repeating the call cannot create a
-   * second account or overwrite a working one. A failure leaves the record exactly as it was, which
-   * is what makes a later retry safe.
+   * <p>Idempotent: a consultant that already owns a chat identity is returned unchanged and the
+   * chat server is not called. A failure leaves the record exactly as it was.
    *
    * @param consultantId the id of the consultant to repair
    * @return the consultant, now owning a chat identity
@@ -119,11 +107,8 @@ public class ConsultantChatIdentityService {
       log.info("Repaired the chat identity of consultant {}", repaired.getId());
       return repaired;
     } catch (Exception e) {
-      // Compensation is not deletion here: the chat account is valid and correct, only unreferenced
-      // for the moment. Destroying it would throw away the counsellor's future room membership for
-      // a transient database fault. The reconciliation is the retry, which adopts this very
-      // account through provisionOrAdopt instead of trying to mint it again - that is what keeps
-      // this interleaving recoverable rather than terminal.
+      // Not deletion: the chat account is valid, only unreferenced. The retry adopts it through
+      // provisionOrAdopt rather than minting it again.
       log.error(
           "Chat identity for consultant {} was provisioned but could not be stored. The chat"
               + " account exists and is unreferenced; repeat the repair and it will be adopted"
@@ -142,11 +127,9 @@ public class ConsultantChatIdentityService {
   }
 
   /**
-   * Mints the chat account, or adopts the one a previous attempt left behind.
-   *
-   * <p>The homeserver refuses to mint the same localpart twice, so without this a single failed
-   * write after a successful provisioning would make the consultant permanently unrepairable - the
-   * repair tool would manufacture exactly the state it exists to remove.
+   * Mints the chat account, or adopts the one a previous attempt left behind. The homeserver
+   * refuses to mint the same localpart twice, so without this a failed write would leave the
+   * consultant permanently unrepairable.
    */
   private String provisionOrAdopt(Consultant consultant) {
     var localpart = usernameTranscoder.decodeUsername(consultant.getUsername());
@@ -182,9 +165,7 @@ public class ConsultantChatIdentityService {
           lookupFailure);
     }
     if (isBlank(existing)) {
-      // Also the answer for an account the homeserver has deactivated: MatrixUserClient refuses to
-      // offer one for adoption, because attaching it would show PROVISIONED here and be refused by
-      // the homeserver — the state this repair exists to remove, manufactured by the repair.
+      // Also covers a deactivated account: MatrixUserClient does not offer one for adoption.
       throw chatServerFailed(cause, consultant);
     }
     assertNotHeldByAnotherConsultant(existing, consultant);
@@ -196,13 +177,9 @@ public class ConsultantChatIdentityService {
   }
 
   /**
-   * Adoption keys on the localpart, which is not unique over time: this table's uniqueness is by
-   * username among non-deleted rows, so a soft-deleted consultant frees their username while still
-   * owning the chat account behind it. Whoever takes that username next would otherwise inherit
-   * their rooms and their counselling history, and the two rows would share one {@code
-   * matrixUserId} — which is what makes {@code findByMatrixUserIdAndDeleteDateIsNull} throw
-   * afterwards. Refusing is the only safe answer: an administrator has to decide which account the
-   * chat identity belongs to.
+   * Adoption keys on the localpart, which is not unique over time: a soft-deleted consultant frees
+   * their username while still owning the chat account. Refusing is the only safe answer — an
+   * administrator has to decide which account the identity belongs to.
    */
   private void assertNotHeldByAnotherConsultant(String matrixUserId, Consultant consultant) {
     var heldByAnother =

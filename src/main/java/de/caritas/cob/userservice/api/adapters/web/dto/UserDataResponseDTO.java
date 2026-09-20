@@ -94,9 +94,8 @@ public class UserDataResponseDTO {
   @JsonIgnore private Boolean twoFactorRequired;
 
   /**
-   * The account still carries the password its administrator chose. Unlike the second-factor
-   * requirement this travels as a field of its own: it is a fact about the password, not about a
-   * factor.
+   * The account still carries the password its administrator chose. Travels as its own field: it is
+   * a fact about the password, not about a factor.
    */
   private Boolean passwordChangeRequired;
 

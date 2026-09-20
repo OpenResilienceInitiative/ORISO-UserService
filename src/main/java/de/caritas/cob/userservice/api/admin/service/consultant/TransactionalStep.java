@@ -5,9 +5,8 @@ public enum TransactionalStep {
   CREATE_CONSULTANT_IN_MARIADB,
 
   /**
-   * Chat (Matrix) account provisioning. Consultant creation deliberately does <em>not</em> roll
-   * back on this step (#1194); it names the failed step of the separate repair path, {@code
-   * ConsultantChatIdentityService#provisionMissingChatIdentity}.
+   * Chat (Matrix) account provisioning. Creation does <em>not</em> roll back on this step; it names
+   * the failed step of the repair path.
    */
   CREATE_ACCOUNT_IN_MATRIX,
 

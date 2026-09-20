@@ -59,16 +59,9 @@ public class UserDtoMapper {
     }
 
     twoFactorAuthDTO.setIsToEncourage(userData.getEncourage2fa());
-    // Fails closed only where the requirement is known: a null (asker, or a consultant row
-    // predating the column) is "not required", not "blocked".
-    //
-    // Gated on the OTP role policy for the same reason UserAccountControllerDelegate gates
-    // encourage2fa for platform admins: announcing a requirement that enrolment refuses is a
-    // permanent lockout, not a nudge. The client shows a gate it cannot dismiss while every
-    // setup endpoint answers 409 (assertTwoFactorAuthAllowed in
-    // UserTwoFactorAuthControllerDelegate), so the person can never satisfy what they are being
-    // asked for. The stored requirement stays stored: turning the policy on later makes it
-    // effective, which is why the gate sits here and not on the write.
+    // Null (asker, or a row predating the column) is "not required", not "blocked". Gated on the
+    // OTP role policy: announcing a requirement that enrolment answers with 409 is a permanent
+    // lockout. The stored requirement is untouched, so enabling the policy later takes effect.
     twoFactorAuthDTO.setIsRequired(
         Boolean.TRUE.equals(userData.getTwoFactorRequired())
             && identityPolicy.isTwoFactorAuthenticationAllowed(userData.getUserRoles()));

@@ -194,11 +194,8 @@ public class GrantConsultantIdentityService {
             .teamConsultant(false)
             .matrixUserId(matrixUserId)
             .encourage2fa(true)
-            // The admin create path marks every counsellor it provisions as owing a second
-            // factor (CreateConsultantDTOCreationInputAdapter). This path grants the same role
-            // over the same kind of account, so it owes the same. passwordChangeRequired stays
-            // at its default here on purpose: no new password is chosen, so there is nothing to
-            // replace.
+            // Same kind of account as the admin create path, so it owes the same second factor.
+            // passwordChangeRequired stays false: no new password is chosen here.
             .twoFactorRequired(true)
             .magicLinkLoginEnabled(false)
             .notifyEnquiriesRepeating(true)
