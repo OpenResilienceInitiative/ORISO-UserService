@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -690,6 +692,62 @@ class MatrixSynapseServiceTest {
         (MatrixPasswordUpdateRequestDTO) updateCaptor.getAllValues().get(1).getBody();
     assertThat(passwordUpdate.getPassword()).isEqualTo("new-secret");
     assertThat(passwordUpdate.isLogoutDevices()).isFalse();
+  }
+
+  @Test
+  void createUserIdWithoutReactivation_refusesAReservedLocalpartInsteadOfReactivatingIt() {
+    // The repair path mints for a consultant that already exists in MariaDB. A localpart is
+    // unique only at a point in time: a soft-deleted colleague frees their username while the
+    // homeserver still holds their deactivated account. Reactivating it here would attach that
+    // colleague's rooms and history to somebody else.
+    var adminUser =
+        URI.create(
+            "https://matrix.example.com/_synapse/admin/v2/users/%40newuser%3Amatrix.example.com");
+    matrixConfig.setServerName("matrix.example.com");
+    matrixConfig.setAdminUsername("admin");
+    matrixConfig.setAdminPassword("admin-password");
+    // Lenient, because the assertion is that none of this traffic happens. Stub it anyway: without
+    // it the refusal would prove nothing, since reactivateDeletedUser already gives up on a
+    // missing admin token long before the PUT.
+    lenient()
+        .when(
+            restTemplate.postForEntity(
+                eq("https://matrix.example.com/_matrix/client/r0/login"),
+                any(HttpEntity.class),
+                eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", ADMIN_TOKEN)));
+    lenient()
+        .when(
+            restTemplate.exchange(
+                eq(adminUser), eq(HttpMethod.GET), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("deactivated", true)));
+    lenient()
+        .when(
+            restTemplate.exchange(
+                eq(adminUser), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of()));
+    when(restTemplate.getForEntity(REGISTER_URL, String.class))
+        .thenReturn(ResponseEntity.ok("{\"nonce\":\"nonce-abc\"}"));
+    when(restTemplate.postForEntity(
+            eq(REGISTER_URL), any(HttpEntity.class), eq(MatrixCreateUserResponseDTO.class)))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.BAD_REQUEST,
+                "Bad Request",
+                null,
+                "{\"errcode\":\"M_USER_IN_USE\",\"error\":\"User ID already taken.\"}"
+                    .getBytes(StandardCharsets.UTF_8),
+                StandardCharsets.UTF_8));
+
+    assertThatThrownBy(
+            () ->
+                matrixSynapseService()
+                    .createUserIdWithoutReactivation("newuser", "new-secret", "New User"))
+        .isInstanceOf(MatrixCreateUserException.class);
+
+    // No admin PUT at all: neither the reactivation nor the password reset that follows it.
+    verify(restTemplate, never())
+        .exchange(any(URI.class), eq(HttpMethod.PUT), any(HttpEntity.class), eq(Map.class));
   }
 
   @Test

@@ -99,7 +99,7 @@ class ConsultantChatIdentityServiceTest {
     when(consultantChatIdentityWriter.find(CONSULTANT_ID))
         .thenReturn(Optional.of(incompleteConsultant));
     when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
-    when(matrixUserClient.createUserId(anyString(), anyString(), any()))
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenReturn("@anna.beispiel:matrix.local");
     when(consultantChatIdentityWriter.attachChatIdentity(eq(CONSULTANT_ID), anyString()))
         .thenAnswer(
@@ -112,7 +112,8 @@ class ConsultantChatIdentityServiceTest {
 
     assertThat(repaired.getMatrixUserId()).isEqualTo("@anna.beispiel:matrix.local");
     verify(matrixUserClient)
-        .createUserId(eq("anna.beispiel"), eq("s3cret-Pass!"), eq("Anna Beispiel"));
+        .createUserIdWithoutReactivation(
+            eq("anna.beispiel"), eq("s3cret-Pass!"), eq("Anna Beispiel"));
     var saved = ArgumentCaptor.forClass(String.class);
     verify(consultantChatIdentityWriter).attachChatIdentity(eq(CONSULTANT_ID), saved.capture());
     assertThat(saved.getValue()).isEqualTo("@anna.beispiel:matrix.local");
@@ -136,7 +137,7 @@ class ConsultantChatIdentityServiceTest {
     when(consultantChatIdentityWriter.find(CONSULTANT_ID))
         .thenReturn(Optional.of(incompleteConsultant));
     when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
-    when(matrixUserClient.createUserId(anyString(), anyString(), any()))
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenReturn("@anna.beispiel:matrix.local");
     when(consultantChatIdentityWriter.attachChatIdentity(eq(CONSULTANT_ID), anyString()))
         .thenAnswer(
@@ -149,7 +150,8 @@ class ConsultantChatIdentityServiceTest {
     var second = consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID);
 
     assertThat(second.getMatrixUserId()).isEqualTo("@anna.beispiel:matrix.local");
-    verify(matrixUserClient, times(1)).createUserId(anyString(), anyString(), any());
+    verify(matrixUserClient, times(1))
+        .createUserIdWithoutReactivation(anyString(), anyString(), any());
     verify(consultantChatIdentityWriter, times(1)).attachChatIdentity(anyString(), anyString());
   }
 
@@ -159,7 +161,7 @@ class ConsultantChatIdentityServiceTest {
     when(consultantChatIdentityWriter.find(CONSULTANT_ID))
         .thenReturn(Optional.of(incompleteConsultant));
     when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
-    when(matrixUserClient.createUserId(anyString(), anyString(), any()))
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenThrow(new MatrixCreateUserException("Synapse is down"));
 
     assertThatThrownBy(
@@ -176,7 +178,8 @@ class ConsultantChatIdentityServiceTest {
     when(consultantChatIdentityWriter.find(CONSULTANT_ID))
         .thenReturn(Optional.of(incompleteConsultant));
     when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
-    when(matrixUserClient.createUserId(anyString(), anyString(), any())).thenReturn(null);
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
+        .thenReturn(null);
 
     assertThatThrownBy(
             () -> consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID))
@@ -200,7 +203,7 @@ class ConsultantChatIdentityServiceTest {
     when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
 
     // first attempt: Matrix provisions the account, the database write then fails
-    when(matrixUserClient.createUserId(anyString(), anyString(), any()))
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenReturn("@anna.beispiel:matrix.local");
     doThrow(new RuntimeException("commit failed"))
         .when(consultantChatIdentityWriter)
@@ -218,7 +221,7 @@ class ConsultantChatIdentityServiceTest {
     assertThat(incompleteConsultant.getMatrixUserId()).isNull();
 
     // second attempt: Matrix now refuses to mint the same user, the existing one is adopted
-    when(matrixUserClient.createUserId(anyString(), anyString(), any()))
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenThrow(new MatrixCreateUserException("Matrix user (anna.beispiel) is already active"));
     when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
     doAnswer(
@@ -240,7 +243,7 @@ class ConsultantChatIdentityServiceTest {
     when(consultantChatIdentityWriter.find(CONSULTANT_ID))
         .thenReturn(Optional.of(incompleteConsultant));
     when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
-    when(matrixUserClient.createUserId(anyString(), anyString(), any()))
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenReturn("@anna.beispiel:matrix.local");
     doThrow(new RuntimeException("commit failed"))
         .when(consultantChatIdentityWriter)
@@ -272,7 +275,7 @@ class ConsultantChatIdentityServiceTest {
     when(consultantChatIdentityWriter.find(CONSULTANT_ID))
         .thenReturn(Optional.of(incompleteConsultant));
     when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
-    when(matrixUserClient.createUserId(anyString(), anyString(), any()))
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenThrow(new MatrixCreateUserException("Matrix user is already active"));
     when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
     when(consultantRepository.findByMatrixUserId("@anna.beispiel:matrix.local"))
@@ -292,7 +295,7 @@ class ConsultantChatIdentityServiceTest {
     when(consultantChatIdentityWriter.find(CONSULTANT_ID))
         .thenReturn(Optional.of(incompleteConsultant));
     when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
-    when(matrixUserClient.createUserId(anyString(), anyString(), any()))
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenThrow(new MatrixCreateUserException("Matrix user is already active"));
     when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
     when(consultantRepository.findByMatrixUserId("@anna.beispiel:matrix.local"))
@@ -313,7 +316,7 @@ class ConsultantChatIdentityServiceTest {
     when(consultantChatIdentityWriter.find(CONSULTANT_ID))
         .thenReturn(Optional.of(incompleteConsultant));
     when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
-    when(matrixUserClient.createUserId(anyString(), anyString(), any()))
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenThrow(new MatrixCreateUserException("Synapse is down"));
     when(matrixUserClient.findUserId("anna.beispiel")).thenReturn(null);
 
@@ -380,6 +383,54 @@ class ConsultantChatIdentityServiceTest {
 
     // Guard against a vacuous pass: if nobody calls the repair any more, this test is meaningless.
     assertThat(callSites).as("call sites of provisionMissingChatIdentity").isNotEmpty();
+  }
+
+  @Test
+  void provisionMissingChatIdentity_Should_neverAskMatrixToReactivateAReservedLocalpart()
+      throws Exception {
+    // createUserId answers M_USER_IN_USE by reactivating the account behind the localpart and
+    // returning its id, without throwing. The repair would then attach it having run neither
+    // adoptExisting nor the ownership check below, so a username freed by a soft-deleted
+    // colleague would hand this consultant that colleague's rooms and history.
+    when(consultantChatIdentityWriter.find(CONSULTANT_ID))
+        .thenReturn(Optional.of(incompleteConsultant));
+    when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
+        .thenReturn("@anna.beispiel:matrix.local");
+    when(consultantRepository.findByMatrixUserId("@anna.beispiel:matrix.local"))
+        .thenReturn(List.of());
+    when(consultantChatIdentityWriter.attachChatIdentity(
+            CONSULTANT_ID, "@anna.beispiel:matrix.local"))
+        .thenReturn(incompleteConsultant);
+
+    consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID);
+
+    verify(matrixUserClient, never()).createUserId(anyString(), anyString(), any());
+  }
+
+  @Test
+  void provisionMissingChatIdentity_Should_refuse_When_theProvisionedIdIsHeldByAnotherConsultant()
+      throws Exception {
+    // The ownership check used to sit inside adoptExisting, which only the failure path reaches.
+    // Whatever produced the id, it is the id that gets attached, so it is the id that is checked.
+    var colleague = new Consultant();
+    colleague.setId("6f2e9a41-0000-4000-8000-1a2b3c4d5e6f");
+    colleague.setMatrixUserId("@anna.beispiel:matrix.local");
+
+    when(consultantChatIdentityWriter.find(CONSULTANT_ID))
+        .thenReturn(Optional.of(incompleteConsultant));
+    when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
+        .thenReturn("@anna.beispiel:matrix.local");
+    when(consultantRepository.findByMatrixUserId("@anna.beispiel:matrix.local"))
+        .thenReturn(List.of(colleague));
+
+    assertThatThrownBy(
+            () -> consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID))
+        .isInstanceOf(ConflictException.class)
+        .hasMessageContaining(CONSULTANT_ID);
+
+    verify(consultantChatIdentityWriter, never()).attachChatIdentity(anyString(), anyString());
   }
 
   @Test
