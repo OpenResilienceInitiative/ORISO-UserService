@@ -40,20 +40,13 @@ import org.springframework.web.util.UriUtils;
  * Service for Matrix Synapse functionalities.
  *
  * <p><b>No log line and no exception message in this class may carry a plain Matrix identifier.</b>
- * A Matrix localpart here is derived from a counsellor's or an advice seeker's name or e-mail, and
- * these lines leave the pod for aggregation, retention and backups. Every username, localpart, full
- * Matrix user id and display name therefore goes through {@link MatrixIdentifierRedactor#pseudonym}
- * first.
+ * Every username, localpart, Matrix user id and display name goes through {@link
+ * MatrixIdentifierRedactor#pseudonym} first; free text the class did not compose goes through
+ * {@code scrub}.
  *
- * <p>This does not cost debuggability, which is why putting the name back "just to debug this one"
- * is not an improvement: the pseudonym is stable and normalised, so every line about the same
- * person carries the same token whether the call site held the bare localpart or the full {@code
- * @local:server} id, and an operator can still follow one failed provisioning end to end. Mapping a
- * token back to a person is a deliberate act against the database, not something a log reader — or
- * a backup thief — can do.
- *
- * <p>{@code MatrixSynapseServiceIdentifierRedactionTest} reads this file and fails the build if a
- * raw identifier reappears at a logging or exception site.
+ * <p>The pseudonym is stable and normalised, so an operator can still follow one failed
+ * provisioning end to end. {@code MatrixSynapseServiceIdentifierRedactionTest} reads this file and
+ * fails the build if a raw identifier reappears.
  */
 @Slf4j
 @Service
@@ -1569,12 +1562,8 @@ public class MatrixSynapseService implements MatrixUserClient {
 
   /**
    * The Matrix {@code errcode} of a Synapse error body ({@code M_USER_IN_USE}, {@code M_FORBIDDEN},
-   * …), or {@code "unknown"}.
-   *
-   * <p>Only the code, never the body. A Matrix error body is free text written by the homeserver;
-   * whether it repeats the user id is the homeserver's choice, not ours, and a privacy guarantee
-   * that rests on a third party's wording is not a guarantee. The code is the part that tells an
-   * operator what actually happened, and it is drawn from a closed vocabulary.
+   * …), or {@code "unknown"}. Only the code, never the body: the body is free text written by the
+   * homeserver, and whether it repeats the user id is not ours to decide.
    */
   private static String errcodeOf(HttpStatusCodeException exception) {
     var matcher = MATRIX_ERRCODE.matcher(exception.getResponseBodyAsString());
