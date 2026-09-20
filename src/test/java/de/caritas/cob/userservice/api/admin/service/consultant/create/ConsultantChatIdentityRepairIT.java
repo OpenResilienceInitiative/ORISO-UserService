@@ -110,8 +110,9 @@ class ConsultantChatIdentityRepairIT {
         .extracting(c -> c.getId())
         .contains(consultantId);
 
-    // when: the chat server is back and an administrator repairs the account
-    when(matrixSynapseService.createUserId(anyString(), anyString(), any()))
+    // when: the chat server is back and an administrator repairs the account. The repair mints
+    // through the variant that refuses a reserved localpart rather than reactivating it.
+    when(matrixSynapseService.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenReturn(MATRIX_USER_ID);
     consultantChatIdentityService.provisionMissingChatIdentity(consultantId);
 
@@ -133,7 +134,9 @@ class ConsultantChatIdentityRepairIT {
     // and: repairing twice is safe - no second chat account is provisioned. Two calls in total:
     // the one the saga made while the chat server was down, and the one that repaired it.
     consultantChatIdentityService.provisionMissingChatIdentity(consultantId);
-    verify(matrixSynapseService, times(2)).createUserId(anyString(), anyString(), any());
+    verify(matrixSynapseService, times(1)).createUserId(anyString(), anyString(), any());
+    verify(matrixSynapseService, times(1))
+        .createUserIdWithoutReactivation(anyString(), anyString(), any());
     assertThat(
             consultantRepository
                 .findByIdAndDeleteDateIsNull(consultantId)
@@ -163,7 +166,7 @@ class ConsultantChatIdentityRepairIT {
         .isNull();
 
     // the homeserver already holds the account an earlier attempt created
-    when(matrixSynapseService.createUserId(anyString(), anyString(), any()))
+    when(matrixSynapseService.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenThrow(
             new de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException(
                 "Matrix user is already active"));
