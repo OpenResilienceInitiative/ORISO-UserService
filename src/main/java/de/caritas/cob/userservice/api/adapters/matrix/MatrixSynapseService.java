@@ -342,7 +342,8 @@ public class MatrixSynapseService implements MatrixUserClient {
     } catch (org.springframework.web.client.HttpClientErrorException.NotFound ex) {
       return java.util.Optional.empty();
     } catch (Exception ex) {
-      log.warn("Could not read the Matrix admin view of a user: {}", ex.getMessage());
+      log.warn(
+          "Could not read the Matrix admin view of a user: {}", redactor.scrub(ex.getMessage()));
       return java.util.Optional.empty();
     }
   }
