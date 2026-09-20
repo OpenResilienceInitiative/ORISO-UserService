@@ -556,6 +556,7 @@ class MatrixSynapseServiceTest {
         matrixLongPollRestTemplate,
         matrixRoomClient,
         matrixMediaClient,
+        REDACTOR,
         nowSupplier);
   }
 
@@ -565,7 +566,19 @@ class MatrixSynapseServiceTest {
         restTemplate,
         matrixLongPollRestTemplate,
         matrixRoomClient,
-        matrixMediaClient);
+        matrixMediaClient,
+        REDACTOR);
+  }
+
+  /**
+   * The adapter must never put a plain username in an exception message, so the assertions below
+   * name the pseudonym this redactor produces rather than the name they used to name.
+   */
+  private static final MatrixIdentifierRedactor REDACTOR =
+      MatrixIdentifierRedactor.withKey("test-secret");
+
+  private static String pseudonymOfNewUser() {
+    return REDACTOR.pseudonym("newuser");
   }
 
   // -------------------------------------------------------------------------
@@ -607,7 +620,8 @@ class MatrixSynapseServiceTest {
 
     assertThatThrownBy(() -> matrixSynapseService().createUser("newuser", "secret", "New User"))
         .isInstanceOf(MatrixCreateUserException.class)
-        .hasMessage("Could not create user (newuser) in Matrix");
+        .hasMessage("Could not create user (" + pseudonymOfNewUser() + ") in Matrix")
+        .hasMessageNotContaining("newuser");
   }
 
   @Test
@@ -627,7 +641,8 @@ class MatrixSynapseServiceTest {
 
     assertThatThrownBy(() -> matrixSynapseService().createUser("newuser", "secret", "New User"))
         .isInstanceOf(MatrixCreateUserException.class)
-        .hasMessageContaining("Could not create user (newuser) in Matrix");
+        .hasMessageContaining("Could not create user (" + pseudonymOfNewUser() + ") in Matrix")
+        .hasMessageNotContaining("newuser");
   }
 
   @Test
@@ -758,7 +773,8 @@ class MatrixSynapseServiceTest {
 
     assertThatThrownBy(() -> matrixSynapseService().createUser("newuser", "secret", "New User"))
         .isInstanceOf(MatrixCreateUserException.class)
-        .hasMessage("Could not create user (newuser) in Matrix");
+        .hasMessage("Could not create user (" + pseudonymOfNewUser() + ") in Matrix")
+        .hasMessageNotContaining("newuser");
   }
 
   // -------------------------------------------------------------------------
