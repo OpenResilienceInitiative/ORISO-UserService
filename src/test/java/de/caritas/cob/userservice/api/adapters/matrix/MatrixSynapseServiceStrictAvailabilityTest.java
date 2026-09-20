@@ -32,7 +32,9 @@ class MatrixSynapseServiceStrictAvailabilityTest {
     config.setAvailabilityAdminAccessToken("test-token");
     config.setApiUrl("https://matrix.example.com");
     config.setServerName("matrix.example.com");
-    service = new MatrixSynapseService(config, rest, rest, null, null);
+    service =
+        new MatrixSynapseService(
+            config, rest, rest, null, null, MatrixIdentifierRedactor.withKey(null));
   }
 
   @ParameterizedTest

@@ -36,7 +36,9 @@ class MatrixStrictReadOnlyHttpTest {
         .andExpect(method(HttpMethod.GET))
         .andExpect(header("Authorization", "Bearer synthetic-lookup-token"))
         .andRespond(withStatus(HttpStatus.valueOf(status)));
-    var service = new MatrixSynapseService(config, rest, rest, null, null);
+    var service =
+        new MatrixSynapseService(
+            config, rest, rest, null, null, MatrixIdentifierRedactor.withKey(null));
     if (status == 200 || status == 404) {
       assertThat(service.userExistsStrict("Otter")).isEqualTo(status == 200);
     } else {
@@ -56,7 +58,9 @@ class MatrixStrictReadOnlyHttpTest {
     config.setAdminPassword("synthetic-test-password");
     var rest = new RestTemplate();
     var server = MockRestServiceServer.createServer(rest);
-    var service = new MatrixSynapseService(config, rest, rest, null, null);
+    var service =
+        new MatrixSynapseService(
+            config, rest, rest, null, null, MatrixIdentifierRedactor.withKey(null));
 
     assertThatThrownBy(() -> service.userExistsStrict("otter"))
         .isInstanceOf(ServiceUnavailableException.class)
