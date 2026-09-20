@@ -66,6 +66,15 @@ public class GuestJoinAttempt {
   @Column(name = "candidate_ordinal")
   private Integer candidateOrdinal;
 
+  /**
+   * Every name this attempt has already found taken, separated by spaces. Bounded by {@link
+   * #MAX_CANDIDATES}, so it cannot grow: at most three names of at most thirty characters. It
+   * outlives the request that discovered them, which is the point — a later call must not hand the
+   * guest back a name that has already collided.
+   */
+  @Column(name = "tried_usernames", length = 128)
+  private String triedUsernames;
+
   @Column(
       name = "language_formal",
       nullable = false,
@@ -163,6 +172,7 @@ public class GuestJoinAttempt {
   }
 
   public void identityCollision() {
+    rememberTriedName();
     requirePhase(Phase.IDENTITY_PENDING);
     phase = Phase.IDENTITY_COLLISION;
   }
@@ -173,6 +183,7 @@ public class GuestJoinAttempt {
   }
 
   public void matrixCollision() {
+    rememberTriedName();
     requirePhase(Phase.MATRIX_PENDING);
     phase = Phase.MATRIX_COLLISION;
   }
@@ -205,6 +216,18 @@ public class GuestJoinAttempt {
     this.identityUserId = null;
     this.matrixUserId = null;
     this.phase = Phase.PREPARED;
+  }
+
+  private void rememberTriedName() {
+    var names = new java.util.LinkedHashSet<>(triedUsernames());
+    names.add(actualUsername());
+    this.triedUsernames = String.join(" ", names);
+  }
+
+  /** The names already found taken, in no particular order. */
+  public java.util.Set<String> triedUsernames() {
+    if (triedUsernames == null || triedUsernames.isBlank()) return java.util.Set.of();
+    return new java.util.LinkedHashSet<>(java.util.List.of(triedUsernames.trim().split(" +")));
   }
 
   public String ownershipMarker() {

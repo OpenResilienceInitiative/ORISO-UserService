@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- ORISO-UserService#1183: the names an attempt has already found taken, so a later
+       request cannot hand the guest back a name that has already collided. Bounded by the
+       three-candidate limit, so 128 characters cannot be exceeded. Nullable: rows written
+       before this change set have tried nothing that anyone recorded. -->
+  <changeSet id="20260920-guest-join-tried-names-1183" author="oriso">
+    <addColumn tableName="guest_join_attempt">
+      <column name="tried_usernames" type="VARCHAR(128)"/>
+    </addColumn>
+    <rollback>
+      <dropColumn tableName="guest_join_attempt" columnName="tried_usernames"/>
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

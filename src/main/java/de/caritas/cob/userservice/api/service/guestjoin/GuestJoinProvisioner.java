@@ -45,6 +45,7 @@ public class GuestJoinProvisioner {
 
   public GuestJoinAttempt provision(GuestJoinCapability capability) {
     InitialDispatch permit = null;
+    // Seeded from the attempt itself, so names a previous request already burned stay burned.
     var tried = new java.util.HashSet<String>();
     // Eight steps carry one candidate through both provider phases including independently
     // committed reconciliation before either repeated write. Each replacement starts that over,
@@ -59,7 +60,7 @@ public class GuestJoinProvisioner {
       // Report only after the outcome commits. Throwing inside advance would erase the evidence.
       if (attempt.getPhase() == Phase.IDENTITY_COLLISION
           || attempt.getPhase() == Phase.MATRIX_COLLISION) {
-        tried.add(attempt.actualUsername());
+        tried.addAll(attempt.triedUsernames());
         // A create the provider refused owns nothing, so another name may be tried at once. A
         // Matrix collision leaves an owned identity behind and must clean it up first; until that
         // is implemented it stays a conflict.

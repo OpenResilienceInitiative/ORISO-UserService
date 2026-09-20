@@ -505,6 +505,27 @@ class GuestJoinServiceTest {
     assertThat(sessions.count()).isZero();
   }
 
+  @Test
+  void theNamesAnAttemptHasTriedOutliveTheRequestThatTriedThem() {
+    // Asserted on the record rather than on a later offer on purpose: which replacement the
+    // catalogue hands back next is drawn at random, so "it did not repeat itself" would pass by
+    // luck most of the time. What the next request actually depends on is this list being there.
+    when(identity.createOnly(eq(NAME), anyString(), anyLong(), anyString()))
+        .thenThrow(new ConflictException("Selected guest name is occupied"));
+    when(authentication.login(anyString(), anyString()))
+        .thenReturn(new IdentityLogin("test-access", 300, 1800, "test-refresh"));
+
+    var joined = join();
+
+    var attempt =
+        attempts.findByKeyHash(GuestJoinCapability.parse(KEY).attemptHash()).orElseThrow();
+    assertThat(attempt.triedUsernames())
+        .as("the name that collided must never be offered to this guest again")
+        .contains(NAME);
+    assertThat(joined.userName()).isNotEqualTo(NAME);
+    assertThat(attempt.triedUsernames()).hasSizeLessThanOrEqualTo(GuestJoinAttempt.MAX_CANDIDATES);
+  }
+
   GuestJoinService.JoinResponse join() {
     return service.join("join-proof-invite", KEY, NAME, "bee.svg", true);
   }
