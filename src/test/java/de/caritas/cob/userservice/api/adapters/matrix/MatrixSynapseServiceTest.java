@@ -995,6 +995,200 @@ class MatrixSynapseServiceTest {
     assertThat(matrixSynapseService().getRoomMembers(MATRIX_ROOM_ID)).isEmpty();
   }
 
+  @Test
+  void getCallRoomMembers_successfulEmptyListIsDefinitive() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("members", List.of())));
+
+    assertThat(matrixSynapseService().getCallRoomMembers(MATRIX_ROOM_ID)).contains(List.of());
+  }
+
+  @Test
+  void getCallRoomMembers_forbiddenIsDefinitive() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(new HttpClientErrorException(HttpStatus.FORBIDDEN));
+
+    assertThat(matrixSynapseService().getCallRoomMembers(MATRIX_ROOM_ID)).isEmpty();
+  }
+
+  @Test
+  void getCallRoomMembers_serviceUnavailableIsRetryable() {
+    stubAdminLogin();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE));
+
+    assertThatThrownBy(() -> matrixSynapseService().getCallRoomMembers(MATRIX_ROOM_ID))
+        .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
+  }
+
+  @Test
+  void getCallRoomBinding_forbiddenIsDefinitive() {
+    stubCallBindingPrerequisites(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(
+                uri -> uri.toString().contains("/state/org.oriso.call.binding")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<Map<String, Object>>>any()))
+        .thenThrow(new HttpClientErrorException(HttpStatus.FORBIDDEN));
+
+    assertThat(matrixSynapseService().getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID)).isEmpty();
+  }
+
+  @Test
+  void getCallRoomBinding_unauthorizedFreshTokenIsRetryable() {
+    stubCallBindingPrerequisites(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(
+                uri -> uri.toString().contains("/state/org.oriso.call.binding")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<Map<String, Object>>>any()))
+        .thenThrow(new HttpClientErrorException(HttpStatus.UNAUTHORIZED));
+
+    assertThatThrownBy(
+            () -> matrixSynapseService().getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID))
+        .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
+  }
+
+  @Test
+  void getCallRoomBinding_unauthorizedImpersonationRefreshesAdminAuthenticationOnRetry() {
+    matrixConfig.setApiUrl(MATRIX_BASE_URL);
+    matrixConfig.setAdminUsername("admin");
+    matrixConfig.setAdminPassword("admin-password");
+    String staleAdminToken = "stale-admin-token";
+    String freshAdminToken = "fresh-admin-token";
+    when(restTemplate.postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", staleAdminToken)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", freshAdminToken)));
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("members", List.of(MATRIX_USER_ID))));
+
+    URI impersonationUri =
+        URI.create(
+            MATRIX_BASE_URL
+                + "/_synapse/admin/v1/users/"
+                + UriUtils.encode(MATRIX_USER_ID, StandardCharsets.UTF_8)
+                + "/login");
+    when(restTemplate.postForEntity(eq(impersonationUri), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(new HttpClientErrorException(HttpStatus.UNAUTHORIZED))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_USER_TOKEN)));
+
+    Map<String, Object> binding = Map.of("call_id", "call-401", "source_room_id", MATRIX_ROOM_ID);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(
+                uri -> uri.toString().contains("/state/org.oriso.call.binding")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<Map<String, Object>>>any()))
+        .thenReturn(ResponseEntity.ok(binding));
+
+    var service = matrixSynapseService();
+
+    assertThatThrownBy(() -> service.getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID))
+        .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
+    assertThat(service.getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID)).contains(binding);
+
+    var impersonationRequest = ArgumentCaptor.forClass(HttpEntity.class);
+    verify(restTemplate, times(2))
+        .postForEntity(eq(impersonationUri), impersonationRequest.capture(), eq(Map.class));
+    assertThat(impersonationRequest.getAllValues())
+        .extracting(request -> request.getHeaders().getFirst("Authorization"))
+        .containsExactly("Bearer " + staleAdminToken, "Bearer " + freshAdminToken);
+    verify(restTemplate, times(2))
+        .postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class));
+  }
+
+  @Test
+  void getCallRoomBinding_permanentImpersonationFailuresAreDefinitive() {
+    stubAdminPasswordLoginOnly();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("members", List.of(MATRIX_USER_ID))));
+    URI impersonationUri =
+        URI.create(
+            MATRIX_BASE_URL
+                + "/_synapse/admin/v1/users/"
+                + UriUtils.encode(MATRIX_USER_ID, StandardCharsets.UTF_8)
+                + "/login");
+    when(restTemplate.postForEntity(eq(impersonationUri), any(HttpEntity.class), eq(Map.class)))
+        .thenThrow(new HttpClientErrorException(HttpStatus.FORBIDDEN))
+        .thenThrow(new HttpClientErrorException(HttpStatus.NOT_FOUND))
+        .thenThrow(new HttpClientErrorException(HttpStatus.BAD_REQUEST));
+
+    var service = matrixSynapseService();
+
+    assertThat(service.getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID)).isEmpty();
+    assertThat(service.getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID)).isEmpty();
+    assertThat(service.getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID)).isEmpty();
+    verify(restTemplate)
+        .postForEntity(
+            eq(MATRIX_BASE_URL + "/_matrix/client/r0/login"), any(HttpEntity.class), eq(Map.class));
+  }
+
+  @Test
+  void getCallRoomBinding_serviceUnavailableIsRetryable() {
+    stubCallBindingPrerequisites(MATRIX_USER_ID);
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(
+                uri -> uri.toString().contains("/state/org.oriso.call.binding")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            org.mockito.ArgumentMatchers
+                .<org.springframework.core.ParameterizedTypeReference<Map<String, Object>>>any()))
+        .thenThrow(new HttpServerErrorException(HttpStatus.SERVICE_UNAVAILABLE));
+
+    assertThatThrownBy(
+            () -> matrixSynapseService().getCallRoomBinding(MATRIX_ROOM_ID, MATRIX_USER_ID))
+        .isInstanceOf(MatrixSynapseService.CallLookupUnavailableException.class);
+  }
+
+  private void stubCallBindingPrerequisites(String memberMatrixId) {
+    stubAdminPasswordLoginOnly();
+    when(restTemplate.exchange(
+            org.mockito.ArgumentMatchers.argThat(uri -> uri.toString().contains("/members")),
+            eq(HttpMethod.GET),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("members", List.of(memberMatrixId))));
+    when(restTemplate.postForEntity(
+            eq(
+                URI.create(
+                    MATRIX_BASE_URL
+                        + "/_synapse/admin/v1/users/"
+                        + UriUtils.encode(memberMatrixId, StandardCharsets.UTF_8)
+                        + "/login")),
+            any(HttpEntity.class),
+            eq(Map.class)))
+        .thenReturn(ResponseEntity.ok(Map.of("access_token", MATRIX_USER_TOKEN)));
+  }
+
   // -------------------------------------------------------------------------
   // sendMessage
   // -------------------------------------------------------------------------
