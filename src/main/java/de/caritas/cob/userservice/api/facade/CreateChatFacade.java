@@ -132,7 +132,7 @@ public class CreateChatFacade {
     //
     // An internal team chat has no occurrence to open. It is a persistent room for colleagues,
     // so there is nothing to wait for and nobody to open it for — creating it inactive sent
-    // counsellors into the askers' Waiting Area, countdown and all (#979). It is open on
+    // counsellors into the askers' Waiting Area, countdown and all. It is open on
     // creation.
     chat.setActive(ConversationType.INTERNAL_GROUP.equals(chat.getConversationType()));
     chat = chatService.saveChat(chat);

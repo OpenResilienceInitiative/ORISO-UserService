@@ -108,7 +108,7 @@ class UserAccountControllerDelegate {
       enrichConsultantAvailability(partialUserData);
     } else if (isTenantAdmin() || isAgencyAdmin()) {
       // A Beratungsstellen-Admin needs their assigned agencies so the Admin UI can land them on
-      // their own agency (ORISO-UserService#1101). The tenant-admin branch stays Keycloak-only.
+      // their own agency. The tenant-admin branch stays Keycloak-only.
       partialUserData =
           isTenantAdmin()
               ? keycloakUserDataProvider.retrieveAuthenticatedUserData()

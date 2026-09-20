@@ -194,7 +194,7 @@ class CounsellorInviteProvisioningServiceTest {
 
   @Test
   void newAgencyRegistrationMakesTheInviteeTheAgencyAdmin() {
-    // ORISO-Admin#998: the invitee just created this Beratungsstelle, so they administrate it.
+    // The invitee just created this Beratungsstelle, so they administrate it.
     AccountInvite invite = activeCounsellorInvite();
     when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))

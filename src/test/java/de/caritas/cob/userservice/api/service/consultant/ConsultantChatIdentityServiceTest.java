@@ -327,7 +327,7 @@ class ConsultantChatIdentityServiceTest {
   @Test
   void provisionMissingChatIdentity_Should_neverCallMatrixInsideADatabaseTransaction() {
     // The repair must not be @Transactional: a Synapse call inside a database transaction is
-    // exactly the defect this service exists to avoid (#1194 / CodeRabbit).
+    // exactly the defect this service exists to avoid.
     var method =
         java.util.Arrays.stream(ConsultantChatIdentityService.class.getDeclaredMethods())
             .filter(m -> m.getName().equals("provisionMissingChatIdentity"))

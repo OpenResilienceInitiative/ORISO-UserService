@@ -490,7 +490,7 @@ class ConsultantAdminFacadeTest {
 
   @Test
   void setConsultantAgencies_Should_notCreateAnything_When_ADeletionIsRejected() {
-    // Issue #939: the deletion leg runs first. When it is rejected (last consultant of a still
+    // The deletion leg runs first. When it is rejected (last consultant of a still
     // active agency), no relation may be created either - a half-applied agency set makes the
     // following consultant update validate topics against agencies the admin did not select.
     when(consultantAgencyAdminService.findConsultantAgencyIds("consultantId"))

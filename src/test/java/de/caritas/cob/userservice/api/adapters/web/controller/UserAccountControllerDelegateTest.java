@@ -456,7 +456,7 @@ class UserAccountControllerDelegateTest {
   @Test
   void getUserData_agencyAdminPath_returnsKeycloakUserDataWithAssignedAgencies() {
     // Agency admins load profile data from Keycloak plus their admin_agency assignments
-    // (ORISO-UserService#1101), never from consultant tables.
+    // never from consultant tables.
     var roles = Set.of(UserRole.AGENCY_ADMIN.getValue());
     var partialUserData = new UserDataResponseDTO();
     var fullUserData = new UserDataResponseDTO();

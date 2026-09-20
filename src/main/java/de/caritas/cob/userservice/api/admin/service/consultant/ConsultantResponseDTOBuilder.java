@@ -108,7 +108,7 @@ public class ConsultantResponseDTOBuilder implements HalLinkBuilder {
         .avatarId(consultant.getAvatarId())
         .isSupervisor(consultant.isSupervisor())
         .assignedSupervisorId(consultant.getAssignedSupervisorId())
-        // #1194: a consultant with no chat identity was created while the chat server was
+        // A consultant with no chat identity was created while the chat server was
         // unreachable. Creation stays successful on purpose, so this is the only place the
         // administrator can learn that the account is not usable for counselling yet.
         .chatIdentityStatus(

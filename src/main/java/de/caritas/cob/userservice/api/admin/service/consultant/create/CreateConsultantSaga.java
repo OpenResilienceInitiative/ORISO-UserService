@@ -275,8 +275,8 @@ public class CreateConsultantSaga {
             keycloakUserId);
       }
     } catch (Exception e) {
-      // Deliberately not fatal (#1194): the integration and E2E suites run without a Synapse at
-      // all, and refusing creation during a chat outage would stop counsellor onboarding. The
+      // Deliberately not fatal: the integration and E2E suites run without a Synapse at all,
+      // and refusing creation during a chat outage would stop counsellor onboarding. The
       // consultant is persisted without a chat identity, the response reports
       // chatIdentityStatus = MISSING, the data-integrity report lists the record, and
       // POST /useradmin/consultants/{id}/chat-identity repairs it.
@@ -496,7 +496,7 @@ public class CreateConsultantSaga {
             .build();
 
     consultant.replaceTopics(consultantCreationInput.getTopicIds());
-    // #1046: normalised in one shared place so a half avatar choice can never be persisted.
+    // Normalised in one shared place so a half avatar choice can never be persisted.
     ConsultantAvatars.apply(
         consultant,
         ConsultantAvatarKind.fromNameOrNull(consultantCreationInput.getAvatarKind()),
