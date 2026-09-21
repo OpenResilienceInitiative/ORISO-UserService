@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
@@ -22,6 +23,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
@@ -58,6 +60,7 @@ class UserSessionControllerDelegate {
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull SessionConsentService sessionConsentService;
+  private final @NonNull ConsultantAgencyService consultantAgencyService;
 
   /**
    * Gate 2 of ADR-022: records which legal-text version this room is cleared for. The pointer is
@@ -240,6 +243,12 @@ class UserSessionControllerDelegate {
     if (messenger.findSession(sessionId).isEmpty()) {
       throw new NotFoundException("Session (%s) not found", sessionId);
     }
+    if (!callerBelongsToSession(sessionId, consultantId.toString())) {
+      throw new ForbiddenException(
+          String.format(
+              "Consultant (%s) may not remove consultant (%s) from session (%s)",
+              authenticatedUser.getUserId(), consultantId, sessionId));
+    }
     if (!messenger.removeConsultantFromSession(sessionId, consultantId.toString())) {
       var message =
           String.format(
@@ -248,6 +257,26 @@ class UserSessionControllerDelegate {
     }
 
     return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * Only somebody who belongs to the session may take a consultant out of its chat room: the
+   * consultant leaving the room themselves (what the frontend does after handing a session over),
+   * or a consultant of the session's agency. The authority alone is held by every consultant of
+   * every agency.
+   */
+  private boolean callerBelongsToSession(Long sessionId, String consultantToRemove) {
+    var callerId = authenticatedUser.getUserId();
+    if (consultantToRemove.equals(callerId)) {
+      return true;
+    }
+    return sessionService
+        .getSession(sessionId)
+        .map(
+            session ->
+                consultantAgencyService.isConsultantAssignedToAgency(
+                    callerId, session.getAgencyId()))
+        .orElse(false);
   }
 
   ResponseEntity<ConsultantSessionDTO> fetchSessionForConsultant(Long sessionId) {
