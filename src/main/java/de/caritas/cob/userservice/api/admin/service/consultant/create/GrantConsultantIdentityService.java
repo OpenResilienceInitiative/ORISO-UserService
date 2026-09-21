@@ -71,6 +71,7 @@ public class GrantConsultantIdentityService {
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
+  private final @NonNull GrantConsultantIdentityAccessPolicy grantConsultantIdentityAccessPolicy;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
@@ -91,6 +92,10 @@ public class GrantConsultantIdentityService {
             .orElseThrow(
                 () ->
                     new BadRequestException(String.format("Admin with id %s not found", adminId)));
+
+    // The lookup above is by primary key, which the Hibernate tenant filter does not narrow, and
+    // the route only requires user-admin: the caller's Träger and agencies are checked here.
+    grantConsultantIdentityAccessPolicy.authorizeGrant(admin, dto.getAgencyIds());
 
     if (consultantRepository.findByIdAndDeleteDateIsNull(adminId).isPresent()) {
       throw new CustomValidationHttpStatusException(

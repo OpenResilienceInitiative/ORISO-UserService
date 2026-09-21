@@ -78,6 +78,7 @@ class GrantConsultantIdentityServiceTest {
   @Mock private ConsultantService consultantService;
   @Mock private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
   @Mock private UserHelper userHelper;
+  @Mock private GrantConsultantIdentityAccessPolicy grantConsultantIdentityAccessPolicy;
 
   @Mock
   private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
