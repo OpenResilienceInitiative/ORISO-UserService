@@ -17,4 +17,4 @@ Wir fragen dich nie per E-Mail nach deinem Passwort. Gib diesen Link an niemande
 Datenschutz: {{privacyUrl}}
 Impressum: {{imprintUrl}}
 
-Diese E-Mail gehört zur Anmeldung und lässt sich nicht abbestellen. Bitte antworte nicht darauf.
+Diese E-Mail gehört zu deiner Einladung und lässt sich nicht abbestellen. Bitte antworte nicht darauf.

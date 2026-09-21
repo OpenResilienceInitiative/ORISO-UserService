@@ -58,6 +58,9 @@ class InviteFrameMailRendererTest {
         .as("the call to action and its copy-paste fallback both carry the accept URL")
         .contains("Einladung annehmen")
         .contains("Falls der Button nicht funktioniert")
+        .as("the footer names the invitation, not signing in — this mail is neither")
+        .contains("Diese E-Mail gehört zu Ihrer Einladung und lässt sich nicht abbestellen.")
+        .doesNotContain("gehört zur Anmeldung")
         .containsOnlyOnce("<!DOCTYPE html>");
     assertThat(countOccurrences(mail.html(), ACCEPT_URL)).isEqualTo(3);
 
@@ -67,6 +70,7 @@ class InviteFrameMailRendererTest {
         .contains("Ihre Einladung zu ORISO")
         .contains("Hallo Maren Muster,")
         .contains("Einladung annehmen:")
+        .contains("Diese E-Mail gehört zu Ihrer Einladung und lässt sich nicht abbestellen.")
         .contains(ACCEPT_URL);
   }
 
@@ -178,6 +182,8 @@ class InviteFrameMailRendererTest {
         .contains("<html lang=\"en\"")
         .contains("Accept invitation")
         .contains("If the button does not work")
+        .contains("This email is part of your invitation and cannot be unsubscribed from.")
+        .doesNotContain("part of signing in")
         .contains("Privacy")
         .contains("Imprint");
   }
