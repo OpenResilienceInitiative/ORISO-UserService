@@ -1,11 +1,13 @@
 package de.caritas.cob.userservice.api.facade.assignsession;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -97,11 +99,14 @@ class AnonymousEnquiryDepartmentResolverTest {
   }
 
   @Test
-  void resolveAgencyId_Should_returnEmpty_When_agencyServiceIsUnavailable() {
+  void resolveAgencyId_Should_failRetryably_When_agencyServiceIsUnavailable() {
+    // An outage is not "no department": answering empty would let the accept persist the enquiry
+    // IN_PROGRESS without one, and the in-progress check then blocks every retry for good.
     when(agencyService.getAgenciesWithoutCaching(any()))
         .thenThrow(new IllegalStateException("agency service down"));
 
-    assertThat(resolver.resolveAgencyId(unboundSession(), consultantInAgencies(10L))).isEmpty();
+    assertThatThrownBy(() -> resolver.resolveAgencyId(unboundSession(), consultantInAgencies(10L)))
+        .isInstanceOf(ServiceUnavailableException.class);
   }
 
   @Test

@@ -24,6 +24,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateRoomException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.facade.EmailNotificationFacade;
@@ -294,6 +295,21 @@ class AssignEnquiryFacadeTest {
             session, CONSULTANT_WITH_AGENCY, SessionStatus.IN_PROGRESS);
     verify(eventNotificationService)
         .createInquiryAcceptedNotification(session, CONSULTANT_WITH_AGENCY);
+  }
+
+  @Test
+  void assignAnonymousEnquiry_Should_leaveTheEnquiryInTheQueue_When_theDepartmentLookupIsDown() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    when(anonymousEnquiryDepartmentResolver.resolveAgencyId(session, CONSULTANT_WITH_AGENCY))
+        .thenThrow(new ServiceUnavailableException("AgencyService unavailable"));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY))
+        .isInstanceOf(ServiceUnavailableException.class);
+
+    // Nothing is saved: the enquiry stays NEW and the counsellor can accept it again.
+    verify(sessionService, never()).updateConsultantAndStatusForSession(any(), any(), any());
+    verify(eventNotificationService, never()).createInquiryAcceptedNotification(any(), any());
   }
 
   @Test

@@ -4,6 +4,7 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -35,9 +36,10 @@ public class AnonymousEnquiryDepartmentResolver {
 
   /**
    * Returns the agency to bind to the given unbound anonymous session, or empty when the session is
-   * already bound, has no main topic, or none of the consultant's agencies offers that topic. Never
-   * throws: acceptance must succeed without a department (the client then shows an explicit
-   * non-blocking warning).
+   * already bound, has no main topic, or none of the consultant's agencies offers that topic —
+   * acceptance then succeeds without a department and the client shows an explicit non-blocking
+   * warning. Throws {@link ServiceUnavailableException} when the agency lookup itself fails, so a
+   * transient outage leaves the enquiry retryable instead of accepted without its department.
    */
   public Optional<Long> resolveAgencyId(Session session, Consultant consultant) {
     if (nonNull(session.getAgencyId())) {
@@ -62,11 +64,16 @@ public class AnonymousEnquiryDepartmentResolver {
       // once per acceptance.
       agencies = agencyService.getAgenciesWithoutCaching(agencyIds);
     } catch (RuntimeException e) {
+      /* An outage is not "no department". Answering empty would persist the enquiry IN_PROGRESS
+      without one, and the in-progress check would then refuse every retry: a passing hiccup would
+      cost this help-seeker the centre's consent text for good. Fail the accept instead; nothing is
+      saved yet, so the enquiry stays in the queue and the counsellor can accept it again. */
       log.warn(
-          "AgencyService unavailable, anonymous session {} stays without department: {}",
+          "AgencyService unavailable, accept of anonymous session {} left retryable: {}",
           session.getId(),
           e.getClass().getSimpleName());
-      return Optional.empty();
+      throw new ServiceUnavailableException(
+          "Counselling centre lookup is temporarily unavailable; accept the enquiry again");
     }
 
     /* Several of the counsellor's agencies may offer the topic. The choice must be deterministic so
