@@ -93,9 +93,13 @@ public class ConsultantAdminFacade {
   public ConsultantSearchResultDTO findFilteredConsultants(
       Integer page, Integer perPage, ConsultantFilter consultantFilter, Sort sort) {
     sort = getValidSorter(sort);
+    var agencyRestriction = adminCallerScope.agencyRestriction();
     var filteredConsultants =
-        this.consultantAdminFilterService.findFilteredConsultants(
-            page, perPage, consultantFilter, sort);
+        agencyRestriction.isPresent()
+            ? this.consultantAdminFilterService.findFilteredConsultants(
+                page, perPage, consultantFilter, sort, agencyRestriction.get())
+            : this.consultantAdminFilterService.findFilteredConsultants(
+                page, perPage, consultantFilter, sort);
     retrieveAndMergeAgenciesToConsultants(filteredConsultants);
 
     return filteredConsultants;
@@ -173,6 +177,7 @@ public class ConsultantAdminFacade {
    * @return the consultant as it now stands, including its {@code chatIdentityStatus}
    */
   public ConsultantAdminResponseDTO repairConsultantChatIdentity(String consultantId) {
+    adminCallerScope.assertMayActOnConsultant(consultantId);
     this.consultantChatIdentityService.provisionMissingChatIdentity(consultantId);
     return this.consultantAdminService.findConsultantById(consultantId);
   }

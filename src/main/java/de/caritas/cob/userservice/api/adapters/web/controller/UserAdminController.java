@@ -104,7 +104,7 @@ public class UserAdminController implements UseradminApi {
   public ResponseEntity<SessionAdminResultDTO> getSessions(
       Integer page, Integer perPage, SessionFilter sessionFilter) {
     SessionAdminResultDTO sessionAdminResultDTO =
-        this.sessionAdminService.findSessions(page, perPage, sessionFilter);
+        this.sessionAdminService.findSessionsInCallerScope(page, perPage, sessionFilter);
     return ResponseEntity.ok(sessionAdminResultDTO);
   }
 

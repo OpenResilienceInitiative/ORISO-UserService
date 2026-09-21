@@ -191,6 +191,21 @@ public class AdminCallerScope {
             });
   }
 
+  /**
+   * The agencies a list endpoint has to narrow its result to. Present only for a Beratungsstellen
+   * admin (restricted agency admin), whose reach ends at their own agencies. Empty for every other
+   * caller: the tenant boundary of a Träger admin is kept by the tenant filter, and the platform
+   * admin sees everything.
+   *
+   * @return the caller's own agency IDs, or empty when the caller is not agency-restricted
+   */
+  public Optional<Set<Long>> agencyRestriction() {
+    if (!authenticatedUser.hasRestrictedAgencyPriviliges()) {
+      return Optional.empty();
+    }
+    return Optional.of(Collections.unmodifiableSet(ownAgencyIds()));
+  }
+
   private boolean isInScope(Long tenantId, Set<Long> agencyIds) {
     if (!isOwnTenant(tenantId)) {
       return false;

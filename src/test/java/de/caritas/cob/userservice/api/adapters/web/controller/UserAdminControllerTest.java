@@ -189,7 +189,7 @@ class UserAdminControllerTest {
   @Test
   void getSessions_Should_delegateToSessionAdminService() {
     var expected = new SessionAdminResultDTO();
-    when(sessionAdminService.findSessions(1, 10, null)).thenReturn(expected);
+    when(sessionAdminService.findSessionsInCallerScope(1, 10, null)).thenReturn(expected);
 
     var response = controller.getSessions(1, 10, null);
 
@@ -201,11 +201,11 @@ class UserAdminControllerTest {
   void getSessions_Should_passFilterThrough() {
     var filter = new SessionFilter();
     var expected = new SessionAdminResultDTO();
-    when(sessionAdminService.findSessions(2, 20, filter)).thenReturn(expected);
+    when(sessionAdminService.findSessionsInCallerScope(2, 20, filter)).thenReturn(expected);
 
     controller.getSessions(2, 20, filter);
 
-    verify(sessionAdminService).findSessions(2, 20, filter);
+    verify(sessionAdminService).findSessionsInCallerScope(2, 20, filter);
   }
 
   @Test

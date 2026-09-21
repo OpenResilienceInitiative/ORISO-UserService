@@ -150,7 +150,7 @@ class UserAdminControllerIT {
         .perform(get(SESSION_PATH).param(PAGE_PARAM, "0").param(PER_PAGE_PARAM, "1"))
         .andExpect(status().isOk());
 
-    verify(this.sessionAdminService, times(1)).findSessions(eq(0), eq(1), any());
+    verify(this.sessionAdminService, times(1)).findSessionsInCallerScope(eq(0), eq(1), any());
   }
 
   @Test
