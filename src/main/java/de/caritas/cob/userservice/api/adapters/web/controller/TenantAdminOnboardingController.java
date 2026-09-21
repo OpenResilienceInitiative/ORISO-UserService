@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorOnboardingState;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorRegistrationResult;
@@ -382,7 +381,7 @@ public class TenantAdminOnboardingController {
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();
       dto.lastName = invite.getLastName();
-      boolean joinsExisting = invite.getTenantIdAllocationMode() == IdAllocationMode.EXISTING;
+      boolean joinsExisting = state.joinsExistingTenant();
       dto.joinsExistingTenant = joinsExisting;
       if (joinsExisting) {
         dto.tenantId = invite.getTenantId();

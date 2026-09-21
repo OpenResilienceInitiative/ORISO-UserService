@@ -17,6 +17,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.AgencyAdminInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -31,6 +33,7 @@ import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.support.TransactionTemplate;
@@ -68,6 +71,7 @@ public class CounsellorOnboardingService {
   private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull AgencyCreationClient agencyCreationClient;
   private final @NonNull AgencyAdminInviteProvisioningService agencyAdminInviteProvisioningService;
+  private final @NonNull ApplicationEventPublisher eventPublisher;
 
   /**
    * Drives the SHORT database-only transactions of this flow explicitly instead of annotating the
@@ -180,6 +184,14 @@ public class CounsellorOnboardingService {
                 rawToken, toProvisionCommand(command, agencyCreated || agencyAdmin))
             : agencyAdminInviteProvisioningService.acceptAsAgencyAdmin(
                 rawToken, command.username(), command.password());
+
+    if (agencyAdmin || agencyCreated) {
+      // ORISO-Admin#1026 slice 5: the Beratungsstelle exists and has its admin — the invites
+      // waiting for it go out now (after-commit listener; idempotent for further admins).
+      eventPublisher.publishEvent(
+          new InviteUnitCreatedEvent(
+              InviteUnitType.AGENCY, invite.getAgencyId(), invite.getTenantId()));
+    }
 
     String consultantId = counsels ? accepted.getProvisionedUserId() : null;
     if (!AccountInviteService.isTwoFactorGateSatisfied(accepted.getTwoFactorStatus())) {

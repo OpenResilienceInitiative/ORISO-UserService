@@ -21,5 +21,12 @@ public enum HttpStatusExceptionReason {
   CHAT_RECOVERY_POLICY_UNAVAILABLE,
   ROLE_NOT_FOUND,
   /** ORISO-Admin#1026: the admin already holds the role they tried to assign themselves. */
-  SELF_ASSIGNMENT_ALREADY_EXISTS
+  SELF_ASSIGNMENT_ALREADY_EXISTS,
+  /**
+   * ORISO-Admin#1026 slice 5: an invite into a not-yet-created unit needs a pending admin invite
+   * for the same reserved ID (409), unless it is part of a CSV import batch.
+   */
+  NO_PENDING_UNIT_ADMIN,
+  /** ORISO-Admin#1026 slice 5: a waiting invite cannot be sent before its unit exists (409). */
+  UNIT_NOT_CREATED
 }

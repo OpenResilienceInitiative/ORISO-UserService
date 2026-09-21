@@ -42,6 +42,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -79,7 +80,25 @@ public class AccountInviteService {
    * cases in which an admin needs to invite the same person once more.
    */
   private static final List<AccountInviteStatus> ADDRESS_HOLDING_INVITE_STATUSES =
-      List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
+      List.of(
+          AccountInviteStatus.WAITING_FOR_UNIT,
+          AccountInviteStatus.DRAFT,
+          AccountInviteStatus.EMAIL_SENT);
+
+  /**
+   * States in which a unit-admin invite can still lead to the unit's creation (ORISO-Admin#1026,
+   * slice 5): not sent yet, sent, or itself waiting for its Träger. Expired ones do not count.
+   */
+  private static final List<AccountInviteStatus> PENDING_UNIT_ADMIN_STATUSES =
+      List.of(
+          AccountInviteStatus.WAITING_FOR_UNIT,
+          AccountInviteStatus.DRAFT,
+          AccountInviteStatus.EMAIL_SENT);
+
+  private static final List<IdAllocationMode> RESERVING_MODES =
+      List.of(IdAllocationMode.AUTO, IdAllocationMode.MANUAL);
+
+  private static final int MAX_IMPORT_BATCH_ID_LENGTH = 64;
 
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull InviteEmailTemplateRepository templateRepository;
@@ -121,21 +140,37 @@ public class AccountInviteService {
       command = bindToExistingAgency(command);
     }
     verifyRecipientEmailAvailable(command.recipientEmail());
+    InviteUnitType unitToWaitFor = unitToWaitFor(command);
+    if (unitToWaitFor != null) {
+      return createWaitingInvite(command, unitToWaitFor);
+    }
+    Optional<TenantIdReservation> sharedTenantReservation = Optional.empty();
     if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
         && !existingTenant
-        && command.tenantId() != null
-        && isTenantIdTaken(command.tenantId())) {
-      // 409 — the admin frontend maps CONFLICT to its dedicated "tenant id taken" message.
-      throw new ConflictException("tenantId " + command.tenantId() + " is already taken");
+        && command.tenantId() != null) {
+      if (tenantExists(command.tenantId())) {
+        // 409 — the admin frontend maps CONFLICT to its dedicated "tenant id taken" message.
+        throw new ConflictException("tenantId " + command.tenantId() + " is already taken");
+      }
+      // Slice 5: several admins for the same new Träger share the first one's reservation.
+      sharedTenantReservation = sharedTenantReservation(command.tenantId());
+      if (sharedTenantReservation.isEmpty() && isTenantIdTaken(command.tenantId())) {
+        throw new ConflictException("tenantId " + command.tenantId() + " is already taken");
+      }
     }
 
     // TEN-INV-U3 (#889): tenant-admin invites hold an authoritative TenantService reservation;
     // agency IDs are reserved in AgencyService's own ID space (U2 decision, AS#214). The green
     // UI state alone grants nothing — the reservation plus the re-validation below decide.
-    TenantIdReservation tenantReservation = null;
+    TenantIdReservation tenantReservation = sharedTenantReservation.orElse(null);
+    boolean reservedTenantHere = false;
     Long reservedAgencyId = null;
-    if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN && !existingTenant) {
+    Long sharedAgencyId = null;
+    if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
+        && !existingTenant
+        && tenantReservation == null) {
       tenantReservation = reserveTenantIdOrDegrade(command);
+      reservedTenantHere = tenantReservation != null;
     }
     try {
       if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
@@ -145,7 +180,13 @@ public class AccountInviteService {
             tenantReservation != null
                 ? Long.valueOf(tenantReservation.tenantId())
                 : command.tenantId();
-        reservedAgencyId = agencyIdAllocationClient.reserve(command.agencyId(), tenantIdForAgency);
+        if (sharesAgencyReservation(command, tenantIdForAgency, null)) {
+          // Slice 5: a further admin of the same new Beratungsstelle joins the reservation.
+          sharedAgencyId = command.agencyId();
+        } else {
+          reservedAgencyId =
+              agencyIdAllocationClient.reserve(command.agencyId(), tenantIdForAgency);
+        }
       }
       revalidateReservations(tenantReservation, reservedAgencyId);
 
@@ -163,11 +204,15 @@ public class AccountInviteService {
               .activeRecipientKey(normalizeEmail(command.recipientEmail()))
               .firstName(trimToNull(command.firstName()))
               .lastName(trimToNull(command.lastName()))
-              .agencyId(reservedAgencyId != null ? reservedAgencyId : command.agencyId())
+              .agencyId(
+                  reservedAgencyId != null
+                      ? reservedAgencyId
+                      : sharedAgencyId != null ? sharedAgencyId : command.agencyId())
               .departmentId(command.departmentId())
               .tenantIdAllocationMode(command.tenantIdAllocationMode())
               .agencyIdAllocationMode(command.agencyIdAllocationMode())
               .alsoCounsellor(alsoCounsellorOf(command))
+              .importBatchId(trimToNull(command.importBatchId()))
               .expiresAt(resolveExpiry(now, command.expiresInDays()))
               .status(AccountInviteStatus.DRAFT)
               .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
@@ -186,7 +231,7 @@ public class AccountInviteService {
       if (reservedAgencyId != null) {
         agencyIdAllocationClient.release(reservedAgencyId);
       }
-      if (tenantReservation != null) {
+      if (reservedTenantHere) {
         tenantIdAllocationClient.release(tenantReservation.tenantId());
       }
       if (isActiveRecipientConflict(exception)) {
@@ -211,6 +256,12 @@ public class AccountInviteService {
                     AccountInvite invite = createInvite(command);
                     claimedInvite[0] = invite;
                     InviteEmailTemplate template = findTemplate(templateId);
+                    if (invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
+                      // Slice 5: stored, not sent. The template goes out with the release.
+                      invite.setQueuedTemplateId(template.getId());
+                      invite = accountInviteRepository.saveAndFlush(invite);
+                      return new DirectInviteDispatch(invite, null, null, null, null, null, null);
+                    }
                     LocalDateTime now = LocalDateTime.now();
                     String rawToken = generateToken();
                     String acceptUrl =
@@ -239,6 +290,9 @@ public class AccountInviteService {
       throw claimFailure;
     }
 
+    if (dispatch.template() == null) {
+      return new InviteSendResult(dispatch.invite(), null, null, null);
+    }
     return deliverPreparedInvite(
         dispatch,
         dispatch.invite().getId(),
@@ -263,7 +317,8 @@ public class AccountInviteService {
                     List<Long> taskIds = new java.util.ArrayList<>();
                     LocalDateTime now = LocalDateTime.now();
                     if (invite.getTenantIdReservationToken() != null
-                        && invite.getTenantId() != null) {
+                        && invite.getTenantId() != null
+                        && !tenantReservationSharedWithAnotherInvite(invite)) {
                       taskIds.add(
                           reservationReleaseTaskRepository
                               .saveAndFlush(
@@ -276,7 +331,8 @@ public class AccountInviteService {
                               .getId());
                     }
                     if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
-                        && invite.getAgencyId() != null) {
+                        && invite.getAgencyId() != null
+                        && !agencyReservationSharedWithAnotherInvite(invite)) {
                       taskIds.add(
                           reservationReleaseTaskRepository
                               .saveAndFlush(
@@ -319,7 +375,13 @@ public class AccountInviteService {
    */
   private void releaseDirectInviteReservations(
       AccountInvite invite, CreateAccountInviteCommand command) {
-    if (invite.getTenantIdReservationToken() != null && invite.getTenantId() != null) {
+    if (invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
+      // A waiting invite (slice 5) never reserved anything, so there is nothing to give back.
+      return;
+    }
+    if (invite.getTenantIdReservationToken() != null
+        && invite.getTenantId() != null
+        && !tenantReservationSharedWithAnotherInvite(invite)) {
       try {
         if (!tenantIdAllocationClient.release(invite.getTenantId())) {
           logReservationReleaseFailure("tenant", new IllegalStateException("release pending"));
@@ -329,7 +391,8 @@ public class AccountInviteService {
       }
     }
     if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
-        && invite.getAgencyId() != null) {
+        && invite.getAgencyId() != null
+        && !agencyReservationSharedWithAnotherInvite(invite)) {
       try {
         if (!agencyIdAllocationClient.release(invite.getAgencyId())) {
           logReservationReleaseFailure("agency", new IllegalStateException("release pending"));
@@ -449,9 +512,16 @@ public class AccountInviteService {
     if (command.tenantIdAllocationMode() == IdAllocationMode.EXISTING) {
       validateExistingTenantMode(command);
     } else if (command.tenantIdAllocationMode() != null
-        && command.targetRole() != AccountInviteTargetRole.TENANT_ADMIN) {
+        && command.targetRole() != AccountInviteTargetRole.TENANT_ADMIN
+        && !waitsInANewTenant(command)) {
       throw new BadRequestException(
-          "tenantIdAllocationMode AUTO/MANUAL is only supported for TENANT_ADMIN invites");
+          "tenantIdAllocationMode AUTO/MANUAL is only supported for TENANT_ADMIN invites and, as"
+              + " queued invites, for AGENCY_ADMIN / COUNSELLOR invites into a new agency");
+    }
+    if (command.importBatchId() != null
+        && command.importBatchId().trim().length() > MAX_IMPORT_BATCH_ID_LENGTH) {
+      throw new BadRequestException(
+          "importBatchId must not be longer than " + MAX_IMPORT_BATCH_ID_LENGTH + " characters");
     }
     if (command.agencyIdAllocationMode() == IdAllocationMode.EXISTING
         && IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())) {
@@ -660,16 +730,35 @@ public class AccountInviteService {
     }
   }
 
-  @Transactional
+  /**
+   * Sends (or re-sends) a stored invite. A {@code WAITING_FOR_UNIT} invite (slice 5) can be sent by
+   * hand only once its unit exists — then this is its release; before that: 409 {@code
+   * UNIT_NOT_CREATED}. An SMTP failure never rolls the release back: the invite stays a DRAFT the
+   * admin can send again.
+   */
+  @Transactional(noRollbackFor = SmtpSendException.class)
   public InviteSendResult sendInvite(SendInviteCommand command) {
     AccountInvite invite = findAuthorizedInvite(command.inviteId());
     InviteEmailTemplate template = findTemplate(command.templateId());
+    if (invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
+      if (!unitExists(invite)) {
+        throw new CustomValidationHttpStatusException(
+            HttpStatusExceptionReason.UNIT_NOT_CREATED, HttpStatus.CONFLICT);
+      }
+      return releaseWaitingInvite(invite, template, true);
+    }
     // The invite was committed by an earlier createInvite transaction, so its id is a safe
     // audit anchor for a FAILED delivery row written in an independent transaction.
     return sendInvite(invite, template, invite.getId());
   }
 
   public InviteSendResult resendInvite(SendInviteCommand command) {
+    AccountInvite current =
+        requiresNewTransaction().execute(transaction -> findAuthorizedInvite(command.inviteId()));
+    if (current != null && current.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
+      // A waiting invite was never sent: "resend" is its first send (release), same rules.
+      return sendInvite(command);
+    }
     ResendDispatch resend = prepareResend(command);
     return deliverPreparedInvite(
         resend.dispatch(),
@@ -718,6 +807,7 @@ public class AccountInviteService {
                       .tenantIdAllocationMode(oldInvite.getTenantIdAllocationMode())
                       .agencyIdAllocationMode(oldInvite.getAgencyIdAllocationMode())
                       .alsoCounsellor(oldInvite.getAlsoCounsellor())
+                      .importBatchId(oldInvite.getImportBatchId())
                       .tokenHash(hash(rawToken))
                       .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
                       .status(AccountInviteStatus.EMAIL_SENT)
@@ -1351,6 +1441,309 @@ public class AccountInviteService {
     return value == null ? "" : value;
   }
 
+  // --- ORISO-Admin#1026 slice 5: a new unit with a queue --------------------------------------
+
+  /**
+   * Which not-yet-created unit an invite has to wait for: a counsellor for a new Beratungsstelle
+   * (AUTO/MANUAL agency), an agency admin for a new Träger (AUTO/MANUAL tenant). The unit's own
+   * admin invites (AGENCY_ADMIN resp. TENANT_ADMIN) never wait — they create the unit.
+   */
+  private static InviteUnitType unitToWaitFor(CreateAccountInviteCommand command) {
+    if (command.targetRole() == AccountInviteTargetRole.COUNSELLOR
+        && IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
+      return InviteUnitType.AGENCY;
+    }
+    if (command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN
+        && IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())) {
+      return InviteUnitType.TENANT;
+    }
+    return null;
+  }
+
+  private static boolean waitsInANewTenant(CreateAccountInviteCommand command) {
+    return (command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN
+            || command.targetRole() == AccountInviteTargetRole.COUNSELLOR)
+        && IdAllocationMode.reservesAnId(command.agencyIdAllocationMode());
+  }
+
+  /**
+   * Stores an invite into a not-yet-created unit with {@code WAITING_FOR_UNIT}: nothing is
+   * reserved, no link exists, the expiry clock does not run. It needs a pending admin invite for
+   * the same ID — except inside a CSV import batch, where the admin row may still come later (the
+   * invite then shows the problem NO_UNIT_ADMIN until it does).
+   */
+  private AccountInvite createWaitingInvite(
+      CreateAccountInviteCommand command, InviteUnitType unit) {
+    Long unitId = unit == InviteUnitType.AGENCY ? command.agencyId() : command.tenantId();
+    if (unitId == null) {
+      // AUTO: no admin invite can hold an ID nobody knows yet.
+      throw noPendingUnitAdmin();
+    }
+    if (unit == InviteUnitType.AGENCY
+        && agencyIdAllocationClient.getAvailability(unitId) == IdAllocationStatus.ASSIGNED) {
+      throw new ConflictException(
+          "agencyId " + unitId + " already exists; invite with agencyIdAllocationMode EXISTING");
+    }
+    if (unit == InviteUnitType.TENANT && tenantExists(unitId)) {
+      throw new ConflictException(
+          "tenantId " + unitId + " already exists; invite with tenantIdAllocationMode EXISTING");
+    }
+    Optional<AccountInvite> admin =
+        pendingUnitAdmins(unit, unitId, command.tenantId(), null).stream().findFirst();
+    if (admin.isEmpty() && isBlank(command.importBatchId())) {
+      throw noPendingUnitAdmin();
+    }
+    long expiryDays =
+        command.expiresInDays() == null ? DEFAULT_EXPIRY_DAYS : command.expiresInDays();
+    LocalDateTime now = LocalDateTime.now();
+    resolveExpiry(now, expiryDays);
+    Long tenantId =
+        command.tenantId() != null
+            ? command.tenantId()
+            : admin.map(AccountInvite::getTenantId).orElse(null);
+    AccountInvite invite =
+        AccountInvite.builder()
+            .targetRole(command.targetRole())
+            .tenantId(tenantId)
+            .recipientEmail(command.recipientEmail().trim())
+            .activeRecipientKey(normalizeEmail(command.recipientEmail()))
+            .firstName(trimToNull(command.firstName()))
+            .lastName(trimToNull(command.lastName()))
+            .agencyId(command.agencyId())
+            .departmentId(command.departmentId())
+            .tenantIdAllocationMode(command.tenantIdAllocationMode())
+            .agencyIdAllocationMode(command.agencyIdAllocationMode())
+            .alsoCounsellor(alsoCounsellorOf(command))
+            .importBatchId(trimToNull(command.importBatchId()))
+            .waitingForUnit(unit)
+            .queuedExpiryDays(expiryDays)
+            .status(AccountInviteStatus.WAITING_FOR_UNIT)
+            .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+            .emailVerificationStatus(EmailVerificationStatus.PENDING)
+            .twoFactorStatus(defaultTwoFactorStatus(command.targetRole()))
+            .createdByUserId(authenticatedUser.getUserId())
+            .createdByUsername(authenticatedUser.getUsername())
+            .createDate(now)
+            .updateDate(now)
+            .build();
+    try {
+      AccountInvite saved = accountInviteRepository.save(invite);
+      accountInviteRepository.flush();
+      return saved;
+    } catch (RuntimeException exception) {
+      if (isActiveRecipientConflict(exception)) {
+        throw emailNotAvailable(exception);
+      }
+      throw exception;
+    }
+  }
+
+  private List<AccountInvite> pendingUnitAdmins(
+      InviteUnitType unit, Long unitId, Long tenantId, Long excludedInviteId) {
+    LocalDateTime now = LocalDateTime.now();
+    return unit == InviteUnitType.AGENCY
+        ? accountInviteRepository.findPendingAgencyAdmins(
+            unitId, tenantId, excludedInviteId, PENDING_UNIT_ADMIN_STATUSES, now)
+        : accountInviteRepository.findPendingTenantAdmins(
+            unitId, excludedInviteId, PENDING_UNIT_ADMIN_STATUSES, now);
+  }
+
+  /**
+   * Why a waiting invite cannot move on by itself (slice 5), derived on read so it clears on its
+   * own: {@code NO_UNIT_ADMIN} when no pending admin invite exists for its unit (revoked, expired,
+   * or a CSV admin row that has not arrived). Null for every invite that is not waiting.
+   */
+  public InviteQueueProblem queueProblemOf(AccountInvite invite) {
+    if (invite == null
+        || invite.getStatus() != AccountInviteStatus.WAITING_FOR_UNIT
+        || invite.getWaitingForUnit() == null) {
+      return null;
+    }
+    Long unitId =
+        invite.getWaitingForUnit() == InviteUnitType.AGENCY
+            ? invite.getAgencyId()
+            : invite.getTenantId();
+    if (unitId == null
+        || pendingUnitAdmins(
+                invite.getWaitingForUnit(), unitId, invite.getTenantId(), invite.getId())
+            .isEmpty()) {
+      return InviteQueueProblem.NO_UNIT_ADMIN;
+    }
+    return null;
+  }
+
+  /**
+   * Releases the invites waiting for a unit that now exists (slice 5 trigger: the unit's first
+   * admin finished onboarding). Each invite is released in its own transaction — sent with the
+   * template it was created with (the expiry clock starts now), or turned into a DRAFT when it was
+   * created without one. One failing invite does not hold up the others; it stays waiting and can
+   * be sent by hand.
+   *
+   * @return the IDs of the invites that left {@code WAITING_FOR_UNIT}
+   */
+  public List<Long> releaseWaitingInvites(InviteUnitType unitType, Long unitId) {
+    if (unitType == null || unitId == null) {
+      return List.of();
+    }
+    List<Long> waitingIds =
+        requiresNewTransaction()
+            .execute(
+                transaction ->
+                    unitType == InviteUnitType.AGENCY
+                        ? accountInviteRepository.findIdsWaitingForAgency(
+                            AccountInviteStatus.WAITING_FOR_UNIT, unitId)
+                        : accountInviteRepository.findIdsWaitingForTenant(
+                            AccountInviteStatus.WAITING_FOR_UNIT, unitId));
+    List<Long> released = new java.util.ArrayList<>();
+    for (Long inviteId : waitingIds == null ? List.<Long>of() : waitingIds) {
+      try {
+        Boolean done =
+            requiresNewTransaction()
+                .execute(
+                    transaction -> {
+                      AccountInvite invite = findInvite(inviteId);
+                      if (invite.getStatus() != AccountInviteStatus.WAITING_FOR_UNIT) {
+                        return false;
+                      }
+                      InviteEmailTemplate template =
+                          invite.getQueuedTemplateId() == null
+                              ? null
+                              : templateRepository
+                                  .findById(invite.getQueuedTemplateId())
+                                  .orElse(null);
+                      releaseWaitingInvite(invite, template, false);
+                      return true;
+                    });
+        if (Boolean.TRUE.equals(done)) {
+          released.add(inviteId);
+        }
+      } catch (RuntimeException exception) {
+        log.warn(
+            "Waiting invite {} could not be released for {} {} ({}); it stays waiting and can be"
+                + " sent by hand",
+            inviteId,
+            unitType,
+            unitId,
+            exception.getClass().getSimpleName());
+      }
+    }
+    log.info(
+        "Released {} of {} invites waiting for {} {}",
+        released.size(),
+        waitingIds == null ? 0 : waitingIds.size(),
+        unitType,
+        unitId);
+    return released;
+  }
+
+  /**
+   * One release inside the caller's transaction. An agency admin who waited for a new Träger gets
+   * its Beratungsstelle ID reserved now (the Träger did not exist before, so AgencyService could
+   * not reserve under it). Then the invite is sent with {@code template} — or becomes a DRAFT
+   * without one, or when the send fails (never a lost invite; the admin can send it again).
+   *
+   * @param rethrowSendFailure whether an SMTP failure reaches the caller (manual send) or is only
+   *     logged (automatic release)
+   */
+  private InviteSendResult releaseWaitingInvite(
+      AccountInvite invite, InviteEmailTemplate template, boolean rethrowSendFailure) {
+    LocalDateTime now = LocalDateTime.now();
+    if (invite.getWaitingForUnit() == InviteUnitType.TENANT
+        && IdAllocationMode.reservesAnId(invite.getAgencyIdAllocationMode())
+        && !sharesAgencyReservation(invite, invite.getTenantId(), invite.getId())) {
+      invite.setAgencyId(
+          agencyIdAllocationClient.reserve(invite.getAgencyId(), invite.getTenantId()));
+    }
+    long days =
+        invite.getQueuedExpiryDays() == null ? DEFAULT_EXPIRY_DAYS : invite.getQueuedExpiryDays();
+    invite.setWaitingForUnit(null);
+    invite.setExpiresAt(now.plusDays(days));
+    invite.setStatus(AccountInviteStatus.DRAFT);
+    invite.setUpdateDate(now);
+    accountInviteRepository.save(invite);
+    if (template == null) {
+      return new InviteSendResult(invite, null, null, null);
+    }
+    try {
+      return sendInvite(invite, template, invite.getId());
+    } catch (SmtpSendException sendFailure) {
+      log.warn(
+          "Released invite {} could not be mailed ({}); it stays a DRAFT",
+          invite.getId(),
+          sendFailure.getClass().getSimpleName());
+      if (rethrowSendFailure) {
+        throw sendFailure;
+      }
+      return new InviteSendResult(invite, null, null, null);
+    }
+  }
+
+  private boolean unitExists(AccountInvite invite) {
+    if (invite.getWaitingForUnit() == InviteUnitType.TENANT) {
+      return invite.getTenantId() != null && tenantExists(invite.getTenantId());
+    }
+    return invite.getAgencyId() != null
+        && agencyIdAllocationClient.getAvailability(invite.getAgencyId())
+            == IdAllocationStatus.ASSIGNED;
+  }
+
+  /**
+   * Whether this AGENCY_ADMIN invite joins a reservation an earlier admin invite of the same new
+   * Beratungsstelle already holds (several admins for one ID, or a new admin after the first was
+   * revoked): the ID is still RESERVED in AgencyService and an earlier admin invite reserved it.
+   */
+  private boolean sharesAgencyReservation(
+      CreateAccountInviteCommand command, Long tenantId, Long excludedInviteId) {
+    return command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN
+        && command.agencyId() != null
+        && accountInviteRepository.existsAgencyAdminReservation(
+            command.agencyId(), tenantId, excludedInviteId, RESERVING_MODES)
+        && agencyIdAllocationClient.getAvailability(command.agencyId())
+            == IdAllocationStatus.RESERVED;
+  }
+
+  private boolean sharesAgencyReservation(
+      AccountInvite invite, Long tenantId, Long excludedInviteId) {
+    return invite.getAgencyId() != null
+        && accountInviteRepository.existsAgencyAdminReservation(
+            invite.getAgencyId(), tenantId, excludedInviteId, RESERVING_MODES)
+        && agencyIdAllocationClient.getAvailability(invite.getAgencyId())
+            == IdAllocationStatus.RESERVED;
+  }
+
+  /**
+   * The reservation of an earlier TENANT_ADMIN invite for the same new Träger that is still held in
+   * TenantService — a further admin shares it (same token), so whoever registers first creates the
+   * Träger and the others join it.
+   */
+  private Optional<TenantIdReservation> sharedTenantReservation(Long tenantId) {
+    return accountInviteRepository
+        .findFirstByTargetRoleAndTenantIdAndTenantIdReservationTokenIsNotNullOrderByCreateDateDesc(
+            AccountInviteTargetRole.TENANT_ADMIN, tenantId)
+        .filter(
+            earlier ->
+                tenantIdAllocationClient.getAvailability(tenantId) == IdAllocationStatus.RESERVED)
+        .map(earlier -> new TenantIdReservation(tenantId, earlier.getTenantIdReservationToken()));
+  }
+
+  private boolean tenantReservationSharedWithAnotherInvite(AccountInvite invite) {
+    return invite.getId() != null
+        && accountInviteRepository.countByTenantIdReservationTokenAndIdNot(
+                invite.getTenantIdReservationToken(), invite.getId())
+            > 0;
+  }
+
+  private boolean agencyReservationSharedWithAnotherInvite(AccountInvite invite) {
+    return invite.getId() != null
+        && accountInviteRepository.existsOtherInviteOnReservedAgency(
+            invite.getAgencyId(), invite.getId(), RESERVING_MODES);
+  }
+
+  private static CustomValidationHttpStatusException noPendingUnitAdmin() {
+    return new CustomValidationHttpStatusException(
+        HttpStatusExceptionReason.NO_PENDING_UNIT_ADMIN, HttpStatus.CONFLICT);
+  }
+
   public record CreateAccountInviteCommand(
       AccountInviteTargetRole targetRole,
       Long tenantId,
@@ -1367,7 +1760,41 @@ public class AccountInviteService {
        * also counsels. {@code null} means the default ({@code true}); the invitee may change it
        * during onboarding. Any other role must leave it {@code null}.
        */
-      Boolean alsoCounsellor) {
+      Boolean alsoCounsellor,
+      /**
+       * ORISO-Admin#1026 slice 5: the CSV import this row belongs to (client-chosen, at most 64
+       * characters). A row for a not-yet-created unit whose admin row has not arrived yet then
+       * waits with the problem NO_UNIT_ADMIN instead of being refused with 409.
+       */
+      String importBatchId) {
+
+    /** Shape without the import batch. */
+    public CreateAccountInviteCommand(
+        AccountInviteTargetRole targetRole,
+        Long tenantId,
+        String recipientEmail,
+        String firstName,
+        String lastName,
+        Long agencyId,
+        Long departmentId,
+        Long expiresInDays,
+        IdAllocationMode tenantIdAllocationMode,
+        IdAllocationMode agencyIdAllocationMode,
+        Boolean alsoCounsellor) {
+      this(
+          targetRole,
+          tenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          departmentId,
+          expiresInDays,
+          tenantIdAllocationMode,
+          agencyIdAllocationMode,
+          alsoCounsellor,
+          null);
+    }
 
     /** Shape without the agency-admin flag (every role but AGENCY_ADMIN). */
     public CreateAccountInviteCommand(
@@ -1392,6 +1819,7 @@ public class AccountInviteService {
           expiresInDays,
           tenantIdAllocationMode,
           agencyIdAllocationMode,
+          null,
           null);
     }
 
@@ -1408,7 +1836,8 @@ public class AccountInviteService {
           expiresInDays,
           tenantIdAllocationMode,
           agencyIdAllocationMode,
-          alsoCounsellor);
+          alsoCounsellor,
+          importBatchId);
     }
 
     /** The same command with another department (every other component kept). */
@@ -1424,7 +1853,8 @@ public class AccountInviteService {
           expiresInDays,
           tenantIdAllocationMode,
           agencyIdAllocationMode,
-          alsoCounsellor);
+          alsoCounsellor,
+          importBatchId);
     }
 
     /** Convenience for callers without ID-allocation semantics (no reservation modes). */

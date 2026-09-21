@@ -21,21 +21,32 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkExc
  * </ul>
  */
 record ResolvedOnboardingInvite(
-    AccountInvite invite, boolean pendingTwoFactorResume, AccountInviteLinkException linkDeath) {
+    AccountInvite invite,
+    boolean pendingTwoFactorResume,
+    AccountInviteLinkException linkDeath,
+    boolean joinsExistingTenant) {
 
   /** A deliverable, unexpired invite — the flow continues with its registration step. */
   static ResolvedOnboardingInvite open(AccountInvite invite) {
-    return new ResolvedOnboardingInvite(invite, false, null);
+    return new ResolvedOnboardingInvite(invite, false, null, false);
+  }
+
+  /**
+   * A deliverable, unexpired tenant-admin invite whose Träger already exists (ORISO-Admin#1026):
+   * registration joins it instead of creating one.
+   */
+  static ResolvedOnboardingInvite openJoiningExistingTenant(AccountInvite invite) {
+    return new ResolvedOnboardingInvite(invite, false, null, true);
   }
 
   /** A consumed invite that re-enters at the 2FA step (#569 resume contract). */
   static ResolvedOnboardingInvite pendingTwoFactorResume(AccountInvite invite) {
-    return new ResolvedOnboardingInvite(invite, true, null);
+    return new ResolvedOnboardingInvite(invite, true, null, false);
   }
 
   /** A dead link; the reason is answered only after the transaction committed. */
   static ResolvedOnboardingInvite dead(AccountInviteLinkException linkDeath) {
-    return new ResolvedOnboardingInvite(null, false, linkDeath);
+    return new ResolvedOnboardingInvite(null, false, linkDeath, false);
   }
 
   /** Answers the link death once the transaction committed; no-op for a live invite. */

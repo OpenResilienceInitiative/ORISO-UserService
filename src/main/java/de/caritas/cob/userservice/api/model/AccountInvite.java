@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisi
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import jakarta.persistence.Column;
@@ -106,6 +107,29 @@ public class AccountInvite {
    */
   @Column(name = "also_counsellor")
   private Boolean alsoCounsellor;
+
+  /**
+   * ORISO-Admin#1026 slice 5: which not-yet-created unit a {@code WAITING_FOR_UNIT} invite waits
+   * for — its {@code agencyId} (AGENCY) or its {@code tenantId} (TENANT). Cleared on release.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "waiting_for_unit", length = 16)
+  private InviteUnitType waitingForUnit;
+
+  /** Template to send a waiting invite with once its unit exists; null = release as DRAFT. */
+  @Column(name = "queued_template_id")
+  private Long queuedTemplateId;
+
+  /** Validity of a waiting invite in days, counted from the actual send (not from creation). */
+  @Column(name = "queued_expiry_days")
+  private Long queuedExpiryDays;
+
+  /**
+   * Client-chosen ID of the CSV import that created the invite. Rows of one import may name a new
+   * unit before its admin row arrives: they wait (problem NO_UNIT_ADMIN) instead of being refused.
+   */
+  @Column(name = "import_batch_id", length = 64)
+  private String importBatchId;
 
   @Column(name = "token_hash", length = 64)
   private String tokenHash;

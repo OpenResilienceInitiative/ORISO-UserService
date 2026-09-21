@@ -72,6 +72,7 @@ class CounsellorOnboardingServiceTest {
   @Mock private UsernameTranscoder usernameTranscoder;
   @Mock private AgencyCreationClient agencyCreationClient;
   @Mock private AgencyAdminInviteProvisioningService agencyAdminInviteProvisioningService;
+  @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
   /**
    * The service drives its short database-only transactions through a {@link TransactionTemplate}
@@ -96,6 +97,7 @@ class CounsellorOnboardingServiceTest {
             usernameTranscoder,
             agencyCreationClient,
             agencyAdminInviteProvisioningService,
+            eventPublisher,
             transactionManager);
   }
 

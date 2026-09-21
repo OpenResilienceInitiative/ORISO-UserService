@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewSe
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService.TemplateCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteQueueProblem;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.time.LocalDateTime;
@@ -75,18 +76,23 @@ public class AccountInviteController {
                 IdAllocationMode.class, safe.tenantIdAllocationMode, "tenantIdAllocationMode"),
             parseOptionalEnum(
                 IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"),
-            safe.alsoCounsellor);
+            safe.alsoCounsellor,
+            safe.importBatchId);
 
     if (safe.templateId != null) {
       InviteSendResult result = accountInviteService.createAndSendInvite(command, safe.templateId);
-      return new ResponseEntity<>(AccountInviteResponseDTO.from(result), HttpStatus.CREATED);
+      return new ResponseEntity<>(
+          withQueueState(AccountInviteResponseDTO.from(result), result.invite()),
+          HttpStatus.CREATED);
     }
 
     AccountInvite invite = accountInviteService.createInvite(command);
 
     return new ResponseEntity<>(
-        AccountInviteResponseDTO.from(
-            invite, null, accountInviteService.calculateAccessGate(invite)),
+        withQueueState(
+            AccountInviteResponseDTO.from(
+                invite, null, accountInviteService.calculateAccessGate(invite)),
+            invite),
         HttpStatus.CREATED);
   }
 
@@ -111,10 +117,12 @@ public class AccountInviteController {
         result.getContent().stream()
             .map(
                 invite ->
-                    AccountInviteResponseDTO.from(
-                        invite,
-                        latestDeliveryStatus(invite),
-                        accountInviteService.calculateAccessGate(invite)))
+                    withQueueState(
+                        AccountInviteResponseDTO.from(
+                            invite,
+                            latestDeliveryStatus(invite),
+                            accountInviteService.calculateAccessGate(invite)),
+                        invite))
             .toList();
     PagedAccountInviteResponseDTO response = new PagedAccountInviteResponseDTO();
     response.content = content;
@@ -289,6 +297,14 @@ public class AccountInviteController {
                     safe.language))));
   }
 
+  /** Slice 5: the derived queue problem of a waiting invite (null for every other invite). */
+  private AccountInviteResponseDTO withQueueState(
+      AccountInviteResponseDTO dto, AccountInvite invite) {
+    InviteQueueProblem problem = accountInviteService.queueProblemOf(invite);
+    dto.queueProblem = problem == null ? null : problem.name();
+    return dto;
+  }
+
   private InviteEmailDeliveryStatus latestDeliveryStatus(AccountInvite invite) {
     if (invite.getId() == null) {
       return null;
@@ -374,6 +390,14 @@ public class AccountInviteController {
      * other role → 400.
      */
     public Boolean alsoCounsellor;
+
+    /**
+     * ORISO-Admin#1026 slice 5, CSV import: one client-chosen ID (at most 64 characters, e.g. a
+     * UUID) for all rows of one file. A row into a not-yet-created unit whose admin row comes later
+     * in the same file is then stored WAITING_FOR_UNIT with {@code queueProblem NO_UNIT_ADMIN}
+     * instead of being refused with 409, so the order of the rows does not matter.
+     */
+    public String importBatchId;
   }
 
   public static class SendInviteRequestDTO {
@@ -467,6 +491,23 @@ public class AccountInviteController {
     /** AGENCY_ADMIN invites: whether the person also counsels; null for every other role. */
     public Boolean alsoCounsellor;
 
+    /**
+     * ORISO-Admin#1026 slice 5: AGENCY or TENANT while {@code inviteStatus} is WAITING_FOR_UNIT —
+     * the unit ({@code agencyId} resp. {@code tenantId}) does not exist yet. The Admin stepper
+     * shows "Beratungsstelle noch nicht angelegt" (resp. Träger) as the first step.
+     */
+    public String waitingForUnit;
+
+    /**
+     * Slice 5: NO_UNIT_ADMIN when a waiting invite has no pending admin invite for its unit any
+     * more (revoked, expired, or a CSV admin row not arrived yet); null otherwise. Clears itself
+     * once a new admin invite for the same ID exists.
+     */
+    public String queueProblem;
+
+    /** Slice 5: the CSV import the invite came from, if any. */
+    public String importBatchId;
+
     public String provisioningStatus;
     public String provisionedUserId;
     public String inviteStatus;
@@ -508,7 +549,7 @@ public class AccountInviteController {
       AccountInviteResponseDTO dto =
           from(
               result.invite(),
-              result.delivery().getStatus(),
+              result.delivery() == null ? null : result.delivery().getStatus(),
               result.invite() == null ? null : AccountAccessGateStatus.BLOCKED_INVITE);
       dto.rawToken = result.rawToken();
       dto.acceptUrl = result.acceptUrl();
@@ -565,6 +606,9 @@ public class AccountInviteController {
               ? null
               : invite.getAgencyIdAllocationMode().name();
       dto.alsoCounsellor = invite.getAlsoCounsellor();
+      dto.waitingForUnit =
+          invite.getWaitingForUnit() == null ? null : invite.getWaitingForUnit().name();
+      dto.importBatchId = invite.getImportBatchId();
       dto.provisioningStatus =
           invite.getProvisioningStatus() == null ? null : invite.getProvisioningStatus().name();
       dto.provisionedUserId = invite.getProvisionedUserId();
@@ -598,7 +642,13 @@ public class AccountInviteController {
    * does not even advertise that vocabulary (ORISO-Admin#896). Admin endpoints keep the full shape
    * with {@code dpaSignedAt} present-as-null until signed.
    */
-  @JsonIgnoreProperties({"dpaForwardedAt", "dpaForwardCount", "dpaSignedAt"})
+  @JsonIgnoreProperties({
+    "dpaForwardedAt",
+    "dpaForwardCount",
+    "dpaSignedAt",
+    "queueProblem",
+    "importBatchId"
+  })
   public static class PublicAccountInviteResponseDTO extends AccountInviteResponseDTO {}
 
   public static class PagedAccountInviteResponseDTO {
