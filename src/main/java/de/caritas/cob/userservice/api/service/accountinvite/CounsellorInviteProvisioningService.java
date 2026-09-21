@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -133,20 +134,25 @@ public class CounsellorInviteProvisioningService {
   /**
    * Undoes the two create-path defaults that only hold when an administrator chose the credentials.
    * The invite already tracks the second-factor requirement, including {@code WAIVED}, and the
-   * counsellor typed their own password seconds ago.
+   * counsellor typed their own password seconds ago. The counsellor also takes over the invite's
+   * topic permission (ORISO-Admin#1026, slice 6).
    */
   private void alignRequirementsWithInvite(String consultantId, AccountInvite invite) {
     var stillOwed = !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());
+    var topicPermission =
+        invite.getTopicPermission() == null ? TopicPermission.CREATE : invite.getTopicPermission();
     consultantRepository
         .findByIdAndDeleteDateIsNull(consultantId)
         .filter(
             consultant ->
                 !Boolean.valueOf(stillOwed).equals(consultant.getTwoFactorRequired())
-                    || Boolean.TRUE.equals(consultant.getPasswordChangeRequired()))
+                    || Boolean.TRUE.equals(consultant.getPasswordChangeRequired())
+                    || consultant.getTopicPermission() != topicPermission)
         .ifPresent(
             consultant -> {
               consultant.setTwoFactorRequired(stillOwed);
               consultant.setPasswordChangeRequired(false);
+              consultant.setTopicPermission(topicPermission);
               consultantRepository.save(consultant);
             });
   }

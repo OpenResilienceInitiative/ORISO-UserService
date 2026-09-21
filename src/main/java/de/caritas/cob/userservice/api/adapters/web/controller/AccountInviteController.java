@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountAccessGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
@@ -14,6 +15,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPermissionService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
@@ -54,6 +56,7 @@ public class AccountInviteController {
   private final @NonNull InviteEmailTemplateService templateService;
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
   private final @NonNull InviteEmailPreviewService previewService;
+  private final @NonNull AccountInviteTopicPermissionService topicPermissionService;
 
   @PreAuthorize(ADMIN_AUTH)
   @PostMapping("/useradmin/account-invites")
@@ -76,12 +79,15 @@ public class AccountInviteController {
             parseOptionalEnum(
                 IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"));
 
+    TopicPermission topicPermission = TopicPermission.fromWire(safe.topicPermission);
+
     if (safe.templateId != null) {
-      InviteSendResult result = accountInviteService.createAndSendInvite(command, safe.templateId);
+      InviteSendResult result =
+          topicPermissionService.createAndSendInvite(command, safe.templateId, topicPermission);
       return new ResponseEntity<>(AccountInviteResponseDTO.from(result), HttpStatus.CREATED);
     }
 
-    AccountInvite invite = accountInviteService.createInvite(command);
+    AccountInvite invite = topicPermissionService.createInvite(command, topicPermission);
 
     return new ResponseEntity<>(
         AccountInviteResponseDTO.from(
@@ -148,6 +154,27 @@ public class AccountInviteController {
   @PostMapping("/useradmin/account-invites/{inviteId}/revoke")
   public ResponseEntity<AccountInviteResponseDTO> revokeInvite(@PathVariable Long inviteId) {
     AccountInvite invite = accountInviteService.revokeInvite(inviteId);
+    return ResponseEntity.ok(
+        AccountInviteResponseDTO.from(
+            invite,
+            latestDeliveryStatus(invite),
+            accountInviteService.calculateAccessGate(invite)));
+  }
+
+  /**
+   * Sets the invited counsellor's topic permission from the invite table (ORISO-Admin#1026, slice
+   * 6) — before and after the account exists; an existing account follows. Body {@code
+   * {"topicPermission": "NONE" | "SELECT_EXISTING" | "CREATE"}} (also {@code true}/{@code false}).
+   * 400 for a missing/unknown value or a non-counsellor invite, 403 outside the caller's scope.
+   */
+  @PreAuthorize(ADMIN_AUTH)
+  @PutMapping("/useradmin/account-invites/{inviteId}/topic-permission")
+  public ResponseEntity<AccountInviteResponseDTO> updateTopicPermission(
+      @PathVariable Long inviteId,
+      @RequestBody(required = false) TopicPermissionRequestDTO request) {
+    TopicPermission permission =
+        TopicPermission.fromWire(request == null ? null : request.topicPermission);
+    AccountInvite invite = topicPermissionService.updatePermission(inviteId, permission);
     return ResponseEntity.ok(
         AccountInviteResponseDTO.from(
             invite,
@@ -360,6 +387,18 @@ public class AccountInviteController {
      * exactly one.
      */
     public String agencyIdAllocationMode;
+
+    /**
+     * Counsellor invites (ORISO-Admin#1026, slice 6): {@code NONE}, {@code SELECT_EXISTING} or
+     * {@code CREATE}; the CSV import may also send {@code true} (= CREATE) or {@code false} (=
+     * NONE). Omitted = the agency's default ({@code CREATE} for a new agency's founder).
+     */
+    public Object topicPermission;
+  }
+
+  /** Body of {@code PUT /useradmin/account-invites/{inviteId}/topic-permission}. */
+  public static class TopicPermissionRequestDTO {
+    public Object topicPermission;
   }
 
   public static class SendInviteRequestDTO {
@@ -473,6 +512,9 @@ public class AccountInviteController {
     public Integer dpaForwardCount;
     public LocalDateTime dpaSignedAt;
 
+    /** ORISO-Admin#1026, slice 6: NONE, SELECT_EXISTING or CREATE. */
+    public String topicPermission;
+
     /**
      * Only set by the public accept endpoint (ORISO-Admin#569 resume contract): {@code
      * PENDING_2FA_ACTIVATION} while the mandatory 2FA activation is open (link resumable), {@code
@@ -555,6 +597,8 @@ public class AccountInviteController {
       dto.dpaForwardedAt = invite.getDpaForwardedAt();
       dto.dpaForwardCount = invite.getDpaForwardCount();
       dto.dpaSignedAt = invite.getDpaSignedAt();
+      dto.topicPermission =
+          invite.getTopicPermission() == null ? null : invite.getTopicPermission().name();
       return dto;
     }
   }

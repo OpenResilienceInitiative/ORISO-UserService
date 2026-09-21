@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
@@ -328,6 +329,14 @@ public class TenantAdminOnboardingController {
     public Boolean agencyExists;
 
     /**
+     * Counsellor invites only (ORISO-Admin#1026, slice 6): {@code CREATE} shows the "+" (further
+     * Träger topics in {@code availableTopics}); {@code SELECT_EXISTING} offers only {@code
+     * topics}; {@code NONE} offers only the assigned department — or, without one, exactly one of
+     * {@code topics}.
+     */
+    public String topicPermission;
+
+    /**
      * The tenant ID the invite reserved (TenantService {@code TenantIdReservationDTO.tenantId}).
      */
     public Long reservedTenantId;
@@ -380,6 +389,10 @@ public class TenantAdminOnboardingController {
       dto.topics = state.topics().stream().map(TopicOptionDTO::from).toList();
       dto.availableTopics = state.availableTopics().stream().map(TopicOptionDTO::from).toList();
       dto.agencyExists = state.agencyExists();
+      dto.topicPermission =
+          invite.getTopicPermission() == null
+              ? TopicPermission.CREATE.name()
+              : invite.getTopicPermission().name();
       dto.expiresAt = invite.getExpiresAt();
       applyTwoFactorResume(dto, invite, state.pendingTwoFactorResume());
       return dto;

@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,12 +16,17 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountAccessGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteAccessPolicy;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPermissionService;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyTopicPermissionLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
@@ -64,7 +70,15 @@ class AccountInviteControllerTest {
             counsellorInviteProvisioningService,
             templateService,
             deliveryRepository,
-            previewService);
+            previewService,
+            // The real permission wrapper around the mocked invite service: it delegates the
+            // creation, so the delegation checks below keep testing the controller.
+            new AccountInviteTopicPermissionService(
+                accountInviteService,
+                mock(AccountInviteRepository.class),
+                mock(ConsultantRepository.class),
+                mock(AccountInviteAccessPolicy.class),
+                mock(AgencyTopicPermissionLookup.class)));
   }
 
   @Test

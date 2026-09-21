@@ -185,6 +185,9 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("agencyIds") Collection<Long> agencyIds,
       Pageable pageable);
 
+  /** The invite(s) whose acceptance created this account (ORISO-Admin#1026 permission sync). */
+  List<AccountInvite> findAllByProvisionedUserId(String provisionedUserId);
+
   List<AccountInvite> findAllByAcceptedByUserIdAndTwoFactorStatus(
       String acceptedByUserId, TwoFactorGateStatus twoFactorStatus);
 

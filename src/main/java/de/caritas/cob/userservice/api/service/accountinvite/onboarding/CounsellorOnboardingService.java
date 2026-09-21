@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
@@ -150,6 +151,7 @@ public class CounsellorOnboardingService {
     CoverageResolution coverage = resolveTopicCoverage(invite);
     command = withAtLeastOneTopic(command, coverage);
     validateTopicSelection(command.topicIds(), coverage);
+    validatePermissionLimit(command.topicIds(), invite);
 
     // A reserved (not yet created) Beratungsstellen-ID: the invitee named the agency in the
     // wizard and it has to exist — under exactly the reserved ID — before the consultant can be
@@ -340,6 +342,12 @@ public class CounsellorOnboardingService {
       if (invite.getDepartmentId() != null) {
         topicIds.add(invite.getDepartmentId());
       }
+      TopicPermission permission = topicPermissionOf(invite);
+      if (permission == TopicPermission.NONE && invite.getDepartmentId() != null) {
+        // NONE: the assigned department is fixed — the agency's other departments are not
+        // on offer (ORISO-Admin#1026, slice 6).
+        topicIds.retainAll(Set.of(invite.getDepartmentId()));
+      }
       TopicLookup topicLookup = safeActiveTopicsById();
       Map<Long, TopicDTO> namesById = topicLookup.topicsById();
       List<TopicOption> topics =
@@ -351,12 +359,16 @@ public class CounsellorOnboardingService {
                   })
               .toList();
       // Every active tenant topic is selectable on top of the coverage (owner decision
-      // 2026-09-17): the invitee removes preselected topics or adds further ones.
+      // 2026-09-17): the invitee removes preselected topics or adds further ones — but only
+      // with the CREATE permission (the wizard's "+"). NONE and SELECT_EXISTING stay within
+      // the agency's own departments (ORISO-Admin#1026, slice 6).
       List<TopicOption> availableTopics =
-          namesById.values().stream()
-              .filter(topic -> topic.getId() != null)
-              .map(topic -> new TopicOption(topic.getId(), topic.getName()))
-              .toList();
+          permission != TopicPermission.CREATE
+              ? List.of()
+              : namesById.values().stream()
+                  .filter(topic -> topic.getId() != null)
+                  .map(topic -> new TopicOption(topic.getId(), topic.getName()))
+                  .toList();
       return new CoverageResolution(
           topics, availableTopics, agencyLookupFailed, topicLookup.failed(), agencyExists);
     } finally {
@@ -625,6 +637,26 @@ public class CounsellorOnboardingService {
             "Topic " + topicId + " is outside the coverage of this invite");
       }
     }
+  }
+
+  /**
+   * {@code NONE} without an assigned department: the invitee picks exactly ONE of the agency's
+   * departments, which then is their assigned one — nothing further (ORISO-Admin#1026, slice 6).
+   */
+  private static void validatePermissionLimit(List<Long> chosen, AccountInvite invite) {
+    if (topicPermissionOf(invite) == TopicPermission.NONE
+        && invite.getDepartmentId() == null
+        && chosen.stream().distinct().count() > 1) {
+      throw new BadRequestException(
+          "This invite allows exactly one topic — pick one of the agency's topics");
+    }
+  }
+
+  /** Invites created before the setting existed carry today's behaviour. */
+  private static TopicPermission topicPermissionOf(AccountInvite invite) {
+    return invite.getTopicPermission() == null
+        ? TopicPermission.CREATE
+        : invite.getTopicPermission();
   }
 
   /**

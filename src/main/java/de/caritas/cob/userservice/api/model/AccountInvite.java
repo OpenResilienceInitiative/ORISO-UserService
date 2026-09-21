@@ -190,6 +190,20 @@ public class AccountInvite {
   @Column(name = "created_by_username")
   private String createdByUsername;
 
+  /**
+   * How far the invited counsellor may extend their own topics (ORISO-Admin#1026, slice 6). New
+   * invites get it set explicitly (agency default or the admin's choice); the column default {@code
+   * CREATE} keeps today's behaviour for every invite created before the setting existed.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(
+      name = "topic_permission",
+      nullable = false,
+      length = 32,
+      columnDefinition = "varchar(32) default 'CREATE'")
+  @Builder.Default
+  private TopicPermission topicPermission = TopicPermission.CREATE;
+
   @Column(name = "create_date", nullable = false, columnDefinition = "datetime")
   private LocalDateTime createDate;
 

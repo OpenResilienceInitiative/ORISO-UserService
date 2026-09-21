@@ -5,6 +5,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
@@ -26,6 +27,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
@@ -34,6 +36,7 @@ import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -118,7 +121,8 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
             appointmentService,
             sessionRepository,
             eventNotificationService,
-            topicAgencyCompatibilityValidator);
+            topicAgencyCompatibilityValidator,
+            mock(AccountInviteRepository.class));
 
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     when(usersResource.get(ADMIN_ID)).thenReturn(userResource);
@@ -259,6 +263,8 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
   void updateConsultant_Should_sendUserIdAlongWithTheNewProfile() {
     givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setId(ADMIN_ID);
     consultant.setUsername(ENCODED_USERNAME);
     consultant.setTenantId(2L);
@@ -295,6 +301,8 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
     setField(keycloakService, "multiTenancyEnabled", false);
     givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setId(ADMIN_ID);
     consultant.setUsername("plainname");
     consultant.setTenantId(null);
@@ -330,6 +338,8 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
   void updateConsultant_Should_notTouchKeycloak_When_identityDataIsUnchanged() {
     // guards the caller contract: no update call means nothing can be wiped
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setId(ADMIN_ID);
     consultant.setFirstName("Same");
     consultant.setLastName("Name");

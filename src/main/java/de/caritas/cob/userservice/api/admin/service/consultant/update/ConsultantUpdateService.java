@@ -16,6 +16,8 @@ import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.model.ConsultantAvatars;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.TopicPermission;
+import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
@@ -53,6 +55,7 @@ public class ConsultantUpdateService {
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
+  private final @NonNull AccountInviteRepository accountInviteRepository;
 
   /**
    * Updates the basic data of consultant with given id.
@@ -83,6 +86,7 @@ public class ConsultantUpdateService {
 
     consultantTopicAgencyCompatibilityValidator.validateTopicUpdateAgainstAssignedAgencies(
         consultant.getId(), updateConsultantDTO.getTopicIds(), consultant.getTenantId());
+    rejectRemovingTheLastTopic(consultant, updateConsultantDTO.getTopicIds());
 
     String previousDisplayName = displayNameOf(consultant.getFirstName(), consultant.getLastName());
     String nextDisplayName =
@@ -163,6 +167,7 @@ public class ConsultantUpdateService {
     consultant.setAbsenceMessage(updateConsultantDTO.getAbsenceMessage());
     applyPersonalInfo(updateConsultantDTO, consultant);
     consultant.replaceTopics(updateConsultantDTO.getTopicIds());
+    applyTopicPermission(updateConsultantDTO, consultant);
     // Always update supervisor field if provided (even if false)
     if (updateConsultantDTO.getIsSupervisor() != null) {
       consultant.setSupervisor(updateConsultantDTO.getIsSupervisor());
@@ -188,6 +193,39 @@ public class ConsultantUpdateService {
     }
 
     return this.consultantService.saveConsultant(consultant);
+  }
+
+  /**
+   * At least one topic, always (ORISO-Admin#1026): an update may replace a counsellor's topics but
+   * never empty them. A counsellor who has no topic today (older accounts) stays editable — an
+   * empty list is then no change.
+   */
+  private static void rejectRemovingTheLastTopic(Consultant consultant, List<Long> topicIds) {
+    if (topicIds == null || topicIds.stream().anyMatch(Objects::nonNull)) {
+      return;
+    }
+    if (consultant.getConsultantTopics() != null && !consultant.getConsultantTopics().isEmpty()) {
+      throw new BadRequestException("At least one topic is required");
+    }
+  }
+
+  /**
+   * The counsellor's topic permission (ORISO-Admin#1026, slice 6). Null leaves it untouched; the
+   * invite that created the account follows, so the invite table shows the same value.
+   */
+  private void applyTopicPermission(UpdateAdminConsultantDTO dto, Consultant consultant) {
+    if (dto.getTopicPermission() == null) {
+      return;
+    }
+    var permission = TopicPermission.valueOf(dto.getTopicPermission().getValue());
+    consultant.setTopicPermission(permission);
+    accountInviteRepository
+        .findAllByProvisionedUserId(consultant.getId())
+        .forEach(
+            invite -> {
+              invite.setTopicPermission(permission);
+              accountInviteRepository.save(invite);
+            });
   }
 
   /**

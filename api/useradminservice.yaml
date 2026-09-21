@@ -1506,10 +1506,23 @@ components:
             Id of the chosen counsellor motif, only meaningful with avatarKind = ICON. Null
             leaves the stored value untouched; an empty string clears it — which also demotes a
             stored ICON choice to INITIALS, because a half choice is never persisted.
+        topicPermission:
+          $ref: '#/components/schemas/TopicPermissionDTO'
+
+    TopicPermissionDTO:
+      type: string
+      enum: [NONE, SELECT_EXISTING, CREATE]
+      description: >-
+        How far a counsellor may extend their own topics (ORISO-Admin#1026). NONE = only the
+        assigned department, SELECT_EXISTING = pick among the agency's departments, CREATE =
+        add further topics of the Traeger (today's behaviour). On an update, null leaves the
+        stored value untouched.
 
     ConsultantDTO:
       type: object
       properties:
+        topicPermission:
+          $ref: '#/components/schemas/TopicPermissionDTO'
         id:
           type: string
           example: "0f2cca9c-9303-4791-a0a5-a1ce16f1524f"

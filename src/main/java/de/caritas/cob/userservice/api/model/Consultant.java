@@ -289,6 +289,20 @@ public class Consultant implements TenantAware, NotificationsAware {
   private Boolean twoFactorRequired = false;
 
   /**
+   * How far this counsellor may extend their own topics (ORISO-Admin#1026, slice 6). Taken over
+   * from the invite that created the account; changeable by admins with rights on the agency. The
+   * column default {@code CREATE} keeps today's behaviour for every existing counsellor.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(
+      name = "topic_permission",
+      nullable = false,
+      length = 32,
+      columnDefinition = "varchar(32) default 'CREATE'")
+  @Builder.Default
+  private TopicPermission topicPermission = TopicPermission.CREATE;
+
+  /**
    * Whether this counsellor must replace their password before using the account. Set for logins
    * provisioned through the admin API, where the password is shared with at least one other person.
    * Cleared when the counsellor changes it. Defaults to false.

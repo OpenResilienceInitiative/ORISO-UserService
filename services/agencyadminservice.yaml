@@ -1717,6 +1717,12 @@ components:
     Settings:
       type: object
       properties:
+        counsellorTopicPermission:
+          type: string
+          enum: [NONE, SELECT_EXISTING, CREATE]
+          description: >
+            Agency default for how far newly invited counsellors may extend their own topics
+            (ORISO-Admin#1026). Agencies that existed before the setting report CREATE.
         featureStatisticsEnabled:
           type: boolean
           example: false
