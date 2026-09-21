@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort.FieldEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.OrderEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminFilterService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminService;
@@ -64,6 +65,8 @@ public class ConsultantAdminFacade {
 
   private final @NonNull ConsultantChatIdentityService consultantChatIdentityService;
 
+  private final @NonNull AdminCallerScope adminCallerScope;
+
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
 
@@ -74,6 +77,7 @@ public class ConsultantAdminFacade {
    * @return the generated {@link ConsultantResponseDTO}
    */
   public ConsultantAdminResponseDTO findConsultant(String consultantId) {
+    adminCallerScope.assertMayActOnConsultant(consultantId);
     return this.consultantAdminService.findConsultantById(consultantId);
   }
 
@@ -157,6 +161,7 @@ public class ConsultantAdminFacade {
    */
   public ConsultantAdminResponseDTO updateConsultant(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
+    adminCallerScope.assertMayActOnConsultant(consultantId);
     return this.consultantAdminService.updateConsultant(consultantId, updateConsultantDTO);
   }
 
@@ -179,7 +184,18 @@ public class ConsultantAdminFacade {
    * @return the generated {@link ConsultantAgencyResponseDTO}
    */
   public ConsultantAgencyResponseDTO findConsultantAgencies(String consultantId) {
+    adminCallerScope.assertMayActOnConsultant(consultantId);
     return this.consultantAgencyAdminService.findConsultantAgencies(consultantId);
+  }
+
+  /**
+   * Checks that the calling admin may act on the given counsellor: a Träger admin only inside their
+   * own tenant, a Beratungsstellen admin only on counsellors of their own agencies.
+   *
+   * @param consultantId the counsellor the admin endpoint targets
+   */
+  public void checkPermissionsToConsultant(String consultantId) {
+    adminCallerScope.assertMayActOnConsultant(consultantId);
   }
 
   /**
@@ -213,6 +229,7 @@ public class ConsultantAdminFacade {
   @Transactional
   public void setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
+    adminCallerScope.assertMayActOnConsultant(consultantId);
     var persistedAgencyIds =
         consultantAgencyAdminService.findConsultantAgencyIds(consultantId).stream()
             .collect(Collectors.toSet());
@@ -223,6 +240,9 @@ public class ConsultantAdminFacade {
         persistedAgencyIds.stream()
             .filter(persistedAgencyId -> !desiredAgencyIds.contains(persistedAgencyId))
             .collect(Collectors.toList());
+    // Only the relations that change are checked: a Beratungsstellen admin may keep, but not drop,
+    // agencies of a shared counsellor that are not their own.
+    adminCallerScope.assertMayUseAgencies(agencyIdsToDelete);
     if (!agencyIdsToDelete.isEmpty()) {
       consultantAgencyAdminService.markConsultantAgenciesForDeletion(
           consultantId, agencyIdsToDelete);
@@ -240,6 +260,7 @@ public class ConsultantAdminFacade {
    * @param agencyTypeDTO the request object containing the target type
    */
   public void changeAgencyType(Long agencyId, AgencyTypeDTO agencyTypeDTO) {
+    adminCallerScope.assertMayUseAgencies(List.of(agencyId));
     if (TEAM_AGENCY.equals(agencyTypeDTO.getAgencyType())) {
       this.consultantAgencyAdminService.markAllAssignedConsultantsAsTeamConsultant(agencyId);
     }
@@ -255,6 +276,8 @@ public class ConsultantAdminFacade {
    * @param agencyId the agency id
    */
   public void markConsultantAgencyForDeletion(String consultantId, Long agencyId) {
+    adminCallerScope.assertMayActOnConsultant(consultantId);
+    adminCallerScope.assertMayUseAgencies(List.of(agencyId));
     this.consultantAgencyAdminService.markConsultantAgencyForDeletion(consultantId, agencyId);
   }
 
@@ -303,6 +326,7 @@ public class ConsultantAdminFacade {
 
   public void pauseConsultantDeletion(
       String consultantId, String reason, Integer months, String pausedBy) {
+    adminCallerScope.assertMayActOnConsultant(consultantId);
     this.consultantAdminService.pauseConsultantDeletion(consultantId, reason, months, pausedBy);
   }
 
@@ -314,6 +338,7 @@ public class ConsultantAdminFacade {
    */
   public AgencyConsultantResponseDTO findConsultantsForAgency(String agencyId) {
     var parsedAgencyId = Long.valueOf(agencyId);
+    adminCallerScope.assertMayUseAgencies(List.of(parsedAgencyId));
     return this.consultantAgencyAdminService.findConsultantsForAgency(parsedAgencyId);
   }
 

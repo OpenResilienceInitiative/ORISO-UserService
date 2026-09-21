@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.FieldEnum;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminFilterService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminService;
@@ -75,6 +76,8 @@ class ConsultantAdminFacadeTest {
   @Mock private AdminUserFacade adminUserFacade;
 
   @Mock private AgencyService agencyService;
+
+  @Mock private AdminCallerScope adminCallerScope;
 
   @Test
   void findConsultant_Should_useConsultantAdminService() {

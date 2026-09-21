@@ -7,10 +7,16 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.model.UserAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collection;
@@ -20,6 +26,7 @@ import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,7 +48,8 @@ import org.springframework.stereotype.Component;
  *   <li><b>Träger admin</b> (bound to a tenant): admins and users of their own tenant, agencies of
  *       their own tenant.
  *   <li><b>Beratungsstellen admin</b> (restricted agency admin): admins and counsellors sharing one
- *       of their own agencies (themselves included), and only their own agencies.
+ *       of their own agencies (themselves included), advice seekers with a session in, or a
+ *       registration for, one of their own agencies, and only their own agencies.
  * </ul>
  */
 @Slf4j
@@ -57,6 +65,9 @@ public class AdminCallerScope {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull AgencyService agencyService;
+  private final @NonNull UserRepository userRepository;
+  private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull UserAgencyRepository userAgencyRepository;
 
   /**
    * Checks that the caller may act on the admin with the given ID. An unknown ID passes, so the
@@ -134,6 +145,52 @@ public class AdminCallerScope {
     }
   }
 
+  /**
+   * Checks that the caller may read or change the counsellor with the given ID. A counsellor marked
+   * for deletion counts with the agencies it had, so its deletion can still be paused by the admins
+   * of those agencies. An unknown ID passes, so the endpoint answers it the way it always has.
+   *
+   * @throws ForbiddenException if the counsellor lies outside the caller's scope
+   */
+  public void assertMayActOnConsultant(String consultantId) {
+    if (isUnrestricted()) {
+      return;
+    }
+    consultantRepository
+        .findById(consultantId)
+        .ifPresent(
+            consultant -> {
+              if (!isInScope(consultant.getTenantId(), agencyIdsOfConsultant(consultant))) {
+                throw deny("act on consultant " + consultantId);
+              }
+            });
+  }
+
+  /**
+   * Checks that the caller may read or change the advice seeker with the given ID. Their agencies
+   * are the agencies of their sessions and of their agency registrations. An unknown ID passes, so
+   * the endpoint answers it the way it always has.
+   *
+   * @throws ForbiddenException if the advice seeker lies outside the caller's scope
+   */
+  public void assertMayActOnAsker(String askerId) {
+    if (isUnrestricted()) {
+      return;
+    }
+    userRepository
+        .findById(askerId)
+        .ifPresent(
+            asker -> {
+              if (!isOwnTenant(asker.getTenantId())) {
+                throw deny("act on asker " + askerId + " of tenant " + asker.getTenantId());
+              }
+              if (authenticatedUser.hasRestrictedAgencyPriviliges()
+                  && Collections.disjoint(ownAgencyIds(), agencyIdsOfAsker(asker))) {
+                throw deny("act on asker " + askerId + " outside own agencies");
+              }
+            });
+  }
+
   private boolean isInScope(Long tenantId, Set<Long> agencyIds) {
     if (!isOwnTenant(tenantId)) {
       return false;
@@ -172,6 +229,26 @@ public class AdminCallerScope {
   private Set<Long> agencyIdsOfConsultant(String consultantId) {
     return consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultantId).stream()
         .map(ConsultantAgency::getAgencyId)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toCollection(HashSet::new));
+  }
+
+  /** Deleting a counsellor soft-deletes its agency relations, so those count for a deleted one. */
+  private Set<Long> agencyIdsOfConsultant(Consultant consultant) {
+    if (consultant.getDeleteDate() == null) {
+      return agencyIdsOfConsultant(consultant.getId());
+    }
+    return consultantAgencyRepository.findByConsultantId(consultant.getId()).stream()
+        .map(ConsultantAgency::getAgencyId)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toCollection(HashSet::new));
+  }
+
+  private Set<Long> agencyIdsOfAsker(User asker) {
+    return Stream.concat(
+            sessionRepository.findByUserUserId(asker.getUserId()).stream()
+                .map(Session::getAgencyId),
+            userAgencyRepository.findByUser(asker).stream().map(UserAgency::getAgencyId))
         .filter(Objects::nonNull)
         .collect(Collectors.toCollection(HashSet::new));
   }
