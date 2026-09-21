@@ -2,6 +2,8 @@ package de.caritas.cob.userservice.api.service.accountinvite.allocation;
 
 import de.caritas.cob.userservice.agencyadminserivce.generated.ApiClient;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.AdminAgencyControllerApi;
+import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyAdminDepartmentDTO;
+import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.TopicDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
@@ -44,16 +46,32 @@ public class ExistingAgencyClient {
       if (agency == null) {
         return Optional.empty();
       }
-      List<Long> topicIds =
-          agency.getTopics() == null
-              ? List.of()
-              : agency.getTopics().stream().map(TopicDTO::getId).filter(Objects::nonNull).toList();
       return Optional.of(
           new ExistingAgency(
-              agency.getId(), agency.getTenantId(), isDeleted(agency.getDeleteDate()), topicIds));
+              agency.getId(),
+              agency.getTenantId(),
+              isDeleted(agency.getDeleteDate()),
+              topicIds(agency)));
     } catch (HttpClientErrorException.NotFound exception) {
       return Optional.empty();
     }
+  }
+
+  /**
+   * The agency's topic IDs from its departments, which carry the ID even when AgencyService could
+   * not resolve the topic names; the topics list is only the fallback for an older AgencyService.
+   */
+  private static List<Long> topicIds(AgencyAdminResponseDTO agency) {
+    if (agency.getDepartments() != null && !agency.getDepartments().isEmpty()) {
+      return agency.getDepartments().stream()
+          .map(AgencyAdminDepartmentDTO::getTopicId)
+          .filter(Objects::nonNull)
+          .distinct()
+          .toList();
+    }
+    return agency.getTopics() == null
+        ? List.of()
+        : agency.getTopics().stream().map(TopicDTO::getId).filter(Objects::nonNull).toList();
   }
 
   /**
