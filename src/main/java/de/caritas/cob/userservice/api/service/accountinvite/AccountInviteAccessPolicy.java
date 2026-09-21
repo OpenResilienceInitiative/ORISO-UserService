@@ -195,7 +195,20 @@ public class AccountInviteAccessPolicy {
         || !scope.agencyIds().contains(command.agencyId())) {
       throw deny("invite a counsellor into agency " + command.agencyId());
     }
+    assertTenantMatchesScope(command.tenantId(), scope);
     return withCallerTenant(command, scope);
+  }
+
+  /**
+   * A caller-supplied tenant must be the caller's own: {@link #withCallerTenant} keeps a non-null
+   * tenant, so a foreign one would otherwise be stored on the invite.
+   */
+  private void assertTenantMatchesScope(Long requestedTenantId, Scope scope) {
+    if (requestedTenantId != null
+        && scope.tenantId() != null
+        && !scope.tenantId().equals(requestedTenantId)) {
+      throw deny("invite into tenant " + requestedTenantId);
+    }
   }
 
   private CreateAccountInviteCommand authorizeTenantAdminCreate(
@@ -212,9 +225,7 @@ public class AccountInviteAccessPolicy {
       // Onboarding a NEW Träger is the platform's job; EXISTING (their own Träger) is fine.
       throw deny("allocate a new tenant");
     }
-    if (command.tenantId() != null && !scope.tenantId().equals(command.tenantId())) {
-      throw deny("invite into tenant " + command.tenantId());
-    }
+    assertTenantMatchesScope(command.tenantId(), scope);
     if (command.agencyId() != null
         && !IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
       assertAgencyBelongsToTenant(command.agencyId(), scope.tenantId());
