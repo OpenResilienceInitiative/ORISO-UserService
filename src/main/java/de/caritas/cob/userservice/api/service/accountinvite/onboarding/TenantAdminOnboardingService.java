@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService;
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService.DpaForwardEmailCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
@@ -119,6 +120,11 @@ public class TenantAdminOnboardingService {
     if (resolved.pendingTwoFactorResume()) {
       return new OnboardingInviteState(resolved.invite(), true, null);
     }
+    if (joinsExistingTenant(resolved.invite())) {
+      // ORISO-Admin#1026 slice 4: the Träger exists and has its own DPA; the invitee confirms
+      // nothing on its behalf, so no contract text is shown.
+      return new OnboardingInviteState(resolved.invite(), false, null);
+    }
     return new OnboardingInviteState(
         resolved.invite(), false, operatorDpaContentClient.fetchPublishedDpaContent());
   }
@@ -180,6 +186,12 @@ public class TenantAdminOnboardingService {
     if (expired != null) {
       // noRollbackFor (see above) keeps the EXPIRED transition this just persisted.
       throw expired;
+    }
+    if (joinsExistingTenant(invite)) {
+      return joinExistingTenant(invite, command, now);
+    }
+    if (isBlank(command.organisationName())) {
+      throw new BadRequestException("organisation.name is required");
     }
     if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
       // Legacy invite created while TenantService lacked the TEN-INV-U1 allocation endpoints —
@@ -286,6 +298,61 @@ public class TenantAdminOnboardingService {
       identityAccountRemover.rollbackUser(admin.getId());
       throw exception;
     }
+  }
+
+  /**
+   * Registration on an invite into an EXISTING Träger (ORISO-Admin#1026, slice 4): the invitee
+   * joins the Träger as one more Träger admin. Nothing of the new-Träger path applies — no Träger
+   * is created, no tenant-ID reservation is consumed, no organisation data is needed and no DPA is
+   * signed (the Träger's agreement already exists). Same single-use claim, same Keycloak
+   * compensation and same TOTP resume contract as the new-Träger path.
+   */
+  private TenantAdminRegistrationResult joinExistingTenant(
+      AccountInvite invite, RegisterTenantAdminCommand command, LocalDateTime now) {
+    if (invite.getTenantId() == null) {
+      throw new InternalServerErrorException("Invite into an existing tenant carries no tenant");
+    }
+    int claimed = accountInviteRepository.claimForAcceptance(invite.getId(), null, now);
+    if (claimed == 0) {
+      AccountInvite current =
+          accountInviteRepository
+              .findById(invite.getId())
+              .orElseThrow(() -> new NotFoundException("Account invite not found"));
+      throw linkDeathException(current);
+    }
+
+    var admin = createAdminService.createNewTenantAdmin(buildAdminDto(invite, command));
+    try {
+      IdentityOtpCredential otpInfo =
+          identitySecondFactor.getOtpCredential(
+              usernameTranscoder.encodeUsername(admin.getUsername()));
+      if (otpInfo == null || isBlank(otpInfo.secret())) {
+        throw new InternalServerErrorException(
+            "Keycloak issued no TOTP setup material for the onboarding account");
+      }
+      AccountInvite claimedInvite =
+          accountInviteRepository
+              .findById(invite.getId())
+              .orElseThrow(() -> new NotFoundException("Account invite not found"));
+      claimedInvite.setAcceptedByUserId(admin.getId());
+      claimedInvite.setTotpPendingSecret(otpInfo.secret());
+      claimedInvite.setUpdateDate(now);
+      accountInviteRepository.save(claimedInvite);
+      log.info(
+          "Tenant-admin onboarding of invite {} joined the existing tenant {}",
+          invite.getId(),
+          invite.getTenantId());
+      return new TenantAdminRegistrationResult(
+          invite.getTenantId(), otpInfo.secret(), otpInfo.secretQrCode());
+    } catch (RuntimeException exception) {
+      identityAccountRemover.rollbackUser(admin.getId());
+      throw exception;
+    }
+  }
+
+  /** Whether the invite targets a Träger that already exists (slice 4) instead of a new one. */
+  static boolean joinsExistingTenant(AccountInvite invite) {
+    return invite.getTenantIdAllocationMode() == IdAllocationMode.EXISTING;
   }
 
   /**
@@ -415,6 +482,11 @@ public class TenantAdminOnboardingService {
             // Returned, not thrown: the EXPIRED transition this just persisted must commit before
             // the link-death exception leaves the flow.
             return ReservedDpaForward.dead(expired);
+          }
+          if (joinsExistingTenant(invite)) {
+            throw new BadRequestException(
+                "This invitation joins an existing tenant; its data processing agreement is not"
+                    + " part of the onboarding");
           }
           if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
             throw new InternalServerErrorException(
@@ -660,9 +732,8 @@ public class TenantAdminOnboardingService {
     if (command == null) {
       throw new BadRequestException("Request body is required");
     }
-    if (isBlank(command.organisationName())) {
-      throw new BadRequestException("organisation.name is required");
-    }
+    // organisation.name is only required for a NEW Träger; registerTenantAdmin checks it once the
+    // invite is known (an invite into an existing Träger names no organisation).
     if (isBlank(command.password()) || command.password().length() < MIN_PASSWORD_LENGTH) {
       throw new BadRequestException(
           "account.password must be at least " + MIN_PASSWORD_LENGTH + " characters long");

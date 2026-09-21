@@ -156,6 +156,12 @@ public class AccountInviteAccessPolicy {
     if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
       throw deny("invite a " + command.targetRole());
     }
+    if (IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())
+        || (command.tenantId() != null
+            && scope.tenantId() != null
+            && !scope.tenantId().equals(command.tenantId()))) {
+      throw deny("invite into tenant " + command.tenantId());
+    }
     if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
         || command.agencyId() == null
         || !scope.agencyIds().contains(command.agencyId())) {
@@ -173,7 +179,9 @@ public class AccountInviteAccessPolicy {
     if (!invitable.contains(command.targetRole())) {
       throw deny("invite a " + command.targetRole());
     }
-    if (command.tenantIdAllocationMode() != null) {
+    if (command.tenantIdAllocationMode() != null
+        && command.tenantIdAllocationMode() != IdAllocationMode.EXISTING) {
+      // Onboarding a NEW Träger is the platform's job; EXISTING (their own Träger) is fine.
       throw deny("allocate a new tenant");
     }
     if (command.tenantId() != null && !scope.tenantId().equals(command.tenantId())) {

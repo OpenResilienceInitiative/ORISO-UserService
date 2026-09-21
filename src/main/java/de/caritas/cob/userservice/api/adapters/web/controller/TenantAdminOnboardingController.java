@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorOnboardingState;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorRegistrationResult;
@@ -346,6 +347,13 @@ public class TenantAdminOnboardingController {
      */
     public String dpaContent;
 
+    /**
+     * Tenant-admin invites only (ORISO-Admin#1026, slice 4): true when the invite joins a Träger
+     * that already exists — the wizard then skips the organisation and DPA steps, registers with
+     * {@code account.password} alone and shows {@code tenantId}; no reservation pair is issued.
+     */
+    public Boolean joinsExistingTenant;
+
     /** {@code PENDING_2FA_ACTIVATION} when the flow re-enters at the 2FA step; null otherwise. */
     public String phase;
 
@@ -359,8 +367,14 @@ public class TenantAdminOnboardingController {
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();
       dto.lastName = invite.getLastName();
-      dto.reservedTenantId = invite.getTenantId();
-      dto.tenantIdReservationToken = invite.getTenantIdReservationToken();
+      boolean joinsExisting = invite.getTenantIdAllocationMode() == IdAllocationMode.EXISTING;
+      dto.joinsExistingTenant = joinsExisting;
+      if (joinsExisting) {
+        dto.tenantId = invite.getTenantId();
+      } else {
+        dto.reservedTenantId = invite.getTenantId();
+        dto.tenantIdReservationToken = invite.getTenantIdReservationToken();
+      }
       dto.expiresAt = invite.getExpiresAt();
       dto.dpaContent = state.dpaContent();
       applyTwoFactorResume(dto, invite, state.pendingTwoFactorResume());

@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -84,6 +85,20 @@ public class AccountInvite {
 
   @Column(name = "department_id")
   private Long departmentId;
+
+  /**
+   * How the invite's tenant ID was allocated (ORISO-Admin#1026): AUTO/MANUAL = a new Träger whose
+   * ID this invite reserved, EXISTING = a Träger that already exists (nothing reserved; its
+   * onboarding joins the Träger instead of creating one). Null on rows created before #1026.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "tenant_id_allocation_mode", length = 16)
+  private IdAllocationMode tenantIdAllocationMode;
+
+  /** Same for the agency ID: AUTO/MANUAL = a new Beratungsstelle, EXISTING = an existing one. */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "agency_id_allocation_mode", length = 16)
+  private IdAllocationMode agencyIdAllocationMode;
 
   @Column(name = "token_hash", length = 64)
   private String tokenHash;

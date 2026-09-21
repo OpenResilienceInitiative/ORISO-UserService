@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdA
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -111,11 +112,16 @@ public class AccountInviteService {
       throw new BadRequestException("recipientEmail is required");
     }
     validateAllocationModes(command);
+    boolean existingTenant = command.tenantIdAllocationMode() == IdAllocationMode.EXISTING;
+    if (existingTenant) {
+      verifyExistingTenant(command.tenantId());
+    }
     if (command.agencyIdAllocationMode() == IdAllocationMode.EXISTING) {
       command = bindToExistingAgency(command);
     }
     verifyRecipientEmailAvailable(command.recipientEmail());
     if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
+        && !existingTenant
         && command.tenantId() != null
         && isTenantIdTaken(command.tenantId())) {
       // 409 — the admin frontend maps CONFLICT to its dedicated "tenant id taken" message.
@@ -127,7 +133,7 @@ public class AccountInviteService {
     // UI state alone grants nothing — the reservation plus the re-validation below decide.
     TenantIdReservation tenantReservation = null;
     Long reservedAgencyId = null;
-    if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN) {
+    if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN && !existingTenant) {
       tenantReservation = reserveTenantIdOrDegrade(command);
     }
     try {
@@ -158,6 +164,8 @@ public class AccountInviteService {
               .lastName(trimToNull(command.lastName()))
               .agencyId(reservedAgencyId != null ? reservedAgencyId : command.agencyId())
               .departmentId(command.departmentId())
+              .tenantIdAllocationMode(command.tenantIdAllocationMode())
+              .agencyIdAllocationMode(command.agencyIdAllocationMode())
               .expiresAt(resolveExpiry(now, command.expiresInDays()))
               .status(AccountInviteStatus.DRAFT)
               .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
@@ -436,21 +444,22 @@ public class AccountInviteService {
     if (command.tenantIdAllocationMode() == IdAllocationMode.AUTO && command.tenantId() != null) {
       throw new BadRequestException("tenantId must be omitted in AUTO tenant allocation mode");
     }
-    if (command.tenantIdAllocationMode() != null
+    if (command.tenantIdAllocationMode() == IdAllocationMode.EXISTING) {
+      validateExistingTenantMode(command);
+    } else if (command.tenantIdAllocationMode() != null
         && command.targetRole() != AccountInviteTargetRole.TENANT_ADMIN) {
       throw new BadRequestException(
-          "tenantIdAllocationMode is only supported for TENANT_ADMIN invites");
+          "tenantIdAllocationMode AUTO/MANUAL is only supported for TENANT_ADMIN invites");
+    }
+    if (command.agencyIdAllocationMode() == IdAllocationMode.EXISTING
+        && IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())) {
+      throw new BadRequestException("An existing agency cannot belong to a new tenant");
     }
     if (command.agencyIdAllocationMode() == IdAllocationMode.MANUAL && command.agencyId() == null) {
       throw new BadRequestException("agencyId is required in MANUAL agency allocation mode");
     }
     if (command.agencyIdAllocationMode() == IdAllocationMode.AUTO && command.agencyId() != null) {
       throw new BadRequestException("agencyId must be omitted in AUTO agency allocation mode");
-    }
-    if (command.tenantIdAllocationMode() == IdAllocationMode.EXISTING) {
-      // Inviting into an existing Träger is ORISO-Admin#1026 slice 4; refuse it explicitly until
-      // then instead of silently reserving the ID.
-      throw new BadRequestException("EXISTING tenant allocation mode is not supported yet");
     }
     if (command.agencyIdAllocationMode() == IdAllocationMode.EXISTING) {
       if (command.agencyId() == null) {
@@ -462,6 +471,35 @@ public class AccountInviteService {
             "EXISTING agency allocation mode is only supported for COUNSELLOR and AGENCY_ADMIN"
                 + " invites");
       }
+    }
+  }
+
+  /**
+   * {@link IdAllocationMode#EXISTING} for the tenant ID (ORISO-Admin#1026, slice 4): the invite
+   * binds to a Träger that already exists. Supported for the roles that live inside a Träger;
+   * {@code tenantId} is required (a Träger-bound caller that named none already got its own tenant
+   * stamped by the access policy), and the technical platform tenant {@code 0} is never a target.
+   */
+  private static void validateExistingTenantMode(CreateAccountInviteCommand command) {
+    if (command.targetRole() != AccountInviteTargetRole.TENANT_ADMIN
+        && command.targetRole() != AccountInviteTargetRole.AGENCY_ADMIN
+        && command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
+      throw new BadRequestException(
+          "EXISTING tenant allocation mode is only supported for TENANT_ADMIN, AGENCY_ADMIN and"
+              + " COUNSELLOR invites");
+    }
+    if (command.tenantId() == null) {
+      throw new BadRequestException("tenantId is required in EXISTING tenant allocation mode");
+    }
+    if (TenantContext.TECHNICAL_TENANT_ID.equals(command.tenantId())) {
+      throw new BadRequestException("The platform tenant cannot be the target of an invite");
+    }
+  }
+
+  /** The Träger named by an EXISTING invite has to exist (404 otherwise); nothing is reserved. */
+  private void verifyExistingTenant(Long tenantId) {
+    if (!tenantExists(tenantId)) {
+      throw new NotFoundException("tenantId " + tenantId + " does not exist");
     }
   }
 
@@ -658,6 +696,8 @@ public class AccountInviteService {
                       .lastName(oldInvite.getLastName())
                       .agencyId(oldInvite.getAgencyId())
                       .departmentId(oldInvite.getDepartmentId())
+                      .tenantIdAllocationMode(oldInvite.getTenantIdAllocationMode())
+                      .agencyIdAllocationMode(oldInvite.getAgencyIdAllocationMode())
                       .tokenHash(hash(rawToken))
                       .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
                       .status(AccountInviteStatus.EMAIL_SENT)
