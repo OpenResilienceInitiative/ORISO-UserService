@@ -41,7 +41,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpaLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantAdminOnboardingService.RegisterTenantAdminCommand;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import java.time.LocalDateTime;
@@ -181,6 +183,8 @@ class TenantAdminOnboardingServiceTest {
   void resolveOnboardingInvite_deliverableInvite_returnsPlainState() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(operatorDpaContentClient.lookupPublishedDpa())
+        .thenReturn(new OperatorDpaLookup(OPERATOR_DPA, null));
 
     var state = service.resolveOnboardingInvite(RAW_TOKEN);
 
@@ -192,23 +196,46 @@ class TenantAdminOnboardingServiceTest {
   void resolveOnboardingInvite_deliverableInvite_carriesTheOperatorDpaText() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
-    when(operatorDpaContentClient.fetchPublishedDpaContent()).thenReturn(OPERATOR_DPA_JSON);
+    when(operatorDpaContentClient.lookupPublishedDpa())
+        .thenReturn(new OperatorDpaLookup(OPERATOR_DPA, null));
 
     var state = service.resolveOnboardingInvite(RAW_TOKEN);
 
     assertEquals(OPERATOR_DPA_JSON, state.dpaContent());
+    // A rendered contract has no unavailability to explain.
+    assertNull(state.dpaUnavailableReason());
   }
 
   @Test
   void resolveOnboardingInvite_deliverableInviteWithoutPublishedDpa_resolvesWithoutText() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
-    when(operatorDpaContentClient.fetchPublishedDpaContent()).thenReturn(null);
+    when(operatorDpaContentClient.lookupPublishedDpa())
+        .thenReturn(new OperatorDpaLookup(null, DpaUnavailableReason.NOT_PUBLISHED));
 
     var state = service.resolveOnboardingInvite(RAW_TOKEN);
 
     assertEquals(invite, state.invite());
     assertNull(state.dpaContent());
+    assertEquals(DpaUnavailableReason.NOT_PUBLISHED, state.dpaUnavailableReason());
+  }
+
+  /**
+   * A broken upstream read must stay distinguishable from "nothing published" all the way to the
+   * client — and must still resolve, never 500.
+   */
+  @Test
+  void resolveOnboardingInvite_operatorDpaLookupFailed_resolvesWithUpstreamErrorReason() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(operatorDpaContentClient.lookupPublishedDpa())
+        .thenReturn(new OperatorDpaLookup(null, DpaUnavailableReason.UPSTREAM_ERROR));
+
+    var state = service.resolveOnboardingInvite(RAW_TOKEN);
+
+    assertEquals(invite, state.invite());
+    assertNull(state.dpaContent());
+    assertEquals(DpaUnavailableReason.UPSTREAM_ERROR, state.dpaUnavailableReason());
   }
 
   @Test
@@ -238,7 +265,8 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("STOREDSECRET", state.invite().getTotpPendingSecret());
     // The resume path re-enters at the 2FA step, which shows no contract — no upstream lookup.
     assertNull(state.dpaContent());
-    verify(operatorDpaContentClient, never()).fetchPublishedDpaContent();
+    assertNull(state.dpaUnavailableReason());
+    verify(operatorDpaContentClient, never()).lookupPublishedDpa();
   }
 
   @Test
