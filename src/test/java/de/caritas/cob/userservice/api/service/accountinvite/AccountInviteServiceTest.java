@@ -656,10 +656,15 @@ class AccountInviteServiceTest {
     // already covered by the identity probe, and a revoked, expired or superseded one must leave
     // the address free — otherwise a mistyped or withdrawn invite would strand the admin with no
     // way to invite that person again.
+    // WAITING_FOR_UNIT (ORISO-Admin#1026 slice 5) holds the address too: the invite is promised.
     verify(accountInviteRepository)
         .countNonTerminalInvitesForRecipientEmail(
             eq("reusable@example.org"),
-            eq(List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT)),
+            eq(
+                List.of(
+                    AccountInviteStatus.WAITING_FOR_UNIT,
+                    AccountInviteStatus.DRAFT,
+                    AccountInviteStatus.EMAIL_SENT)),
             any());
   }
 

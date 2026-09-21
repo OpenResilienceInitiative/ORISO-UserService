@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkExc
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyAdminInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
@@ -70,6 +71,8 @@ class CounsellorOnboardingServiceTest {
   @Mock private TopicService topicService;
   @Mock private UsernameTranscoder usernameTranscoder;
   @Mock private AgencyCreationClient agencyCreationClient;
+  @Mock private AgencyAdminInviteProvisioningService agencyAdminInviteProvisioningService;
+  @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
 
   /**
    * The service drives its short database-only transactions through a {@link TransactionTemplate}
@@ -93,6 +96,8 @@ class CounsellorOnboardingServiceTest {
             topicService,
             usernameTranscoder,
             agencyCreationClient,
+            agencyAdminInviteProvisioningService,
+            eventPublisher,
             transactionManager);
   }
 

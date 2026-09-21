@@ -236,27 +236,6 @@ class AccountInviteExistingAgencyIT {
         .isInstanceOf(BadRequestException.class);
   }
 
-  @Test
-  void createInvite_Should_Refuse400_When_ExistingIsUsedForTheTenantId() {
-    actAsPlatformAdmin();
-
-    var command =
-        new CreateAccountInviteCommand(
-            AccountInviteTargetRole.TENANT_ADMIN,
-            OWN_TENANT,
-            "tenant-existing@example.org",
-            "Ada",
-            "Lovelace",
-            null,
-            null,
-            null,
-            IdAllocationMode.EXISTING,
-            null);
-
-    // Reserved for slice 4 (invite into an existing Träger); until then it is refused explicitly.
-    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
-  }
-
   // --- backwards compatibility ------------------------------------------------------------------
 
   @Test
@@ -269,7 +248,9 @@ class AccountInviteExistingAgencyIT {
     AccountInvite invite =
         service.createInvite(
             new CreateAccountInviteCommand(
-                AccountInviteTargetRole.COUNSELLOR,
+                // Slice 5: a counsellor into a new agency waits for its admin; the unit's admin
+                // invite is the one that reserves.
+                AccountInviteTargetRole.AGENCY_ADMIN,
                 OWN_TENANT,
                 "manual@example.org",
                 "Ada",

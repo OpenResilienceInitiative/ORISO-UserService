@@ -151,10 +151,44 @@ public class AccountInviteAccessPolicy {
     }
   }
 
+  /**
+   * Self-assignment (ORISO-Admin#1026, slice 3): may the caller assign THEIR OWN account to the
+   * given role in the given agency? The same "higher assigns lower" rule as invites: the platform
+   * admin anywhere; a Träger admin as agency admin or counsellor of an agency of their own Träger;
+   * an agency admin only as counsellor of an agency they administer (becoming agency admin of
+   * another agency would be a promotion, which is out of scope).
+   *
+   * @throws ForbiddenException if the assignment lies outside the caller's scope
+   */
+  public void authorizeSelfAssignment(boolean asAgencyAdmin, long agencyId, Long agencyTenantId) {
+    Scope scope = callerScope();
+    switch (scope.kind()) {
+      case TENANT:
+        if (!authenticatedUser.hasTenantLevelAdminRole()
+            || !scope.tenantId().equals(agencyTenantId)) {
+          throw deny("assign themselves in agency " + agencyId);
+        }
+        return;
+      case AGENCY:
+        if (asAgencyAdmin || !scope.agencyIds().contains(agencyId)) {
+          throw deny("assign themselves in agency " + agencyId);
+        }
+        return;
+      default:
+        return;
+    }
+  }
+
   private CreateAccountInviteCommand authorizeAgencyAdminCreate(
       CreateAccountInviteCommand command, Scope scope) {
     if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
       throw deny("invite a " + command.targetRole());
+    }
+    if (IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())
+        || (command.tenantId() != null
+            && scope.tenantId() != null
+            && !scope.tenantId().equals(command.tenantId()))) {
+      throw deny("invite into tenant " + command.tenantId());
     }
     if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
         || command.agencyId() == null
@@ -173,7 +207,9 @@ public class AccountInviteAccessPolicy {
     if (!invitable.contains(command.targetRole())) {
       throw deny("invite a " + command.targetRole());
     }
-    if (command.tenantIdAllocationMode() != null) {
+    if (command.tenantIdAllocationMode() != null
+        && command.tenantIdAllocationMode() != IdAllocationMode.EXISTING) {
+      // Onboarding a NEW Träger is the platform's job; EXISTING (their own Träger) is fine.
       throw deny("allocate a new tenant");
     }
     if (command.tenantId() != null && !scope.tenantId().equals(command.tenantId())) {
@@ -205,17 +241,7 @@ public class AccountInviteAccessPolicy {
     if (command.tenantId() != null || scope.tenantId() == null) {
       return command;
     }
-    return new CreateAccountInviteCommand(
-        command.targetRole(),
-        scope.tenantId(),
-        command.recipientEmail(),
-        command.firstName(),
-        command.lastName(),
-        command.agencyId(),
-        command.departmentId(),
-        command.expiresInDays(),
-        command.tenantIdAllocationMode(),
-        command.agencyIdAllocationMode());
+    return command.withTenantId(scope.tenantId());
   }
 
   private Scope callerScope() {

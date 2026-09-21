@@ -20,6 +20,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService;
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService.DpaForwardEmailCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
@@ -31,6 +34,7 @@ import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Transactional;
@@ -84,6 +88,7 @@ public class TenantAdminOnboardingService {
   private final @NonNull PublicDpaForwardClient publicDpaForwardClient;
   private final @NonNull DpaForwardEmailService dpaForwardEmailService;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull ApplicationEventPublisher eventPublisher;
 
   /**
    * Drives the short database-only transactions of the read paths explicitly: the invite row is
@@ -119,6 +124,12 @@ public class TenantAdminOnboardingService {
     if (resolved.pendingTwoFactorResume()) {
       return new OnboardingInviteState(resolved.invite(), true, null);
     }
+    if (resolved.joinsExistingTenant()) {
+      // ORISO-Admin#1026 slices 4/5: the Träger exists (an EXISTING invite, or a further admin of
+      // a new Träger that another admin created first). It has its own DPA; the invitee confirms
+      // nothing on its behalf, so no contract text is shown.
+      return new OnboardingInviteState(resolved.invite(), false, null, true);
+    }
     return new OnboardingInviteState(
         resolved.invite(), false, operatorDpaContentClient.fetchPublishedDpaContent());
   }
@@ -132,9 +143,12 @@ public class TenantAdminOnboardingService {
 
           if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
             AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
-            return expired == null
-                ? ResolvedOnboardingInvite.open(invite)
-                : ResolvedOnboardingInvite.dead(expired);
+            if (expired != null) {
+              return ResolvedOnboardingInvite.dead(expired);
+            }
+            return joinsExistingTenant(invite)
+                ? ResolvedOnboardingInvite.openJoiningExistingTenant(invite)
+                : ResolvedOnboardingInvite.open(invite);
           }
           if (isResumableAtTwoFactorStep(invite, now)) {
             return ResolvedOnboardingInvite.pendingTwoFactorResume(invite);
@@ -180,6 +194,12 @@ public class TenantAdminOnboardingService {
     if (expired != null) {
       // noRollbackFor (see above) keeps the EXPIRED transition this just persisted.
       throw expired;
+    }
+    if (joinsExistingTenant(invite)) {
+      return joinExistingTenant(invite, command, now);
+    }
+    if (isBlank(command.organisationName())) {
+      throw new BadRequestException("organisation.name is required");
     }
     if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
       // Legacy invite created while TenantService lacked the TEN-INV-U1 allocation endpoints —
@@ -279,6 +299,7 @@ public class TenantAdminOnboardingService {
       }
       Long tenantId =
           created != null && created.getId() != null ? created.getId() : invite.getTenantId();
+      publishTenantCreated(tenantId);
       return new TenantAdminRegistrationResult(tenantId, otpInfo.secret(), otpInfo.secretQrCode());
     } catch (RuntimeException exception) {
       // Every database change rolls back with the exception; the Keycloak account is external
@@ -286,6 +307,81 @@ public class TenantAdminOnboardingService {
       identityAccountRemover.rollbackUser(admin.getId());
       throw exception;
     }
+  }
+
+  /**
+   * Registration on an invite into an EXISTING Träger (ORISO-Admin#1026, slice 4): the invitee
+   * joins the Träger as one more Träger admin. Nothing of the new-Träger path applies — no Träger
+   * is created, no tenant-ID reservation is consumed, no organisation data is needed and no DPA is
+   * signed (the Träger's agreement already exists). Same single-use claim, same Keycloak
+   * compensation and same TOTP resume contract as the new-Träger path.
+   */
+  private TenantAdminRegistrationResult joinExistingTenant(
+      AccountInvite invite, RegisterTenantAdminCommand command, LocalDateTime now) {
+    if (invite.getTenantId() == null) {
+      throw new InternalServerErrorException("Invite into an existing tenant carries no tenant");
+    }
+    int claimed = accountInviteRepository.claimForAcceptance(invite.getId(), null, now);
+    if (claimed == 0) {
+      AccountInvite current =
+          accountInviteRepository
+              .findById(invite.getId())
+              .orElseThrow(() -> new NotFoundException("Account invite not found"));
+      throw linkDeathException(current);
+    }
+
+    var admin = createAdminService.createNewTenantAdmin(buildAdminDto(invite, command));
+    try {
+      IdentityOtpCredential otpInfo =
+          identitySecondFactor.getOtpCredential(
+              usernameTranscoder.encodeUsername(admin.getUsername()));
+      if (otpInfo == null || isBlank(otpInfo.secret())) {
+        throw new InternalServerErrorException(
+            "Keycloak issued no TOTP setup material for the onboarding account");
+      }
+      AccountInvite claimedInvite =
+          accountInviteRepository
+              .findById(invite.getId())
+              .orElseThrow(() -> new NotFoundException("Account invite not found"));
+      claimedInvite.setAcceptedByUserId(admin.getId());
+      claimedInvite.setTotpPendingSecret(otpInfo.secret());
+      claimedInvite.setUpdateDate(now);
+      accountInviteRepository.save(claimedInvite);
+      log.info(
+          "Tenant-admin onboarding of invite {} joined the existing tenant {}",
+          invite.getId(),
+          invite.getTenantId());
+      publishTenantCreated(invite.getTenantId());
+      return new TenantAdminRegistrationResult(
+          invite.getTenantId(), otpInfo.secret(), otpInfo.secretQrCode());
+    } catch (RuntimeException exception) {
+      identityAccountRemover.rollbackUser(admin.getId());
+      throw exception;
+    }
+  }
+
+  /**
+   * Whether the invitee joins a Träger that already exists instead of creating one: an invite into
+   * an EXISTING Träger (slice 4), or a further admin of a new Träger whose first admin already
+   * finished onboarding and created it (slice 5, "whoever registers first creates the unit").
+   */
+  private boolean joinsExistingTenant(AccountInvite invite) {
+    if (invite.getTenantIdAllocationMode() == IdAllocationMode.EXISTING) {
+      return true;
+    }
+    return invite.getTenantId() != null
+        && invite.getId() != null
+        && accountInviteRepository.existsByTargetRoleAndTenantIdAndStatusAndIdNot(
+            AccountInviteTargetRole.TENANT_ADMIN,
+            invite.getTenantId(),
+            AccountInviteStatus.ACCEPTED,
+            invite.getId());
+  }
+
+  /** Slice 5 trigger: the Träger exists and has an admin — release the invites waiting for it. */
+  private void publishTenantCreated(Long tenantId) {
+    eventPublisher.publishEvent(
+        new InviteUnitCreatedEvent(InviteUnitType.TENANT, tenantId, tenantId));
   }
 
   /**
@@ -415,6 +511,11 @@ public class TenantAdminOnboardingService {
             // Returned, not thrown: the EXPIRED transition this just persisted must commit before
             // the link-death exception leaves the flow.
             return ReservedDpaForward.dead(expired);
+          }
+          if (joinsExistingTenant(invite)) {
+            throw new BadRequestException(
+                "This invitation joins an existing tenant; its data processing agreement is not"
+                    + " part of the onboarding");
           }
           if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
             throw new InternalServerErrorException(
@@ -660,9 +761,8 @@ public class TenantAdminOnboardingService {
     if (command == null) {
       throw new BadRequestException("Request body is required");
     }
-    if (isBlank(command.organisationName())) {
-      throw new BadRequestException("organisation.name is required");
-    }
+    // organisation.name is only required for a NEW Träger; registerTenantAdmin checks it once the
+    // invite is known (an invite into an existing Träger names no organisation).
     if (isBlank(command.password()) || command.password().length() < MIN_PASSWORD_LENGTH) {
       throw new BadRequestException(
           "account.password must be at least " + MIN_PASSWORD_LENGTH + " characters long");
@@ -747,7 +847,17 @@ public class TenantAdminOnboardingService {
    * published or the lookup is unavailable.
    */
   public record OnboardingInviteState(
-      AccountInvite invite, boolean pendingTwoFactorResume, String dpaContent) {}
+      AccountInvite invite,
+      boolean pendingTwoFactorResume,
+      String dpaContent,
+      /** The invitee joins an existing Träger (slices 4/5): no organisation or DPA step. */
+      boolean joinsExistingTenant) {
+
+    public OnboardingInviteState(
+        AccountInvite invite, boolean pendingTwoFactorResume, String dpaContent) {
+      this(invite, pendingTwoFactorResume, dpaContent, false);
+    }
+  }
 
   /** Input for the reservation-consuming registration; mirrors the Admin panel request shape. */
   public record RegisterTenantAdminCommand(

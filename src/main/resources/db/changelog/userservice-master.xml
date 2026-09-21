@@ -201,5 +201,8 @@
   <include file="db/changelog/changeset/20260917_consultant_picture_visibility_1049/changeSet.xml"/>
   <include file="db/changelog/changeset/20260919_consultant_two_factor_required/changeSet.xml"/>
   <include file="db/changelog/changeset/20260919_consultant_password_change_required/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260921_account_invite_allocation_modes/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260921_account_invite_also_counsellor/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260921_account_invite_unit_queue/changeSet.xml"/>
   <include file="db/changelog/changeset/20260921_topic_permission_1026/changeSet.xml"/>
 </databaseChangeLog>

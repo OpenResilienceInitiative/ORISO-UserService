@@ -236,7 +236,9 @@ class AccountInviteTenantScopeIT {
     actAsTenantAdmin();
 
     AccountInvite created =
-        service.createInvite(invite(AccountInviteTargetRole.AGENCY_ADMIN, OWN_TENANT, null));
+        // ORISO-Admin#1026 slice 3: an agency-admin invite always names its agency.
+        service.createInvite(
+            invite(AccountInviteTargetRole.AGENCY_ADMIN, OWN_TENANT, OWN_AGENCY_ID));
 
     assertThat(created.getId()).isNotNull();
     assertThat(created.getTenantId()).isEqualTo(OWN_TENANT);
