@@ -272,6 +272,82 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("excludedId") Long excludedId,
       @Param("modes") Collection<IdAllocationMode> modes);
 
+  /**
+   * Whether one of our invites reserved this agency number (ORISO-Admin#1026): an invite that took
+   * it under AUTO/MANUAL itself — not a queued invite, which only points at another invite's
+   * reservation.
+   */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.agencyId = :agencyId"
+          + " AND i.agencyIdAllocationMode IN :modes"
+          + " AND i.waitingForUnit IS NULL"
+          + " AND i.status <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus"
+          + ".WAITING_FOR_UNIT")
+  boolean existsReservationHolderForAgency(
+      @Param("agencyId") Long agencyId, @Param("modes") Collection<IdAllocationMode> modes);
+
+  /**
+   * Whether another still-pending invite needs this agency number: a further admin of the same new
+   * Beratungsstelle or an invite waiting for it (ORISO-Admin#1026). Elapsed invites do not count.
+   */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.agencyId = :agencyId"
+          + " AND i.id <> :excludedId"
+          + " AND i.agencyIdAllocationMode IN :modes"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  boolean existsPendingInviteOnAgencyNumber(
+      @Param("agencyId") Long agencyId,
+      @Param("excludedId") Long excludedId,
+      @Param("modes") Collection<IdAllocationMode> modes,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * Whether another still-pending invite needs this Träger number: a further admin sharing the
+   * reservation or an invite waiting for the new Träger (ORISO-Admin#1026).
+   */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.tenantId = :tenantId"
+          + " AND i.id <> :excludedId"
+          + " AND (i.tenantIdReservationToken IS NOT NULL"
+          + "      OR i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT)"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  boolean existsPendingInviteOnTenantNumber(
+      @Param("tenantId") Long tenantId,
+      @Param("excludedId") Long excludedId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * Elapsed invites that may still hold a reserved number (ORISO-Admin#1026 expiry sweep): not yet
+   * accepted, past their expiry, and reserving a Träger or agency number.
+   */
+  @Query(
+      "SELECT i FROM AccountInvite i WHERE i.status IN :statuses"
+          + " AND i.expiresAt IS NOT NULL AND i.expiresAt <= :now"
+          + " AND (i.tenantIdReservationToken IS NOT NULL OR i.agencyIdAllocationMode IN :modes)"
+          + " ORDER BY i.expiresAt ASC")
+  List<AccountInvite> findElapsedHoldingANumber(
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("modes") Collection<IdAllocationMode> modes,
+      @Param("now") LocalDateTime now,
+      Pageable pageable);
+
+  /** The elapsed address-holding rows {@link #expireElapsedRecipientClaims} is about to expire. */
+  @Query(
+      "SELECT i FROM AccountInvite i WHERE i.activeRecipientKey = :recipientEmail"
+          + " AND i.status IN :statuses"
+          + " AND i.expiresAt IS NOT NULL"
+          + " AND i.expiresAt <= :now")
+  List<AccountInvite> findElapsedRecipientClaims(
+      @Param("recipientEmail") String recipientEmail,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
   /** The newest TENANT_ADMIN invite holding a tenant-ID reservation token for this tenant. */
   Optional<AccountInvite>
       findFirstByTargetRoleAndTenantIdAndTenantIdReservationTokenIsNotNullOrderByCreateDateDesc(

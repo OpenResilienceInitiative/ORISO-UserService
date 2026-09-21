@@ -55,6 +55,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.HttpClientErrorException;
 
@@ -99,6 +101,12 @@ public class AccountInviteService {
       List.of(IdAllocationMode.AUTO, IdAllocationMode.MANUAL);
 
   private static final int MAX_IMPORT_BATCH_ID_LENGTH = 64;
+
+  /** Invites the expiry sweep may expire: never sent (DRAFT) or sent and not yet accepted. */
+  private static final List<AccountInviteStatus> EXPIRABLE_STATUSES =
+      List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
+
+  private static final int EXPIRY_SWEEP_BATCH = 100;
 
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull InviteEmailTemplateRepository templateRepository;
@@ -443,14 +451,27 @@ public class AccountInviteService {
    * <p>The count provides the user-friendly conflict. New active rows additionally carry a unique
    * normalized claim so concurrent requests on different replicas cannot both pass this read.
    */
+  /**
+   * Materializes the elapsed claims on this address; each gives its reserved number back like the
+   * expiry sweep would (ORISO-Admin#1026).
+   */
+  private void expireElapsedRecipientClaims(String normalizedEmail, LocalDateTime now) {
+    for (AccountInvite elapsed :
+        accountInviteRepository.findElapsedRecipientClaims(
+            normalizedEmail, ADDRESS_HOLDING_INVITE_STATUSES, now)) {
+      expireAndReleaseNumbers(elapsed, now);
+    }
+    accountInviteRepository.expireElapsedRecipientClaims(
+        normalizedEmail, ADDRESS_HOLDING_INVITE_STATUSES, now);
+  }
+
   private void verifyRecipientEmailAvailable(String recipientEmail) {
     String normalized = normalizeEmail(recipientEmail);
     if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()) {
       throw emailNotAvailable(null);
     }
     LocalDateTime now = LocalDateTime.now();
-    accountInviteRepository.expireElapsedRecipientClaims(
-        normalized, ADDRESS_HOLDING_INVITE_STATUSES, now);
+    expireElapsedRecipientClaims(normalized, now);
     if (accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
             normalized, ADDRESS_HOLDING_INVITE_STATUSES, now)
         > 0) {
@@ -468,8 +489,7 @@ public class AccountInviteService {
     if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()) {
       throw emailNotAvailable(null);
     }
-    accountInviteRepository.expireElapsedRecipientClaims(
-        normalized, ADDRESS_HOLDING_INVITE_STATUSES, now);
+    expireElapsedRecipientClaims(normalized, now);
     if (accountInviteRepository.countNonTerminalInvitesForRecipientEmailExcludingId(
             normalized, excludedInviteId, ADDRESS_HOLDING_INVITE_STATUSES, now)
         > 0) {
@@ -929,6 +949,26 @@ public class AccountInviteService {
         dispatch.invite(), delivery, dispatch.rawToken(), dispatch.acceptUrl());
   }
 
+  /**
+   * Expires elapsed invites that still hold a reserved Träger / agency number and gives the number
+   * back unless another pending invite still needs it (ORISO-Admin#1026). Run by {@link
+   * ExpiredInviteReservationSweep}; the release itself is a durable task, retried by the
+   * reservation-release scheduler when the ledger is unreachable.
+   *
+   * @return how many invites were expired
+   */
+  @Transactional
+  public int expireElapsedInvites() {
+    LocalDateTime now = LocalDateTime.now();
+    List<AccountInvite> elapsed =
+        accountInviteRepository.findElapsedHoldingANumber(
+            EXPIRABLE_STATUSES, RESERVING_MODES, now, PageRequest.of(0, EXPIRY_SWEEP_BATCH));
+    for (AccountInvite invite : elapsed) {
+      expireAndReleaseNumbers(invite, now);
+    }
+    return elapsed.size();
+  }
+
   @Transactional
   public AccountInvite revokeInvite(Long inviteId) {
     AccountInvite invite = findAuthorizedInvite(inviteId);
@@ -941,7 +981,125 @@ public class AccountInviteService {
     invite.setRevokedAt(now);
     invite.setRevokedByUserId(authenticatedUser.getUserId());
     invite.setUpdateDate(now);
-    return accountInviteRepository.save(invite);
+    AccountInvite saved = accountInviteRepository.save(invite);
+    releaseNumbersAfterCommit(enqueueUnneededNumberReleases(saved, now));
+    return saved;
+  }
+
+  private void expireAndReleaseNumbers(AccountInvite invite, LocalDateTime now) {
+    invite.setStatus(AccountInviteStatus.EXPIRED);
+    invite.setActiveRecipientKey(null);
+    invite.setUpdateDate(now);
+    accountInviteRepository.save(invite);
+    releaseNumbersAfterCommit(enqueueUnneededNumberReleases(invite, now));
+  }
+
+  /**
+   * Records a durable release task for every number this revoked / expired invite held that no
+   * other pending invite still needs (ORISO-Admin#1026). A number is only given back while it is
+   * still a reservation — never once the unit exists — and only when one of our invites reserved
+   * it, so a queued CSV row can never release somebody else's number.
+   */
+  private List<Long> enqueueUnneededNumberReleases(AccountInvite invite, LocalDateTime now) {
+    List<Long> taskIds = new java.util.ArrayList<>();
+    Long tenantId = invite.getTenantId();
+    if (tenantId != null
+        && holdsOrWaitsForTenantReservation(invite)
+        && !accountInviteRepository.existsPendingInviteOnTenantNumber(
+            tenantId, invite.getId(), PENDING_UNIT_ADMIN_STATUSES, now)
+        && !reservationReleaseTaskRepository.existsByAllocationTypeAndReservedId(
+            IdReservationReleaseType.TENANT, tenantId)
+        && stillReserved("tenant", () -> tenantIdAllocationClient.getAvailability(tenantId))) {
+      taskIds.add(saveReleaseTask(IdReservationReleaseType.TENANT, tenantId, tenantId, now));
+    }
+    Long agencyId = invite.getAgencyId();
+    if (agencyId != null
+        && IdAllocationMode.reservesAnId(invite.getAgencyIdAllocationMode())
+        && accountInviteRepository.existsReservationHolderForAgency(agencyId, RESERVING_MODES)
+        && !accountInviteRepository.existsPendingInviteOnAgencyNumber(
+            agencyId, invite.getId(), RESERVING_MODES, PENDING_UNIT_ADMIN_STATUSES, now)
+        && !reservationReleaseTaskRepository.existsByAllocationTypeAndReservedId(
+            IdReservationReleaseType.AGENCY, agencyId)
+        && stillReserved("agency", () -> agencyIdAllocationClient.getAvailability(agencyId))) {
+      taskIds.add(saveReleaseTask(IdReservationReleaseType.AGENCY, agencyId, tenantId, now));
+    }
+    return taskIds;
+  }
+
+  /**
+   * Whether the ledger still reports the number as a reservation. An unreachable ledger keeps the
+   * number (logged): releasing blindly could free a number whose unit meanwhile exists.
+   */
+  private boolean stillReserved(
+      String allocationType, java.util.function.Supplier<IdAllocationStatus> availability) {
+    try {
+      return availability.get() == IdAllocationStatus.RESERVED;
+    } catch (RuntimeException ledgerFailure) {
+      log.warn(
+          "Could not check the {} number before releasing it ({}); it stays reserved",
+          allocationType,
+          ledgerFailure.getClass().getSimpleName());
+      return false;
+    }
+  }
+
+  /**
+   * The invite reserved a new Träger itself (its token), or waited for one whose admin invite
+   * reserved it.
+   */
+  private boolean holdsOrWaitsForTenantReservation(AccountInvite invite) {
+    if (invite.getTenantIdReservationToken() != null) {
+      return true;
+    }
+    return invite.getWaitingForUnit() == InviteUnitType.TENANT
+        && accountInviteRepository
+            .findFirstByTargetRoleAndTenantIdAndTenantIdReservationTokenIsNotNullOrderByCreateDateDesc(
+                AccountInviteTargetRole.TENANT_ADMIN, invite.getTenantId())
+            .isPresent();
+  }
+
+  private Long saveReleaseTask(
+      IdReservationReleaseType type, Long reservedId, Long tenantContextId, LocalDateTime now) {
+    return reservationReleaseTaskRepository
+        .saveAndFlush(
+            IdReservationReleaseTask.builder()
+                .allocationType(type)
+                .reservedId(reservedId)
+                .tenantContextId(tenantContextId)
+                .createDate(now)
+                .build())
+        .getId();
+  }
+
+  /**
+   * Runs the release tasks once the revoke / expiry is committed; a failure leaves the task for the
+   * reservation-release scheduler.
+   */
+  private void releaseNumbersAfterCommit(List<Long> taskIds) {
+    if (taskIds.isEmpty()) {
+      return;
+    }
+    Runnable release =
+        () -> {
+          for (Long taskId : taskIds) {
+            try {
+              reservationReleaseProcessor.process(taskId);
+            } catch (RuntimeException releaseFailure) {
+              logReservationReleaseFailure("scheduled", releaseFailure);
+            }
+          }
+        };
+    if (TransactionSynchronizationManager.isSynchronizationActive()) {
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              release.run();
+            }
+          });
+    } else {
+      release.run();
+    }
   }
 
   @Transactional(noRollbackFor = AccountInviteLinkException.class)
@@ -959,10 +1117,7 @@ public class AccountInviteService {
       return resolveAlreadyProcessedInvite(invite, now);
     }
     if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
-      invite.setStatus(AccountInviteStatus.EXPIRED);
-      invite.setActiveRecipientKey(null);
-      invite.setUpdateDate(now);
-      accountInviteRepository.save(invite);
+      expireAndReleaseNumbers(invite, now);
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
 
