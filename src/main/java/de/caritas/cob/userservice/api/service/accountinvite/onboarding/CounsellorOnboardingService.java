@@ -164,6 +164,10 @@ public class CounsellorOnboardingService {
       validateTopicSelection(command.topicIds(), coverage);
     } else if (command.topicIds() != null && !command.topicIds().isEmpty()) {
       validateTopicSelection(command.topicIds(), coverage);
+    } else if (!coverage.agencyExists()) {
+      // ORISO-Admin#1026 (Q28): a founding admin who does not counsel still gives the new agency
+      // at least one topic — the counsellors queued for it pick from those.
+      throw new BadRequestException("A new agency needs at least one topic");
     }
 
     // A reserved (not yet created) Beratungsstellen-ID: the invitee named the agency in the

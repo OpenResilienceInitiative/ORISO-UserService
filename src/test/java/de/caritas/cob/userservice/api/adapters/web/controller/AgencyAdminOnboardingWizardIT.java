@@ -206,8 +206,45 @@ class AgencyAdminOnboardingWizardIT {
         .hasSize(1);
   }
 
+  /**
+   * ORISO-Admin#1026 (Frank, Q28): a founding agency admin gives the new agency at least one topic,
+   * even without counselling — otherwise the counsellors queued for it have nothing to pick.
+   */
+  @Test
+  void register_Should_Answer400AndCreateNothing_When_AFoundingAdminWhoDoesNotCounselSendsNoTopic()
+      throws Exception {
+    String token = seedAgencyAdminInvite(NEW_AGENCY, false);
+
+    register(token, "admin_no_topic", false, "Beratungsstelle Nord", "")
+        .andExpect(status().isBadRequest());
+
+    verify(agencyCreationClient, never()).createAgencyWithReservedId(any(), any(), any(), any());
+    verify(keycloakService, never()).createUser(any(UserDTO.class), anyString(), anyString());
+    assertThat(accountInviteRepository.findAll().get(0).getStatus())
+        .isEqualTo(AccountInviteStatus.EMAIL_SENT);
+  }
+
+  @Test
+  void register_Should_PassTheTopicToTheNewAgency_When_AFoundingAdminDoesNotCounsel()
+      throws Exception {
+    String token = seedAgencyAdminInvite(NEW_AGENCY, false);
+
+    register(token, "admin_only", false, "Beratungsstelle Nord").andExpect(status().isOk());
+
+    verify(agencyCreationClient)
+        .createAgencyWithReservedId(
+            eq(NEW_AGENCY), eq("Beratungsstelle Nord"), eq(TENANT), eq(List.of(TOPIC)));
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+  }
+
   private org.springframework.test.web.servlet.ResultActions register(
       String token, String username, Boolean alsoCounsellor, String agencyName) throws Exception {
+    return register(token, username, alsoCounsellor, agencyName, String.valueOf(TOPIC));
+  }
+
+  private org.springframework.test.web.servlet.ResultActions register(
+      String token, String username, Boolean alsoCounsellor, String agencyName, String topicIds)
+      throws Exception {
     String alsoCounsellorJson =
         alsoCounsellor == null ? "" : ", \"alsoCounsellor\": " + alsoCounsellor;
     String agencyJson =
@@ -221,7 +258,7 @@ class AgencyAdminOnboardingWizardIT {
                 "{ \"account\": { \"username\": \""
                     + username
                     + "\", \"password\": \"Valid-Test-Password-2026!\" }, \"topicIds\": ["
-                    + TOPIC
+                    + topicIds
                     + "]"
                     + alsoCounsellorJson
                     + agencyJson
