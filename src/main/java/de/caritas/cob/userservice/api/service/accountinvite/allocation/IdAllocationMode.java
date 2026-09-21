@@ -5,9 +5,18 @@ package de.caritas.cob.userservice.api.service.accountinvite.allocation;
  *
  * <p>{@code AUTO} — the owning service assigns the smallest currently free ID atomically; the
  * request must not pin an ID. {@code MANUAL} — the admin pinned a specific ID which is reserved or
- * rejected with a conflict.
+ * rejected with a conflict. {@code EXISTING} (ORISO-Admin#1026) — the ID names a unit that already
+ * exists; nothing is reserved, the unit is validated instead (exists, not deleted, inside the
+ * caller's scope). Supported for {@code agencyIdAllocationMode}; {@code tenantIdAllocationMode}
+ * refuses it until inviting into an existing Träger is built (#1026 slice 4).
  */
 public enum IdAllocationMode {
   AUTO,
-  MANUAL
+  MANUAL,
+  EXISTING;
+
+  /** Whether the mode reserves an ID in the owning service (AUTO, MANUAL) — EXISTING does not. */
+  public static boolean reservesAnId(IdAllocationMode mode) {
+    return mode == AUTO || mode == MANUAL;
+  }
 }

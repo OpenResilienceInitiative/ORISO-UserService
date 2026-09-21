@@ -335,6 +335,60 @@ class CounsellorOnboardingWizardIT {
             persisted -> assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED));
   }
 
+  /**
+   * ORISO-Admin#1026 slice 2: an invite into an EXISTING agency that offers exactly one topic. The
+   * create call stamps that topic as the department; the invitee may then register without picking
+   * a topic and is attached to the existing agency with that one topic.
+   */
+  @Test
+  void registerWithoutTopics_intoAnExistingSingleTopicAgency_attachesToItWithItsOnlyTopic()
+      throws Exception {
+    String token = "existing-single-topic-token-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(DEPARTMENT_TOPIC_ID)));
+
+    mockMvc.perform(registerWithoutTopics(token)).andExpect(status().isOk());
+
+    ArgumentCaptor<CreateConsultantDTO> consultantCaptor =
+        ArgumentCaptor.forClass(CreateConsultantDTO.class);
+    verify(consultantAdminFacade).createNewConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getTopicIds()).containsExactly(DEPARTMENT_TOPIC_ID);
+    ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
+        ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
+    verify(consultantAdminFacade)
+        .createNewConsultantAgency(eq(CONSULTANT_ID), agencyCaptor.capture());
+    assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
+  }
+
+  /** With more than one topic on offer the invitee has to choose — at least one topic, always. */
+  @Test
+  void registerWithoutTopics_whenTheAgencyOffersSeveralTopics_answers400() throws Exception {
+    String token = "existing-multi-topic-token-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+
+    mockMvc
+        .perform(registerWithoutTopics(token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(containsString("At least one topic")));
+
+    assertInviteStillResolvesUnconsumed(token);
+  }
+
+  private MockHttpServletRequestBuilder registerWithoutTopics(String token) {
+    return post("/users/account-invites/{token}/onboarding/register", token)
+        .header("X-CSRF-Token", CSRF)
+        .cookie(CSRF_COOKIE)
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(
+            """
+            {
+              "account": { "username": "codex_wizard_counsellor", "password": "Valid-Test-Password-2026!" },
+              "topicIds": []
+            }
+            """);
+  }
+
   private static String sha256(String value) throws Exception {
     return HexFormat.of()
         .formatHex(

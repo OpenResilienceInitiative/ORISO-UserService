@@ -134,7 +134,8 @@ public class CounsellorOnboardingService {
    * resume path can re-show it (#569 resume contract).
    */
   public CounsellorRegistrationResult registerCounsellor(
-      String rawToken, RegisterCounsellorCommand command) {
+      String rawToken, RegisterCounsellorCommand requestedCommand) {
+    RegisterCounsellorCommand command = requestedCommand;
     validateRegistration(command);
     AccountInvite invite = findCounsellorInvite(rawToken);
     LocalDateTime now = LocalDateTime.now();
@@ -147,6 +148,7 @@ public class CounsellorOnboardingService {
       throw expired;
     }
     CoverageResolution coverage = resolveTopicCoverage(invite);
+    command = withAtLeastOneTopic(command, coverage);
     validateTopicSelection(command.topicIds(), coverage);
 
     // A reserved (not yet created) Beratungsstellen-ID: the invitee named the agency in the
@@ -557,9 +559,33 @@ public class CounsellorOnboardingService {
       throw new BadRequestException(
           "account.password must be at least " + MIN_PASSWORD_LENGTH + " characters long");
     }
-    if (command.topicIds() == null || command.topicIds().isEmpty()) {
+  }
+
+  /**
+   * At least one topic, always (ORISO-Admin#1026). An invitee who picked none gets the coverage's
+   * only topic when there is exactly one — an invite into an existing single-topic agency needs no
+   * choice; with several topics on offer (or none) the invitee has to choose.
+   */
+  private static RegisterCounsellorCommand withAtLeastOneTopic(
+      RegisterCounsellorCommand command, CoverageResolution coverage) {
+    if (command.topicIds() != null && !command.topicIds().isEmpty()) {
+      return command;
+    }
+    if (coverage.topics().size() != 1) {
       throw new BadRequestException("At least one topic must be selected");
     }
+    return new RegisterCounsellorCommand(
+        command.username(),
+        command.password(),
+        command.salutation(),
+        command.position(),
+        command.title(),
+        command.displayName(),
+        command.internalDisplayName(),
+        List.of(coverage.topics().get(0).id()),
+        command.avatarKind(),
+        command.avatarId(),
+        command.agencyName());
   }
 
   /**

@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.EnumSet;
@@ -155,7 +156,7 @@ public class AccountInviteAccessPolicy {
     if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
       throw deny("invite a " + command.targetRole());
     }
-    if (command.agencyIdAllocationMode() != null
+    if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
         || command.agencyId() == null
         || !scope.agencyIds().contains(command.agencyId())) {
       throw deny("invite a counsellor into agency " + command.agencyId());
@@ -178,7 +179,8 @@ public class AccountInviteAccessPolicy {
     if (command.tenantId() != null && !scope.tenantId().equals(command.tenantId())) {
       throw deny("invite into tenant " + command.tenantId());
     }
-    if (command.agencyId() != null && command.agencyIdAllocationMode() == null) {
+    if (command.agencyId() != null
+        && !IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
       assertAgencyBelongsToTenant(command.agencyId(), scope.tenantId());
     }
     return withCallerTenant(command, scope);
@@ -186,9 +188,10 @@ public class AccountInviteAccessPolicy {
 
   /**
    * An invite into an existing agency must not name another Träger's agency: the accepted invite
-   * would otherwise attach the new account to that agency. With an allocation mode the agency ID is
-   * a fresh reservation made under the invite's (caller's) tenant, so there is nothing to look up.
-   * An agency that cannot be found is refused — its tenant cannot be proven.
+   * would otherwise attach the new account to that agency — with no mode (legacy) and with {@code
+   * EXISTING} alike. With a reserving mode (AUTO/MANUAL) the agency ID is a fresh reservation made
+   * under the invite's (caller's) tenant, so there is nothing to look up. An agency that cannot be
+   * found is refused — its tenant cannot be proven.
    */
   private void assertAgencyBelongsToTenant(Long agencyId, Long tenantId) {
     AgencyDTO agency = agencyService.getAgencyWithoutCaching(agencyId);

@@ -20,6 +20,8 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteAccessPolicy.InviteListScope;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient.ExistingAgency;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
@@ -93,6 +95,7 @@ public class AccountInviteService {
   private final @NonNull IdReservationReleaseProcessor reservationReleaseProcessor;
   private final @NonNull PlatformTransactionManager transactionManager;
   private final @NonNull AccountInviteAccessPolicy accessPolicy;
+  private final @NonNull ExistingAgencyClient existingAgencyClient;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand requestedCommand) {
@@ -108,6 +111,9 @@ public class AccountInviteService {
       throw new BadRequestException("recipientEmail is required");
     }
     validateAllocationModes(command);
+    if (command.agencyIdAllocationMode() == IdAllocationMode.EXISTING) {
+      command = bindToExistingAgency(command);
+    }
     verifyRecipientEmailAvailable(command.recipientEmail());
     if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
         && command.tenantId() != null
@@ -125,7 +131,7 @@ public class AccountInviteService {
       tenantReservation = reserveTenantIdOrDegrade(command);
     }
     try {
-      if (command.agencyIdAllocationMode() != null) {
+      if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
         // Long.valueOf: the reservation record carries a primitive long — a bare ternary would
         // unbox command.tenantId() and NPE on invites without a tenant ID.
         Long tenantIdForAgency =
@@ -259,7 +265,8 @@ public class AccountInviteService {
                                       .build())
                               .getId());
                     }
-                    if (command.agencyIdAllocationMode() != null && invite.getAgencyId() != null) {
+                    if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
+                        && invite.getAgencyId() != null) {
                       taskIds.add(
                           reservationReleaseTaskRepository
                               .saveAndFlush(
@@ -311,7 +318,8 @@ public class AccountInviteService {
         logReservationReleaseFailure("tenant", releaseException);
       }
     }
-    if (command.agencyIdAllocationMode() != null && invite.getAgencyId() != null) {
+    if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
+        && invite.getAgencyId() != null) {
       try {
         if (!agencyIdAllocationClient.release(invite.getAgencyId())) {
           logReservationReleaseFailure("agency", new IllegalStateException("release pending"));
@@ -439,6 +447,69 @@ public class AccountInviteService {
     if (command.agencyIdAllocationMode() == IdAllocationMode.AUTO && command.agencyId() != null) {
       throw new BadRequestException("agencyId must be omitted in AUTO agency allocation mode");
     }
+    if (command.tenantIdAllocationMode() == IdAllocationMode.EXISTING) {
+      // Inviting into an existing Träger is ORISO-Admin#1026 slice 4; refuse it explicitly until
+      // then instead of silently reserving the ID.
+      throw new BadRequestException("EXISTING tenant allocation mode is not supported yet");
+    }
+    if (command.agencyIdAllocationMode() == IdAllocationMode.EXISTING) {
+      if (command.agencyId() == null) {
+        throw new BadRequestException("agencyId is required in EXISTING agency allocation mode");
+      }
+      if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR
+          && command.targetRole() != AccountInviteTargetRole.AGENCY_ADMIN) {
+        throw new BadRequestException(
+            "EXISTING agency allocation mode is only supported for COUNSELLOR and AGENCY_ADMIN"
+                + " invites");
+      }
+    }
+  }
+
+  /**
+   * {@link IdAllocationMode#EXISTING} (ORISO-Admin#1026): the invite binds to an agency that
+   * already exists, so nothing is reserved. The access policy has already checked that the caller
+   * may act in that agency; this checks the agency itself and completes the command from it:
+   *
+   * <ul>
+   *   <li>unknown or soft-deleted agency: 404;
+   *   <li>a named tenant that is not the agency's tenant: 400 (only the platform admin can get here
+   *       — the policy stamps every other caller's own tenant);
+   *   <li>no tenant named: the agency's tenant;
+   *   <li>a department (topic) that the agency does not offer: 400; none named and the agency
+   *       offers exactly one topic: that topic, so the counsellor always ends up with at least one.
+   * </ul>
+   */
+  private CreateAccountInviteCommand bindToExistingAgency(CreateAccountInviteCommand command) {
+    ExistingAgency agency =
+        existingAgencyClient
+            .find(command.agencyId())
+            .filter(found -> !found.deleted())
+            .orElseThrow(
+                () -> new NotFoundException("agencyId " + command.agencyId() + " does not exist"));
+    if (command.tenantId() != null && !command.tenantId().equals(agency.tenantId())) {
+      throw new BadRequestException(
+          "agencyId " + command.agencyId() + " does not belong to tenant " + command.tenantId());
+    }
+    List<Long> topicIds = agency.topicIds() == null ? List.of() : agency.topicIds();
+    Long departmentId = command.departmentId();
+    if (departmentId != null && !topicIds.isEmpty() && !topicIds.contains(departmentId)) {
+      throw new BadRequestException(
+          "departmentId " + departmentId + " is not a topic of agency " + command.agencyId());
+    }
+    if (departmentId == null && topicIds.size() == 1) {
+      departmentId = topicIds.get(0);
+    }
+    return new CreateAccountInviteCommand(
+        command.targetRole(),
+        command.tenantId() != null ? command.tenantId() : agency.tenantId(),
+        command.recipientEmail(),
+        command.firstName(),
+        command.lastName(),
+        command.agencyId(),
+        departmentId,
+        command.expiresInDays(),
+        command.tenantIdAllocationMode(),
+        command.agencyIdAllocationMode());
   }
 
   /**
