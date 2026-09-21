@@ -78,7 +78,9 @@ class GrantConsultantIdentityServiceTest {
   @Mock private ConsultantService consultantService;
   @Mock private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
   @Mock private UserHelper userHelper;
-  @Mock private GrantConsultantIdentityAccessPolicy grantConsultantIdentityAccessPolicy;
+
+  @Mock
+  private de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope adminCallerScope;
 
   @Mock
   private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;

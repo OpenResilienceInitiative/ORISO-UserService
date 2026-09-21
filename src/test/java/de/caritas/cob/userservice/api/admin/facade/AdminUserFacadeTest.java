@@ -35,6 +35,10 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class AdminUserFacadeTest {
 
   @InjectMocks private AdminUserFacade adminUserFacade;
+
+  @Mock
+  private de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope adminCallerScope;
+
   @Mock private AgencyAdminUserService agencyAdminUserService;
   @Mock private AdminAgencyRelationService adminAgencyRelationService;
   @Mock private AdminFilterService adminFilterService;

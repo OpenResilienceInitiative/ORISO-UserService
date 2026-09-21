@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.AdminFilterService;
@@ -37,6 +38,7 @@ public class AdminUserFacade {
   private final @NonNull AdminFilterService adminFilterService;
 
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminCallerScope adminCallerScope;
 
   public AdminResponseDTO createNewTenantAdmin(final CreateAdminDTO createTenantAdminDTO) {
     return this.tenantAdminUserService.createNewTenantAdmin(createTenantAdminDTO);
@@ -74,6 +76,15 @@ public class AdminUserFacade {
 
   public List<Long> findAdminUserAgencyIds(String userId) {
     return this.agencyAdminUserService.findAgenciesOfAdmin(userId);
+  }
+
+  /**
+   * Returns the agency IDs of the given admin for {@code GET
+   * /useradmin/agencyadmins/{adminId}/agencies}, after checking the admin is in the caller's scope.
+   */
+  public List<Long> findAgencyIdsOfAdminInCallerScope(String adminId) {
+    adminCallerScope.assertMayActOnAdmin(adminId);
+    return this.agencyAdminUserService.findAgenciesOfAdmin(adminId);
   }
 
   public void createNewAdminAgencyRelation(

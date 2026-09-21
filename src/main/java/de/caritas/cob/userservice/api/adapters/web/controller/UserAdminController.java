@@ -443,7 +443,7 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<List<Long>> getAdminAgencies(@PathVariable String adminId) {
-    var adminAgencies = this.adminUserFacade.findAdminUserAgencyIds(adminId);
+    var adminAgencies = this.adminUserFacade.findAgencyIdsOfAdminInCallerScope(adminId);
     return ResponseEntity.ok(adminAgencies);
   }
 

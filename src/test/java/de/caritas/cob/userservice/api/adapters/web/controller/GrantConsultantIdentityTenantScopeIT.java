@@ -186,15 +186,15 @@ class GrantConsultantIdentityTenantScopeIT {
   }
 
   /**
-   * Not a leak on unchanged code: once the target is an own-tenant admin, the topic/agency
-   * validator already refuses agencies of another tenant (400). Kept as a regression guard.
+   * Not a leak on unchanged code: the topic/agency validator already refused agencies outside the
+   * target's tenant (400). The caller scope now refuses them first (403).
    */
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void grant_Should_Refuse_When_TenantAdminAssignsAnAgencyOfAnotherTenant() throws Exception {
     actAsTenantAdmin();
 
-    grant(ownTenantAdmin, List.of(FOREIGN_TENANT_AGENCY)).andExpect(status().isBadRequest());
+    grant(ownTenantAdmin, List.of(FOREIGN_TENANT_AGENCY)).andExpect(status().isForbidden());
 
     assertNoConsultantIdentityGranted(ownTenantAdmin);
   }
