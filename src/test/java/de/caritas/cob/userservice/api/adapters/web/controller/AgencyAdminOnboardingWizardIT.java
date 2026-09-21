@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
@@ -204,6 +205,47 @@ class AgencyAdminOnboardingWizardIT {
         .createAgencyWithReservedId(eq(NEW_AGENCY), eq("Beratungsstelle Nord"), eq(TENANT), any());
     assertThat(adminAgencyRepository.findByAdminIdAndAgencyId(ADMIN_ONLY_ID, NEW_AGENCY))
         .hasSize(1);
+  }
+
+  @Test
+  void onboarding_Should_OfferTheAgencyAdminEveryTopic_When_TheStoredPermissionIsNarrower()
+      throws Exception {
+    // An agency admin always counsels with CREATE (founder of a new agency brings its topics,
+    // an existing agency's admin administers them anyway) — also when the invite row carries
+    // NONE, e.g. from before the rule or from the column default of a partial deployment.
+    long otherTopic = 3L;
+    when(topicService.getAllActiveTopicsMap())
+        .thenReturn(
+            Map.of(
+                TOPIC,
+                new TopicDTO().id(TOPIC).name("Sucht"),
+                otherTopic,
+                new TopicDTO().id(otherTopic).name("Schulden")));
+    String token = seedAgencyAdminInvite(AGENCY, true);
+    AccountInvite stored = accountInviteRepository.findAll().get(0);
+    stored.setTopicPermission(TopicPermission.NONE);
+    accountInviteRepository.save(stored);
+
+    mockMvc
+        .perform(get("/users/account-invites/{token}/onboarding", token))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.topicPermission").value("CREATE"))
+        .andExpect(jsonPath("$.availableTopics[?(@.id == 3)]").exists());
+
+    mockMvc
+        .perform(
+            post("/users/account-invites/{token}/onboarding/register", token)
+                .header("X-CSRF-Token", CSRF)
+                .cookie(CSRF_COOKIE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    "{ \"account\": { \"username\": \"admin_two_topics\", \"password\":"
+                        + " \"Valid-Test-Password-2026!\" }, \"topicIds\": ["
+                        + TOPIC
+                        + ", "
+                        + otherTopic
+                        + "], \"alsoCounsellor\": true }"))
+        .andExpect(status().isOk());
   }
 
   private org.springframework.test.web.servlet.ResultActions register(

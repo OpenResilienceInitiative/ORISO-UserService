@@ -695,8 +695,16 @@ public class CounsellorOnboardingService {
     }
   }
 
-  /** Invites created before the setting existed carry today's behaviour. */
-  private static TopicPermission topicPermissionOf(AccountInvite invite) {
+  /**
+   * The permission the wizard applies. Invites created before the setting existed carry today's
+   * behaviour. An AGENCY_ADMIN invite (slice 3) always has CREATE: its invitee founds or
+   * administers the Beratungsstelle and, when also counselling a NEW one, has to bring its topics —
+   * the agency has none yet.
+   */
+  public static TopicPermission topicPermissionOf(AccountInvite invite) {
+    if (invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN) {
+      return TopicPermission.CREATE;
+    }
     return invite.getTopicPermission() == null
         ? TopicPermission.CREATE
         : invite.getTopicPermission();

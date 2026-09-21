@@ -116,6 +116,11 @@ public class AccountInviteTopicPermissionService {
   }
 
   private TopicPermission decide(CreateAccountInviteCommand command, TopicPermission requested) {
+    if (command != null && command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN) {
+      // Slice 3: the agency admin founds (new agency) or administers the Beratungsstelle and may
+      // also counsel — a founder has to bring the agency's topics (Frank, 2026-09-21).
+      return TopicPermission.CREATE;
+    }
     if (command == null || command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
       return TopicPermission.NONE;
     }

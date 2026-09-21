@@ -185,7 +185,8 @@ class AccountInviteTopicPermissionIT {
   void createInvite_Should_LetTheFounderCreateTopics_When_TheAgencyDoesNotExistYet() {
     actAsTenantAdmin();
 
-    AccountInvite invite = service.createInvite(counsellorIntoNewAgency(null), null);
+    // Since slice 5 the founder of a new Beratungsstelle is its agency admin (slice 3).
+    AccountInvite invite = service.createInvite(agencyAdminIntoNewAgency(), null);
 
     assertThat(invite.getTopicPermission()).isEqualTo(TopicPermission.CREATE);
     verify(agencyTopicPermissionLookup, never()).find(anyLong());
@@ -224,12 +225,22 @@ class AccountInviteTopicPermissionIT {
   }
 
   @Test
-  void createInvite_Should_StoreNone_When_TheInviteIsNotForACounsellor() {
+  void createInvite_Should_StoreCreate_When_TheInviteIsForAnAgencyAdmin() {
     actAsTenantAdmin();
 
-    AccountInvite invite = service.createInvite(agencyAdminInto(LEGACY_AGENCY, "a"), null);
+    // Slice 3: the agency admin may also counsel and administers the agency's topics anyway —
+    // whatever the agency default or the inviter's choice says.
+    AccountInvite intoLegacy = service.createInvite(agencyAdminInto(LEGACY_AGENCY, "a"), null);
+    AccountInvite intoNoneDefault =
+        service.createInvite(agencyAdminInto(NEW_STYLE_AGENCY, "c"), TopicPermission.NONE);
 
-    assertThat(invite.getTopicPermission()).isEqualTo(TopicPermission.NONE);
+    assertThat(intoLegacy.getTopicPermission()).isEqualTo(TopicPermission.CREATE);
+    assertThat(
+            accountInviteRepository
+                .findById(intoNoneDefault.getId())
+                .orElseThrow()
+                .getTopicPermission())
+        .isEqualTo(TopicPermission.CREATE);
   }
 
   // --- later changes from the invite table ------------------------------------------------------
@@ -388,6 +399,20 @@ class AccountInviteTopicPermissionIT {
         null,
         null,
         IdAllocationMode.EXISTING);
+  }
+
+  private static CreateAccountInviteCommand agencyAdminIntoNewAgency() {
+    return new CreateAccountInviteCommand(
+        AccountInviteTargetRole.AGENCY_ADMIN,
+        OWN_TENANT,
+        "new-agency-admin-" + System.nanoTime() + "@example.org",
+        "Grace",
+        "Hopper",
+        null,
+        null,
+        null,
+        null,
+        IdAllocationMode.AUTO);
   }
 
   private static CreateAccountInviteCommand counsellorIntoNewAgency(Long departmentId) {
