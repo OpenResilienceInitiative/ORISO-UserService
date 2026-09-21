@@ -31,6 +31,12 @@ class MatrixConfigPropertiesTest {
   }
 
   @Test
+  void availabilityCredentialHasNoEmbeddedTokenOrPasswordFallback() throws IOException {
+    assertEnvDrivenWithEmptyDefault(
+        "matrix.availabilityAdminAccessToken", "MATRIX_AVAILABILITY_ADMIN_ACCESS_TOKEN");
+  }
+
+  @Test
   void matrixApiUrl_should_resolve_from_env_with_no_hardcoded_default() throws IOException {
     assertEnvDrivenWithEmptyDefault("matrix.apiUrl", "MATRIX_API_URL");
   }

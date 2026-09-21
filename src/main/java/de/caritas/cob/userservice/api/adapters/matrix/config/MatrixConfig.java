@@ -17,6 +17,13 @@ public class MatrixConfig {
   private String serverName = "caritas.local";
   private String adminUsername;
   private String adminPassword;
+
+  /**
+   * Externally provisioned Synapse admin token used only by availability GET requests. The token
+   * itself has admin privileges; this path never logs in, registers accounts or renews it.
+   */
+  private String availabilityAdminAccessToken;
+
   private boolean encryptionEnabled = false;
 
   /**

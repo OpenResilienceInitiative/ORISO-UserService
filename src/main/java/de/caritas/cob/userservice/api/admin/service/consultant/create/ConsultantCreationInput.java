@@ -20,6 +20,22 @@ interface ConsultantCreationInput {
 
   String getEmail();
 
+  /**
+   * Whether the created counsellor must establish a second factor before using the account.
+   * Defaults to false so a creation path has to opt in; the bulk import keeps that default.
+   */
+  default boolean isTwoFactorRequired() {
+    return false;
+  }
+
+  /**
+   * Whether the created counsellor must replace their password before using the account. Defaults
+   * to false so a creation path has to opt in; the bulk import keeps that default.
+   */
+  default boolean isPasswordChangeRequired() {
+    return false;
+  }
+
   default String getPublicSlug() {
     return null;
   }
