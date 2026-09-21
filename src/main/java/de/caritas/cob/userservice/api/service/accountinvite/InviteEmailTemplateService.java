@@ -18,9 +18,11 @@ public class InviteEmailTemplateService {
 
   private final @NonNull InviteEmailTemplateRepository templateRepository;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AccountInviteAccessPolicy accessPolicy;
 
   @Transactional
   public InviteEmailTemplate createTemplate(TemplateCommand command) {
+    accessPolicy.authorizeTemplateWrite();
     validate(command);
     LocalDateTime now = LocalDateTime.now();
     InviteEmailTemplate template =
@@ -40,6 +42,7 @@ public class InviteEmailTemplateService {
 
   @Transactional
   public InviteEmailTemplate updateTemplate(Long templateId, TemplateCommand command) {
+    accessPolicy.authorizeTemplateWrite();
     validate(command);
     InviteEmailTemplate template =
         templateRepository

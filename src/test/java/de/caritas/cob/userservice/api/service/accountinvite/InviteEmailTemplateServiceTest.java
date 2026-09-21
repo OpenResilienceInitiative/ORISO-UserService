@@ -3,10 +3,13 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
@@ -28,6 +31,7 @@ class InviteEmailTemplateServiceTest {
 
   @Mock private InviteEmailTemplateRepository templateRepository;
   @Mock private AuthenticatedUser authenticatedUser;
+  @Mock private AccountInviteAccessPolicy accessPolicy;
 
   @InjectMocks private InviteEmailTemplateService service;
 
@@ -188,6 +192,42 @@ class InviteEmailTemplateServiceTest {
     assertThat(result.getBody()).isEqualTo("New body");
     assertThat(result.getActive()).isFalse();
     verify(templateRepository).save(existing);
+  }
+
+  // ---------------------------------------------------------------------------
+  // platform-admin-only writes (ORISO-Admin#1026)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createTemplate_Should_notSave_When_accessPolicyDenies() {
+    doThrow(new ForbiddenException("denied")).when(accessPolicy).authorizeTemplateWrite();
+    var command =
+        new TemplateCommand(
+            InviteEmailTemplateKind.TENANT_INVITE, "Name", "en", "Subj", "Body", true);
+
+    assertThatThrownBy(() -> service.createTemplate(command))
+        .isInstanceOf(ForbiddenException.class);
+    verify(templateRepository, never()).save(any());
+  }
+
+  @Test
+  void updateTemplate_Should_notLoadOrSave_When_accessPolicyDenies() {
+    doThrow(new ForbiddenException("denied")).when(accessPolicy).authorizeTemplateWrite();
+    var command =
+        new TemplateCommand(
+            InviteEmailTemplateKind.TENANT_INVITE, "Name", "en", "Subj", "Body", true);
+
+    assertThatThrownBy(() -> service.updateTemplate(1L, command))
+        .isInstanceOf(ForbiddenException.class);
+    verify(templateRepository, never()).findById(any());
+    verify(templateRepository, never()).save(any());
+  }
+
+  @Test
+  void listTemplates_Should_notAskAccessPolicy() {
+    service.listTemplates(null);
+
+    verify(accessPolicy, never()).authorizeTemplateWrite();
   }
 
   // ---------------------------------------------------------------------------

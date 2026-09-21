@@ -44,6 +44,9 @@ public class AccountInviteAccessPolicy {
 
   static final String OUT_OF_SCOPE_MESSAGE = "Account invite is outside the caller's scope";
 
+  static final String TEMPLATE_WRITE_DENIED_MESSAGE =
+      "Only the platform admin may change invite e-mail templates";
+
   private static final Set<AccountInviteTargetRole> TENANT_ADMIN_INVITABLE_ROLES =
       EnumSet.of(
           AccountInviteTargetRole.TENANT_ADMIN,
@@ -150,6 +153,19 @@ public class AccountInviteAccessPolicy {
     }
   }
 
+  /**
+   * Invite e-mail templates are global — one row is used by every Träger — so for now only the
+   * platform admin (tenant {@code 0}, or a single-tenant deployment) may create, change or delete
+   * them (ORISO-Admin#1026). Träger admins and Beratungsstellen admins may still read and use them.
+   *
+   * @throws ForbiddenException if the caller is not the platform admin
+   */
+  public void authorizeTemplateWrite() {
+    if (callerScope().kind() != Kind.UNRESTRICTED) {
+      throw denyTemplateWrite();
+    }
+  }
+
   private CreateAccountInviteCommand authorizeAgencyAdminCreate(
       CreateAccountInviteCommand command, Scope scope) {
     if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
@@ -238,6 +254,14 @@ public class AccountInviteAccessPolicy {
       return null;
     }
     return tenantId;
+  }
+
+  private ForbiddenException denyTemplateWrite() {
+    log.warn(
+        "Admin {} (tenant {}) may not change the global invite e-mail templates",
+        authenticatedUser.getUserId(),
+        authenticatedUser.getTenantId());
+    return new ForbiddenException(TEMPLATE_WRITE_DENIED_MESSAGE);
   }
 
   private ForbiddenException deny(String attempt) {
