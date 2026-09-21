@@ -29,9 +29,8 @@ public class MatrixRtcCallPolicyService {
     }
 
     // The call-policy endpoint is whitelisted from HttpTenantFilter, so this thread has no
-    // tenant context. Without technical context TenantAspect enables the Hibernate
-    // tenantFilter with tenantId=null, the room-to-session lookup matches nothing, and every
-    // call is denied regardless of tenant settings.
+    // tenant context. The lookup is explicitly cross-tenant, so it runs in technical context,
+    // which lifts the Hibernate tenantFilter (see TenantFilterParameterResolver).
     var callerTenant = TenantContext.getCurrentTenant();
     try {
       TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);

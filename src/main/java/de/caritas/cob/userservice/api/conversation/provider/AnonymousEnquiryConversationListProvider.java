@@ -115,8 +115,8 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
     // consultant's
     // own topics were resolved in the caller's tenant context; only the visibility query itself
     // must
-    // bypass the tenant filter. Running it in technical context makes TenantAspect disable the
-    // Hibernate tenantFilter; the caller's tenant is restored afterwards so no other query in this
+    // bypass the tenant filter. Running it in technical context lifts the Hibernate
+    // tenantFilter; the caller's tenant is restored afterwards so no other query in this
     // request leaks. Registered (non-anonymous) session queries stay strictly tenant-isolated.
     return runCrossTenant(
         () ->

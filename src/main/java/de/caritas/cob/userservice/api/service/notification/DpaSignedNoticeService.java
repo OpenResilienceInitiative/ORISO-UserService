@@ -197,9 +197,8 @@ public class DpaSignedNoticeService {
    */
   private void processHint(Long tenantId) {
     // The dispatch runs on a pooled daemon thread, which starts with no TenantContext. Every
-    // repository call below passes through TenantAspect, and that aspect calls filter.validate()
-    // with TenantContext.getCurrentTenant() — a null tenant either fails the Hibernate filter or
-    // silently filters the forwarding admin away, so the notice would never be sent. Establish the
+    // repository call below is tenant-filtered with TenantContext.getCurrentTenant(); without the
+    // hinted tenant the lookups would not be scoped to the Träger the notice is for. Establish the
     // hinted tenant for the duration of the task, and clear it again because the pool reuses the
     // thread.
     TenantContext.setCurrentTenant(tenantId);

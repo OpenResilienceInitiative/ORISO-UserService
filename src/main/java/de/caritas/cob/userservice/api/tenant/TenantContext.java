@@ -48,4 +48,26 @@ public class TenantContext {
   public static boolean isTechnicalOrSuperAdminContext() {
     return TECHNICAL_TENANT_ID.equals(getCurrentTenant());
   }
+
+  /**
+   * Runs {@code lookup} in the technical tenant context, so neither the tenant filter nor the
+   * tenant check on loads by id hides rows of other tenants, and restores the caller's context
+   * afterwards. Only for scope checks that must <i>see</i> a foreign row in order to refuse it.
+   */
+  public static <T> T supplyAcrossTenants(java.util.function.Supplier<T> lookup) {
+    var callerTenantData = CURRENT_TENANT_DATA.get();
+    CURRENT_TENANT_DATA.set(
+        new TenantData(
+            TECHNICAL_TENANT_ID,
+            callerTenantData == null ? null : callerTenantData.getSubdomain()));
+    try {
+      return lookup.get();
+    } finally {
+      if (callerTenantData == null) {
+        CURRENT_TENANT_DATA.remove();
+      } else {
+        CURRENT_TENANT_DATA.set(callerTenantData);
+      }
+    }
+  }
 }

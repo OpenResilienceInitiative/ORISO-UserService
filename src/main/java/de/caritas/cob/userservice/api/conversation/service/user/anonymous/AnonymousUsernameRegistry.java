@@ -108,9 +108,9 @@ public class AnonymousUsernameRegistry {
   }
 
   /**
-   * Runs a lookup in technical tenant context so {@code TenantAspect} disables the Hibernate {@code
-   * tenantFilter}; the caller's tenant is restored afterwards so no other query in the same request
-   * leaks across tenants.
+   * Runs a lookup in technical tenant context so the Hibernate {@code tenantFilter} is lifted (see
+   * {@code TenantFilterParameterResolver}); the caller's tenant is restored afterwards so no other
+   * query in the same request leaks across tenants.
    */
   private boolean runCrossTenant(java.util.function.BooleanSupplier lookup) {
     var callerTenant = TenantContext.getCurrentTenant();

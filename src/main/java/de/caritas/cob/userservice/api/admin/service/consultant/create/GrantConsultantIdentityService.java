@@ -32,6 +32,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -87,15 +88,15 @@ public class GrantConsultantIdentityService {
   public ConsultantAdminResponseDTO grantConsultantIdentityToAdmin(
       String adminId, GrantConsultantIdentityDTO dto) {
 
+    // Looked up across tenants on purpose: the route only requires user-admin, so the caller's
+    // Träger and agencies are checked right below, and an admin of another Träger must be refused
+    // (403) rather than reported as unknown.
     var admin =
-        adminRepository
-            .findById(adminId)
+        TenantContext.supplyAcrossTenants(() -> adminRepository.findById(adminId))
             .orElseThrow(
                 () ->
                     new BadRequestException(String.format("Admin with id %s not found", adminId)));
 
-    // The lookup above is by primary key, which the Hibernate tenant filter does not narrow, and
-    // the route only requires user-admin: the caller's Träger and agencies are checked here.
     adminCallerScope.assertMayActOnAdmin(admin);
     adminCallerScope.assertMayUseAgencies(dto.getAgencyIds());
 

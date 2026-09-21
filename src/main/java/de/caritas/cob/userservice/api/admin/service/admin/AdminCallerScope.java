@@ -37,9 +37,10 @@ import org.springframework.stereotype.Component;
  * endpoints that take an ID from the path or body ("cross-Träger" isolation).
  *
  * <p>Those routes mostly only require {@code user-admin}, which every Träger admin and every
- * Beratungsstellen admin holds, and a lookup by primary key is not narrowed by the Hibernate tenant
- * filter (neither is {@code admin_agency}, which carries no tenant). So the scope has to be checked
- * explicitly:
+ * Beratungsstellen admin holds, and {@code admin_agency} carries no tenant. So the scope has to be
+ * checked explicitly. The target is looked up across tenants on purpose: a row of another tenant
+ * must be seen to be refused (403) — the tenant filter alone would make it look unknown, and an
+ * unknown ID passes:
  *
  * <ul>
  *   <li><b>Platform admin</b> (tenant {@code 0}) and callers without a tenant (single-tenant
@@ -76,7 +77,8 @@ public class AdminCallerScope {
    * @throws ForbiddenException if the admin lies outside the caller's scope
    */
   public void assertMayActOnAdmin(String adminId) {
-    adminRepository.findById(adminId).ifPresent(this::assertMayActOnAdmin);
+    TenantContext.supplyAcrossTenants(() -> adminRepository.findById(adminId))
+        .ifPresent(this::assertMayActOnAdmin);
   }
 
   /**
@@ -108,11 +110,13 @@ public class AdminCallerScope {
     if (isUnrestricted()) {
       return;
     }
-    Optional<Admin> admin = adminRepository.findById(userId);
+    Optional<Admin> admin =
+        TenantContext.supplyAcrossTenants(() -> adminRepository.findById(userId));
     if (admin.isPresent() && isInScope(admin.get().getTenantId(), agencyIdsOfAdmin(userId))) {
       return;
     }
-    Optional<Consultant> consultant = consultantRepository.findById(userId);
+    Optional<Consultant> consultant =
+        TenantContext.supplyAcrossTenants(() -> consultantRepository.findById(userId));
     if (consultant.isPresent()
         && isInScope(consultant.get().getTenantId(), agencyIdsOfConsultant(userId))) {
       return;
@@ -156,8 +160,7 @@ public class AdminCallerScope {
     if (isUnrestricted()) {
       return;
     }
-    consultantRepository
-        .findById(consultantId)
+    TenantContext.supplyAcrossTenants(() -> consultantRepository.findById(consultantId))
         .ifPresent(
             consultant -> {
               if (!isInScope(consultant.getTenantId(), agencyIdsOfConsultant(consultant))) {
@@ -177,8 +180,7 @@ public class AdminCallerScope {
     if (isUnrestricted()) {
       return;
     }
-    userRepository
-        .findById(askerId)
+    TenantContext.supplyAcrossTenants(() -> userRepository.findById(askerId))
         .ifPresent(
             asker -> {
               if (!isOwnTenant(asker.getTenantId())) {

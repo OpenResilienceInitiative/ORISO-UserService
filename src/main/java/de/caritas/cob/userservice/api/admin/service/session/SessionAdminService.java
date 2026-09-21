@@ -61,9 +61,8 @@ public class SessionAdminService {
    * @param sessionFilter criteria to filter on sessions
    * @return a generated {@link SessionAdminResultDTO} containing the results
    */
-  // Read-only transaction: the tenant filter (TenantAspect) is enabled on the transaction's
-  // Hibernate session. Without a surrounding transaction it lands on a different session than the
-  // query and a Träger admin sees the sessions of every Träger.
+  // Read-only transaction: one Hibernate session for the whole page. The tenant filter itself no
+  // longer depends on it (it is auto-enabled on every session, see TenantFilter).
   @Transactional(readOnly = true)
   public SessionAdminResultDTO findSessions(
       Integer page, Integer perPage, SessionFilter sessionFilter) {

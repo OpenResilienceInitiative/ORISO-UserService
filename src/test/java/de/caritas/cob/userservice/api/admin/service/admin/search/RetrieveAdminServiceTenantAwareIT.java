@@ -8,6 +8,7 @@ import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 
 import de.caritas.cob.userservice.api.UserServiceApplication;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NoContentException;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
@@ -120,6 +121,7 @@ public class RetrieveAdminServiceTenantAwareIT {
   @Test
   public void findAgencyIdsOfAdmin_Should_returnCorrectAdmin_When_correctIdIsProvided() {
     // given
+    TenantContext.setCurrentTenant(2L);
     long expectedAgencyId = 90L;
 
     // when
@@ -129,6 +131,17 @@ public class RetrieveAdminServiceTenantAwareIT {
     assertThat(agencyIdsOfAdmin, notNullValue());
     assertThat(agencyIdsOfAdmin, hasSize(1));
     assertThat(agencyIdsOfAdmin, hasItems(expectedAgencyId));
+  }
+
+  @Test
+  public void findAgencyIdsOfAdmin_Should_throwBadRequest_When_adminBelongsToAnotherTenant() {
+    // given: the admin belongs to tenant 2, the caller to tenant 1
+    TenantContext.setCurrentTenant(1L);
+
+    // when / then: a load by id no longer crosses the tenant boundary
+    assertThrows(
+        BadRequestException.class,
+        () -> retrieveAdminService.findAgencyIdsOfAdmin(VALID_AGENCY_ADMIN_ID));
   }
 
   @Test
