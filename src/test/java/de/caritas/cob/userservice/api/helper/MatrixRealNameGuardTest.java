@@ -59,6 +59,35 @@ class MatrixRealNameGuardTest {
         .isInstanceOf(AssertionError.class);
   }
 
+  /** A sink taking a live object, so the walk is what finds the name, not a toString(). */
+  interface PayloadSink {
+    void send(Object payload);
+  }
+
+  @Test
+  @DisplayName("walks into maps and collections whose toString() hides their content")
+  void assertNoRealNameReachedMatrix_Should_Fail_When_OnlyWalkingTheObjectFindsTheName() {
+    var sink = mock(PayloadSink.class);
+    var opaqueMap =
+        new java.util.HashMap<String, Object>(Map.of("username", "Angela Musterfrau")) {
+          @Override
+          public String toString() {
+            return "opaque";
+          }
+        };
+    var opaqueList =
+        new java.util.ArrayList<Object>(List.of(opaqueMap)) {
+          @Override
+          public String toString() {
+            return "opaque";
+          }
+        };
+    sink.send(opaqueList);
+
+    assertThatThrownBy(() -> assertNoRealNameReachedMatrix(sink, FIRST, LAST))
+        .isInstanceOf(AssertionError.class);
+  }
+
   @Test
   @DisplayName("catches the name inside a JSON message body")
   void assertNoRealNameReachedMatrix_Should_Fail_When_TheNameIsInAJsonBody() throws Exception {

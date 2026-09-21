@@ -6,8 +6,10 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import org.junit.jupiter.api.Test;
 
@@ -66,7 +68,15 @@ class MatrixDisplayNameSourceTest {
         "String shown = resolver.resolveMatrixDisplayName(consultant);\n"
             + "matrixUserClient.createUserId(consultant.getUsername(), password, shown);";
 
+    var viaAlias =
+        "String realName = consultant.getFullName();\nString shown = realName;\n"
+            + "matrixUserClient.updateUserDisplayName(id, shown);";
+    var selfReferencing =
+        "String shown = shown.trim();\nmatrixUserClient.createUserId(a, b, shown);";
+
     assertThat(offencesIn(Path.of("Inline.java"), inline)).hasSize(1);
+    assertThat(offencesIn(Path.of("ViaAlias.java"), viaAlias)).hasSize(1);
+    assertThat(offencesIn(Path.of("SelfReferencing.java"), selfReferencing)).isEmpty();
     assertThat(offencesIn(Path.of("ViaVariable.java"), viaVariable)).hasSize(1);
     assertThat(offencesIn(Path.of("Resolved.java"), resolved)).isEmpty();
     assertThat(
@@ -92,17 +102,33 @@ class MatrixDisplayNameSourceTest {
   }
 
   private static boolean isBuiltFromARealName(String argument, String source) {
-    if (REAL_NAME_GETTER.matcher(argument).find()) {
+    return isBuiltFromARealName(argument, source, new HashSet<>());
+  }
+
+  /**
+   * Follows local aliases ({@code shown = realName}), so one extra hop does not hide the getter.
+   */
+  private static boolean isBuiltFromARealName(String expression, String source, Set<String> seen) {
+    if (REAL_NAME_GETTER.matcher(expression).find()) {
       return true;
     }
-    if (!IDENTIFIER.matcher(argument).matches()) {
+    if (expression.contains("(")) {
+      // A call decides the value, not its arguments: resolver.resolve(consultant) is clean even
+      // though consultant was loaded somewhere that also reads the real name.
       return false;
     }
-    var assignment =
-        Pattern.compile("\\b" + Pattern.quote(argument) + "\\s*=(?!=)([^;]*);").matcher(source);
-    while (assignment.find()) {
-      if (REAL_NAME_GETTER.matcher(assignment.group(1)).find()) {
-        return true;
+    var identifier = IDENTIFIER.matcher(expression);
+    while (identifier.find()) {
+      var name = identifier.group();
+      if (!seen.add(name)) {
+        continue;
+      }
+      var assignment =
+          Pattern.compile("\\b" + Pattern.quote(name) + "\\s*=(?!=)([^;]*);").matcher(source);
+      while (assignment.find()) {
+        if (isBuiltFromARealName(assignment.group(1), source, seen)) {
+          return true;
+        }
       }
     }
     return false;
