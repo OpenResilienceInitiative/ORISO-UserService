@@ -86,6 +86,10 @@ public class AnonymousEnquiryDepartmentResolver {
             : agencies.stream()
                 .filter(Objects::nonNull)
                 .filter(agency -> nonNull(agency.getId()))
+                // An offline centre takes no new cases (as ConsultantAgencyService's online
+                // agencies): binding one would show its legal text for a conversation it will
+                // never hold.
+                .filter(agency -> !Boolean.TRUE.equals(agency.getOffline()))
                 .filter(agency -> offersTopic(agency, topicId))
                 .min(
                     Comparator.comparing(

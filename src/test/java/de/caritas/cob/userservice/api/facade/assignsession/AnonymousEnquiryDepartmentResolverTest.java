@@ -99,6 +99,20 @@ class AnonymousEnquiryDepartmentResolverTest {
   }
 
   @Test
+  void resolveAgencyId_Should_skipAnOfflineAgency_even_When_itHasTheLowestId() {
+    // An offline centre takes no new cases; binding one would show its legal text for a
+    // conversation it will never hold.
+    when(agencyService.getAgenciesWithoutCaching(any()))
+        .thenReturn(
+            List.of(
+                agency(10L, SESSION_TENANT_ID, TOPIC_ID).offline(true),
+                agency(11L, SESSION_TENANT_ID, TOPIC_ID)));
+
+    assertThat(resolver.resolveAgencyId(unboundSession(), consultantInAgencies(10L, 11L)))
+        .contains(11L);
+  }
+
+  @Test
   void resolveAgencyId_Should_failRetryably_When_agencyServiceIsUnavailable() {
     // An outage is not "no department": answering empty would let the accept persist the enquiry
     // IN_PROGRESS without one, and the in-progress check then blocks every retry for good.
