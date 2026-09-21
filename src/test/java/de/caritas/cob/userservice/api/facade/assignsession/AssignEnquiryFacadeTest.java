@@ -81,6 +81,7 @@ class AssignEnquiryFacadeTest {
   @Mock de.caritas.cob.userservice.api.facade.TeamDiscussionFacade teamDiscussionFacade;
 
   @Mock private ConsultantDisplayNameResolver consultantDisplayNameResolver;
+  @Mock AnonymousEnquiryDepartmentResolver anonymousEnquiryDepartmentResolver;
 
   private static final String USER_MATRIX_ID = "@user:matrix.example.com";
   private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.com";
@@ -230,6 +231,121 @@ class AssignEnquiryFacadeTest {
     verify(eventNotificationService)
         .createInquiryAcceptedNotification(
             ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+  }
+
+  // ---------------------------------------------------------------------------
+  // assignAnonymousEnquiry — department binding (ADR-022 decision 1, ADR-003)
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void assignAnonymousEnquiry_Should_bindTheAcceptingConsultantsDepartment_inTheSameSave() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    when(anonymousEnquiryDepartmentResolver.resolveAgencyId(session, CONSULTANT_WITH_AGENCY))
+        .thenReturn(Optional.of(BOUND_AGENCY_ID));
+    var agencyIdAtAssignmentSave = new java.util.concurrent.atomic.AtomicReference<Long>();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              Session saved = invocation.getArgument(0);
+              if (invocation.getArgument(2) == SessionStatus.IN_PROGRESS) {
+                agencyIdAtAssignmentSave.set(saved.getAgencyId());
+              }
+              return null;
+            })
+        .when(sessionService)
+        .updateConsultantAndStatusForSession(any(), any(), any());
+
+    assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY);
+
+    assertThat(session.getAgencyId()).isEqualTo(BOUND_AGENCY_ID);
+    assertThat(agencyIdAtAssignmentSave.get()).isEqualTo(BOUND_AGENCY_ID);
+  }
+
+  @Test
+  void assignAnonymousEnquiry_Should_exposeTheBoundAgency_inTheAnonymousConversationDto() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    when(anonymousEnquiryDepartmentResolver.resolveAgencyId(session, CONSULTANT_WITH_AGENCY))
+        .thenReturn(Optional.of(BOUND_AGENCY_ID));
+
+    assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY);
+
+    // GET /conversations/anonymous/{id} is built from exactly these two mappers.
+    var sessionMap =
+        new de.caritas.cob.userservice.api.UserServiceMapper(usernameTranscoder)
+            .mapOf(Optional.of(session))
+            .orElseThrow();
+    var dto =
+        new de.caritas.cob.userservice.api.adapters.web.mapping.ConversationDtoMapper()
+            .anonymousEnquiryOf(sessionMap, 0, 0);
+    assertThat(dto.getAgencyId()).isEqualTo(BOUND_AGENCY_ID);
+    assertThat(dto.getMainTopicId()).isEqualTo(TOPIC_ID);
+  }
+
+  @Test
+  void assignAnonymousEnquiry_Should_stillSucceedWithoutAgency_When_noDepartmentResolves() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    when(anonymousEnquiryDepartmentResolver.resolveAgencyId(session, CONSULTANT_WITH_AGENCY))
+        .thenReturn(Optional.empty());
+
+    assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY);
+
+    assertThat(session.getAgencyId()).isNull();
+    verify(sessionService)
+        .updateConsultantAndStatusForSession(
+            session, CONSULTANT_WITH_AGENCY, SessionStatus.IN_PROGRESS);
+    verify(eventNotificationService)
+        .createInquiryAcceptedNotification(session, CONSULTANT_WITH_AGENCY);
+  }
+
+  @Test
+  void assignAnonymousEnquiry_Should_neverChangeAnAgencyTheSessionAlreadyHas() {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    session.setAgencyId(7L);
+
+    assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY);
+
+    assertThat(session.getAgencyId()).isEqualTo(7L);
+    verify(anonymousEnquiryDepartmentResolver, never()).resolveAgencyId(any(), any());
+  }
+
+  @Test
+  void assignAnonymousEnquiry_Should_unbindTheDepartmentAgain_When_theAssignmentIsRolledBack()
+      throws Exception {
+    var session = unboundTopicBasedAnonymousEnquiry();
+    when(anonymousEnquiryDepartmentResolver.resolveAgencyId(session, CONSULTANT_WITH_AGENCY))
+        .thenReturn(Optional.of(BOUND_AGENCY_ID));
+    when(sessionRoomGateway.createRoomAsUser(anyString(), anyString(), anyString()))
+        .thenReturn(null);
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () -> assignEnquiryFacade.assignAnonymousEnquiry(session, CONSULTANT_WITH_AGENCY));
+
+    assertThat(session.getAgencyId()).isNull();
+    verify(sessionService).updateConsultantAndStatusForSession(session, null, NEW);
+  }
+
+  @Test
+  void assignRegisteredEnquiry_Should_notResolveADepartment() {
+    assignEnquiryFacade.assignRegisteredEnquiry(SESSION_WITHOUT_CONSULTANT, CONSULTANT_WITH_AGENCY);
+
+    verify(anonymousEnquiryDepartmentResolver, never()).resolveAgencyId(any(), any());
+  }
+
+  private static final long BOUND_AGENCY_ID = 11L;
+  private static final long TOPIC_ID = 20L;
+
+  private static Session unboundTopicBasedAnonymousEnquiry() {
+    return Session.builder()
+        .id(4711L)
+        .user(USER_WITH_MATRIX_ID)
+        .consultingTypeId(1)
+        .registrationType(RegistrationType.ANONYMOUS)
+        .postcode("00000")
+        .tenantId(CURRENT_TENANT_ID)
+        .mainTopicId(TOPIC_ID)
+        .status(NEW)
+        .teamSession(false)
+        .build();
   }
 
   // ---------------------------------------------------------------------------
