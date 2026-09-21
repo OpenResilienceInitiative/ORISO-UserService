@@ -12,14 +12,13 @@ import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService.InviteEmailPreview;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService.PreviewCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteFrameMailRendererFixture;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailTransport;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
-import de.caritas.cob.userservice.api.service.email.layout.BrandedEmailLayoutRenderer;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
-import de.caritas.cob.userservice.api.service.email.layout.EmailContentSanitizer;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
@@ -63,8 +62,7 @@ class InviteEmailPreviewServiceTest {
             restTemplate,
             applicationSettingsService,
             inviteMailTransport,
-            emailBrandingResolver,
-            new BrandedEmailLayoutRenderer(new EmailContentSanitizer()),
+            InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver),
             "http://consultingtypeservice:8080/service",
             "smtp-user",
             "smtp-pass");

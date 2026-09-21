@@ -25,6 +25,12 @@ import org.springframework.web.util.HtmlUtils;
  * in this repository. Storybook renders the same content model, so what a reviewer approves there
  * is what this class sends. See ADR-020 in ORISO-Frontend.
  *
+ * <p>One exception, and it is temporary: {@code einladung-freitext} — the frame around an
+ * operator-authored invite text — was added here first, because the invite mail had to leave its
+ * hand-written layout before the design system had a generic message template. The sync script
+ * refuses to complete while that template is missing from the generated set, so the day it is added
+ * in ORISO-Frontend this repository stops being its home without anyone noticing a gap.
+ *
  * <p>This service consumes the {@code plain} dialect, which is deliberately not a template engine:
  * the substitution below is the whole of it. Anything cleverer would be a second renderer, and a
  * second renderer is how a mail starts disagreeing with its own design.
@@ -42,14 +48,40 @@ public class OrisoEmailRenderer {
    * design system places the logo, and this is the markup that token expands to when a logo URL is
    * configured. When {@code logoUrl} is blank the token expands to nothing at all: an {@code <img
    * src="">} renders as a broken-image icon next to the platform name, so the text wordmark has to
-   * carry the header alone. The dialect has no conditional syntax — this constant is the one
-   * conditional the mails need, and it stays in the renderer so the markup remains e-mail-client
+   * carry the header alone. The dialect has no conditional syntax — this constant is one of the two
+   * conditionals the mails need, and it stays in the renderer so the markup remains e-mail-client
    * table markup reviewed together with the templates.
    */
   private static final String LOGO_CELL =
       "<td width=\"36\" valign=\"middle\" style=\"width:36px;padding-right:12px;\">"
           + "<img src=\"{{logoUrl}}\" width=\"36\" height=\"36\" alt=\"{{platformName}}\""
           + " style=\"display:block;width:36px;height:36px;border:0;border-radius:8px;\"></td>";
+
+  /**
+   * The call-to-action button plus the visible copy-paste fallback line, for templates whose action
+   * is supplied by the caller rather than fixed in the document (today: {@code
+   * einladung-freitext}). The second conditional, and the last one: a mail whose action URL is
+   * absent must not ship a button pointing nowhere, and the dialect cannot express that. Templates
+   * with a fixed action — {@code einladung-traeger}, {@code anmeldelink} — carry their own button
+   * markup and never see this token.
+   */
+  private static final String CTA_BLOCK_HTML =
+      "<tr><td class=\"sp btn\" align=\"left\" style=\"padding:20px 40px 0px 40px;\">"
+          + "<table role=\"presentation\" cellpadding=\"0\" cellspacing=\"0\" border=\"0\"><tr>"
+          + "<td align=\"center\" bgcolor=\"{{primaryColor}}\""
+          + " style=\"background-color:{{primaryColor}};border-radius:999px;\">"
+          + "<a href=\"{{actionUrl}}\" style=\"display:inline-block;padding:14px 32px;"
+          + "font-family:Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif;font-size:16px;"
+          + "line-height:20px;font-weight:600;color:#ffffff;text-decoration:none;"
+          + "border-radius:999px;\">{{actionLabel}}</a></td></tr></table></td></tr>"
+          + "<tr><td class=\"sp\" style=\"padding:16px 40px 0px 40px;"
+          + "font-family:Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif;font-size:13px;"
+          + "line-height:20px;color:#5c5555;word-break:break-word;\">{{fallbackHint}}<br>"
+          + "<a href=\"{{actionUrl}}\" style=\"color:{{linkColor}};text-decoration:underline;"
+          + "word-break:break-all;\">{{actionUrl}}</a></td></tr>";
+
+  /** The plain-text half of {@link #CTA_BLOCK_HTML}. */
+  private static final String CTA_BLOCK_TEXT = "{{actionLabel}}:\n{{actionUrl}}";
 
   private final Map<String, String> templateCache = new ConcurrentHashMap<>();
 
@@ -95,11 +127,37 @@ public class OrisoEmailRenderer {
    *     report and a silent blank is not
    */
   public RenderedEmail render(String templateId, Tone tone, Map<String, String> values) {
+    return render(templateId, tone, values, Map.of());
+  }
+
+  /**
+   * Renders one mail, with some slots filled by markup the caller has already produced.
+   *
+   * <p>{@code fragments} exists for exactly one thing the escaping substitution cannot do: a body
+   * that is authored elsewhere and arrives as a finished, already-sanitised HTML fragment (see
+   * {@code einladung-freitext}, whose body an operator writes in the Admin panel). Those values are
+   * inserted <em>after</em> substitution and are never re-scanned, so a fragment can neither be
+   * escaped into visible tag soup nor smuggle a {@code {{placeholder}}} of its own into the
+   * document. Everything a template can express without that — every ordinary value — belongs in
+   * {@code values}, where it is escaped.
+   *
+   * @param fragments placeholder name → verbatim replacement; the caller is responsible for the
+   *     safety of what it puts in here
+   */
+  public RenderedEmail render(
+      String templateId, Tone tone, Map<String, String> values, Map<String, String> fragments) {
     values = withOccasionOnUnsubscribeLink(templateId, values);
-    String html = substitute(withLogoCell(read(templateId, tone, "html"), values), values, true);
-    String text = substitute(read(templateId, tone, "txt"), values, false);
+    String html =
+        substitute(
+            withConditionalBlocks(read(templateId, tone, "html"), values, true), values, true);
+    String text =
+        substitute(
+            withConditionalBlocks(read(templateId, tone, "txt"), values, false), values, false);
     String subject = substitute(subjectOf(templateId, tone), values, false);
-    return new RenderedEmail(subject, html, text);
+    return new RenderedEmail(
+        insertFragments(subject, fragments),
+        insertFragments(html, fragments),
+        insertFragments(text, fragments));
   }
 
   /**
@@ -173,13 +231,28 @@ public class OrisoEmailRenderer {
   }
 
   /**
-   * Expands {@code {{logoCell}}} to the logo image cell, or to nothing when no logo URL is
-   * configured. Runs before {@link #substitute}, so the {@code {{logoUrl}}} and {@code
-   * {{platformName}}} inside the expanded markup are filled — and escaped — like any other
-   * placeholder.
+   * Expands the two conditional tokens — {@code {{logoCell}}} and {@code {{ctaBlock}}} — to their
+   * markup, or to nothing when the value they depend on is absent. Runs before {@link #substitute},
+   * so the placeholders inside the expanded markup are filled — and escaped — like any other.
    */
-  private String withLogoCell(String html, Map<String, String> values) {
-    return html.replace("{{logoCell}}", isNotBlank(values.get("logoUrl")) ? LOGO_CELL : "");
+  private String withConditionalBlocks(String template, Map<String, String> values, boolean html) {
+    return template
+        .replace("{{logoCell}}", isNotBlank(values.get("logoUrl")) ? LOGO_CELL : "")
+        .replace(
+            "{{ctaBlock}}",
+            isNotBlank(values.get("actionUrl")) ? (html ? CTA_BLOCK_HTML : CTA_BLOCK_TEXT) : "");
+  }
+
+  /** Inserts already-finished fragments verbatim; see {@link #render(String, Tone, Map, Map)}. */
+  private static String insertFragments(String document, Map<String, String> fragments) {
+    String result = document;
+    for (Map.Entry<String, String> fragment : fragments.entrySet()) {
+      result =
+          result.replace(
+              "{{" + fragment.getKey() + "}}",
+              fragment.getValue() == null ? "" : fragment.getValue());
+    }
+    return result;
   }
 
   /**
