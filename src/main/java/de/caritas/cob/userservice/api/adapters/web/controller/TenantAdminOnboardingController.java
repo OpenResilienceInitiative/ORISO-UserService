@@ -57,7 +57,7 @@ public class TenantAdminOnboardingController {
   })
   public ResponseEntity<TenantAdminOnboardingInviteResponseDTO> resolveOnboardingInvite(
       @PathVariable String token) {
-    if (targetRoleOf(token) == AccountInviteTargetRole.COUNSELLOR) {
+    if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
       CounsellorOnboardingState state = counsellorOnboardingService.resolveOnboardingInvite(token);
       return ResponseEntity.ok(TenantAdminOnboardingInviteResponseDTO.from(state));
     }
@@ -72,7 +72,7 @@ public class TenantAdminOnboardingController {
   public ResponseEntity<TenantAdminRegistrationResponseDTO> registerTenantAdmin(
       @PathVariable String token,
       @RequestBody(required = false) TenantAdminRegistrationRequestDTO request) {
-    if (targetRoleOf(token) == AccountInviteTargetRole.COUNSELLOR) {
+    if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
       CounsellorRegistrationResult result =
           counsellorOnboardingService.registerCounsellor(token, toCounsellorCommand(request));
       return ResponseEntity.ok(TenantAdminRegistrationResponseDTO.from(result));
@@ -90,7 +90,7 @@ public class TenantAdminOnboardingController {
       @PathVariable String token,
       @RequestBody(required = false) TwoFactorActivationRequestDTO request) {
     String otp = request == null ? null : request.otp;
-    if (targetRoleOf(token) == AccountInviteTargetRole.COUNSELLOR) {
+    if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
       counsellorOnboardingService.activateTwoFactor(token, otp);
     } else {
       onboardingService.activateTwoFactor(token, otp);
@@ -173,7 +173,8 @@ public class TenantAdminOnboardingController {
         safe.topicIds,
         avatar.kind,
         avatar.id,
-        safe.agency == null ? null : safe.agency.name);
+        safe.agency == null ? null : safe.agency.name,
+        safe.alsoCounsellor);
   }
 
   private static RegisterTenantAdminCommand toCommand(TenantAdminRegistrationRequestDTO request) {
@@ -268,6 +269,13 @@ public class TenantAdminOnboardingController {
 
     /** Counsellor wizard: only for invites whose agency does not exist yet. */
     public AgencyDataDTO agency;
+
+    /**
+     * Agency-admin invites only (ORISO-Admin#1026, slice 3): the invitee's own choice whether they
+     * also counsel. Omitted = the inviter's proposal ({@code alsoCounsellor} of the resolve
+     * answer). Off: an agency-admin account without a consultant; topics are then optional.
+     */
+    public Boolean alsoCounsellor;
   }
 
   public static class TwoFactorActivationRequestDTO {
@@ -329,6 +337,13 @@ public class TenantAdminOnboardingController {
     public Boolean agencyExists;
 
     /**
+     * Agency-admin invites only (ORISO-Admin#1026, slice 3): the inviter's proposal whether the
+     * agency admin also counsels. The wizard shows it as a switch the invitee may change and sends
+     * the choice back as {@code alsoCounsellor} on register.
+     */
+    public Boolean alsoCounsellor;
+
+    /**
      * The tenant ID the invite reserved (TenantService {@code TenantIdReservationDTO.tenantId}).
      */
     public Long reservedTenantId;
@@ -384,7 +399,8 @@ public class TenantAdminOnboardingController {
     static TenantAdminOnboardingInviteResponseDTO from(CounsellorOnboardingState state) {
       AccountInvite invite = state.invite();
       TenantAdminOnboardingInviteResponseDTO dto = new TenantAdminOnboardingInviteResponseDTO();
-      dto.targetRole = AccountInviteTargetRole.COUNSELLOR.name();
+      dto.targetRole = invite.getTargetRole().name();
+      dto.alsoCounsellor = invite.getAlsoCounsellor();
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();
       dto.lastName = invite.getLastName();

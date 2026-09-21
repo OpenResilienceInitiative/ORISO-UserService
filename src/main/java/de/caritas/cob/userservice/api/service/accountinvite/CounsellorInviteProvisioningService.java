@@ -40,7 +40,14 @@ public class CounsellorInviteProvisioningService {
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
     AccountInvite invite = accountInviteService.findInviteByToken(rawToken);
-    if (invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR) {
+    // An AGENCY_ADMIN invite whose invitee also counsels takes this consultant path, but only from
+    // the onboarding wizard, which asks for the agency-admin grant (ORISO-Admin#1026, slice 3).
+    boolean agencyAdminAlsoCounselling =
+        invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN
+            && command != null
+            && Boolean.TRUE.equals(command.grantAgencyAdmin());
+    if (invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR
+        && !agencyAdminAlsoCounselling) {
       return accountInviteService.acceptInvite(
           rawToken, command == null ? null : command.acceptedByUserId());
     }
@@ -96,6 +103,9 @@ public class CounsellorInviteProvisioningService {
       }
 
       AccountInvite accepted = accountInviteService.acceptInvite(rawToken, consultantId);
+      if (agencyAdminAlsoCounselling) {
+        accepted.setAlsoCounsellor(true);
+      }
       accepted.setProvisionedUserId(consultantId);
       accepted.setProvisioningStatus(AccountInviteProvisioningStatus.COMPLETED);
       accepted.setProvisioningFailureReason(null);

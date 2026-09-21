@@ -112,6 +112,7 @@ public class AccountInviteService {
       throw new BadRequestException("recipientEmail is required");
     }
     validateAllocationModes(command);
+    validateAgencyAdminFields(command);
     boolean existingTenant = command.tenantIdAllocationMode() == IdAllocationMode.EXISTING;
     if (existingTenant) {
       verifyExistingTenant(command.tenantId());
@@ -166,6 +167,7 @@ public class AccountInviteService {
               .departmentId(command.departmentId())
               .tenantIdAllocationMode(command.tenantIdAllocationMode())
               .agencyIdAllocationMode(command.agencyIdAllocationMode())
+              .alsoCounsellor(alsoCounsellorOf(command))
               .expiresAt(resolveExpiry(now, command.expiresInDays()))
               .status(AccountInviteStatus.DRAFT)
               .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
@@ -475,6 +477,31 @@ public class AccountInviteService {
   }
 
   /**
+   * The agency-admin part of the role field (ORISO-Admin#1026, slice 3): "also counsellor" exists
+   * only for AGENCY_ADMIN invites, and an agency admin always administers an agency — an existing
+   * one ({@code agencyId}, EXISTING or legacy) or a new one (AUTO/MANUAL).
+   */
+  private static void validateAgencyAdminFields(CreateAccountInviteCommand command) {
+    boolean agencyAdmin = command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN;
+    if (!agencyAdmin && command.alsoCounsellor() != null) {
+      throw new BadRequestException("alsoCounsellor is only supported for AGENCY_ADMIN invites");
+    }
+    if (agencyAdmin
+        && command.agencyId() == null
+        && command.agencyIdAllocationMode() != IdAllocationMode.AUTO) {
+      throw new BadRequestException("An AGENCY_ADMIN invite requires an agency");
+    }
+  }
+
+  /** "Also counsellor" of an AGENCY_ADMIN invite, on unless the inviter switched it off. */
+  private static Boolean alsoCounsellorOf(CreateAccountInviteCommand command) {
+    if (command.targetRole() != AccountInviteTargetRole.AGENCY_ADMIN) {
+      return null;
+    }
+    return !Boolean.FALSE.equals(command.alsoCounsellor());
+  }
+
+  /**
    * {@link IdAllocationMode#EXISTING} for the tenant ID (ORISO-Admin#1026, slice 4): the invite
    * binds to a Träger that already exists. Supported for the roles that live inside a Träger;
    * {@code tenantId} is required (a Träger-bound caller that named none already got its own tenant
@@ -537,17 +564,9 @@ public class AccountInviteService {
     if (departmentId == null && topicIds.size() == 1) {
       departmentId = topicIds.get(0);
     }
-    return new CreateAccountInviteCommand(
-        command.targetRole(),
-        command.tenantId() != null ? command.tenantId() : agency.tenantId(),
-        command.recipientEmail(),
-        command.firstName(),
-        command.lastName(),
-        command.agencyId(),
-        departmentId,
-        command.expiresInDays(),
-        command.tenantIdAllocationMode(),
-        command.agencyIdAllocationMode());
+    return command
+        .withTenantId(command.tenantId() != null ? command.tenantId() : agency.tenantId())
+        .withDepartmentId(departmentId);
   }
 
   /**
@@ -698,6 +717,7 @@ public class AccountInviteService {
                       .departmentId(oldInvite.getDepartmentId())
                       .tenantIdAllocationMode(oldInvite.getTenantIdAllocationMode())
                       .agencyIdAllocationMode(oldInvite.getAgencyIdAllocationMode())
+                      .alsoCounsellor(oldInvite.getAlsoCounsellor())
                       .tokenHash(hash(rawToken))
                       .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
                       .status(AccountInviteStatus.EMAIL_SENT)
@@ -1169,13 +1189,15 @@ public class AccountInviteService {
   }
 
   /**
-   * Counsellors and tenant admins carry a mandatory TOTP setup (ORISO-Admin#569: "account,
-   * password, 2FA" is one coherent onboarding flow). Their gate starts at {@code PENDING_SETUP},
-   * which also keeps the consumed invite link resumable until the OTP credential exists — see
-   * {@link #resumeConsumedInviteOrThrow(AccountInvite, LocalDateTime)}.
+   * Counsellors, agency admins (ORISO-Admin#1026: they onboard through the same wizard) and tenant
+   * admins carry a mandatory TOTP setup (ORISO-Admin#569: "account, password, 2FA" is one coherent
+   * onboarding flow). Their gate starts at {@code PENDING_SETUP}, which also keeps the consumed
+   * invite link resumable until the OTP credential exists — see {@link
+   * #resumeConsumedInviteOrThrow(AccountInvite, LocalDateTime)}.
    */
   private static TwoFactorGateStatus defaultTwoFactorStatus(AccountInviteTargetRole targetRole) {
     return targetRole == AccountInviteTargetRole.COUNSELLOR
+            || targetRole == AccountInviteTargetRole.AGENCY_ADMIN
             || targetRole == AccountInviteTargetRole.TENANT_ADMIN
         ? TwoFactorGateStatus.PENDING_SETUP
         : TwoFactorGateStatus.NOT_REQUIRED;
@@ -1339,7 +1361,71 @@ public class AccountInviteService {
       Long departmentId,
       Long expiresInDays,
       IdAllocationMode tenantIdAllocationMode,
-      IdAllocationMode agencyIdAllocationMode) {
+      IdAllocationMode agencyIdAllocationMode,
+      /**
+       * AGENCY_ADMIN invites only (ORISO-Admin#1026, slice 3): whether the invited agency admin
+       * also counsels. {@code null} means the default ({@code true}); the invitee may change it
+       * during onboarding. Any other role must leave it {@code null}.
+       */
+      Boolean alsoCounsellor) {
+
+    /** Shape without the agency-admin flag (every role but AGENCY_ADMIN). */
+    public CreateAccountInviteCommand(
+        AccountInviteTargetRole targetRole,
+        Long tenantId,
+        String recipientEmail,
+        String firstName,
+        String lastName,
+        Long agencyId,
+        Long departmentId,
+        Long expiresInDays,
+        IdAllocationMode tenantIdAllocationMode,
+        IdAllocationMode agencyIdAllocationMode) {
+      this(
+          targetRole,
+          tenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          departmentId,
+          expiresInDays,
+          tenantIdAllocationMode,
+          agencyIdAllocationMode,
+          null);
+    }
+
+    /** The same command bound to another tenant (every other component kept). */
+    public CreateAccountInviteCommand withTenantId(Long newTenantId) {
+      return new CreateAccountInviteCommand(
+          targetRole,
+          newTenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          departmentId,
+          expiresInDays,
+          tenantIdAllocationMode,
+          agencyIdAllocationMode,
+          alsoCounsellor);
+    }
+
+    /** The same command with another department (every other component kept). */
+    public CreateAccountInviteCommand withDepartmentId(Long newDepartmentId) {
+      return new CreateAccountInviteCommand(
+          targetRole,
+          tenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          newDepartmentId,
+          expiresInDays,
+          tenantIdAllocationMode,
+          agencyIdAllocationMode,
+          alsoCounsellor);
+    }
 
     /** Convenience for callers without ID-allocation semantics (no reservation modes). */
     public CreateAccountInviteCommand(

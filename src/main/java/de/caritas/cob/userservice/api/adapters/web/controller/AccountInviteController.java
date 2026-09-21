@@ -74,7 +74,8 @@ public class AccountInviteController {
             parseOptionalEnum(
                 IdAllocationMode.class, safe.tenantIdAllocationMode, "tenantIdAllocationMode"),
             parseOptionalEnum(
-                IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"));
+                IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"),
+            safe.alsoCounsellor);
 
     if (safe.templateId != null) {
       InviteSendResult result = accountInviteService.createAndSendInvite(command, safe.templateId);
@@ -366,6 +367,13 @@ public class AccountInviteController {
      * exactly one.
      */
     public String agencyIdAllocationMode;
+
+    /**
+     * AGENCY_ADMIN invites only (ORISO-Admin#1026, slice 3): whether the agency admin also
+     * counsels. Omitted = true. The invitee may change it in the onboarding wizard. Set for any
+     * other role → 400.
+     */
+    public Boolean alsoCounsellor;
   }
 
   public static class SendInviteRequestDTO {
@@ -455,6 +463,9 @@ public class AccountInviteController {
 
     /** AUTO / MANUAL (new Beratungsstelle) or EXISTING; null on invites created before #1026. */
     public String agencyIdAllocationMode;
+
+    /** AGENCY_ADMIN invites: whether the person also counsels; null for every other role. */
+    public Boolean alsoCounsellor;
 
     public String provisioningStatus;
     public String provisionedUserId;
@@ -553,6 +564,7 @@ public class AccountInviteController {
           invite.getAgencyIdAllocationMode() == null
               ? null
               : invite.getAgencyIdAllocationMode().name();
+      dto.alsoCounsellor = invite.getAlsoCounsellor();
       dto.provisioningStatus =
           invite.getProvisioningStatus() == null ? null : invite.getProvisioningStatus().name();
       dto.provisionedUserId = invite.getProvisionedUserId();
