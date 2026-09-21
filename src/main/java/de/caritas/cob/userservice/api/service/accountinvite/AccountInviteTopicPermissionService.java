@@ -45,6 +45,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class AccountInviteTopicPermissionService {
 
+  /** What AgencyService stores as counsellor topic permission on a newly created agency. */
+  static final TopicPermission NEW_AGENCY_DEFAULT = TopicPermission.NONE;
+
   private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull ConsultantRepository consultantRepository;
@@ -89,7 +92,14 @@ public class AccountInviteTopicPermissionService {
     if (invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR) {
       throw new BadRequestException("Only counsellor invites carry a topic permission");
     }
-    if (permission != TopicPermission.CREATE && invite.getDepartmentId() == null) {
+    // Slice 5: an invite waiting for its new Beratungsstelle cannot be checked yet — the agency's
+    // admin brings the topics before the invite is released.
+    boolean waitsForNewAgency =
+        invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT
+            && invite.getWaitingForUnit() == InviteUnitType.AGENCY;
+    if (permission != TopicPermission.CREATE
+        && invite.getDepartmentId() == null
+        && !waitsForNewAgency) {
       boolean agencyHasTopics =
           invite.getAgencyId() != null
               && agencyTopicPermissionLookup
@@ -125,11 +135,25 @@ public class AccountInviteTopicPermissionService {
       return TopicPermission.NONE;
     }
     Optional<AgencyTopicSettings> agency = existingAgency(command);
-    TopicPermission permission =
-        requested != null
-            ? requested
-            : agency.map(AgencyTopicSettings::defaultPermission).orElse(TopicPermission.CREATE);
-    if (permission != TopicPermission.CREATE && command.departmentId() == null) {
+    // Slice 5: a counsellor for a NEW Beratungsstelle waits (WAITING_FOR_UNIT) until its admin
+    // created it. Without an explicit choice it gets the default the agency will have once it
+    // exists — AgencyService writes NEW_AGENCY_DEFAULT onto every newly created agency
+    // (AgencyService PR #308). The release follows the agency's creation immediately, so nobody
+    // can change that default in between. The "no topic to pick" check cannot run yet: the
+    // agency's admin brings the topics.
+    boolean waitsForNewAgency = IdAllocationMode.reservesAnId(command.agencyIdAllocationMode());
+    TopicPermission permission;
+    if (requested != null) {
+      permission = requested;
+    } else if (waitsForNewAgency) {
+      permission = NEW_AGENCY_DEFAULT;
+    } else {
+      permission =
+          agency.map(AgencyTopicSettings::defaultPermission).orElse(TopicPermission.CREATE);
+    }
+    if (permission != TopicPermission.CREATE
+        && command.departmentId() == null
+        && !waitsForNewAgency) {
       List<Long> agencyTopics = agency.map(AgencyTopicSettings::topicIds).orElse(List.of());
       if (agencyTopics.isEmpty()) {
         throw noTopicToPick(permission);

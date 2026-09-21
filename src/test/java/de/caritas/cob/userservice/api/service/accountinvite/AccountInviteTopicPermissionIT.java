@@ -193,6 +193,28 @@ class AccountInviteTopicPermissionIT {
   }
 
   @Test
+  void createInvite_Should_KeepThePermission_When_TheCounsellorWaitsForANewAgency() {
+    actAsTenantAdmin();
+
+    // Slice 5: a counsellor for a not-yet-created agency waits (WAITING_FOR_UNIT). Without a
+    // choice it gets the default a new agency starts with (NONE, AgencyService #308); an
+    // explicit choice is kept although the agency has no topic yet — its admin brings them
+    // before the invite is released.
+    AccountInvite open = service.createInvite(counsellorWaitingForNewAgency(), null);
+    AccountInvite fixed =
+        service.createInvite(counsellorWaitingForNewAgency(), TopicPermission.SELECT_EXISTING);
+    AccountInvite free =
+        service.createInvite(counsellorWaitingForNewAgency(), TopicPermission.CREATE);
+
+    assertThat(open.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
+    assertThat(open.getTopicPermission()).isEqualTo(TopicPermission.NONE);
+    assertThat(free.getTopicPermission()).isEqualTo(TopicPermission.CREATE);
+    assertThat(fixed.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
+    assertThat(accountInviteRepository.findById(fixed.getId()).orElseThrow().getTopicPermission())
+        .isEqualTo(TopicPermission.SELECT_EXISTING);
+  }
+
+  @Test
   void createInvite_Should_Refuse_When_TheCounsellorWouldBeLeftWithoutATopic() {
     actAsTenantAdmin();
 
@@ -205,12 +227,6 @@ class AccountInviteTopicPermissionIT {
             () ->
                 service.createInvite(
                     counsellorInto(TOPICLESS_AGENCY, null), TopicPermission.SELECT_EXISTING))
-        .isInstanceOf(BadRequestException.class);
-    // A new agency has no departments yet, so only CREATE works without an assigned department.
-    assertThatThrownBy(
-            () ->
-                service.createInvite(
-                    counsellorIntoNewAgency(null), TopicPermission.SELECT_EXISTING))
         .isInstanceOf(BadRequestException.class);
     assertThat(accountInviteRepository.findAll()).isEmpty();
   }
@@ -307,17 +323,26 @@ class AccountInviteTopicPermissionIT {
   void updatePermission_Should_Refuse_Invalid_Requests() {
     actAsTenantAdmin();
     AccountInvite counsellorInvite = service.createInvite(counsellorInto(LEGACY_AGENCY, 11L), null);
-    AccountInvite founderInvite = service.createInvite(counsellorIntoNewAgency(null), null);
+    AccountInvite topiclessInvite =
+        service.createInvite(counsellorInto(TOPICLESS_AGENCY, null), null);
+    AccountInvite waitingInvite = service.createInvite(counsellorWaitingForNewAgency(), null);
     AccountInvite adminInvite = service.createInvite(agencyAdminInto(LEGACY_AGENCY, "b"), null);
 
     assertThatThrownBy(() -> service.updatePermission(adminInvite.getId(), TopicPermission.NONE))
         .isInstanceOf(BadRequestException.class);
     assertThatThrownBy(() -> service.updatePermission(counsellorInvite.getId(), null))
         .isInstanceOf(BadRequestException.class);
-    // The founder of a new agency has no department to be limited to.
-    when(agencyTopicPermissionLookup.find(4711L)).thenReturn(Optional.empty());
-    assertThatThrownBy(() -> service.updatePermission(founderInvite.getId(), TopicPermission.NONE))
+    // An agency without topics leaves nothing to be limited to.
+    assertThatThrownBy(
+            () -> service.updatePermission(topiclessInvite.getId(), TopicPermission.NONE))
         .isInstanceOf(BadRequestException.class);
+    // A counsellor waiting for a new agency (slice 5): its admin brings the topics first.
+    when(agencyTopicPermissionLookup.find(4711L)).thenReturn(Optional.empty());
+    assertThat(
+            service
+                .updatePermission(waitingInvite.getId(), TopicPermission.SELECT_EXISTING)
+                .getTopicPermission())
+        .isEqualTo(TopicPermission.SELECT_EXISTING);
     assertThatThrownBy(() -> service.updatePermission(987654L, TopicPermission.NONE))
         .isInstanceOf(NotFoundException.class);
   }
@@ -415,17 +440,20 @@ class AccountInviteTopicPermissionIT {
         IdAllocationMode.AUTO);
   }
 
-  private static CreateAccountInviteCommand counsellorIntoNewAgency(Long departmentId) {
+  /** A CSV row (import batch) for a counsellor of the not-yet-created agency 4711. */
+  private static CreateAccountInviteCommand counsellorWaitingForNewAgency() {
     return new CreateAccountInviteCommand(
         AccountInviteTargetRole.COUNSELLOR,
         OWN_TENANT,
-        "new-agency-" + System.nanoTime() + "@example.org",
+        "waiting-" + System.nanoTime() + "@example.org",
         "Ada",
         "Lovelace",
+        4711L,
         null,
-        departmentId,
         null,
         null,
-        IdAllocationMode.AUTO);
+        IdAllocationMode.MANUAL,
+        null,
+        "batch-1026-s6");
   }
 }
