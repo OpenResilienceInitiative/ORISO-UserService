@@ -253,6 +253,7 @@ class ConsultantChatIdentityServiceTest {
     when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenThrow(new MatrixCreateUserException("Matrix user (anna.beispiel) is already active"));
     when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
+    when(matrixUserClient.updateUserDisplayName(anyString(), anyString())).thenReturn(true);
     doAnswer(
             invocation -> {
               incompleteConsultant.setMatrixUserId(invocation.getArgument(1));
@@ -329,14 +330,38 @@ class ConsultantChatIdentityServiceTest {
     when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
     when(consultantRepository.findByMatrixUserId("@anna.beispiel:matrix.local"))
         .thenReturn(List.of());
+    when(matrixUserClient.updateUserDisplayName("@anna.beispiel:matrix.local", "anna.beispiel"))
+        .thenReturn(true);
     when(consultantChatIdentityWriter.attachChatIdentity(
             CONSULTANT_ID, "@anna.beispiel:matrix.local"))
         .thenReturn(incompleteConsultant);
 
     consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID);
 
+    // The adopted account was minted by an earlier attempt, possibly under the real name.
+    verify(matrixUserClient).updateUserDisplayName("@anna.beispiel:matrix.local", "anna.beispiel");
     verify(consultantChatIdentityWriter)
         .attachChatIdentity(CONSULTANT_ID, "@anna.beispiel:matrix.local");
+  }
+
+  @Test
+  void provisionMissingChatIdentity_Should_notAttach_When_theAdoptedAccountKeepsItsOldName()
+      throws Exception {
+    when(consultantChatIdentityWriter.find(CONSULTANT_ID))
+        .thenReturn(Optional.of(incompleteConsultant));
+    when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
+        .thenThrow(new MatrixCreateUserException("Matrix user is already active"));
+    when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
+    when(consultantRepository.findByMatrixUserId("@anna.beispiel:matrix.local"))
+        .thenReturn(List.of());
+    when(matrixUserClient.updateUserDisplayName(anyString(), anyString())).thenReturn(false);
+
+    assertThatThrownBy(
+            () -> consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID))
+        .isInstanceOf(DistributedTransactionException.class);
+
+    verify(consultantChatIdentityWriter, never()).attachChatIdentity(anyString(), anyString());
   }
 
   @Test
