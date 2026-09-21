@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
@@ -2042,5 +2043,40 @@ class AccountInviteServiceTest {
 
     assertThat(result.invite().getTenantIdReservationToken()).isEqualTo("res-token-21");
     assertThat(result.invite().getTenantId()).isEqualTo(21L);
+  }
+
+  @Test
+  void resendInvite_Should_KeepTheTopicPermissionOnTheReplacementInvite() {
+    // ORISO-Admin#1026 slice 6: an admin's NONE / SELECT_EXISTING must survive a resend — the
+    // replacement invite is the one the counsellor accepts.
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(11L)
+            .tenantId(21L)
+            .agencyId(7L)
+            .departmentId(3L)
+            .recipientEmail("counsellor@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .topicPermission(TopicPermission.SELECT_EXISTING)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(21L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("Again")
+            .body("Use {{inviteLink}}")
+            .active(true)
+            .build();
+    when(accountInviteRepository.findById(11L)).thenReturn(Optional.of(oldInvite));
+    when(templateRepository.findById(21L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    givenSuccessfulDispatch();
+    var result = service.resendInvite(new SendInviteCommand(11L, 21L));
+
+    assertThat(result.invite()).isNotSameAs(oldInvite);
+    assertThat(result.invite().getTopicPermission()).isEqualTo(TopicPermission.SELECT_EXISTING);
   }
 }

@@ -808,6 +808,7 @@ public class AccountInviteService {
                       .agencyIdAllocationMode(oldInvite.getAgencyIdAllocationMode())
                       .alsoCounsellor(oldInvite.getAlsoCounsellor())
                       .importBatchId(oldInvite.getImportBatchId())
+                      .topicPermission(oldInvite.getTopicPermission())
                       .tokenHash(hash(rawToken))
                       .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
                       .status(AccountInviteStatus.EMAIL_SENT)
