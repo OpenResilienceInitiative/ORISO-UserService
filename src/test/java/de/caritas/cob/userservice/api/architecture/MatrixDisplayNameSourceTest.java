@@ -71,12 +71,13 @@ class MatrixDisplayNameSourceTest {
     var viaAlias =
         "String realName = consultant.getFullName();\nString shown = realName;\n"
             + "matrixUserClient.updateUserDisplayName(id, shown);";
-    var selfReferencing =
-        "String shown = shown.trim();\nmatrixUserClient.createUserId(a, b, shown);";
+    var cyclicAliases =
+        "String first = \"clean\";\nString second = first;\nfirst = second;\n"
+            + "matrixUserClient.createUserId(a, b, first);";
 
     assertThat(offencesIn(Path.of("Inline.java"), inline)).hasSize(1);
     assertThat(offencesIn(Path.of("ViaAlias.java"), viaAlias)).hasSize(1);
-    assertThat(offencesIn(Path.of("SelfReferencing.java"), selfReferencing)).isEmpty();
+    assertThat(offencesIn(Path.of("CyclicAliases.java"), cyclicAliases)).isEmpty();
     assertThat(offencesIn(Path.of("ViaVariable.java"), viaVariable)).hasSize(1);
     assertThat(offencesIn(Path.of("Resolved.java"), resolved)).isEmpty();
     assertThat(
