@@ -314,6 +314,20 @@ class AccountInviteTenantScopeIT {
   }
 
   @Test
+  void createInvite_Should_Refuse_When_AgencyAdminNamesOwnAgencyButAnotherTenant() {
+    actAsAgencyAdmin();
+    long foreignTenantInvitesBefore = countInvitesOfTenant(FOREIGN_TENANT);
+
+    // Own agency, foreign Träger: the invite must not be stored under tenant 2.
+    assertThatThrownBy(
+            () ->
+                service.createInvite(
+                    invite(AccountInviteTargetRole.COUNSELLOR, FOREIGN_TENANT, OWN_AGENCY_ID)))
+        .isInstanceOf(ForbiddenException.class);
+    assertThat(countInvitesOfTenant(FOREIGN_TENANT)).isEqualTo(foreignTenantInvitesBefore);
+  }
+
+  @Test
   void createInvite_Should_Succeed_When_AgencyAdminInvitesACounsellorIntoOwnAgency() {
     actAsAgencyAdmin();
 
@@ -388,6 +402,12 @@ class AccountInviteTenantScopeIT {
             .map(UserRole::getValue)
             .collect(java.util.stream.Collectors.toSet()));
     caller.setGrantedAuthorities(Set.of());
+  }
+
+  private long countInvitesOfTenant(long tenantId) {
+    return accountInviteRepository.findAll().stream()
+        .filter(i -> Long.valueOf(tenantId).equals(i.getTenantId()))
+        .count();
   }
 
   private void givenAgency(long agencyId, long tenantId) {
