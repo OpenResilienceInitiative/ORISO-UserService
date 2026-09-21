@@ -42,7 +42,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorD
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantCreationClient;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
+import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
 import java.time.Instant;
 import java.time.LocalDateTime;
@@ -79,6 +81,8 @@ class QueuedInviteReleaseOnOnboardingIT {
   private static final String CSRF = "it-csrf-token";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
 
+  private static final long TOPIC = 2L;
+
   @Autowired private MockMvc mockMvc;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private InviteEmailTemplateRepository templateRepository;
@@ -94,11 +98,16 @@ class QueuedInviteReleaseOnOnboardingIT {
   @MockitoBean private TenantCreationClient tenantCreationClient;
   @MockitoBean private OperatorDpaContentClient operatorDpaContentClient;
 
+  /** The tenant's active topics — the founding admin gives the new agency one of them (Q28). */
+  @MockitoBean private TopicService topicService;
+
   private Long templateId;
 
   @BeforeEach
   void upstreams() {
     when(agencyService.getAgencyWithoutCaching(NEW_AGENCY)).thenReturn(null);
+    when(topicService.getAllActiveTopicsMap())
+        .thenReturn(java.util.Map.of(TOPIC, new TopicDTO().id(TOPIC).name("Sucht")));
     when(keycloakService.login(anyString(), anyString()))
         .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
     when(keycloakService.createUser(any(UserDTO.class), anyString(), anyString()))
@@ -153,7 +162,8 @@ class QueuedInviteReleaseOnOnboardingIT {
                 .content(
                     """
                     { "account": { "username": "queue_admin", "password": "Valid-Test-Password-2026!" },
-                      "alsoCounsellor": false, "agency": { "name": "Neue Beratungsstelle" } }
+                      "topicIds": [2], "alsoCounsellor": false,
+                      "agency": { "name": "Neue Beratungsstelle" } }
                     """))
         .andExpect(status().isOk());
 
