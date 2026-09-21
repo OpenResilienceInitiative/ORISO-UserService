@@ -84,6 +84,8 @@ public class ConsultantDataProvider {
         .languages(languageStringsOf(consultant.getLanguages()))
         .preferredLanguage(preferredLanguageOf(consultant.getLanguageCode()))
         .encourage2fa(consultant.getEncourage2fa())
+        .twoFactorRequired(consultant.getTwoFactorRequired())
+        .passwordChangeRequired(consultant.getPasswordChangeRequired())
         .magicLinkLoginEnabled(consultant.getMagicLinkLoginEnabled())
         .publicSlug(consultant.getPublicSlug())
         .pendingPublicSlug(consultant.getPendingPublicSlug())

@@ -257,6 +257,83 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
+  void updatePasswordShouldClearThePasswordChangeRequirement() {
+    // The requirement exists because an administrator chose the password. Once the
+    // counsellor has replaced it, it is theirs and the gate must open.
+    var consultant = consultantOwing(true);
+    givenAPasswordChangeSucceedsFor(consultant);
+
+    delegate.updatePassword(passwordChange());
+
+    assertThat(consultant.getPasswordChangeRequired()).isFalse();
+    verify(consultantService).saveConsultant(consultant);
+  }
+
+  @Test
+  void updatePasswordShouldNotWriteWhenNoChangeWasOwed() {
+    var consultant = consultantOwing(false);
+    givenAPasswordChangeSucceedsFor(consultant);
+
+    delegate.updatePassword(passwordChange());
+
+    verify(consultantService, never()).saveConsultant(any(Consultant.class));
+  }
+
+  @Test
+  void updatePasswordShouldSucceedForAccountsThatAreNotConsultants() {
+    // Askers and admins have no consultant row; there is nothing to clear and that
+    // is not an error.
+    givenAPasswordChangeSucceedsFor(null);
+
+    var response = delegate.updatePassword(passwordChange());
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+    verify(consultantService, never()).saveConsultant(any(Consultant.class));
+  }
+
+  @Test
+  void updatePasswordShouldKeepTheRequirementWhenTheChangeFailed() {
+    var passwordDTO = passwordChange();
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
+    when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(true);
+    when(identityManager.changePassword(USER_ID, "new")).thenReturn(false);
+
+    assertThatThrownBy(() -> delegate.updatePassword(passwordDTO))
+        .isInstanceOf(InternalServerErrorException.class);
+
+    verify(consultantService, never()).saveConsultant(any(Consultant.class));
+  }
+
+  private static Consultant consultantOwing(boolean passwordChangeRequired) {
+    return Consultant.builder()
+        .id(USER_ID)
+        .username(USERNAME)
+        .firstName("Lisa")
+        .lastName("Simpson")
+        .email("lisa.simpson@oriso.org")
+        .passwordChangeRequired(passwordChangeRequired)
+        .build();
+  }
+
+  private PasswordDTO passwordChange() {
+    var passwordDTO = new PasswordDTO();
+    passwordDTO.setOldPassword("old");
+    passwordDTO.setNewPassword("new");
+    return passwordDTO;
+  }
+
+  private void givenAPasswordChangeSucceedsFor(Consultant consultant) {
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
+    when(identityManager.validatePasswordIgnoring2fa(USERNAME, "old")).thenReturn(true);
+    when(identityManager.changePassword(USER_ID, "new")).thenReturn(true);
+    when(consultantService.getConsultant(USER_ID)).thenReturn(Optional.ofNullable(consultant));
+  }
+
+  @Test
   void updateEmailAddressShouldNormalizeEmailToLowerCase() {
     var response = delegate.updateEmailAddress("Name@Example.org");
 
@@ -379,7 +456,7 @@ class UserAccountControllerDelegateTest {
   @Test
   void getUserData_agencyAdminPath_returnsKeycloakUserDataWithAssignedAgencies() {
     // Agency admins load profile data from Keycloak plus their admin_agency assignments
-    // (ORISO-UserService#1101), never from consultant tables.
+    // never from consultant tables.
     var roles = Set.of(UserRole.AGENCY_ADMIN.getValue());
     var partialUserData = new UserDataResponseDTO();
     var fullUserData = new UserDataResponseDTO();

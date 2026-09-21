@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantAdminService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
+import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
@@ -172,6 +173,34 @@ class CreateConsultantSagaTest {
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
     verify(identityClient).updateRole(KEYCLOAK_USER_ID, CONSULTANT.getValue());
     verify(appointmentService, never()).createConsultant(any());
+  }
+
+  @Test
+  void createNewConsultant_Should_persistTheSecondFactorRequirement() throws Exception {
+    // The admin API is the "an administrator picks the password and hands it over"
+    // path, so the counsellor owes a second factor before the account is usable.
+    stubHappyPath();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(captured.getValue().getTwoFactorRequired(), is(true));
+  }
+
+  @Test
+  void createNewConsultant_Should_persistThePasswordChangeRequirement() throws Exception {
+    // The administrator chose this password and passed it on, so it is a shared
+    // secret until the counsellor replaces it.
+    stubHappyPath();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(captured.getValue().getPasswordChangeRequired(), is(true));
   }
 
   @Test
@@ -374,14 +403,41 @@ class CreateConsultantSagaTest {
   }
 
   @Test
-  void
-      createNewConsultant_Should_continueWithoutMatrixIdentity_When_plainCredentialsAreUnavailable()
-          throws Exception {
+  void createNewConsultant_Should_persistTheConsultant_When_matrixProvisioningFails()
+      throws Exception {
+    // The tolerance this asserts is deliberate: the integration suite and the E2E suite run
+    // without a Synapse, and making a chat outage fatal turned 10 of them red. What the previous
+    // version of this test did NOT do was exercise it - and for a sharper reason than the review
+    // supposed. The saga reads PlainCredentialsHolder BEFORE createKeycloakUser populates it, so
+    // with the holder unset the Matrix branch is skipped entirely and the mock is never touched:
+    // the test asserted the tolerance without the saga ever attempting to provision. Seeding the
+    // holder the way UserAdminController does is what makes the failure branch reachable at all.
     stubHappyPath();
+    PlainCredentialsHolder.set(VALID_USERNAME, null);
+    when(matrixSynapseService.createUserId(any(), any(), any()))
+        .thenThrow(new MatrixCreateUserException("Synapse is unreachable"));
 
     var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
 
     assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    verify(matrixSynapseService).createUserId(any(), any(), any());
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
+    verify(rollbackFacade, never()).rollbackConsultantAccount(any(Consultant.class));
+  }
+
+  @Test
+  void createNewConsultant_Should_persistTheConsultant_When_matrixAnswersWithoutAUserId()
+      throws Exception {
+    stubHappyPath();
+    PlainCredentialsHolder.set(VALID_USERNAME, null);
+    when(matrixSynapseService.createUserId(any(), any(), any())).thenReturn(null);
+
+    var response = createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    assertThat(response.getEmbedded().getId(), is(KEYCLOAK_USER_ID));
+    verify(matrixSynapseService).createUserId(any(), any(), any());
     ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
     verify(consultantService).saveConsultant(consultantCaptor.capture());
     assertThat(consultantCaptor.getValue().getMatrixUserId(), is((String) null));
@@ -415,6 +471,36 @@ class CreateConsultantSagaTest {
         "LOGIN_PASSWORD", consultant.getChatRecoveryMode());
     org.junit.jupiter.api.Assertions.assertEquals(3L, consultant.getChatRecoveryPolicyRevision());
     verify(identityPasswordUpdater).updatePassword(KEYCLOAK_USER_ID, "GeneratedPass1!");
+  }
+
+  @Test
+  void createNewConsultant_Should_notRequireASecondFactor_When_importingConsultants()
+      throws Exception {
+    // Imported counsellors already exist elsewhere; the import is a move, not a new
+    // account, so it must not gate a whole migrated tenant at the next login.
+    ImportRecord importRecord = validImportRecord();
+    stubHappyPath();
+    when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
+
+    Consultant consultant =
+        createConsultantSaga.createNewConsultant(
+            importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
+
+    assertThat(consultant.getTwoFactorRequired(), is(false));
+  }
+
+  @Test
+  void createNewConsultant_Should_notRequireAPasswordChange_When_importingConsultants()
+      throws Exception {
+    ImportRecord importRecord = validImportRecord();
+    stubHappyPath();
+    when(userHelper.getRandomPassword()).thenReturn("GeneratedPass1!");
+
+    Consultant consultant =
+        createConsultantSaga.createNewConsultant(
+            importRecord, CollectionHelper.asSet(CONSULTANT.getValue()));
+
+    assertThat(consultant.getPasswordChangeRequired(), is(false));
   }
 
   @Test

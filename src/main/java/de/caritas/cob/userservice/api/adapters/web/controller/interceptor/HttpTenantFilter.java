@@ -108,7 +108,9 @@ public class HttpTenantFilter extends OncePerRequestFilter {
 
     private boolean belongsToWhitelist(HttpServletRequest request, List<String> tenantWhitelist) {
       String requestUri = request.getRequestURI().toLowerCase();
-      if (DPA_SIGNED_NOTICE_PATH.matcher(requestUri).matches()) {
+      if (requestUri.equals("/users/identity-suggestions")
+          || requestUri.equals("/service/users/identity-suggestions")
+          || DPA_SIGNED_NOTICE_PATH.matcher(requestUri).matches()) {
         return true;
       }
       return tenantWhitelist.parallelStream()

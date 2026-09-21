@@ -278,6 +278,28 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Column(name = "encourage_2fa", nullable = false, columnDefinition = "bit default true")
   private Boolean encourage2fa;
 
+  /**
+   * Whether this counsellor must establish a second factor before using the account. A hard gate,
+   * unlike {@link #encourage2fa}. Set for logins provisioned through the admin API, where the
+   * administrator chooses the initial password. Defaults to false, so it never applies
+   * retroactively.
+   */
+  @Column(name = "two_factor_required", nullable = false, columnDefinition = "bit default false")
+  @Builder.Default
+  private Boolean twoFactorRequired = false;
+
+  /**
+   * Whether this counsellor must replace their password before using the account. Set for logins
+   * provisioned through the admin API, where the password is shared with at least one other person.
+   * Cleared when the counsellor changes it. Defaults to false.
+   */
+  @Column(
+      name = "password_change_required",
+      nullable = false,
+      columnDefinition = "bit default false")
+  @Builder.Default
+  private Boolean passwordChangeRequired = false;
+
   @Column(
       name = "magic_link_login_enabled",
       nullable = false,
