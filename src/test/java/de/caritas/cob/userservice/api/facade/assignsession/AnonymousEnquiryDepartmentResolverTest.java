@@ -7,7 +7,6 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
-import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -23,6 +22,8 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.http.HttpStatus;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * ADR-022 decision 1 / ADR-003: accepting a topic-based anonymous enquiry must bind the accepting
@@ -120,7 +121,11 @@ class AnonymousEnquiryDepartmentResolverTest {
         .thenThrow(new IllegalStateException("agency service down"));
 
     assertThatThrownBy(() -> resolver.resolveAgencyId(unboundSession(), consultantInAgencies(10L)))
-        .isInstanceOf(ServiceUnavailableException.class);
+        // docs/api-error-contract.md: a failed downstream service is 424/502, not this
+        // service's own 503.
+        .isInstanceOfSatisfying(
+            ResponseStatusException.class,
+            e -> assertThat(e.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY));
   }
 
   @Test

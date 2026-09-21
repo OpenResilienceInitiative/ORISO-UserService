@@ -4,7 +4,6 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
-import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -16,7 +15,9 @@ import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.web.server.ResponseStatusException;
 
 /**
  * Resolves the department (agency x topic, ADR-003) an anonymous enquiry belongs to once a
@@ -38,8 +39,9 @@ public class AnonymousEnquiryDepartmentResolver {
    * Returns the agency to bind to the given unbound anonymous session, or empty when the session is
    * already bound, has no main topic, or none of the consultant's agencies offers that topic —
    * acceptance then succeeds without a department and the client shows an explicit non-blocking
-   * warning. Throws {@link ServiceUnavailableException} when the agency lookup itself fails, so a
-   * transient outage leaves the enquiry retryable instead of accepted without its department.
+   * warning. Throws a {@code 502} {@link ResponseStatusException} when the agency lookup itself
+   * fails, so a transient outage leaves the enquiry retryable instead of accepted without its
+   * department.
    */
   public Optional<Long> resolveAgencyId(Session session, Consultant consultant) {
     if (nonNull(session.getAgencyId())) {
@@ -72,7 +74,10 @@ public class AnonymousEnquiryDepartmentResolver {
           "AgencyService unavailable, accept of anonymous session {} left retryable: {}",
           session.getId(),
           e.getClass().getSimpleName());
-      throw new ServiceUnavailableException(
+      // AgencyService failed, not this service: docs/api-error-contract.md reserves 424/502 for a
+      // failed downstream dependency (as AgencyCreationClient does). Still retryable.
+      throw new ResponseStatusException(
+          HttpStatus.BAD_GATEWAY,
           "Counselling centre lookup is temporarily unavailable; accept the enquiry again");
     }
 
