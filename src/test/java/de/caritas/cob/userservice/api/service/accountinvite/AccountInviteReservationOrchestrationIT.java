@@ -152,7 +152,7 @@ class AccountInviteReservationOrchestrationIT {
   }
 
   @Test
-  void parallelManualInvitesForSameId_Should_LetExactlyOneSucceed() throws Exception {
+  void parallelManualInvitesForSameId_Should_ReserveTheIdExactlyOnce() throws Exception {
     List<Object> outcomes =
         runConcurrentlyCollectingErrors(
             () -> createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "manual-a@example.org"),
@@ -165,10 +165,17 @@ class AccountInviteReservationOrchestrationIT {
             .toList();
     List<Object> conflicts = outcomes.stream().filter(ConflictException.class::isInstance).toList();
 
-    assertThat(successes).hasSize(1);
-    assertThat(conflicts).hasSize(1);
-    assertThat(successes.get(0).getTenantId()).isEqualTo(21L);
-    assertThat(accountInviteRepository.count()).isEqualTo(1);
+    // Slice 5 (ORISO-Admin#1026): a further admin of the same new Träger shares the first one's
+    // reservation. Which outcome the race produces depends on timing — the second invite either
+    // sees the first one's saved reservation and joins it, or both reach the ledger together and
+    // the loser gets the 409. Either way the ID is reserved exactly once.
+    assertThat(successes.size() + conflicts.size()).isEqualTo(2);
+    assertThat(successes).isNotEmpty();
+    assertThat(successes).extracting(AccountInvite::getTenantId).containsOnly(21L);
+    assertThat(successes)
+        .extracting(AccountInvite::getTenantIdReservationToken)
+        .containsOnly("token-21");
+    assertThat(accountInviteRepository.count()).isEqualTo(successes.size());
     // The winner's reservation is still held — the loser's conflict released nothing.
     assertThat(tenantIdLedger).containsExactly(21L);
   }
