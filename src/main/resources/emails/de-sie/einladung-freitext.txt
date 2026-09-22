@@ -12,7 +12,7 @@ Wir fragen Sie nie per E-Mail nach Ihrem Passwort. Geben Sie diesen Link an niem
 {{orgAddress}}
 {{contactLine}}
 
-{{platformName}} ist ein Angebot von {{orgName}}.
+{{offeringName}} ist ein Angebot von {{orgName}}.
 
 Datenschutz: {{privacyUrl}}
 Impressum: {{imprintUrl}}

@@ -12,7 +12,7 @@ We will never ask for your password by email. Do not pass this link on to anyone
 {{orgAddress}}
 {{contactLine}}
 
-{{platformName}} is a service provided by {{orgName}}.
+{{offeringName}} is a service provided by {{orgName}}.
 
 Privacy: {{privacyUrl}}
 Imprint: {{imprintUrl}}

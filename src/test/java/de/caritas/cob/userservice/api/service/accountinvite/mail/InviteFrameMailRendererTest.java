@@ -104,13 +104,34 @@ class InviteFrameMailRendererTest {
 
     assertThat(mail.html())
         .contains("<img src=\"https://nord.oriso.org/service/tenant/public/branding/logo\"")
-        .as("the tenant name brands the header and the footer")
+        .as("the tenant name brands the header")
         .contains("Träger Nord e.V.")
         .as("the tenant colour reaches the accent bar and the button")
         .contains("#1c4f8f")
         .as("tenant imprint and privacy pointers, not the platform's")
         .contains("https://nord.oriso.org/impressum")
         .contains("https://nord.oriso.org/datenschutz");
+  }
+
+  /**
+   * The Träger brands the header, but the footer's "X ist ein Angebot von Y" describes the
+   * platform: X is the platform name, Y the operator (Frank, 2026-09-23).
+   */
+  @Test
+  void footerNamesThePlatformAndItsOperator_evenWhenATraegerBrandsTheHeader() {
+    BrandedEmail mail =
+        render(
+            new EmailBranding("Caritasverband Musterstadt e.V.", null, "#1c4f8f", null, null),
+            "Einladung",
+            "Hallo",
+            ACCEPT_URL);
+
+    assertThat(mail.html())
+        .contains(">Online-Beratung ist ein Angebot von ORISO.</div>")
+        .doesNotContain("Musterstadt e.V. ist ein Angebot von");
+    assertThat(mail.plainText())
+        .contains("\nOnline-Beratung ist ein Angebot von ORISO.\n")
+        .doesNotContain("Musterstadt e.V. ist ein Angebot von");
   }
 
   /** No logo means the text wordmark carries the header — never an {@code <img src="">}. */

@@ -175,7 +175,7 @@ class DpaSignedNoticeServiceTest {
             eq(TENANT_ID),
             eq("en"));
     // the account language wins
-    assertTrue(subject.getValue().contains("Data processing agreement signed"));
+    assertTrue(subject.getValue().contains("Contract documents signed"));
     // tenant, version, timestamp and signer as recorded
     assertTrue(body.getValue().contains("Träger Nord e.V."));
     assertTrue(body.getValue().contains("2026-07-01 12:00"));
@@ -187,6 +187,41 @@ class DpaSignedNoticeServiceTest {
     assertTrue(body.getValue().contains("https://admin.example.org/admin"));
     // no raw sign token can leak into the mail — the signature carries none
     assertTrue(!body.getValue().contains("/dpa-sign/"));
+  }
+
+  /** Frank, 2026-09-23: "Vertragsunterlagen", never "AVV" or "Auftragsverarbeitungsvertrag". */
+  @Test
+  void onSignatureHint_saysVertragsunterlagen_inTheGermanSubjectAndBody() {
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+
+    service.onSignatureHint(TENANT_ID);
+
+    var subject = ArgumentCaptor.forClass(String.class);
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(inviteMailDispatchService)
+        .send(
+            eq("toni@example.org"),
+            subject.capture(),
+            body.capture(),
+            isNull(),
+            eq(TENANT_ID),
+            eq("de"));
+    assertThat(subject.getValue()).isEqualTo("Vertragsunterlagen unterzeichnet – Träger Nord e.V.");
+    assertThat(body.getValue())
+        .contains("die Vertragsunterlagen für Träger Nord e.V. wurden unterzeichnet.")
+        .doesNotContain("AVV")
+        .doesNotContain("Auftragsverarbeitungsvertrag");
+  }
+
+  /** The English default follows: "contract documents", not "data processing agreement". */
+  @Test
+  void defaultCopy_saysContractDocuments_inEnglish() {
+    assertThat(DpaSignedNoticeService.defaultSubject("en"))
+        .isEqualTo("Contract documents signed – {{tenantName}}");
+    assertThat(DpaSignedNoticeService.defaultBody("en"))
+        .contains("the contract documents for {{tenantName}} have been signed.")
+        .doesNotContainIgnoringCase("data processing agreement");
   }
 
   /** Measured on dev 2026-09-23: signed at 00:45 German time, mailed as "22.09.2026 22:45 Uhr". */

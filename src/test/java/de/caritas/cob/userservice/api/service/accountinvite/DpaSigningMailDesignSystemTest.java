@@ -43,10 +43,10 @@ import org.springframework.web.client.HttpClientErrorException;
 import org.springframework.web.client.RestTemplate;
 
 /**
- * The DPA ("AVV") signing mail, observed where the Admin wizard sees it: the preview and the mail
- * that reaches the transport. Everything between those two points is the production object — the
- * design-system template, the brand values, the tenant branding resolver, the SMTP dispatcher — and
- * only the tenant lookup, the SMTP settings read and the wire are stubbed.
+ * The DPA signing mail ("Vertragsunterlagen"), observed where the Admin wizard sees it: the preview
+ * and the mail that reaches the transport. Everything between those two points is the production
+ * object — the design-system template, the brand values, the tenant branding resolver, the SMTP
+ * dispatcher — and only the tenant lookup, the SMTP settings read and the wire are stubbed.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -135,6 +135,75 @@ class DpaSigningMailDesignSystemTest {
         .contains("Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:")
         .contains(">" + sampleLink + "</a>");
     assertThat(html.split(Pattern.quote("href=\"" + sampleLink + "\""), -1)).hasSize(3);
+  }
+
+  /** Frank, 2026-09-23: the mail says "Vertragsunterlagen", never "AVV" or the long form. */
+  @Test
+  void copy_saysVertragsunterlagen_neverAvvOrAuftragsverarbeitungsvertrag() {
+    givenRegisteredTenant();
+
+    SentMail mail = sendSigningLink();
+
+    for (String part : List.of(mail.subject(), mail.html(), mail.text())) {
+      assertThat(part).doesNotContain("AVV").doesNotContain("Auftragsverarbeitungsvertrag");
+    }
+    assertThat(mail.html())
+        .contains(">Die Vertragsunterlagen liegen zur Unterschrift bereit</h1>")
+        .contains("Für Träger Nord &amp; Söhne e.V. wurden Vertragsunterlagen erstellt.")
+        .contains(
+            "Ohne unterzeichnete Vertragsunterlagen bleibt die Beratung für diesen Träger"
+                + " gesperrt.");
+    assertThat(mail.text())
+        .contains(
+            "Ohne unterzeichnete Vertragsunterlagen bleibt die Beratung für diesen Träger"
+                + " gesperrt.");
+  }
+
+  /**
+   * The Träger brands the header, but "X ist ein Angebot von Y" describes the platform: X is the
+   * platform name the platform admin configured, Y the operator — never the Träger.
+   */
+  @Test
+  void footer_namesThePlatformAndItsOperator_evenThoughATraegerBrandsTheMail() {
+    givenRegisteredTenant();
+
+    SentMail mail = sendSigningLink();
+
+    assertThat(offeredByLine(mail.text()))
+        .isEqualTo("Online-Beratung ist ein Angebot von ORISO.")
+        .doesNotContain("Träger Nord");
+    assertThat(mail.html())
+        .contains(">Online-Beratung ist ein Angebot von ORISO.</div>")
+        .doesNotContain("e.V. ist ein Angebot von");
+  }
+
+  /** A Träger name ending in "e.V." must not end the fine print with "e.V..". */
+  @Test
+  void finePrint_endsWithASingleFullStop_When_theTraegerNameEndsWithAnAbbreviation() {
+    givenRegisteredTenant();
+
+    SentMail mail = sendSigningLink();
+
+    assertThat(mail.html() + mail.text()).doesNotContain("e.V..");
+    assertThat(mail.html())
+        .contains("Vertragsverhältnis zwischen ORISO und Träger Nord &amp; Söhne e.V.</td>");
+    assertThat(mail.text())
+        .contains("Vertragsverhältnis zwischen ORISO und Träger Nord & Söhne e.V.\n");
+  }
+
+  /** "zwischen … und" takes the dative; the subject's "für" keeps the accusative. */
+  @Test
+  void finePrint_putsTheFallbackInTheDative_When_theTenantIsOnlyReserved() {
+    when(tenantService.getRestrictedTenantData(TENANT_ID))
+        .thenThrow(
+            HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null));
+
+    var preview = forward.previewSigningMail(TENANT_ID);
+
+    assertThat(preview.subject()).isEqualTo("Vertragsunterlagen für Ihre Organisation");
+    assertThat(preview.html())
+        .contains("Vertragsverhältnis zwischen ORISO und Ihrer Organisation.</td>")
+        .contains("Für Ihre Organisation wurden Vertragsunterlagen erstellt.");
   }
 
   @Test
@@ -249,6 +318,13 @@ class DpaSigningMailDesignSystemTest {
         "globalSmtpPort", Map.of("value", "587"),
         "globalSmtpSecure", Map.of("value", false),
         "globalSmtpFrom", Map.of("value", "noreply@example.org"));
+  }
+
+  private static String offeredByLine(String text) {
+    return text.lines()
+        .filter(line -> line.contains("ist ein Angebot von"))
+        .findFirst()
+        .orElseThrow();
   }
 
   private static List<String> urlsIn(String document) {

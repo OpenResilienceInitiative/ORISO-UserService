@@ -21,12 +21,6 @@ public class DpaForwardEmailService {
   static final String SAMPLE_SIGN_TOKEN = "SAMPLE-PREVIEW-TOKEN";
   private static final int PREVIEW_EXPIRY_DAYS = 14;
 
-  /**
-   * See {@link #resolveTenantName(Long)} for why this fallback is German-only. Accusative, because
-   * the signing mail puts it after "für".
-   */
-  private static final String GENERIC_ORGANISATION_NAME = "Ihre Organisation";
-
   private final TenantService tenantService;
   private final DpaSigningEmailDispatchService dpaSigningEmailDispatchService;
   private final URI permittedAppOrigin;
@@ -117,22 +111,15 @@ public class DpaForwardEmailService {
 
   /**
    * The tenant of a pre-account onboarding forward does not exist yet (only its ID is reserved,
-   * ORISO-Admin#722) — the mail then falls back to the generic wording instead of failing.
-   *
-   * <p>The fallback is deliberately German-only, like the DPA_FORWARD mail it lands in: the {@link
-   * DpaSigningEmailDispatchService} contract carries no language at all and the downstream template
-   * is maintained in German only — the DPA is a German-language contract between the platform
-   * operator and a Träger. If that dispatch contract ever grows a language dimension, this fallback
-   * must follow it.
+   * ORISO-Admin#722): {@code null}, and the mail renderer words the generic fallback, because it
+   * needs the name in two grammatical cases ("für Ihre Organisation", "und Ihrer Organisation").
    */
   private String resolveTenantName(Long tenantId) {
     try {
       var tenant = tenantService.getRestrictedTenantData(tenantId);
-      return tenant == null || isBlank(tenant.getName())
-          ? GENERIC_ORGANISATION_NAME
-          : tenant.getName();
+      return tenant == null || isBlank(tenant.getName()) ? null : tenant.getName();
     } catch (org.springframework.web.client.HttpClientErrorException.NotFound exception) {
-      return GENERIC_ORGANISATION_NAME;
+      return null;
     }
   }
 

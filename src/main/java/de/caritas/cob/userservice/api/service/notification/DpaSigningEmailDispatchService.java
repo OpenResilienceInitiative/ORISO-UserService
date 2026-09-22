@@ -7,6 +7,7 @@ public interface DpaSigningEmailDispatchService {
 
   /**
    * @param tenantId tenant whose branding the mail carries (may be only reserved, not created)
+   * @param tenantName the Träger name, or {@code null} while the tenant is only reserved
    * @param expiresAt zoneless UTC, as TenantService issues it
    */
   void send(

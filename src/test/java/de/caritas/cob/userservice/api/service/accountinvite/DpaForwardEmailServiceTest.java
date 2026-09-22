@@ -58,11 +58,11 @@ class DpaForwardEmailServiceTest {
   }
 
   /**
-   * A reserved-but-unregistered tenant has no name yet. The fallback lands after "für" in the
-   * signing mail ("Vertragsunterlagen für …"), which takes the accusative: "Ihre Organisation".
+   * A reserved-but-unregistered tenant has no name yet. No name is passed on: the renderer words
+   * the fallback in the case each sentence needs (DpaSigningMailDesignSystemTest pins the wording).
    */
   @Test
-  void sendSigningLink_unknownTenant_fallsBackToGrammaticalGenericName() {
+  void sendSigningLink_unknownTenant_passesNoNameSoTheRendererWordsTheFallback() {
     when(tenantService.getRestrictedTenantData(84L))
         .thenThrow(
             org.springframework.web.client.HttpClientErrorException.create(
@@ -79,7 +79,7 @@ class DpaForwardEmailServiceTest {
         .send(
             84L,
             "bart.simpson@oriso.org",
-            "Ihre Organisation",
+            null,
             "https://app.oriso-dev.site/dpa-sign/single-use-token",
             LocalDateTime.parse("2026-08-03T13:27:28.243207790"));
   }

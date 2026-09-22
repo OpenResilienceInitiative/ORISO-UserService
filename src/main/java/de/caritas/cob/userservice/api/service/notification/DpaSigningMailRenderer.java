@@ -11,17 +11,23 @@ import java.time.format.DateTimeFormatter;
 import java.util.Locale;
 import java.util.Map;
 import lombok.NonNull;
+import org.apache.commons.lang3.StringUtils;
 import org.springframework.stereotype.Component;
 
 /**
- * Renders the DPA ("AVV") signing mail from the design system's {@code avv-unterschrift} template
- * (ADR-020), branded like the invite mail. Preview and send both come through here, so the Admin
- * wizard shows exactly what the signatory receives.
+ * Renders the DPA signing mail ("Vertragsunterlagen") from the design system's {@code
+ * avv-unterschrift} template (ADR-020), branded like the invite mail. Preview and send both come
+ * through here, so the Admin wizard shows exactly what the signatory receives.
  */
 @Component
 public class DpaSigningMailRenderer {
 
   static final String TEMPLATE_ID = "avv-unterschrift";
+
+  // German-only on purpose: the DPA is a German contract and the dispatch contract carries no
+  // language. "für" takes the accusative, the fine print's "zwischen … und" the dative.
+  static final String GENERIC_TENANT_NAME = "Ihre Organisation";
+  static final String GENERIC_TENANT_NAME_DATIVE = "Ihrer Organisation";
 
   private static final DateTimeFormatter DATE_TIME =
       DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm 'Uhr'", Locale.GERMAN);
@@ -45,14 +51,17 @@ public class DpaSigningMailRenderer {
   /**
    * @param tenantId tenant whose branding the mail carries; a reserved, not yet created tenant
    *     yields platform branding
-   * @param tenantName the Träger name shown in subject and body, already resolved by the caller
+   * @param tenantName the Träger name shown in subject and body, or {@code null} while the tenant
+   *     is only reserved — the mail then says "Ihre Organisation"
    * @param signLink absolute, origin-checked sign link
    */
   public RenderedEmail render(
       Long tenantId, String tenantName, String signLink, Instant providedAt, Instant expiresAt) {
     Map<String, String> values =
         tenantEmailBrandValues.values(emailBrandingResolver.resolve(tenantId));
-    values.put("tenantName", tenantName);
+    boolean named = StringUtils.isNotBlank(tenantName);
+    values.put("tenantName", named ? tenantName : GENERIC_TENANT_NAME);
+    values.put("tenantNameDative", named ? tenantName : GENERIC_TENANT_NAME_DATIVE);
     values.put("dpaUrl", signLink);
     values.put("dpaProvidedAt", germanDateTime(providedAt));
     values.put("dpaExpiresAt", germanDateTime(expiresAt));

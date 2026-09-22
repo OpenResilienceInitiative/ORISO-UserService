@@ -42,8 +42,9 @@ public class TenantEmailBrandValues {
     Map<String, String> values =
         new LinkedHashMap<>(orisoEmailBrand.values(applicationBaseUrl, branding.accentColor()));
 
-    // Header wordmark and the "is a service provided by" line: the Träger's name, the platform's
-    // operator. brandName already falls back to the configured platform name.
+    // Header wordmark only: the offered-by line keeps offeringName, the platform's own name, so
+    // it never reads "<Träger> ist ein Angebot von <operator>". brandName falls back to the
+    // platform.
     values.put("platformName", branding.brandName());
 
     // Blank rather than absent: {{logoCell}} expands to nothing for a blank logo URL, and an
