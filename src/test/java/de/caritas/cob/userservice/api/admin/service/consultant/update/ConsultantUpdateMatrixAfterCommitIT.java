@@ -6,7 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -95,7 +94,7 @@ class ConsultantUpdateMatrixAfterCommitIT extends ConsultantUpdateServiceBase {
 
     // No public display name on this row, so the resolver falls back to the decoded username —
     // never "Angela Musterfrau" (ADR-002 §2, #1200).
-    verify(matrixSynapseService).updateUserDisplayName(eq(MATRIX_USER_ID), anyString());
+    verify(matrixSynapseService).updateUserDisplayName(MATRIX_USER_ID, "Beraterin Sonnenblume");
     assertNoRealNameReachedMatrix(matrixSynapseService, "Angela", "Musterfrau");
     assertThat(storedFirstName()).isEqualTo("Angela");
   }
