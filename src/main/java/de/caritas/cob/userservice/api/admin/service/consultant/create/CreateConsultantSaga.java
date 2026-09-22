@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransac
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.facade.rollback.RollbackFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
@@ -75,6 +76,7 @@ public class CreateConsultantSaga {
   private final @NonNull UserAccountInputValidator userAccountInputValidator;
   private final @NonNull TenantAdminService tenantAdminService;
   private final @NonNull MatrixUserClient matrixUserClient;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
@@ -248,13 +250,15 @@ public class CreateConsultantSaga {
         // application logs are aggregated, retained and backed up. Only the internal consultant id
         // (the Keycloak id this row is built from) and the outcome go into the log.
         log.info("Provisioning the chat account of consultant {}", keycloakUserId);
+        // The Synapse displayname is readable by every member of a shared room, the advice seeker
+        // included, so it must never be the real name. The resolver decides which name may go
+        // there; the saga only hands it the inputs.
+        String matrixDisplayName =
+            consultantDisplayNameResolver.resolveMatrixDisplayName(
+                consultantCreationInput.getDisplayName(), plainCreds.getUsername());
         matrixUserId =
             matrixUserClient.createUserId(
-                plainCreds.getUsername(),
-                matrixPassword,
-                consultantCreationInput.getFirstName()
-                    + " "
-                    + consultantCreationInput.getLastName());
+                plainCreds.getUsername(), matrixPassword, matrixDisplayName);
 
         if (matrixUserId != null) {
           log.info("Provisioned the chat account of consultant {}", keycloakUserId);
