@@ -65,6 +65,34 @@ class ConsultantDisplayNameResolverTest {
   }
 
   // ---------------------------------------------------------------------------
+  // resolveMatrixDisplayName(String, String) — consultant CREATION has no persisted entity yet
+  // (#1200). Same rule, same class: the saga must not re-decide.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  @DisplayName("the creation-input overload prefers the public display name")
+  void resolveMatrixDisplayName_Should_PreferTheDisplayName_When_ResolvingFromRawInput() {
+    assertThat(resolver.resolveMatrixDisplayName("Frau M.", "beraterin1")).isEqualTo("Frau M.");
+  }
+
+  @Test
+  @DisplayName("the creation-input overload falls back to the decoded username")
+  void resolveMatrixDisplayName_Should_FallBackToTheUsername_When_ResolvingFromRawInput() {
+    assertThat(resolver.resolveMatrixDisplayName(null, "beraterin1")).isEqualTo("beraterin1");
+    assertThat(resolver.resolveMatrixDisplayName("  ", "beraterin1")).isEqualTo("beraterin1");
+    assertThat(resolver.resolveMatrixDisplayName("enc.MFRGGZDF", "beraterin1"))
+        .isEqualTo("beraterin1");
+    var encodedUsername = new UsernameTranscoder().encodeUsername("beraterin1");
+    assertThat(resolver.resolveMatrixDisplayName(null, encodedUsername)).isEqualTo("beraterin1");
+  }
+
+  @Test
+  @DisplayName("the creation-input overload tolerates a missing username")
+  void resolveMatrixDisplayName_Should_ReturnNull_When_BothInputsAreAbsent() {
+    assertThat(resolver.resolveMatrixDisplayName(null, null)).isNull();
+  }
+
+  // ---------------------------------------------------------------------------
   // resolveInternalDisplayName — internal surfaces (team lists, supervision marker, #996)
   // ---------------------------------------------------------------------------
 

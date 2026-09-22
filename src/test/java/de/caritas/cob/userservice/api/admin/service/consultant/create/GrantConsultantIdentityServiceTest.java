@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.config.auth.UserRole.CONSULTANT;
 import static de.caritas.cob.userservice.api.config.auth.UserRole.GROUP_CHAT_CONSULTANT;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.hamcrest.Matchers.not;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
@@ -23,6 +24,8 @@ import de.caritas.cob.userservice.api.admin.service.consultant.validation.Consul
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
+import de.caritas.cob.userservice.api.helper.MatrixRealNameGuard;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -41,6 +44,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
@@ -84,6 +88,12 @@ class GrantConsultantIdentityServiceTest {
 
   @Mock
   private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
+
+  // The real rule, not a mock: ConsultantDisplayNameResolver is the single place that decides
+  // which name may reach Matrix (ADR-002 §2).
+  @Spy
+  private ConsultantDisplayNameResolver consultantDisplayNameResolver =
+      new ConsultantDisplayNameResolver();
 
   private GrantConsultantIdentityDTO dto;
 
@@ -268,6 +278,32 @@ class GrantConsultantIdentityServiceTest {
 
     verify(identityRoleUpdater)
         .ensureRoles(ADMIN_ID, Set.of(CONSULTANT.getValue(), GROUP_CHAT_CONSULTANT.getValue()));
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1200: granting a consultant identity must not publish the admin's real name.
+  // This class's javadoc says it "mirrors CreateConsultantSaga" — it mirrored the defect too.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void provisionMatrixWithTheUsername_And_neverTheRealName() throws Exception {
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    stubHappyMatrix();
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
+
+    ArgumentCaptor<String> displayName = ArgumentCaptor.forClass(String.class);
+    verify(matrixSynapseService)
+        .createUserId(eq(ADMIN_USERNAME), anyString(), displayName.capture());
+    MatrixRealNameGuard.assertNoRealNameReachedMatrix(matrixSynapseService, "First", "Last");
+    // An Admin has no public display name, so the Matrix ID's own username is the only source.
+    assertThat(displayName.getValue(), is(ADMIN_USERNAME));
+    assertThat(displayName.getValue(), is(not("First Last")));
   }
 
   @Test
