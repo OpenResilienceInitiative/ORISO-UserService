@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.service.notification.DpaSigningEmailDispat
 import de.caritas.cob.userservice.api.service.notification.DpaSigningEmailPreview;
 import java.net.URI;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Objects;
 import lombok.NonNull;
 import org.springframework.beans.factory.annotation.Value;
@@ -51,22 +52,27 @@ public class DpaForwardEmailService {
 
     var tenantName = resolveTenantName(command.tenantId());
     dpaSigningEmailDispatchService.send(
-        command.recipientEmail().trim(), tenantName, signLink, command.expiresAt());
+        command.tenantId(),
+        command.recipientEmail().trim(),
+        tenantName,
+        signLink,
+        command.expiresAt());
   }
 
   /**
-   * Renders the canonical CTS signing mail with non-deliverable sample data. No DPA sign link is
-   * minted and no mail is sent by this path.
+   * Renders the signing mail with non-deliverable sample data. No DPA sign link is minted and no
+   * mail is sent by this path.
    */
   public DpaSigningEmailPreview previewSigningMail(Long tenantId) {
     if (tenantId == null) {
       throw new BadRequestException("tenantId is required");
     }
     return dpaSigningEmailDispatchService.preview(
+        tenantId,
         PREVIEW_RECIPIENT,
         resolveTenantName(tenantId),
         toAbsoluteSignLink("/dpa-sign/" + SAMPLE_SIGN_TOKEN),
-        LocalDateTime.now().plusDays(PREVIEW_EXPIRY_DAYS));
+        LocalDateTime.now(ZoneOffset.UTC).plusDays(PREVIEW_EXPIRY_DAYS));
   }
 
   /**
