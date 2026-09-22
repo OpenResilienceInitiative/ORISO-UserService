@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.update.Consultant
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.userdata.AgencyAdminDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
@@ -237,6 +238,21 @@ class UserAccountControllerDelegateTest {
     verify(identityManager, never())
         .changePassword(
             org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+  }
+
+  @Test
+  void updatePasswordShouldRefuseTheOldPasswordAsTheNewOneAndKeepTheRequirement() {
+    var passwordDTO = new PasswordDTO();
+    passwordDTO.setOldPassword("old");
+    passwordDTO.setNewPassword("old");
+
+    assertThatThrownBy(() -> delegate.updatePassword(passwordDTO))
+        .isInstanceOf(ConflictException.class);
+
+    verify(identityManager, never())
+        .changePassword(
+            org.mockito.ArgumentMatchers.anyString(), org.mockito.ArgumentMatchers.anyString());
+    verify(consultantService, never()).saveConsultant(org.mockito.ArgumentMatchers.any());
   }
 
   @Test
