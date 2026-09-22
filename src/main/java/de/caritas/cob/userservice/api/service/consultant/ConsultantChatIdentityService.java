@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransac
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionInfo;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -36,6 +37,7 @@ public class ConsultantChatIdentityService {
   private final @NonNull ConsultantChatIdentityWriter consultantChatIdentityWriter;
   private final @NonNull MatrixUserClient matrixUserClient;
   private final @NonNull UserHelper userHelper;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
@@ -100,9 +102,14 @@ public class ConsultantChatIdentityService {
     }
 
     // Outside every database transaction, deliberately. See the class javadoc.
-    var matrixUserId = provisionOrAdopt(consultant);
+    var account = provisionOrAdopt(consultant);
+    var matrixUserId = account.matrixUserId();
     // On the id that is about to be stored, whichever path produced it.
     assertNotHeldByAnotherConsultant(matrixUserId, consultant);
+    if (account.adopted()) {
+      // Only once the account is known to be this consultant's: renaming a colleague's is worse.
+      publishDisplayNameOfAdopted(matrixUserId, consultant);
+    }
 
     try {
       var repaired = consultantChatIdentityWriter.attachChatIdentity(consultantId, matrixUserId);
@@ -136,17 +143,19 @@ public class ConsultantChatIdentityService {
    * <p>Minting must not reactivate: a localpart is unique only at a point in time, so an account
    * the homeserver still holds for it may belong to a soft-deleted colleague.
    */
-  private String provisionOrAdopt(Consultant consultant) {
+  private ChatAccount provisionOrAdopt(Consultant consultant) {
     var localpart = usernameTranscoder.decodeUsername(consultant.getUsername());
     String matrixUserId;
+    boolean adopted = false;
     try {
       matrixUserId =
           matrixUserClient.createUserIdWithoutReactivation(
               localpart,
               userHelper.getRandomPassword(),
-              consultant.getFirstName() + " " + consultant.getLastName());
+              consultantDisplayNameResolver.resolveMatrixDisplayName(consultant));
     } catch (Exception e) {
       matrixUserId = adoptExisting(consultant, e);
+      adopted = true;
     }
 
     if (isBlank(matrixUserId)) {
@@ -154,8 +163,35 @@ public class ConsultantChatIdentityService {
       matrixUserId =
           adoptExisting(
               consultant, new MatrixCreateUserException("Matrix answered without a user_id"));
+      adopted = true;
     }
-    return matrixUserId;
+    return new ChatAccount(matrixUserId, adopted);
+  }
+
+  private record ChatAccount(String matrixUserId, boolean adopted) {}
+
+  /**
+   * An adopted account was minted by an earlier attempt, which may have registered the real name.
+   * Fails the repair rather than attach an account still showing it; the repair can be repeated.
+   */
+  private void publishDisplayNameOfAdopted(String matrixUserId, Consultant consultant) {
+    boolean published;
+    Exception cause = null;
+    try {
+      published =
+          matrixUserClient.updateUserDisplayName(
+              matrixUserId, consultantDisplayNameResolver.resolveMatrixDisplayName(consultant));
+    } catch (Exception e) {
+      published = false;
+      cause = e;
+    }
+    if (!published) {
+      throw chatServerFailed(
+          cause != null
+              ? cause
+              : new MatrixCreateUserException("Could not set the adopted account's display name"),
+          consultant);
+    }
   }
 
   private String adoptExisting(Consultant consultant, Exception cause) {

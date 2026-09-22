@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.admin.service.consultant.create;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -171,6 +172,8 @@ class ConsultantChatIdentityRepairIT {
             new de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException(
                 "Matrix user is already active"));
     when(matrixSynapseService.findUserId(ORPHAN_USERNAME)).thenReturn(ORPHAN_MATRIX_USER_ID);
+    when(matrixSynapseService.updateUserDisplayName(eq(ORPHAN_MATRIX_USER_ID), anyString()))
+        .thenReturn(true);
 
     consultantChatIdentityService.provisionMissingChatIdentity(consultantId);
 
