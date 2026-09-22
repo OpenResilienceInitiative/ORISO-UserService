@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -56,6 +57,7 @@ public class EventNotificationService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityTombstoneService identityTombstoneService;
   private final @NonNull EventNotificationDeduplicationWriter deduplicationWriter;
+  private final @NonNull MatrixFeedUpdateSignalService feedUpdateSignalService;
   private final Map<String, ActiveViewState> activeViewByUserId = new ConcurrentHashMap<>();
   private final ObjectMapper paramsObjectMapper = new ObjectMapper();
   private volatile LongSupplier monotonicNanos = System::nanoTime;
@@ -869,6 +871,9 @@ public class EventNotificationService {
             sourceSessionId,
             tenantId,
             null));
+    // P2 feed-update signal (ADR-020): nudge the recipient's clients to refresh the Activity
+    // Timeline now instead of on the next 15 s poll. Best-effort and content-free.
+    signalFeedUpdatedSafely(recipientUserId);
   }
 
   /** Persists an event at most once for a producer-owned key and recipient. */
@@ -906,10 +911,25 @@ public class EventNotificationService {
               sourceSessionId,
               tenantId,
               deduplicationKey));
+      // Only nudge on a genuine first persist — a duplicate-key race (below) already delivered.
+      signalFeedUpdatedSafely(recipientUserId);
     } catch (DataIntegrityViolationException duplicate) {
       // Another scheduler replica won the unique-key race. The desired event already exists.
       log.debug(
           "Notification {} already persisted for recipient {}", deduplicationKey, recipientUserId);
+    }
+  }
+
+  /**
+   * Fires the P2 feed-update signal without ever letting it break the flow that created the
+   * notification — the same best-effort contract commit {@code 8b75eddd} gave the retired
+   * LiveService hook.
+   */
+  private void signalFeedUpdatedSafely(String recipientUserId) {
+    try {
+      feedUpdateSignalService.signalFeedUpdated(recipientUserId);
+    } catch (Exception ex) {
+      log.warn("Feed-update signal failed for recipient {}: {}", recipientUserId, ex.getMessage());
     }
   }
 

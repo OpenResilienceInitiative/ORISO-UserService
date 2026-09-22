@@ -58,6 +58,10 @@ class EventNotificationServiceTest {
   @Mock private IdentityTombstoneService identityTombstoneService;
   @Mock private EventNotificationDeduplicationWriter deduplicationWriter;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService
+      feedUpdateSignalService;
+
   @Captor private ArgumentCaptor<EventNotification> eventCaptor;
 
   private final ObjectMapper objectMapper = new ObjectMapper();

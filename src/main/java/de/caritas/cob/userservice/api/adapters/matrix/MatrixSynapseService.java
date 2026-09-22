@@ -69,6 +69,8 @@ public class MatrixSynapseService implements MatrixUserClient {
   private static final String ENDPOINT_ROOM_EVENT =
       "/_matrix/client/v3/rooms/{roomId}/event/{eventId}";
   private static final String ENDPOINT_ROOM_MESSAGES = "/_matrix/client/r0/rooms/{roomId}/messages";
+  private static final String ENDPOINT_SEND_TO_DEVICE =
+      "/_matrix/client/v3/sendToDevice/{eventType}/{txnId}";
   private static final long PRESENCE_CACHE_TTL_MS = 10_000L;
 
   // The closed-vocabulary error code in a Synapse error body; never the body's free text.
@@ -1301,6 +1303,70 @@ public class MatrixSynapseService implements MatrixUserClient {
    * @param accessToken the access token
    * @return the send response with event_id
    */
+  /**
+   * Sends a content-free Matrix to-device message to every device of one user, as the technical
+   * admin identity.
+   *
+   * <p>To-device is deliberate: it needs no shared room, writes nothing to any room timeline, and
+   * reaches every logged-in device of the recipient. Nothing is persisted in Matrix, so no
+   * signalling room has to be provisioned and existing users need no migration.
+   *
+   * @param eventType the custom event type, e.g. {@code org.oriso.feed.updated}
+   * @param matrixUserId the fully qualified recipient, e.g. {@code @alice:matrix.oriso.org}
+   * @param content the event content; pass an empty map for a content-free signal
+   * @return {@code true} when Synapse accepted the message; {@code false} on any failure (this
+   *     method never throws — callers are best-effort)
+   */
+  public boolean sendToDeviceMessage(
+      String eventType, String matrixUserId, java.util.Map<String, Object> content) {
+    if (eventType == null
+        || eventType.isBlank()
+        || matrixUserId == null
+        || matrixUserId.isBlank()) {
+      return false;
+    }
+    try {
+      String adminToken = getAdminToken();
+      if (adminToken == null) {
+        log.debug("No Matrix admin token available; skipping to-device message {}", eventType);
+        return false;
+      }
+
+      var headers = getClientHttpHeaders(adminToken);
+      headers.setContentType(MediaType.APPLICATION_JSON);
+
+      // { "messages": { "@alice:server": { "*": <content> } } } — "*" = all devices.
+      var body =
+          java.util.Map.<String, Object>of(
+              "messages",
+              java.util.Map.of(
+                  matrixUserId,
+                  java.util.Map.of("*", content == null ? java.util.Map.of() : content)));
+
+      var url =
+          MatrixUrlBuilder.buildUrl(
+              matrixConfig,
+              ENDPOINT_SEND_TO_DEVICE,
+              java.util.Map.of(
+                  "eventType", eventType, "txnId", java.util.UUID.randomUUID().toString()));
+
+      restTemplate.exchange(
+          url,
+          org.springframework.http.HttpMethod.PUT,
+          new HttpEntity<>(body, headers),
+          java.util.Map.class);
+      return true;
+    } catch (Exception ex) {
+      // Best effort by contract: signalling failures must never reach the caller.
+      log.warn(
+          "Matrix Error: Could not send to-device message {} to {}: {}",
+          eventType,
+          matrixUserId,
+          ex.getMessage());
+      return false;
+    }
+  }
+
   public java.util.Map<String, Object> sendMessage(
       String roomId, String message, String accessToken) {
     try {

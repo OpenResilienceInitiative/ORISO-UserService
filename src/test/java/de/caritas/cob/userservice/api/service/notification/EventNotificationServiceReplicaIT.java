@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
+import de.caritas.cob.userservice.api.service.matrix.MatrixFeedUpdateSignalService;
 import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
@@ -33,6 +34,7 @@ class EventNotificationServiceReplicaIT {
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private IdentityTombstoneService identityTombstoneService;
   @Autowired private EventNotificationDeduplicationWriter deduplicationWriter;
+  @Autowired private MatrixFeedUpdateSignalService feedUpdateSignalService;
 
   @AfterEach
   void deleteReplicaProofNotification() {
@@ -78,7 +80,8 @@ class EventNotificationServiceReplicaIT {
         userRepository,
         consultantRepository,
         identityTombstoneService,
-        deduplicationWriter);
+        deduplicationWriter,
+        feedUpdateSignalService);
   }
 
   private void publishReminder(
