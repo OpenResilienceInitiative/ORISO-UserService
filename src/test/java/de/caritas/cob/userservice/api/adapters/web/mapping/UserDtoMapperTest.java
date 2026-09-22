@@ -226,6 +226,7 @@ class UserDtoMapperTest {
     dto.setTermsAndConditionsConfirmation(true);
     dto.setDataPrivacyConfirmation(true);
     dto.setAvailable(false);
+    dto.setLiveChatViaSidebar(true);
     var toggleDaily = new EmailToggle();
     toggleDaily.setName(EmailType.DAILY_ENQUIRY);
     toggleDaily.setState(true);
@@ -248,6 +249,7 @@ class UserDtoMapperTest {
         .containsEntry("termsAndConditionsConfirmation", true)
         .containsEntry("dataPrivacyConfirmation", true)
         .containsEntry("available", false)
+        .containsEntry("liveChatViaSidebar", true)
         .containsEntry("notifyEnquiriesRepeating", true)
         .containsEntry("notifyNewChatMessageFromAdviceSeeker", false);
   }

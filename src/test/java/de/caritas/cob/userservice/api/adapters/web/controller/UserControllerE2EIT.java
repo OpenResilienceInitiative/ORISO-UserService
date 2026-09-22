@@ -956,6 +956,82 @@ class UserControllerE2EIT {
   }
 
   @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void getUserDataShouldReturnLiveChatViaSidebarFalseByDefaultForConsultant() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("liveChatViaSidebar", is(false)));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldStoreLiveChatViaSidebarOnConsultantProfile() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+
+    patchLiveChatViaSidebar(true);
+    expectLiveChatViaSidebar(true);
+
+    patchLiveChatViaSidebar(false);
+    expectLiveChatViaSidebar(false);
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void patchUserDataShouldIgnoreLiveChatViaSidebarForAdviceSeeker() throws Exception {
+    givenABearerToken();
+    givenAValidUser();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
+
+    patchLiveChatViaSidebar(true);
+
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("liveChatViaSidebar", is(nullValue())));
+  }
+
+  private void expectLiveChatViaSidebar(boolean expected) throws Exception {
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("liveChatViaSidebar", is(expected)));
+  }
+
+  private void patchLiveChatViaSidebar(boolean value) throws Exception {
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"liveChatViaSidebar\": " + value + "}")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isNoContent());
+  }
+
+  @Test
   @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
   void patchUserDataShouldSaveAdviceSeekerAndRespondWithNoContent() throws Exception {
     givenAValidUser();
@@ -2155,6 +2231,9 @@ class UserControllerE2EIT {
 
   private void givenAFullPatchDto() {
     patchUserDTO = easyRandom.nextObject(PatchUserDTO.class);
+    // Pinned: a random true is rejected with 400 for fixtures without a profile email, and which
+    // value the shared EasyRandom draws shifts whenever PatchUserDTO gains a field.
+    patchUserDTO.setMagicLinkLoginEnabled(false);
 
     var dailyEnquiries = new EmailToggle();
     dailyEnquiries.setName(EmailType.DAILY_ENQUIRY);

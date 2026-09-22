@@ -43,7 +43,7 @@ import org.springframework.transaction.annotation.Transactional;
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import(AccountInviteService.class)
+@Import({AccountInviteService.class, AccountInviteAccessPolicy.class})
 class AccountInviteRecipientEmailGuardIT {
 
   private static final String ADDRESS = "held@example.org";
@@ -52,6 +52,7 @@ class AccountInviteRecipientEmailGuardIT {
   @Autowired private AccountInviteRepository accountInviteRepository;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
