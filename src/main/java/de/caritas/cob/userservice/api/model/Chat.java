@@ -16,7 +16,9 @@ import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.Size;
 import java.time.DateTimeException;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.time.ZoneId;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
@@ -202,13 +204,7 @@ public class Chat {
       throw new InternalServerErrorException(
           String.format("Chat with id %s does not have a valid interval.", id));
     }
-    ZoneId zoneId;
-    try {
-      zoneId = ZoneId.of(timezone == null ? "UTC" : timezone);
-    } catch (DateTimeException invalidPersistedTimezone) {
-      zoneId = ZoneOffset.UTC;
-    }
-    var localAnchor = initialStartDate.atZone(ZoneOffset.UTC).withZoneSameInstant(zoneId);
+    var localAnchor = initialStartDate.atZone(ZoneOffset.UTC).withZoneSameInstant(zoneId());
     ZonedDateTime occurrence =
         switch (chatInterval) {
           case DAILY -> localAnchor.plusDays(occurrenceIndex);
@@ -219,5 +215,29 @@ public class Chat {
           case YEARLY -> localAnchor.plusYears(occurrenceIndex);
         };
     return occurrence.withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
+  }
+
+  /** The current occurrence start as wall-clock time in the chat's own timezone. */
+  @JsonIgnore
+  public LocalDateTime localStartDate() {
+    return startDate.atZone(ZoneOffset.UTC).withZoneSameInstant(zoneId()).toLocalDateTime();
+  }
+
+  /** Wall-clock time in {@code zoneId} to the UTC instant stored in start dates. */
+  public static LocalDateTime toUtc(LocalDate date, LocalTime time, ZoneId zoneId) {
+    return LocalDateTime.of(date, time)
+        .atZone(zoneId)
+        .withZoneSameInstant(ZoneOffset.UTC)
+        .toLocalDateTime();
+  }
+
+  /** The chat's timezone; falls back to UTC for legacy rows without a valid zone. */
+  @JsonIgnore
+  public ZoneId zoneId() {
+    try {
+      return ZoneId.of(timezone == null ? "UTC" : timezone);
+    } catch (DateTimeException invalidPersistedTimezone) {
+      return ZoneOffset.UTC;
+    }
   }
 }

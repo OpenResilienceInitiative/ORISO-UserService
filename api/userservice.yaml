@@ -2595,10 +2595,12 @@ components:
           type: string
           format: date
           example: 2019-10-23
+          description: Date of the current occurrence, as wall-clock time in `timezone`.
         startTime:
           type: string
           format: time
           example: 12:05
+          description: Start of the current occurrence, as wall-clock time in `timezone` (not UTC).
         duration:
           type: integer
           example: 120
@@ -3240,6 +3242,7 @@ components:
           type: string
           format: time
           example: 12:05
+          description: Wall-clock start time in `timezone`; stored as a UTC instant.
         duration:
           type: integer
           example: 120
