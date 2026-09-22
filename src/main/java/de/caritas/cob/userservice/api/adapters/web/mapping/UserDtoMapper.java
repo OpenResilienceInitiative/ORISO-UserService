@@ -107,6 +107,7 @@ public class UserDtoMapper {
         && isNull(patchUserDTO.getDataPrivacyConfirmation())
         && isNull(patchUserDTO.getTermsAndConditionsConfirmation())
         && isNull(patchUserDTO.getAvailable())
+        && isNull(patchUserDTO.getLiveChatViaSidebar())
         && isNull(patchUserDTO.getEmailNotifications())) {
       return Optional.empty();
     }
@@ -143,6 +144,9 @@ public class UserDtoMapper {
     }
     if (nonNull(patchUserDTO.getAvailable())) {
       map.put("available", patchUserDTO.getAvailable());
+    }
+    if (nonNull(patchUserDTO.getLiveChatViaSidebar())) {
+      map.put("liveChatViaSidebar", patchUserDTO.getLiveChatViaSidebar());
     }
     if (nonNull(patchUserDTO.getEmailNotifications())) {
       map.put("emailNotifications", patchUserDTO.getEmailNotifications());
