@@ -56,6 +56,7 @@ public class AssignEnquiryFacade {
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull AgencyMatrixCredentialClient agencyMatrixCredentialClient;
   private final @NonNull EventNotificationService eventNotificationService;
+  private final @NonNull AnonymousEnquiryDepartmentResolver anonymousEnquiryDepartmentResolver;
 
   /**
    * "Supervision (auto-assigned)" (grill 2026-07-13): attaches the accepting counsellor's standing
@@ -117,7 +118,7 @@ public class AssignEnquiryFacade {
     deadlock: the centre had to accept before its notice could be shown, while acceptance required
     the notice to have been accepted. The current product decision is disclosure, not a write or
     assignment lock. */
-    assignEnquiry(session, consultant);
+    assignEnquiry(session, consultant, false, true);
     eventNotificationService.createInquiryAcceptedNotification(session, consultant);
   }
 
@@ -129,6 +130,14 @@ public class AssignEnquiryFacade {
       Session session,
       Consultant consultant,
       boolean skipConsultantAssignmentAndSessionInProgressChecks) {
+    assignEnquiry(session, consultant, skipConsultantAssignmentAndSessionInProgressChecks, false);
+  }
+
+  private void assignEnquiry(
+      Session session,
+      Consultant consultant,
+      boolean skipConsultantAssignmentAndSessionInProgressChecks,
+      boolean bindDepartment) {
     var consultantSessionDTO =
         ConsultantSessionDTO.builder().consultant(consultant).session(session).build();
     if (!skipConsultantAssignmentAndSessionInProgressChecks) {
@@ -137,6 +146,10 @@ public class AssignEnquiryFacade {
     sessionToConsultantVerifier.verifyPreconditionsForAssignment(
         consultantSessionDTO, skipConsultantAssignmentAndSessionInProgressChecks);
 
+    // ADR-022 decision 1 / ADR-003: a topic-based anonymous enquiry carries no agency until it is
+    // accepted. Bind the accepting counsellor's department here, before the assignment save, so
+    // agency, consultant and status are persisted together.
+    var departmentBound = bindDepartment && bindDepartmentIfUnbound(session, consultant);
     sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
 
     // Create Matrix room and invite user
@@ -317,7 +330,7 @@ public class AssignEnquiryFacade {
                 session.getId(), user.getMatrixUserId(), consultant.getMatrixUserId()));
       }
     } catch (Exception e) {
-      rollbackSessionUpdate(session);
+      rollbackSessionUpdate(session, departmentBound);
       log.error(
           "Matrix room creation failed for session: {}, rolling back assignment",
           session.getId(),
@@ -333,8 +346,21 @@ public class AssignEnquiryFacade {
         session.getUser(), consultant, TenantContext.getCurrentTenantData());
   }
 
-  private void rollbackSessionUpdate(Session session) {
+  private boolean bindDepartmentIfUnbound(Session session, Consultant consultant) {
+    if (nonNull(session.getAgencyId())) {
+      return false;
+    }
+    var agencyId = anonymousEnquiryDepartmentResolver.resolveAgencyId(session, consultant);
+    agencyId.ifPresent(session::setAgencyId);
+    return agencyId.isPresent();
+  }
+
+  private void rollbackSessionUpdate(Session session, boolean departmentBound) {
     if (nonNull(session)) {
+      if (departmentBound) {
+        // The enquiry returns to the queue unaccepted, so it no longer belongs to a department.
+        session.setAgencyId(null);
+      }
       sessionService.updateConsultantAndStatusForSession(session, null, NEW);
     }
   }
