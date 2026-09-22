@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionInfo;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -71,6 +72,7 @@ public class GrantConsultantIdentityService {
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
 
@@ -141,11 +143,15 @@ public class GrantConsultantIdentityService {
   private String createMatrixAccount(de.caritas.cob.userservice.api.model.Admin admin) {
     try {
       var matrixPassword = userHelper.getRandomPassword();
+      // ADR-002 §2 / #1200: the Synapse displayname is readable by every member of a shared room
+      // via /joined_members, the advice seeker included — so it must never be the real name. An
+      // Admin carries no public display name of its own (nor does GrantConsultantIdentityDTO), so
+      // the resolver falls back to the username the Matrix ID already exposes. The rule is NOT
+      // repeated here: ConsultantDisplayNameResolver stays the only place that decides.
+      var matrixDisplayName =
+          consultantDisplayNameResolver.resolveMatrixDisplayName(null, admin.getUsername());
       var matrixUserId =
-          matrixUserClient.createUserId(
-              admin.getUsername(),
-              matrixPassword,
-              admin.getFirstName() + " " + admin.getLastName());
+          matrixUserClient.createUserId(admin.getUsername(), matrixPassword, matrixDisplayName);
       if (matrixUserId != null) {
         return matrixUserId;
       }

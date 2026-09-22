@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
@@ -23,6 +24,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixInviteUserException;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
@@ -96,6 +98,12 @@ class CaseHandoverServiceTest {
   @Mock private PlatformTransactionManager transactionManager;
   @Mock private TransactionStatus transactionStatus;
   @Spy private Clock clock = Clock.fixed(Instant.parse("2026-08-16T10:00:00Z"), ZoneOffset.UTC);
+
+  // The real rule, not a mock: ConsultantDisplayNameResolver is the single place that decides
+  // which counsellor name may appear in client-facing handover copy (ADR-002 §2, #1200).
+  @Spy
+  private ConsultantDisplayNameResolver consultantDisplayNameResolver =
+      new ConsultantDisplayNameResolver();
 
   private Consultant requester;
   private Consultant previous;
@@ -1948,6 +1956,45 @@ class CaseHandoverServiceTest {
     session.setMainTopicId(99L);
 
     assertThrows(ForbiddenException.class, () -> caseHandoverService.getStatus(123L));
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1200: the in-chat handover message is a persisted m.text event in the advice
+  // seeker's OWN room. Its name field stays (the client renders it) — its value must never be the
+  // counsellor's real name. The old getFullName() fallback fired exactly when the public display
+  // name was blank, i.e. for the population pseudonymity protects.
+  // ---------------------------------------------------------------------------
+
+  @ParameterizedTest
+  @ValueSource(strings = {"", "   "})
+  void requestAccess_neverPutsTheRealNameIntoTheClientVisibleHandoverMessage(String blank) {
+    requester.setDisplayName(blank);
+    requester.setFirstName("Angela");
+    requester.setLastName("Musterfrau");
+    requester.setUsername("beraterin1");
+
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
+
+    ArgumentCaptor<String> advisorName = ArgumentCaptor.forClass(String.class);
+    ArgumentCaptor<String> description = ArgumentCaptor.forClass(String.class);
+    verify(matrixSessionSystemMessageService)
+        .postCaseHandoverGrantedMessage(eq(session), advisorName.capture(), description.capture());
+
+    // The username is what the Matrix ID in the same room already exposes.
+    assertEquals("beraterin1", advisorName.getValue());
+    assertThat(description.getValue()).doesNotContain("Angela").doesNotContain("Musterfrau");
+  }
+
+  @Test
+  void requestAccess_stillUsesThePublicDisplayNameWhenOneIsSet() {
+    requester.setDisplayName("Frau M.");
+    requester.setFirstName("Angela");
+    requester.setLastName("Musterfrau");
+
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
+
+    verify(matrixSessionSystemMessageService)
+        .postCaseHandoverGrantedMessage(eq(session), eq("Frau M."), anyString());
   }
 
   private Consultant consultant(String id, String displayName) {
