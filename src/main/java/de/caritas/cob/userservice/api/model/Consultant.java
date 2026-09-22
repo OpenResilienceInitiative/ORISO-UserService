@@ -314,6 +314,15 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Builder.Default
   private Boolean passwordChangeRequired = false;
 
+  /**
+   * Whether this counsellor controls live-chat availability from the navigation rail instead of My
+   * Profile. A per-counsellor preference, stored here so it follows them across browsers and
+   * devices. Defaults to false.
+   */
+  @Column(name = "live_chat_via_sidebar", nullable = false, columnDefinition = "bit default false")
+  @Builder.Default
+  private Boolean liveChatViaSidebar = false;
+
   @Column(
       name = "magic_link_login_enabled",
       nullable = false,
