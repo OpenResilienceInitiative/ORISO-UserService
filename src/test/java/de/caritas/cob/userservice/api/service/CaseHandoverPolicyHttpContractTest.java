@@ -110,6 +110,7 @@ class CaseHandoverPolicyHttpContractTest {
             mock(
                 de.caritas.cob.userservice.api.service.matrix.MatrixSessionSystemMessageService
                     .class),
+            new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver(),
             claims,
             clock,
             transactionManager);
