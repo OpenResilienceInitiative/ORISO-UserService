@@ -191,7 +191,6 @@ public class EventNotificationController {
           request.getMessagePreview(),
           request.getThreadRootId(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
-          request.getSenderDisplayName(),
           request.getThreadParentPreview(),
           envelope);
     } else {
@@ -200,7 +199,6 @@ public class EventNotificationController {
           authenticatedUser.getUserId(),
           request.getMessagePreview(),
           request.getSupervisorMessage() != null && request.getSupervisorMessage(),
-          request.getSenderDisplayName(),
           envelope);
     }
 
@@ -295,7 +293,15 @@ public class EventNotificationController {
     private String messagePreview;
     private String threadRootId;
     private Boolean supervisorMessage;
+
+    /**
+     * ADR-002 §2 / #1201: only the team-discussion branch still reads this, a
+     * consultant-to-consultant surface. The session paths ignore it — a client does not get to
+     * decide what a third party is told the sender is called, and the app sends the real name here
+     * when the counsellor has no pseudonym. Kept on the wire so existing clients keep working.
+     */
     private String senderDisplayName;
+
     private String threadParentPreview;
     private Boolean teamDiscussion;
     private java.util.List<String> mentionedUserIds;

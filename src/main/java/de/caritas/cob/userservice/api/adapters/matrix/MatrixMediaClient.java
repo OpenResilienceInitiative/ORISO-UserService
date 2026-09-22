@@ -20,9 +20,16 @@ import org.springframework.web.multipart.MultipartFile;
 @RequiredArgsConstructor
 public class MatrixMediaClient {
 
-  private static final String ENDPOINT_MEDIA_UPLOAD = "/_matrix/media/r0/upload";
+  // Uploads are deliberately NOT migrated: MSC3916 leaves POST /_matrix/media/v3/upload in place
+  // and Synapse's enable_authenticated_media never touches it. Only the r0 alias is normalised
+  // to v3 so nothing here still reads like the retired generation.
+  private static final String ENDPOINT_MEDIA_UPLOAD = "/_matrix/media/v3/upload";
+  // Authenticated media (#1487): the unauthenticated /_matrix/media/{r0,v1,v3}/download endpoint
+  // answers 404 M_NOT_FOUND for every file uploaded after Synapse's enable_authenticated_media is
+  // set to true. /_matrix/client/v1/media/download requires the bearer token this client already
+  // sends and serves grandfathered media too, so it is correct before and after the flip.
   private static final String ENDPOINT_MEDIA_DOWNLOAD =
-      "/_matrix/media/r0/download/{serverName}/{mediaId}";
+      "/_matrix/client/v1/media/download/{serverName}/{mediaId}";
   private static final String ENDPOINT_SEND_MESSAGE =
       "/_matrix/client/r0/rooms/{roomId}/send/m.room.message/{txnId}";
 

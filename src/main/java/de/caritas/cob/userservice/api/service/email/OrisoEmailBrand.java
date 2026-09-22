@@ -90,7 +90,7 @@ public class OrisoEmailBrand {
    * ratio and pick a different shade. This is the guard behind it: a colour that slipped through
    * still must not produce a button nobody can read.
    */
-  String readablePrimary(String tenantThemeColor) {
+  public String readablePrimary(String tenantThemeColor) {
     if (!isNotBlank(tenantThemeColor) || !HEX.matcher(tenantThemeColor.trim()).matches()) {
       return DEFAULT_PRIMARY;
     }
