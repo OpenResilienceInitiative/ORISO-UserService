@@ -368,6 +368,18 @@ public class TenantAdminOnboardingController {
      */
     public Boolean joinsExistingTenant;
 
+    /**
+     * Why {@link #dpaContent} is absent — {@code NOT_PUBLISHED} when the platform operator has
+     * published no DPA yet (a content task), {@code UPSTREAM_ERROR} when the lookup itself failed,
+     * i.e. TenantService could not be read or the technical-user login was rejected (a platform
+     * configuration task). Null whenever the contract text is present, and null on the counsellor
+     * variant and when {@link #joinsExistingTenant} is true, neither of which has a DPA step.
+     *
+     * <p>Without this the Admin panel could only tell the invitee to reload the page, which once
+     * hid a server-side misconfiguration on staging for hours.
+     */
+    public String dpaUnavailableReason;
+
     /** {@code PENDING_2FA_ACTIVATION} when the flow re-enters at the 2FA step; null otherwise. */
     public String phase;
 
@@ -391,6 +403,8 @@ public class TenantAdminOnboardingController {
       }
       dto.expiresAt = invite.getExpiresAt();
       dto.dpaContent = state.dpaContent();
+      dto.dpaUnavailableReason =
+          state.dpaUnavailableReason() == null ? null : state.dpaUnavailableReason().name();
       applyTwoFactorResume(dto, invite, state.pendingTwoFactorResume());
       return dto;
     }

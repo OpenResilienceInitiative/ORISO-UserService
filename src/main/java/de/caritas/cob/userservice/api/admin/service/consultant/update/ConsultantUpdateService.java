@@ -88,9 +88,6 @@ public class ConsultantUpdateService {
     consultantTopicAgencyCompatibilityValidator.validateTopicUpdateAgainstAssignedAgencies(
         consultant.getId(), updateConsultantDTO.getTopicIds(), consultant.getTenantId());
 
-    String previousDisplayName = displayNameOf(consultant.getFirstName(), consultant.getLastName());
-    String nextDisplayName =
-        displayNameOf(updateConsultantDTO.getFirstname(), updateConsultantDTO.getLastname());
     boolean identityDataChanged = identityDataChanged(consultant, updateConsultantDTO);
     boolean appointmentDataChanged =
         identityDataChanged
@@ -118,18 +115,19 @@ public class ConsultantUpdateService {
     }
 
     // Captured before the entity is mutated, so a display-name-only edit can be detected below.
-    String previousMatrixDisplayName =
+    String previousPublishedName =
         consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
 
     var updatedConsultant = updateDatabaseConsultant(updateConsultantDTO, consultant, adminEdit);
     // updateDatabaseConsultant mutates this very entity, so it already carries the new values.
-    scheduleMatrixDisplayNameUpdate(consultant, identityDataChanged, previousMatrixDisplayName);
+    scheduleMatrixDisplayNameUpdate(consultant, identityDataChanged, previousPublishedName);
     if (appointmentDataChanged) {
       appointmentService.syncConsultantData(updatedConsultant);
     }
-    if (identityDataChanged) {
-      emitCounselorRenameNotificationsIfNeeded(consultant, previousDisplayName, nextDisplayName);
-    }
+    emitCounselorRenameNotificationsIfNeeded(
+        consultant,
+        previousPublishedName,
+        consultantDisplayNameResolver.resolveMatrixDisplayName(consultant));
     return updatedConsultant;
   }
 
@@ -358,12 +356,28 @@ public class ConsultantUpdateService {
             .collect(Collectors.toSet());
   }
 
+  /**
+   * Tells the advice seekers of this counsellor's open cases that the name they see has changed.
+   *
+   * <p>ADR-002 §2 / #1201. Two things here are deliberate:
+   *
+   * <ul>
+   *   <li><b>What triggers it</b> is a change of the <em>published</em> name — the pseudonym
+   *       resolved by {@link ConsultantDisplayNameResolver} — not of {@code firstName + " " +
+   *       lastName}. The advice seeker never saw the real name, so a real-name edit changes nothing
+   *       for them and must not produce an entry; conversely a pseudonym-only edit changes
+   *       everything they see and previously produced none.
+   *   <li><b>What it carries</b> is no name at all. Neither name is passed on, and neither is
+   *       logged: the old pseudonym plus the new one is a rename history, and with no pseudonym
+   *       stored both values are the real name.
+   * </ul>
+   */
   private void emitCounselorRenameNotificationsIfNeeded(
-      Consultant consultant, String previousDisplayName, String nextDisplayName) {
+      Consultant consultant, String previousPublishedName, String nextPublishedName) {
     if (consultant == null || consultant.getId() == null) {
       return;
     }
-    if (previousDisplayName.equals(nextDisplayName)) {
+    if (Objects.equals(previousPublishedName, nextPublishedName)) {
       return;
     }
     var activeStatuses = List.of(SessionStatus.NEW, SessionStatus.IN_PROGRESS);
@@ -373,19 +387,10 @@ public class ConsultantUpdateService {
         .forEach(
             session ->
                 eventNotificationService.createCounselorRenamedNotification(
-                    session, session.getUser().getUserId(), previousDisplayName, nextDisplayName));
+                    session, session.getUser().getUserId()));
     log.info(
-        "Counselor rename event created for consultantId={} from='{}' to='{}' sessions={}",
+        "Counselor rename event created for consultantId={} sessions={}",
         consultant.getId(),
-        previousDisplayName,
-        nextDisplayName,
         sessions.size());
-  }
-
-  private String displayNameOf(String firstName, String lastName) {
-    String first = firstName == null ? "" : firstName.trim();
-    String last = lastName == null ? "" : lastName.trim();
-    String combined = (first + " " + last).trim();
-    return combined.isBlank() ? "Counselor" : combined;
   }
 }

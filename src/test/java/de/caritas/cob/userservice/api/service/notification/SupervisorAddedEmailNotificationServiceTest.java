@@ -67,7 +67,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     Consultant supervisor = new Consultant();
     supervisor.setEmail("sup@example.com");
 
-    service.notifySupervisorAdded(user, supervisor, "Sup Name", 42L, null, "token");
+    service.notifySupervisorAdded(user, supervisor, 42L, null, "token");
 
     verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(1L), eq("token"));
   }
@@ -79,7 +79,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     Consultant supervisor = new Consultant();
     // tenantId is null → resolveSmtpSettings(null) returns null → early exit
 
-    service.notifySupervisorAdded(user, supervisor, "Name", 1L, null, null);
+    service.notifySupervisorAdded(user, supervisor, 1L, null, null);
 
     verify(emailSettingsService, never()).resolveSupervisorAddedEmailSettings(any(), any());
   }
@@ -94,7 +94,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     Consultant supervisor = new Consultant();
     supervisor.setTenantId(5L);
 
-    service.notifySupervisorAdded(user, supervisor, "Name", 1L, null, null);
+    service.notifySupervisorAdded(user, supervisor, 1L, null, null);
 
     verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(5L), any());
   }
@@ -109,7 +109,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     TenantData tenantData = new TenantData();
     tenantData.setTenantId(7L);
 
-    service.notifySupervisorAdded(user, null, "Name", 1L, tenantData, null);
+    service.notifySupervisorAdded(user, null, 1L, tenantData, null);
 
     verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(7L), any());
   }
@@ -130,7 +130,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     supervisor.setEmail("sup@dummy.invalid");
 
     // Both have dummy emails — smtp attempt is skipped (no real connection), method completes
-    service.notifySupervisorAdded(user, supervisor, "Sup", 10L, null, null);
+    service.notifySupervisorAdded(user, supervisor, 10L, null, null);
 
     // No exception should escape; the method exits cleanly
   }
@@ -146,14 +146,14 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setTenantId(3L);
     Consultant supervisor = new Consultant();
 
-    service.notifySupervisorRemoved(user, supervisor, "Sup", 20L, null, "tok");
+    service.notifySupervisorRemoved(user, supervisor, 20L, null, "tok");
 
     verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(3L), eq("tok"));
   }
 
   @Test
   void notifySupervisorRemoved_Should_ReturnEarly_When_TenantIdIsNull() {
-    service.notifySupervisorRemoved(null, null, "Name", 1L, null, null);
+    service.notifySupervisorRemoved(null, null, 1L, null, null);
 
     verify(emailSettingsService, never()).resolveSupervisorAddedEmailSettings(any(), any());
   }
@@ -223,7 +223,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(userService.getUser("user-abc")).thenReturn(Optional.of(fetchedUser));
 
     // fetchedUser has real email → smtp attempt is made (caught by sendEmailSafely)
-    service.notifySupervisorAdded(user, null, "Sup", 10L, null, null);
+    service.notifySupervisorAdded(user, null, 10L, null, null);
 
     verify(userService).getUser("user-abc");
   }
@@ -244,7 +244,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setEmail("real@example.com");
 
     // Before fix: NPE in hasValidUserEmail on emailDummySuffix == null
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, "Sup", 1L, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -263,7 +263,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     supervisor.setEmail("sup@example.com");
 
     // Before fix: NPE in hasValidConsultantEmail on emailDummySuffix == null
-    assertThatCode(() -> service.notifySupervisorAdded(user, supervisor, "Sup", 1L, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, supervisor, 1L, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -279,7 +279,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     Consultant supervisor = new Consultant();
     supervisor.setTenantId(5L);
 
-    assertThatCode(() -> service.notifySupervisorAdded(null, supervisor, "Sup", 1L, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(null, supervisor, 1L, null, null))
         .doesNotThrowAnyException();
 
     verify(userService, never()).getUser(any());
@@ -297,7 +297,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setTenantId(1L);
     user.setEmail("  ");
 
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, "Sup", 1L, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
         .doesNotThrowAnyException();
 
     verify(userService, never()).getUser(any());
@@ -335,7 +335,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     Consultant supervisor = new Consultant();
     supervisor.setEmail("supervisor@example.com");
 
-    assertThatCode(() -> service.notifySupervisorRemoved(user, supervisor, "Sup", 99L, null, null))
+    assertThatCode(() -> service.notifySupervisorRemoved(user, supervisor, 99L, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -351,7 +351,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setTenantId(1L);
     user.setEmail("user@dummy.invalid");
 
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, null, 1L, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -371,7 +371,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     User user = new User();
     user.setEmail("user@dummy.invalid");
 
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, "Sup", 1L, tenantData, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, tenantData, null))
         .doesNotThrowAnyException();
     verify(tenantTemplateSupplier).getTemplateAttributes();
   }
@@ -385,7 +385,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(tenantTemplateSupplier.getTemplateAttributes())
         .thenThrow(new RuntimeException("service unavailable"));
 
-    assertThatCode(() -> service.notifySupervisorAdded(null, null, "Sup", 1L, tenantData, null))
+    assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
         .doesNotThrowAnyException();
   }
 
@@ -400,7 +400,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(attr.getValue()).thenReturn("some-value");
     when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(List.of(attr));
 
-    assertThatCode(() -> service.notifySupervisorAdded(null, null, "Sup", 1L, tenantData, null))
+    assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
         .doesNotThrowAnyException();
   }
 
@@ -416,7 +416,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setEmail("user@example.com");
     user.setLanguageCode(LanguageCode.en);
 
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, "Sup Name", 5L, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, null, 5L, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -431,7 +431,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     supervisor.setEmail("sup@example.com");
     supervisor.setLanguageCode(LanguageCode.en);
 
-    assertThatCode(() -> service.notifySupervisorAdded(user, supervisor, "Sup", 5L, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, supervisor, 5L, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -449,7 +449,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     supervisor.setEmail("sup@example.com");
     supervisor.setLanguageCode(LanguageCode.en);
 
-    assertThatCode(() -> service.notifySupervisorRemoved(user, supervisor, "Sup", 5L, null, null))
+    assertThatCode(() -> service.notifySupervisorRemoved(user, supervisor, 5L, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -503,7 +503,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setTenantId(1L);
     user.setEmail("user@dummy.invalid");
 
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, "Sup", 1L, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -520,7 +520,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setTenantId(1L);
     user.setEmail("user@dummy.invalid");
 
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, "Sup", 1L, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -536,7 +536,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setTenantId(1L);
     user.setEmail("user@dummy.invalid");
 
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, "Sup", null, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, null, null, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -552,10 +552,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setTenantId(1L);
     user.setEmail("user@example.com");
 
-    assertThatCode(
-            () ->
-                service.notifySupervisorAdded(
-                    user, null, "<script>alert('xss')</script> & \"Sup\"", 1L, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -571,8 +568,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setEmail("user@example.com");
     user.setLanguageCode(LanguageCode.de);
 
-    assertThatCode(
-            () -> service.notifySupervisorRemoved(user, null, "Supervisor Name", 7L, null, null))
+    assertThatCode(() -> service.notifySupervisorRemoved(user, null, 7L, null, null))
         .doesNotThrowAnyException();
   }
 
@@ -611,7 +607,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(userService.getUser("user-xyz")).thenReturn(Optional.empty());
 
     // Falls back to original user (dummy email) → hasValidUserEmail returns false → no send
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, "Sup", 1L, null, null))
+    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
         .doesNotThrowAnyException();
     verify(userService).getUser("user-xyz");
   }

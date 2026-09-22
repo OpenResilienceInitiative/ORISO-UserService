@@ -25,3 +25,20 @@ cp "$src/catalogue.json" "$target/catalogue.json"
 
 echo "synced $(find "$target" -type f | wc -l | tr -d ' ') files into src/main/resources/emails"
 echo "review the diff before committing — it is the only review this content gets here."
+
+# This sync wipes the target directory, so a template the generator does not know about
+# disappears without a word. Name the ones the service cannot start without, loudly.
+missing=()
+for tone in de-sie de-du en; do
+  for id in einladung-freitext; do
+    for ext in html txt; do
+      [[ -f "$target/$tone/$id.$ext" ]] || missing+=("$tone/$id.$ext")
+    done
+  done
+done
+if (( ${#missing[@]} )); then
+  echo >&2
+  echo "ERROR: the sync removed templates this service renders: ${missing[*]}" >&2
+  echo "       Add them to ORISO-Frontend src/emails/ and regenerate, or restore them here." >&2
+  exit 1
+fi
