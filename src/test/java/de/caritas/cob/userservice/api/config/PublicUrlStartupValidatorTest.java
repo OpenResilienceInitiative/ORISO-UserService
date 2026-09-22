@@ -59,11 +59,48 @@ class PublicUrlStartupValidatorTest {
   }
 
   @Test
-  void rejectsAQueryOrFragmentBecauseRoutesAreAppendedToTheOrigin() {
+  void rejectsAQueryBecauseRoutesAreAppendedToTheOrigin() {
     environment.setProperty("magic.link.frontend.base-url", "https://app.counselling.test?x=1");
 
     assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
         .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL");
+  }
+
+  @Test
+  void rejectsAFragmentBecauseRoutesAreAppendedToTheOrigin() {
+    environment.setProperty(
+        "magic.link.frontend.base-url", "https://app.counselling.test/#section");
+
+    assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+        .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL");
+  }
+
+  @Test
+  void rejectsUserInfoInTheOrigin() {
+    environment.setProperty("dpa.sign.frontend.base-url", "https://someone@app.counselling.test");
+
+    assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+        .hasMessageContaining("DPA_SIGN_FRONTEND_BASE_URL")
+        .hasMessageContaining("user info");
+  }
+
+  @Test
+  void keepsAPathPrefixBecauseTheAdminResetLinkLivesUnderSlashAdmin() {
+    environment.setProperty(
+        "password.reset.admin.frontend.base-url", "https://app.counselling.test/admin");
+
+    assertThatCode(() -> PublicUrlStartupValidator.validate(environment))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void namesTheVariableAndTheReasonForATemplateHost() {
+    environment.setProperty("magic.link.frontend.base-url", "https://app.example.org");
+
+    assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+        .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL")
+        .hasMessageContaining("reserved example or template host")
+        .hasMessageContaining("app.example.org");
   }
 
   @Test
@@ -75,7 +112,7 @@ class PublicUrlStartupValidatorTest {
     assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
         .hasMessageContaining("ACCOUNT_INVITE_APP_FRONTEND_BASE_URL")
         .hasMessageContaining("DPA_SIGN_FRONTEND_BASE_URL")
-        .hasMessageContaining("placeholder");
+        .hasMessageContaining("reserved example or template host");
   }
 
   @Test

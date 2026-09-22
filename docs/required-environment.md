@@ -35,7 +35,7 @@ at a time.
 
 `PublicUrlStartupValidator` checks these before any bean is created and reports
 every problem in one message, so a missing set costs one restart, not six.
-Each must be an absolute `http(s)` origin with a host and no query or fragment.
+Each must be an absolute `http(s)` origin with a host, no user info, and no query or fragment.
 Outside the `local` and `testing` profiles, template hosts (`your-domain…`,
 `example.com/.org/.net`) are refused as well
 ([ORISO-Helm#368](https://github.com/OpenResilienceInitiative/ORISO-Helm/issues/368)).

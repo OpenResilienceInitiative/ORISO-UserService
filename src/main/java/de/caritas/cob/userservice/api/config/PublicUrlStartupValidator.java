@@ -136,13 +136,19 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
     if (!("http".equals(scheme) || "https".equals(scheme)) || isBlank(uri.getHost())) {
       return "must be an absolute http(s) URL with a host";
     }
-    // Routes are appended to these origins; a query or fragment would swallow them.
+    // Credentials in a mailed link would leak to every recipient.
+    if (uri.getRawUserInfo() != null) {
+      return "must carry no user info";
+    }
+    // Routes are appended to these origins; a query or fragment would swallow them. A path
+    // prefix stays allowed: the admin password-reset origin is <host>/admin.
     if (uri.getRawQuery() != null || uri.getRawFragment() != null) {
       return "must carry no query or fragment";
     }
     String host = uri.getHost().toLowerCase(Locale.ROOT);
     if (deployed && isPlaceholder(host)) {
-      return "is a template placeholder, not this environment's host";
+      return "uses a reserved example or template host (example.com/.org/.net, your-domain),"
+          + " which cannot be this environment's public host";
     }
     return null;
   }
