@@ -44,13 +44,13 @@ class DpaForwardEmailServiceTest {
     service.sendSigningLink(
         new DpaForwardEmailService.DpaForwardEmailCommand(
             84L,
-            "bart.simpson@oriso.org",
+            "bart.simpson@example.org",
             "https://app.oriso-dev.site/dpa-sign/single-use-token",
             LocalDateTime.parse("2026-08-03T13:27:28.243207790")));
 
     verify(dpaSigningEmailDispatchService)
         .send(
-            "bart.simpson@oriso.org",
+            "bart.simpson@example.org",
             "E2E Full Gate 202607191747",
             "https://app.oriso-dev.site/dpa-sign/single-use-token",
             LocalDateTime.parse("2026-08-03T13:27:28.243207790"));
@@ -69,13 +69,13 @@ class DpaForwardEmailServiceTest {
     service.sendSigningLink(
         new DpaForwardEmailService.DpaForwardEmailCommand(
             84L,
-            "bart.simpson@oriso.org",
+            "bart.simpson@example.org",
             "/dpa-sign/single-use-token",
             LocalDateTime.parse("2026-08-03T13:27:28.243207790")));
 
     verify(dpaSigningEmailDispatchService)
         .send(
-            "bart.simpson@oriso.org",
+            "bart.simpson@example.org",
             "E2E Full Gate 202607191747",
             "https://app.oriso-dev.site/dpa-sign/single-use-token",
             LocalDateTime.parse("2026-08-03T13:27:28.243207790"));
@@ -92,7 +92,7 @@ class DpaForwardEmailServiceTest {
                 service.sendSigningLink(
                     new DpaForwardEmailService.DpaForwardEmailCommand(
                         84L,
-                        "bart.simpson@oriso.org",
+                        "bart.simpson@example.org",
                         "//attacker.example/dpa-sign/stolen-token",
                         LocalDateTime.parse("2026-08-03T13:27:28.243207790"))))
         .isInstanceOf(BadRequestException.class)
@@ -111,7 +111,7 @@ class DpaForwardEmailServiceTest {
                 service.sendSigningLink(
                     new DpaForwardEmailService.DpaForwardEmailCommand(
                         84L,
-                        "bart.simpson@oriso.org",
+                        "bart.simpson@example.org",
                         "/admin/dashboard",
                         LocalDateTime.parse("2026-08-03T13:27:28.243207790"))))
         .isInstanceOf(BadRequestException.class)
@@ -129,7 +129,7 @@ class DpaForwardEmailServiceTest {
                 service.sendSigningLink(
                     new DpaForwardEmailService.DpaForwardEmailCommand(
                         84L,
-                        "bart.simpson@oriso.org",
+                        "bart.simpson@example.org",
                         "https://attacker.example/dpa-sign/stolen-token",
                         LocalDateTime.parse("2026-08-03T13:27:28.243207790"))))
         .isInstanceOf(BadRequestException.class)
@@ -179,5 +179,18 @@ class DpaForwardEmailServiceTest {
     assertThatThrownBy(() -> service.toAbsoluteSignLink("https://evil.example/dpa-sign/token"))
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class);
+  }
+
+  /** ORISO-Helm#368: a missing DPA origin stops startup and names the variable, never a guess. */
+  @Test
+  void constructor_failsNamingTheVariable_whenTheAppOriginIsBlankOrRelative() {
+    for (String configured : new String[] {null, " ", "/dpa-sign", "app.example.org"}) {
+      assertThatThrownBy(
+              () ->
+                  new DpaForwardEmailService(
+                      tenantService, dpaSigningEmailDispatchService, configured))
+          .isInstanceOf(IllegalStateException.class)
+          .hasMessageContaining("DPA_SIGN_FRONTEND_BASE_URL");
+    }
   }
 }

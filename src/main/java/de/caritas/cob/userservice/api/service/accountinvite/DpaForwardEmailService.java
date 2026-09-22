@@ -30,10 +30,10 @@ public class DpaForwardEmailService {
   public DpaForwardEmailService(
       @NonNull TenantService tenantService,
       @NonNull DpaSigningEmailDispatchService dpaSigningEmailDispatchService,
-      @Value("${dpa.sign.frontend.base-url:${app.base.url}}") String appBaseUrl) {
+      @Value("${dpa.sign.frontend.base-url}") String appBaseUrl) {
     this.tenantService = tenantService;
     this.dpaSigningEmailDispatchService = dpaSigningEmailDispatchService;
-    this.permittedAppOrigin = parseUri(appBaseUrl, "appBaseUrl");
+    this.permittedAppOrigin = requireAbsoluteOrigin(appBaseUrl);
   }
 
   public void sendSigningLink(DpaForwardEmailCommand command) {
@@ -125,6 +125,22 @@ public class DpaForwardEmailService {
     } catch (org.springframework.web.client.HttpClientErrorException.NotFound exception) {
       return GENERIC_ORGANISATION_NAME;
     }
+  }
+
+  private static URI requireAbsoluteOrigin(String configured) {
+    try {
+      URI origin = URI.create(configured == null ? "" : configured.trim());
+      if (("http".equals(origin.getScheme()) || "https".equals(origin.getScheme()))
+          && !isBlank(origin.getHost())) {
+        return origin;
+      }
+    } catch (IllegalArgumentException ignored) {
+      // reported below with the variable name, which is what an operator needs
+    }
+    throw new IllegalStateException(
+        "dpa.sign.frontend.base-url must be this environment's absolute app origin, got: '"
+            + configured
+            + "' (DPA_SIGN_FRONTEND_BASE_URL)");
   }
 
   private static URI parseUri(String value, String field) {

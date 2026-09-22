@@ -31,6 +31,31 @@ at a time.
 | `SPRING_LIQUIBASE_ENABLED` / `ORISO_MIGRATIONS_EXTERNALLY_MANAGED` | `SchemaMigrationGuard` | `IllegalStateException`: changesets in the image would never be applied |
 | `SPRING_JPA_HIBERNATE_DDL_AUTO` | `SchemaMigrationGuard` | `IllegalStateException` unless the value is `validate` |
 
+### Public mail-link origins
+
+`PublicUrlStartupValidator` checks these before any bean is created and reports
+every problem in one message, so a missing set costs one restart, not six.
+Each must be an absolute `http(s)` origin with a host and no query or fragment.
+Outside the `local` and `testing` profiles, template hosts (`your-domain…`,
+`example.com/.org/.net`) are refused as well
+([ORISO-Helm#368](https://github.com/OpenResilienceInitiative/ORISO-Helm/issues/368)).
+
+| Variable | Used for |
+|---|---|
+| `APP_BASE_URL` | enquiry/welcome/inactivity mails, tenant links, OTP URL derivation |
+| `SYSTEM_NOTIFICATION_FRONTEND_BASE_URL` | supervisor-added notice, SMTP test mail |
+| `DPA_SIGN_FRONTEND_BASE_URL` | DPA signing link (forwarded to a Träger) |
+| `MAGIC_LINK_FRONTEND_BASE_URL` | magic-link login mail |
+| `ACCOUNT_INVITE_APP_FRONTEND_BASE_URL` | app-level invite accept link |
+| `ACCOUNT_INVITE_ADMIN_FRONTEND_BASE_URL` | tenant-admin and counsellor onboarding links, Admin panel links |
+
+`PASSWORD_RESET_FRONTEND_BASE_URL` and `PASSWORD_RESET_ADMIN_FRONTEND_BASE_URL`
+stay optional: blank keeps self-service password reset switched off. A value
+that is set must still pass the same shape check.
+
+None of them falls back to another. An environment where App and Admin share one
+host sets the same origin in each variable.
+
 `SPRING_DATASOURCE_URL` is required too, but the local path gets it from
 `run-local-remote-db.sh`, not from `config.env`. A value in `config.env`
 overrides it, because the script sources that file after its own exports.

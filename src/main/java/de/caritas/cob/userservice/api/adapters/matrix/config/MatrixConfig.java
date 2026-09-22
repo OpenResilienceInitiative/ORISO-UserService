@@ -12,9 +12,11 @@ import org.springframework.stereotype.Component;
 @ConfigurationProperties(prefix = "matrix")
 public class MatrixConfig {
 
-  private String apiUrl = "http://matrix-synapse:8008";
-  private String registrationSharedSecret = "caritas-registration-secret-2025";
-  private String serverName = "caritas.local";
+  // No defaults: MATRIX_API_URL, MATRIX_REGISTRATION_SHARED_SECRET and MATRIX_SERVER_NAME come from
+  // the environment; ConfigurationValidator refuses to start without the URL and the secret.
+  private String apiUrl;
+  private String registrationSharedSecret;
+  private String serverName;
   private String adminUsername;
   private String adminPassword;
 

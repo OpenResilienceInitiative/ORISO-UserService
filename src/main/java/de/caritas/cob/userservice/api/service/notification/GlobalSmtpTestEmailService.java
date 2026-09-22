@@ -31,8 +31,8 @@ public class GlobalSmtpTestEmailService {
   private final @NonNull OrisoEmailRenderer emailRenderer;
   private final @NonNull OrisoEmailBrand emailBrand;
 
-  // No fallback: an admin-triggered diagnostic mail that silently links into the wrong
-  // deployment's app.oriso.org is worse than a startup failure that says so.
+  // No fallback: an admin-triggered diagnostic mail that silently links into another
+  // deployment is worse than a startup failure that says so.
   @Value("${system.notification.frontend.base-url}")
   private String appBaseUrl;
 
