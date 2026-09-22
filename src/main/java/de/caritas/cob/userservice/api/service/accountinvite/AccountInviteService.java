@@ -978,13 +978,15 @@ public class AccountInviteService {
   }
 
   public AccountInvite waiveTwoFactor(Long inviteId, WaiveTwoFactorCommand command) {
-    return waiveTwoFactor(findAuthorizedInvite(inviteId), command);
+    return waiveTwoFactor(findInvite(inviteId), command);
   }
 
+  /** Waives the 2FA gate; applies the cross-Träger guard itself, whichever overload is used. */
   public AccountInvite waiveTwoFactor(AccountInvite invite, WaiveTwoFactorCommand command) {
     if (invite == null) {
       throw new BadRequestException("Invite is required");
     }
+    accessPolicy.authorizeAccess(invite);
     if (command == null || isBlank(command.reason())) {
       throw new BadRequestException("Waiver reason is required");
     }
