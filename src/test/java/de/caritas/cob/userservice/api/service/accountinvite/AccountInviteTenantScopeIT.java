@@ -263,6 +263,26 @@ class AccountInviteTenantScopeIT {
         .isInstanceOf(ForbiddenException.class);
   }
 
+  @Test
+  void waiveTwoFactorOnEntity_Should_Refuse_When_TenantAdminTouchesAnotherTenantsInvite() {
+    actAsTenantAdmin();
+    AccountInvite foreign =
+        accountInviteRepository.findById(foreignTenantCounsellorInvite.getId()).orElseThrow();
+    var statusBefore = foreign.getTwoFactorStatus();
+
+    assertThatThrownBy(
+            () ->
+                service.waiveTwoFactor(
+                    foreign, new AccountInviteService.WaiveTwoFactorCommand("because")))
+        .isInstanceOf(ForbiddenException.class);
+    assertThat(
+            accountInviteRepository
+                .findById(foreignTenantCounsellorInvite.getId())
+                .orElseThrow()
+                .getTwoFactorStatus())
+        .isEqualTo(statusBefore);
+  }
+
   // --- Beratungsstellen admin (restricted agency admin of agency 1) ---------------------------
 
   @Test
