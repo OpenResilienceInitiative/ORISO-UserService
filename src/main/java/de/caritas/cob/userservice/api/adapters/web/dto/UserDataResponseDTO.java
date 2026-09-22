@@ -105,6 +105,9 @@ public class UserDataResponseDTO {
 
   private Boolean isWalkThroughEnabled;
 
+  /** Consultants only: live-chat availability is controlled from the navigation rail. */
+  private Boolean liveChatViaSidebar;
+
   private Set<EmailToggle> emailToggles;
 
   private Boolean appointmentFeatureEnabled;
