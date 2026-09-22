@@ -118,7 +118,8 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
             appointmentService,
             sessionRepository,
             eventNotificationService,
-            topicAgencyCompatibilityValidator);
+            topicAgencyCompatibilityValidator,
+            new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver());
 
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);
     when(usersResource.get(ADMIN_ID)).thenReturn(userResource);
