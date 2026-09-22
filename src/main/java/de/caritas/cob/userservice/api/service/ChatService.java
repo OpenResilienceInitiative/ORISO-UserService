@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
@@ -151,6 +152,8 @@ public class ChatService {
     if (chat.getConversationType() == null) {
       chat.setConversationType(ConversationType.INTERNAL_GROUP);
     }
+    // Every chat mutation goes through here, so this is the one place to stamp it.
+    chat.setUpdateDate(nowInUtc());
     return chatRepository.save(chat);
   }
 

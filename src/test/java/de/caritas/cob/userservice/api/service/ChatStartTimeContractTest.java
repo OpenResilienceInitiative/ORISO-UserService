@@ -44,6 +44,7 @@ class ChatStartTimeContractTest {
 
   private static final String BERLIN = "Europe/Berlin";
   private static final long CHAT_ID = 4711L;
+  private static final LocalDateTime LONG_AGO = LocalDateTime.of(2020, 1, 1, 0, 0);
 
   @InjectMocks private ChatService chatService;
   @Mock private ChatRepository chatRepository;
@@ -151,6 +152,30 @@ class ChatStartTimeContractTest {
     UserChatDTO read = read(series);
     assertThat(read.getStartDate()).isEqualTo(LocalDate.parse("2026-10-27"));
     assertThat(read.getStartTime()).isEqualTo(LocalTime.parse("18:00"));
+  }
+
+  @Test
+  void update_Should_StampUpdateDate() {
+    Chat existing = inactiveOwnedChat();
+    existing.setUpdateDate(LONG_AGO);
+    when(chatRepository.findByIdWithPermissionRelations(CHAT_ID)).thenReturn(Optional.of(existing));
+
+    chatService.updateChat(
+        CHAT_ID, dto("2026-12-01", "18:00", BERLIN), AUTHENTICATED_USER_CONSULTANT);
+
+    assertThat(savedChat().getUpdateDate()).isAfter(LONG_AGO);
+  }
+
+  @Test
+  void saveChat_Should_StampUpdateDate_ForStartStopAndLeave() {
+    // Start, stop and the last member leaving all persist through saveChat.
+    Chat chat = inactiveOwnedChat();
+    chat.setUpdateDate(LONG_AGO);
+    chat.setActive(true);
+
+    chatService.saveChat(chat);
+
+    assertThat(savedChat().getUpdateDate()).isAfter(LONG_AGO);
   }
 
   private UserChatDTO read(Chat chat) {
