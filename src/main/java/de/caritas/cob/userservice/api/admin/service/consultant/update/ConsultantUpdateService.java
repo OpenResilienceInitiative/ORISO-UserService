@@ -184,7 +184,13 @@ public class ConsultantUpdateService {
   private void pushMatrixDisplayName(
       String consultantId, String matrixUserId, String newDisplayName) {
     try {
-      matrixUserClient.updateUserDisplayName(matrixUserId, newDisplayName);
+      // A false answer is Synapse refusing, not a transport error; it must be visible too.
+      if (!matrixUserClient.updateUserDisplayName(matrixUserId, newDisplayName)) {
+        log.warn(
+            "Matrix did not accept the display name update for consultant {}; the stored update"
+                + " stands and the profile is re-sent on the next identity edit",
+            consultantId);
+      }
     } catch (Exception e) {
       log.warn(
           "Matrix display name update failed for consultant {}, but continuing", consultantId, e);
