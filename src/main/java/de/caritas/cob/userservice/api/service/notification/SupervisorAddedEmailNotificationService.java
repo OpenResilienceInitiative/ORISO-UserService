@@ -60,7 +60,6 @@ public class SupervisorAddedEmailNotificationService {
   public void notifySupervisorAdded(
       User sessionUser,
       Consultant supervisor,
-      String supervisorDisplayName,
       Long sessionId,
       TenantData tenantData,
       String accessToken) {
@@ -108,7 +107,6 @@ public class SupervisorAddedEmailNotificationService {
   public void notifySupervisorRemoved(
       User sessionUser,
       Consultant supervisor,
-      String supervisorDisplayName,
       Long sessionId,
       TenantData tenantData,
       String accessToken) {
