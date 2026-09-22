@@ -26,7 +26,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class TeamDiscussionRoomCleanupServiceTest {
 
-  private static final String LOSING_ROOM = "!loser:oriso.org";
+  private static final String LOSING_ROOM = "!loser:example.org";
 
   @Mock private TeamDiscussionRoomCleanupTaskRepository cleanupTaskRepository;
   @Mock private TeamDiscussionRepository discussionRepository;

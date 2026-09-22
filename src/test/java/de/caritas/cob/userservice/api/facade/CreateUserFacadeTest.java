@@ -420,7 +420,7 @@ public class CreateUserFacadeTest {
 
   private void givenMatrixProvisioningSucceeds() throws Exception {
     var matrixResponseBody = new MatrixCreateUserResponseDTO();
-    matrixResponseBody.setUserId("@registered:matrix.oriso.org");
+    matrixResponseBody.setUserId("@registered:matrix.example.org");
     lenient()
         .when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(matrixResponseBody));
@@ -433,7 +433,7 @@ public class CreateUserFacadeTest {
     givenBasicRegistrationStubs();
     User user = givenAFullyPersistedUser();
     var matrixResponseBody = new MatrixCreateUserResponseDTO();
-    matrixResponseBody.setUserId("@plainuser:matrix.oriso.org");
+    matrixResponseBody.setUserId("@plainuser:matrix.example.org");
     try {
       PlainCredentialsHolder.set("plainuser", "plainpw");
       when(matrixSynapseService.createUser(eq("plainuser"), anyString(), eq("plainuser")))
@@ -446,7 +446,7 @@ public class CreateUserFacadeTest {
 
     verify(matrixSynapseService, times(1))
         .createUser(eq("plainuser"), anyString(), eq("plainuser"));
-    assertThat(user.getMatrixUserId(), is("@plainuser:matrix.oriso.org"));
+    assertThat(user.getMatrixUserId(), is("@plainuser:matrix.example.org"));
     verify(userService, times(2)).saveUser(any());
   }
 
@@ -458,14 +458,14 @@ public class CreateUserFacadeTest {
     givenBasicRegistrationStubs();
     User user = givenAFullyPersistedUser();
     var matrixResponseBody = new MatrixCreateUserResponseDTO();
-    matrixResponseBody.setUserId("@dbUser:matrix.oriso.org");
+    matrixResponseBody.setUserId("@dbUser:matrix.example.org");
     when(matrixSynapseService.createUser(eq("dbUser"), anyString(), eq("dbUser")))
         .thenReturn(ResponseEntity.ok(matrixResponseBody));
 
     createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
 
     verify(matrixSynapseService, times(1)).createUser(eq("dbUser"), anyString(), eq("dbUser"));
-    assertThat(user.getMatrixUserId(), is("@dbUser:matrix.oriso.org"));
+    assertThat(user.getMatrixUserId(), is("@dbUser:matrix.example.org"));
   }
 
   @Test
@@ -571,7 +571,7 @@ public class CreateUserFacadeTest {
     Session partialSession = new Session();
     partialSession.setId(42L);
     var matrixResponse = new MatrixCreateUserResponseDTO();
-    matrixResponse.setUserId("@plainuser:matrix.oriso.org");
+    matrixResponse.setUserId("@plainuser:matrix.example.org");
     when(consultingTypeManager.getConsultingTypeSettings(any()))
         .thenReturn(CONSULTING_TYPE_SETTINGS_SUCHT);
     when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
@@ -580,7 +580,7 @@ public class CreateUserFacadeTest {
     when(userService.saveUser(any(User.class))).thenReturn(user);
     when(matrixSynapseService.createUser(eq("plainuser"), anyString(), eq("plainuser")))
         .thenReturn(ResponseEntity.ok(matrixResponse));
-    when(matrixSynapseService.deactivateUser("@plainuser:matrix.oriso.org")).thenReturn(true);
+    when(matrixSynapseService.deactivateUser("@plainuser:matrix.example.org")).thenReturn(true);
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenThrow(new InternalServerErrorException("session initialization failed"));
@@ -593,7 +593,7 @@ public class CreateUserFacadeTest {
     var compensationOrder =
         inOrder(matrixSynapseService, sessionService, userService, identityAccountRemover);
     compensationOrder.verify(sessionService).deleteSession(partialSession);
-    compensationOrder.verify(matrixSynapseService).deactivateUser("@plainuser:matrix.oriso.org");
+    compensationOrder.verify(matrixSynapseService).deactivateUser("@plainuser:matrix.example.org");
     compensationOrder.verify(userService).deleteUser(user);
     compensationOrder.verify(identityAccountRemover).rollbackUser(USER_ID);
     assertThat(PlainCredentialsHolder.get(), nullValue());
@@ -612,9 +612,9 @@ public class CreateUserFacadeTest {
     var replayIdentity =
         new de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity("replay-id");
     var firstMatrixResponse = new MatrixCreateUserResponseDTO();
-    firstMatrixResponse.setUserId("@first:matrix.oriso.org");
+    firstMatrixResponse.setUserId("@first:matrix.example.org");
     var replayMatrixResponse = new MatrixCreateUserResponseDTO();
-    replayMatrixResponse.setUserId("@replay:matrix.oriso.org");
+    replayMatrixResponse.setUserId("@replay:matrix.example.org");
     var replayRegistration =
         new NewRegistrationResponseDto().sessionId(99L).status(HttpStatus.CREATED);
 
@@ -627,7 +627,7 @@ public class CreateUserFacadeTest {
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(
             ResponseEntity.ok(firstMatrixResponse), ResponseEntity.ok(replayMatrixResponse));
-    when(matrixSynapseService.deactivateUser("@first:matrix.oriso.org")).thenReturn(true);
+    when(matrixSynapseService.deactivateUser("@first:matrix.example.org")).thenReturn(true);
     when(createNewSessionFacade.initializeNewSession(
             any(), any(), any(ExtendedConsultingTypeResponseDTO.class)))
         .thenThrow(new InternalServerErrorException("first attempt failed"))
@@ -644,8 +644,8 @@ public class CreateUserFacadeTest {
 
     assertThat(replaySessionId, is(99L));
     verify(sessionService).deleteSession(partialSession);
-    verify(matrixSynapseService).deactivateUser("@first:matrix.oriso.org");
-    verify(matrixSynapseService, never()).deactivateUser("@replay:matrix.oriso.org");
+    verify(matrixSynapseService).deactivateUser("@first:matrix.example.org");
+    verify(matrixSynapseService, never()).deactivateUser("@replay:matrix.example.org");
     verify(userService).deleteUser(firstUser);
     verify(userService, never()).deleteUser(replayUser);
     verify(identityAccountRemover).rollbackUser("first-id");

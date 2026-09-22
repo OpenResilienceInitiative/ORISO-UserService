@@ -121,7 +121,7 @@ class DpaForwardEmailControllerTest {
                     """
                     {
                       "tenantId": 84,
-                      "recipientEmail": "bart.simpson@oriso.org",
+                      "recipientEmail": "bart.simpson@example.org",
                       "signLink": "https://app.oriso-dev.site/dpa-sign/single-use-token",
                       "expiresAt": "2026-08-03T13:27:28.243207790"
                     }
@@ -132,7 +132,7 @@ class DpaForwardEmailControllerTest {
         ArgumentCaptor.forClass(DpaForwardEmailCommand.class);
     verify(dpaForwardEmailService).sendSigningLink(command.capture());
     assertThat(command.getValue().tenantId()).isEqualTo(84L);
-    assertThat(command.getValue().recipientEmail()).isEqualTo("bart.simpson@oriso.org");
+    assertThat(command.getValue().recipientEmail()).isEqualTo("bart.simpson@example.org");
     assertThat(command.getValue().signLink())
         .isEqualTo("https://app.oriso-dev.site/dpa-sign/single-use-token");
     assertThat(command.getValue().expiresAt())

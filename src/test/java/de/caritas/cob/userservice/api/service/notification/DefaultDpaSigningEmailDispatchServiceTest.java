@@ -59,7 +59,7 @@ class DefaultDpaSigningEmailDispatchServiceTest {
             requestTo("http://consulting-type.example/service/settingsadmin/dpa-signing-emails"))
         .andExpect(method(HttpMethod.POST))
         .andExpect(header("Authorization", "Bearer tenant-admin-token"))
-        .andExpect(jsonPath("$.recipientEmail").value("bart.simpson@oriso.org"))
+        .andExpect(jsonPath("$.recipientEmail").value("bart.simpson@example.org"))
         .andExpect(jsonPath("$.tenantName").value("E2E Full Gate 202607191747"))
         .andExpect(
             jsonPath("$.signLink").value("https://app.oriso-dev.site/dpa-sign/single-use-token"))
@@ -67,7 +67,7 @@ class DefaultDpaSigningEmailDispatchServiceTest {
         .andRespond(withNoContent());
 
     service.send(
-        "bart.simpson@oriso.org",
+        "bart.simpson@example.org",
         "E2E Full Gate 202607191747",
         "https://app.oriso-dev.site/dpa-sign/single-use-token",
         LocalDateTime.parse("2026-08-03T13:27:28.243207790"));
@@ -106,7 +106,7 @@ class DefaultDpaSigningEmailDispatchServiceTest {
     service.send(
         "legal@example.org",
         "Träger Nord e.V.",
-        "https://app.oriso.org/dpa-sign/single-use-token",
+        "https://app.example.org/dpa-sign/single-use-token",
         LocalDateTime.parse("2026-08-29T14:31:07"));
 
     server.verify();
@@ -133,7 +133,7 @@ class DefaultDpaSigningEmailDispatchServiceTest {
         service.preview(
             "preview@example.org",
             "Example organisation",
-            "https://app.oriso.org/dpa-sign/SAMPLE-PREVIEW-TOKEN",
+            "https://app.example.org/dpa-sign/SAMPLE-PREVIEW-TOKEN",
             LocalDateTime.parse("2026-09-30T12:00:00"));
 
     org.assertj.core.api.Assertions.assertThat(preview.subject()).isEqualTo("Contract documents");
@@ -158,7 +158,7 @@ class DefaultDpaSigningEmailDispatchServiceTest {
                 service.preview(
                     "preview@example.org",
                     "Example organisation",
-                    "https://app.oriso.org/dpa-sign/SAMPLE-PREVIEW-TOKEN",
+                    "https://app.example.org/dpa-sign/SAMPLE-PREVIEW-TOKEN",
                     LocalDateTime.parse("2026-09-30T12:00:00")))
         .isInstanceOf(IllegalStateException.class);
     server.verify();

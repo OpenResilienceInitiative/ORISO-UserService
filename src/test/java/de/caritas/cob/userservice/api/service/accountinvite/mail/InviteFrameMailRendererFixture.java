@@ -15,7 +15,7 @@ import org.springframework.test.util.ReflectionTestUtils;
  */
 public final class InviteFrameMailRendererFixture {
 
-  public static final String APP_BASE_URL = "https://app.oriso.org";
+  public static final String APP_BASE_URL = "https://app.example.org";
   public static final String PLATFORM_NAME = "Online-Beratung";
   public static final String ORG_NAME = "ORISO";
 

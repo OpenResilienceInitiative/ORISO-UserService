@@ -57,7 +57,7 @@ import org.mockito.ArgumentCaptor;
 class ConsultantSelfServiceMatrixDisplayNameTest {
 
   private static final String CONSULTANT_ID = "counsellor-1";
-  private static final String MATRIX_USER_ID = "@beraterin1:matrix.oriso.org";
+  private static final String MATRIX_USER_ID = "@beraterin1:matrix.example.org";
 
   private final MatrixUserClient matrixUserClient = mock(MatrixUserClient.class);
   private final ConsultantService consultantService = mock(ConsultantService.class);

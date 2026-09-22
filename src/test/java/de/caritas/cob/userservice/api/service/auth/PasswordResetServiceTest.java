@@ -64,9 +64,11 @@ class PasswordResetServiceTest {
     ReflectionTestUtils.setField(passwordResetService, "emailDummySuffix", "@beratungcaritas.de");
     ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "");
     ReflectionTestUtils.setField(
-        passwordResetService, "passwordResetFrontendBaseUrl", "https://app.oriso.org");
+        passwordResetService, "passwordResetFrontendBaseUrl", "https://app.example.org");
     ReflectionTestUtils.setField(
-        passwordResetService, "passwordResetAdminFrontendBaseUrl", "https://admin.oriso.org/admin");
+        passwordResetService,
+        "passwordResetAdminFrontendBaseUrl",
+        "https://admin.example.org/admin");
     // Run dispatch synchronously so request-flow assertions are deterministic.
     ReflectionTestUtils.setField(
         passwordResetService, "passwordResetExecutor", (Executor) Runnable::run);
@@ -155,8 +157,8 @@ class PasswordResetServiceTest {
     assertThat(mail.locale()).isEqualTo("en");
     // Reset URL must be built from the configured base URL and carry a 64-hex-char one-time token.
     assertThat(mail.resetUrl())
-        .startsWith("https://app.oriso.org/password-reset/confirm?token=")
-        .matches("https://app\\.oriso\\.org/password-reset/confirm\\?token=[0-9a-f]{64}");
+        .startsWith("https://app.example.org/password-reset/confirm?token=")
+        .matches("https://app\\.example\\.org/password-reset/confirm\\?token=[0-9a-f]{64}");
   }
 
   @Test
@@ -184,7 +186,7 @@ class PasswordResetServiceTest {
     assertThat(sentMails).hasSize(1);
     assertThat(sentMails.get(0).recipient()).isEqualTo("admin@example.com");
     assertThat(sentMails.get(0).resetUrl())
-        .matches("https://admin\\.oriso\\.org/admin/password-reset/confirm\\?token=[0-9a-f]{64}");
+        .matches("https://admin\\.example\\.org/admin/password-reset/confirm\\?token=[0-9a-f]{64}");
     verify(userService, never()).findUserByUsername(anyString());
     verify(consultantService, never()).findConsultantByUsernameOrEmail(anyString(), anyString());
   }

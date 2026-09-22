@@ -23,8 +23,8 @@ class MatrixRtcCallPolicyControllerTest {
 
   @Mock private MatrixRtcCallPolicyService callPolicyService;
 
-  private static final String ROOM_ID = "!room:matrix.oriso.org";
-  private static final String MATRIX_USER_ID = "@participant:matrix.oriso.org";
+  private static final String ROOM_ID = "!room:matrix.example.org";
+  private static final String MATRIX_USER_ID = "@participant:matrix.example.org";
 
   @Test
   void rejectsMissingOrInvalidInternalCredentialBeforeResolvingRoom() {

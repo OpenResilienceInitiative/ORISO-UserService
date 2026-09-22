@@ -86,9 +86,9 @@ class MatrixEventListenerServiceTest {
   private Logger logger;
   private ListAppender<ILoggingEvent> logAppender;
 
-  private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
-  private static final String SENDER_MATRIX_ID = "@asker:matrix.oriso.org";
-  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!room:matrix.example.org";
+  private static final String SENDER_MATRIX_ID = "@asker:matrix.example.org";
+  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.org";
   private static final String ASKER_DOMAIN_ID = "asker-user-id";
   private static final String CONSULTANT_DOMAIN_ID = "consultant-id";
 

@@ -70,10 +70,10 @@ class EmailContentSanitizerTest {
   @Test
   void toContentHtml_Should_keepHttpAndMailtoAnchorsAndStyleThemInline() {
     String html =
-        sanitize("<a href=\"https://oriso.org\">Web</a> <a href=\"mailto:a@b.org\">Mail</a>");
+        sanitize("<a href=\"https://example.org\">Web</a> <a href=\"mailto:a@b.org\">Mail</a>");
 
     assertThat(html)
-        .contains("href=\"https://oriso.org\"")
+        .contains("href=\"https://example.org\"")
         .contains("href=\"mailto:a@b.org\"")
         .contains("color:" + LINK_COLOR)
         .contains("rel=\"noopener noreferrer\"");
@@ -82,23 +82,23 @@ class EmailContentSanitizerTest {
   /** #913: the bare onboarding URL in a plain-text template must become clickable. */
   @Test
   void toContentHtml_Should_linkifyBareUrls() {
-    String html = sanitize("Bitte oeffnen: https://app.oriso.org/account-invite/abc123");
+    String html = sanitize("Bitte oeffnen: https://app.example.org/account-invite/abc123");
 
     assertThat(html)
-        .contains("<a href=\"https://app.oriso.org/account-invite/abc123\"")
-        .contains(">https://app.oriso.org/account-invite/abc123</a>");
+        .contains("<a href=\"https://app.example.org/account-invite/abc123\"")
+        .contains(">https://app.example.org/account-invite/abc123</a>");
   }
 
   @Test
   void toContentHtml_Should_notSwallowSentenceEndingPunctuationIntoTheUrl() {
-    String html = sanitize("Siehe https://oriso.org/hilfe.");
+    String html = sanitize("Siehe https://example.org/hilfe.");
 
-    assertThat(html).contains("href=\"https://oriso.org/hilfe\"").endsWith(".</p>");
+    assertThat(html).contains("href=\"https://example.org/hilfe\"").endsWith(".</p>");
   }
 
   @Test
   void toContentHtml_Should_notDoubleWrapUrlsThatAreAlreadyAnchors() {
-    String html = sanitize("<p><a href=\"https://oriso.org\">https://oriso.org</a></p>");
+    String html = sanitize("<p><a href=\"https://example.org\">https://example.org</a></p>");
 
     assertThat(html.split("<a ", -1)).hasSize(2);
   }
@@ -128,17 +128,17 @@ class EmailContentSanitizerTest {
   void toPlainText_Should_renderListsBreaksAndAnchorTargets() {
     String plain =
         sanitizer.toPlainText(
-            sanitize("Hallo,\n\nBitte: <a href=\"https://oriso.org/x\">hier klicken</a>"));
+            sanitize("Hallo,\n\nBitte: <a href=\"https://example.org/x\">hier klicken</a>"));
 
-    assertThat(plain).contains("Hallo,").contains("hier klicken (https://oriso.org/x)");
+    assertThat(plain).contains("Hallo,").contains("hier klicken (https://example.org/x)");
   }
 
   @Test
   void toPlainText_Should_printBareUrlOnce_When_LabelEqualsHref() {
-    String plain = sanitizer.toPlainText(sanitize("Link: https://oriso.org/x"));
+    String plain = sanitizer.toPlainText(sanitize("Link: https://example.org/x"));
 
-    assertThat(plain).contains("https://oriso.org/x");
-    assertThat(plain.split("https://oriso.org/x", -1)).hasSize(2);
+    assertThat(plain).contains("https://example.org/x");
+    assertThat(plain.split("https://example.org/x", -1)).hasSize(2);
   }
 
   @Test

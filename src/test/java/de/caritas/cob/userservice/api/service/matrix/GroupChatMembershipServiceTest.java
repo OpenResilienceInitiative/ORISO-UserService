@@ -35,12 +35,12 @@ import org.slf4j.LoggerFactory;
 @ExtendWith(MockitoExtension.class)
 class GroupChatMembershipServiceTest {
 
-  private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
-  private static final String LEAVER_MATRIX_ID = "@leaver:matrix.oriso.org";
-  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.oriso.org";
-  private static final String ASKER_MATRIX_ID = "@asker:matrix.oriso.org";
-  private static final String AGENCY_BOT_MATRIX_ID = "@agency-1:matrix.oriso.org";
-  private static final String SYSTEM_USER_MATRIX_ID = "@group-chat-system-1:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!room:matrix.example.org";
+  private static final String LEAVER_MATRIX_ID = "@leaver:matrix.example.org";
+  private static final String CONSULTANT_MATRIX_ID = "@consultant:matrix.example.org";
+  private static final String ASKER_MATRIX_ID = "@asker:matrix.example.org";
+  private static final String AGENCY_BOT_MATRIX_ID = "@agency-1:matrix.example.org";
+  private static final String SYSTEM_USER_MATRIX_ID = "@group-chat-system-1:matrix.example.org";
 
   @InjectMocks private GroupChatMembershipService groupChatMembershipService;
 
@@ -466,12 +466,13 @@ class GroupChatMembershipServiceTest {
   @Test
   void hasRemainingHumanMembers_Should_FilterExactGroupChatSystemPrefix() {
     when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
-        .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID, "@group-chat-system:matrix.oriso.org")));
+        .thenReturn(
+            Optional.of(List.of(LEAVER_MATRIX_ID, "@group-chat-system:matrix.example.org")));
     when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(
-            "@group-chat-system:matrix.oriso.org"))
+            "@group-chat-system:matrix.example.org"))
         .thenReturn(Optional.empty());
     when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(
-            "@group-chat-system:matrix.oriso.org"))
+            "@group-chat-system:matrix.example.org"))
         .thenReturn(Optional.of(user));
     when(user.getUserId()).thenReturn("group-chat-system");
 

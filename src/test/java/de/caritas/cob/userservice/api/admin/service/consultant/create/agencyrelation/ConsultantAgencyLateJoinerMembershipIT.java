@@ -75,9 +75,9 @@ class ConsultantAgencyLateJoinerMembershipIT {
   private static final Long AGENCY_ID = 91015L;
   private static final Long OTHER_AGENCY_ID = 91016L;
   private static final Long UNKNOWN_AGENCY_ID = 91099L;
-  private static final String ENQUIRY_ROOM_ID = "!existing-enquiry:oriso.org";
-  private static final String OTHER_AGENCY_ROOM_ID = "!other-agency-enquiry:oriso.org";
-  private static final String CONSULTANT_MATRIX_USER_ID = "@late.joiner:oriso.org";
+  private static final String ENQUIRY_ROOM_ID = "!existing-enquiry:example.org";
+  private static final String OTHER_AGENCY_ROOM_ID = "!other-agency-enquiry:example.org";
+  private static final String CONSULTANT_MATRIX_USER_ID = "@late.joiner:example.org";
   private static final String AGENCY_TOKEN = "agency-service-account-token";
   private static final String CONSULTANT_TOKEN = "late-joiner-token";
   private static final String ROLE_SET_KEY = "valid-role-set";
@@ -190,7 +190,7 @@ class ConsultantAgencyLateJoinerMembershipIT {
 
   private void givenAgencyServiceAccount() {
     var credentials = new AgencyMatrixCredentialsDTO();
-    credentials.setMatrixUserId("@agency:oriso.org");
+    credentials.setMatrixUserId("@agency:example.org");
     credentials.setMatrixPassword("agency-password");
     when(matrixCredentialClient.fetchMatrixCredentials(any())).thenReturn(Optional.of(credentials));
     when(sessionRoomGateway.loginUser("agency", "agency-password")).thenReturn(AGENCY_TOKEN);

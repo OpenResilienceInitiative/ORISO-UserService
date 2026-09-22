@@ -65,7 +65,7 @@ class AccountInviteCounsellorProvisioningIT {
         AccountInvite.builder()
             .targetRole(AccountInviteTargetRole.COUNSELLOR)
             .tenantId(79L)
-            .recipientEmail("lisa.simpson@oriso.org")
+            .recipientEmail("lisa.simpson@example.org")
             .firstName("Lisa")
             .lastName("Simpson")
             .agencyId(275L)
@@ -103,7 +103,7 @@ class AccountInviteCounsellorProvisioningIT {
     verify(consultantAdminFacade).createNewConsultant(consultantCaptor.capture());
     CreateConsultantDTO consultant = consultantCaptor.getValue();
     assertThat(consultant.getUsername()).isEqualTo("codex_invited_counsellor");
-    assertThat(consultant.getEmail()).isEqualTo("lisa.simpson@oriso.org");
+    assertThat(consultant.getEmail()).isEqualTo("lisa.simpson@example.org");
     assertThat(consultant.getTenantId()).isEqualTo(79L);
     assertThat(consultant.getTopicIds()).containsExactly(2L);
 

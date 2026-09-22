@@ -69,13 +69,13 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   private static final Long AGENCY_ID = 55L;
   private static final String MESSAGE = "Hello, I need help.";
   private static final String USER_ID = "user-abc";
-  private static final String USER_MATRIX_ID = "@asker:oriso.org";
-  private static final String AGENCY_MATRIX_ID = "@agency-svc:oriso.org";
+  private static final String USER_MATRIX_ID = "@asker:example.org";
+  private static final String AGENCY_MATRIX_ID = "@agency-svc:example.org";
   private static final String AGENCY_MATRIX_LOCALPART = "agency-svc";
   private static final String AGENCY_MATRIX_PASSWORD = "s3cret";
   private static final String AGENCY_TOKEN = "agency-token";
   private static final String USER_TOKEN = "user-token";
-  private static final String NEW_ROOM_ID = "!provisioned:oriso.org";
+  private static final String NEW_ROOM_ID = "!provisioned:example.org";
   private static final String MATRIX_EVENT_ID = "$event-1";
 
   @InjectMocks private CreateEnquiryMessageFacade createEnquiryMessageFacade;
@@ -228,7 +228,7 @@ class CreateEnquiryMessageFacadeMatrixRoomProvisioningTest {
   @Test
   @DisplayName("FE#811: the agency's counsellors are room members before the enquiry is finalized")
   void createEnquiryMessage_joinsAgencyConsultantsBeforeSendingTheEnquiry() throws Exception {
-    var consultantMatrixId = "@counsellor:oriso.org";
+    var consultantMatrixId = "@counsellor:example.org";
     var consultantToken = "counsellor-token";
 
     var consultant = new Consultant();

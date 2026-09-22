@@ -293,7 +293,7 @@ class UserControllerE2EIT {
   @BeforeEach
   public void setUp() throws MatrixCreateUserException {
     MatrixCreateUserResponseDTO matrixCreateUserResponse = new MatrixCreateUserResponseDTO();
-    matrixCreateUserResponse.setUserId("@test-user:matrix.oriso.org");
+    matrixCreateUserResponse.setUserId("@test-user:matrix.example.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(matrixCreateUserResponse));
     when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);

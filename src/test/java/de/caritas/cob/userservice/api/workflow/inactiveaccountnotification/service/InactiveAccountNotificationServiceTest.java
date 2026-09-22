@@ -61,7 +61,7 @@ class InactiveAccountNotificationServiceTest {
   void setUp() {
     setField(service, "inactivityThresholdDays", 365L);
     setField(service, "emailDispatchEnabled", false);
-    setField(service, "appBaseUrl", "https://app.oriso.org");
+    setField(service, "appBaseUrl", "https://app.example.org");
 
     recipientAdmin =
         Admin.builder()
