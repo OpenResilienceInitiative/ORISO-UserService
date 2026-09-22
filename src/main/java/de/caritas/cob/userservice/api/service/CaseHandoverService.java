@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
@@ -306,6 +307,7 @@ public class CaseHandoverService {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull CaseHandoverMatrixRepairService matrixRepairService;
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
   private final @NonNull PlatformTransactionManager transactionManager;
@@ -1940,20 +1942,25 @@ public class CaseHandoverService {
         });
   }
 
+  /**
+   * The counsellor name that may appear in <em>client-facing</em> handover copy: the in-chat system
+   * message (a persisted {@code m.text} event in the advice seeker's own session room, see {@link
+   * #postGrantedChatSystemMessage}) and the client notification.
+   *
+   * <p>ADR-002 §2 / #1200: never the real name. This used to fall back to {@link
+   * Consultant#getFullName()} whenever the public display name was blank — which is exactly the
+   * population the pseudonymity rule exists to protect, so the counsellor's Matrix profile showed a
+   * pseudonym while their real name sat in a chat message in the same room. {@link
+   * ConsultantDisplayNameResolver} is the single place that decides which name may go there.
+   */
   private String resolveConsultantName(Consultant consultant) {
     if (consultant == null) {
       return "A counsellor";
     }
-    if (consultant.getDisplayName() != null && !consultant.getDisplayName().isBlank()) {
-      return consultant.getDisplayName();
-    }
-    if (consultant.getFullName() != null && !consultant.getFullName().isBlank()) {
-      return consultant.getFullName();
-    }
-    if (consultant.getUsername() != null && !consultant.getUsername().isBlank()) {
-      return consultant.getUsername();
-    }
-    return "A counsellor";
+    var resolved =
+        consultantDisplayNameResolver.resolveMatrixDisplayName(
+            consultant.getDisplayName(), consultant.getUsername());
+    return resolved == null || resolved.isBlank() ? "A counsellor" : resolved;
   }
 
   @Data
