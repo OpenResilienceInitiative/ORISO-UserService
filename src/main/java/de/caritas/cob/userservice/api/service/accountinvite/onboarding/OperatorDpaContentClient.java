@@ -35,10 +35,16 @@ import org.springframework.web.client.RestClientException;
  *
  * <p>Failure isolation is deliberate: the resolve endpoint is the entry point of the whole
  * onboarding flow and must not 500 because the upstream lookup hiccuped. Every upstream failure
- * degrades to {@code null}, which the Admin panel renders as the "text will be provided by the
- * platform operator" hint. Published text is cached for a short while because resolve is called on
- * an anonymous endpoint and each miss costs a technical-user login; a miss is never cached, so
- * publishing the operator DPA takes effect immediately.
+ * degrades to an absent contract text, which the Admin panel renders as the "text will be provided
+ * by the platform operator" hint. Published text is cached for a short while because resolve is
+ * called on an anonymous endpoint and each miss costs a technical-user login; a miss is never
+ * cached, so publishing the operator DPA takes effect immediately.
+ *
+ * <p>Absence is not one state though: {@link #lookupPublishedDpa()} separates {@link
+ * DpaUnavailableReason#NOT_PUBLISHED} (the operator published nothing — a content task) from {@link
+ * DpaUnavailableReason#UPSTREAM_ERROR} (TenantService or the technical-user login failed — a
+ * platform configuration task). Collapsing both into {@code null} once hid a server-side
+ * misconfiguration for hours because the invitee was only ever told to reload the page.
  */
 @Service
 @Slf4j
@@ -81,44 +87,71 @@ public class OperatorDpaContentClient {
    * whatever happens to be current when the registration lands.
    */
   public OperatorDpa fetchPublishedDpa() {
-    if (operatorTenantId <= 0) {
-      return null;
-    }
-    CachedContent cached = cache.get();
-    if (cached != null && !cached.isExpired()) {
-      return cached.dpa();
-    }
-    OperatorDpa dpa = readNewestPublished();
-    if (dpa != null) {
-      cache.set(new CachedContent(dpa, System.nanoTime() + CACHE_TTL.toNanos()));
-    }
-    return dpa;
+    return lookupPublishedDpa().dpa();
   }
 
   /** Content-only convenience for the resolve step, which renders but does not sign. */
   public String fetchPublishedDpaContent() {
-    OperatorDpa dpa = fetchPublishedDpa();
-    return dpa == null ? null : dpa.content();
+    return lookupPublishedDpa().content();
   }
 
-  private OperatorDpa readNewestPublished() {
+  /**
+   * The same read as {@link #fetchPublishedDpa()}, but it also says WHY there is no contract text:
+   * {@link DpaUnavailableReason#NOT_PUBLISHED} when the operator published none (or the lookup is
+   * disabled), {@link DpaUnavailableReason#UPSTREAM_ERROR} when TenantService or the technical-user
+   * login failed. The reason is {@code null} exactly when a DPA is present.
+   *
+   * <p>Cache semantics are unchanged: only a successful read is cached, and only for {@link
+   * #CACHE_TTL}. Neither unavailable outcome is cached — a freshly published DPA and a repaired
+   * platform configuration both take effect on the next request.
+   */
+  public OperatorDpaLookup lookupPublishedDpa() {
+    if (operatorTenantId <= 0) {
+      return OperatorDpaLookup.unavailable(DpaUnavailableReason.NOT_PUBLISHED);
+    }
+    CachedContent cached = cache.get();
+    if (cached != null && !cached.isExpired()) {
+      return OperatorDpaLookup.found(cached.dpa());
+    }
+    OperatorDpaLookup lookup = readNewestPublished();
+    if (lookup.dpa() != null) {
+      cache.set(new CachedContent(lookup.dpa(), System.nanoTime() + CACHE_TTL.toNanos()));
+    }
+    return lookup;
+  }
+
+  private OperatorDpaLookup readNewestPublished() {
     List<DpaVersionDTO> versions;
     try {
       versions = createControllerApi().getDataProcessingAgreementVersions(operatorTenantId);
     } catch (RestClientException exception) {
       log.warn(
           "Could not read the operator DPA of tenant {} — the onboarding DPA step renders without"
-              + " the contract text",
+              + " the contract text and reports {}",
           operatorTenantId,
+          DpaUnavailableReason.UPSTREAM_ERROR,
           exception);
-      return null;
+      return OperatorDpaLookup.unavailable(DpaUnavailableReason.UPSTREAM_ERROR);
+    } catch (RuntimeException exception) {
+      // Deliberately broad: the technical-user login happens inside createControllerApi() and
+      // throws its own unchecked types (bad credentials, Keycloak unreachable, misconfigured
+      // technical user). The public resolve endpoint must degrade, never 500, so ANY failure of
+      // the upstream read is reported as UPSTREAM_ERROR instead of escaping.
+      log.warn(
+          "Could not authenticate or call TenantService for the operator DPA of tenant {} — the"
+              + " onboarding DPA step renders without the contract text and reports {}",
+          operatorTenantId,
+          DpaUnavailableReason.UPSTREAM_ERROR,
+          exception);
+      return OperatorDpaLookup.unavailable(DpaUnavailableReason.UPSTREAM_ERROR);
     }
     if (versions == null || versions.isEmpty()) {
       log.warn(
           "The operator tenant {} has no published DPA — the onboarding DPA step renders without"
-              + " the contract text",
-          operatorTenantId);
-      return null;
+              + " the contract text and reports {}",
+          operatorTenantId,
+          DpaUnavailableReason.NOT_PUBLISHED);
+      return OperatorDpaLookup.unavailable(DpaUnavailableReason.NOT_PUBLISHED);
     }
     // TenantService lists the versions newest first; skip empty snapshots defensively. Content and
     // version must come from the SAME entry, otherwise the recorded signature would name a version
@@ -128,8 +161,9 @@ public class OperatorDpaContentClient {
         .findFirst()
         .map(
             version ->
-                new OperatorDpa(version.getContent(), trimToNull(version.getActivationDate())))
-        .orElse(null);
+                OperatorDpaLookup.found(
+                    new OperatorDpa(version.getContent(), trimToNull(version.getActivationDate()))))
+        .orElseGet(() -> OperatorDpaLookup.unavailable(DpaUnavailableReason.NOT_PUBLISHED));
   }
 
   private static boolean isNotBlank(String value) {
@@ -145,6 +179,41 @@ public class OperatorDpaContentClient {
    * activation timestamp identifying the version ({@code null} when TenantService served none).
    */
   public record OperatorDpa(String content, String version) {}
+
+  /**
+   * Why the onboarding DPA step has no contract text to render. The two cases need different people
+   * to act, so the public resolve endpoint names them instead of showing one undifferentiated
+   * "reload the page" hint.
+   */
+  public enum DpaUnavailableReason {
+    /**
+     * The platform operator has published no DPA (or the lookup is switched off) — content task.
+     */
+    NOT_PUBLISHED,
+
+    /** TenantService or the technical-user login failed — platform configuration task. */
+    UPSTREAM_ERROR
+  }
+
+  /**
+   * Outcome of an operator DPA read: either the contract ({@code reason == null}) or the reason
+   * there is none ({@code dpa == null}). Never both, never neither.
+   */
+  public record OperatorDpaLookup(OperatorDpa dpa, DpaUnavailableReason reason) {
+
+    static OperatorDpaLookup found(OperatorDpa dpa) {
+      return new OperatorDpaLookup(dpa, null);
+    }
+
+    static OperatorDpaLookup unavailable(DpaUnavailableReason reason) {
+      return new OperatorDpaLookup(null, reason);
+    }
+
+    /** The stored language -&gt; HTML map, or {@code null} when the contract is unavailable. */
+    public String content() {
+      return dpa == null ? null : dpa.content();
+    }
+  }
 
   private TenantControllerApi createControllerApi() {
     var controllerApi = tenantAdminServiceApiControllerFactory.createControllerApi();

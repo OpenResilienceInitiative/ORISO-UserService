@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailServi
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
@@ -122,16 +123,16 @@ public class TenantAdminOnboardingService {
     resolved.rethrowLinkDeath();
 
     if (resolved.pendingTwoFactorResume()) {
-      return new OnboardingInviteState(resolved.invite(), true, null);
+      return new OnboardingInviteState(resolved.invite(), true, null, null);
     }
     if (resolved.joinsExistingTenant()) {
       // ORISO-Admin#1026 slices 4/5: the Träger exists (an EXISTING invite, or a further admin of
       // a new Träger that another admin created first). It has its own DPA; the invitee confirms
       // nothing on its behalf, so no contract text is shown.
-      return new OnboardingInviteState(resolved.invite(), false, null, true);
+      return new OnboardingInviteState(resolved.invite(), false, null, null, true);
     }
-    return new OnboardingInviteState(
-        resolved.invite(), false, operatorDpaContentClient.fetchPublishedDpaContent());
+    var lookup = operatorDpaContentClient.lookupPublishedDpa();
+    return new OnboardingInviteState(resolved.invite(), false, lookup.content(), lookup.reason());
   }
 
   /** The database-only part of {@link #resolveOnboardingInvite}: locked load and classification. */
@@ -843,19 +844,28 @@ public class TenantAdminOnboardingService {
   /**
    * Resolved onboarding state: the invite, whether the flow re-enters at the 2FA step (#569 resume
    * contract) instead of the registration step, and the operator's published DPA/AVV text (stored
-   * language -&gt; HTML JSON map) the DPA step renders read-only; {@code null} when nothing is
-   * published or the lookup is unavailable.
+   * language -&gt; HTML JSON map) the DPA step renders read-only.
+   *
+   * <p>{@code dpaContent} is {@code null} when no contract could be shown; {@code
+   * dpaUnavailableReason} then tells the invitee's client which of the two very different causes it
+   * was — nothing published yet, or the upstream read failed. Both are {@code null} on the resume
+   * path, which re-enters at the 2FA step and shows no contract at all.
    */
   public record OnboardingInviteState(
       AccountInvite invite,
       boolean pendingTwoFactorResume,
       String dpaContent,
+      /** Why {@code dpaContent} is absent; null when present or when there is no DPA step. */
+      DpaUnavailableReason dpaUnavailableReason,
       /** The invitee joins an existing Träger (slices 4/5): no organisation or DPA step. */
       boolean joinsExistingTenant) {
 
     public OnboardingInviteState(
-        AccountInvite invite, boolean pendingTwoFactorResume, String dpaContent) {
-      this(invite, pendingTwoFactorResume, dpaContent, false);
+        AccountInvite invite,
+        boolean pendingTwoFactorResume,
+        String dpaContent,
+        DpaUnavailableReason dpaUnavailableReason) {
+      this(invite, pendingTwoFactorResume, dpaContent, dpaUnavailableReason, false);
     }
   }
 
