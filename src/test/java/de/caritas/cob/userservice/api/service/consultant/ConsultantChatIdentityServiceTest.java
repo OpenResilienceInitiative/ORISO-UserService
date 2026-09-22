@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.matrix.MatrixCreateUserException;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -30,6 +31,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 /**
@@ -47,6 +49,10 @@ class ConsultantChatIdentityServiceTest {
   @Mock private ConsultantChatIdentityWriter consultantChatIdentityWriter;
   @Mock private MatrixUserClient matrixUserClient;
   @Mock private UserHelper userHelper;
+
+  @Spy
+  private ConsultantDisplayNameResolver consultantDisplayNameResolver =
+      new ConsultantDisplayNameResolver();
 
   private Consultant incompleteConsultant;
 
@@ -113,10 +119,33 @@ class ConsultantChatIdentityServiceTest {
     assertThat(repaired.getMatrixUserId()).isEqualTo("@anna.beispiel:matrix.local");
     verify(matrixUserClient)
         .createUserIdWithoutReactivation(
-            eq("anna.beispiel"), eq("s3cret-Pass!"), eq("Anna Beispiel"));
+            eq("anna.beispiel"), eq("s3cret-Pass!"), eq("anna.beispiel"));
     var saved = ArgumentCaptor.forClass(String.class);
     verify(consultantChatIdentityWriter).attachChatIdentity(eq(CONSULTANT_ID), saved.capture());
     assertThat(saved.getValue()).isEqualTo("@anna.beispiel:matrix.local");
+  }
+
+  @Test
+  void provisionMissingChatIdentity_Should_publishThePublicDisplayName_NeverTheRealName()
+      throws Exception {
+    incompleteConsultant.setDisplayName("Beraterin Sonnenblume");
+    when(consultantChatIdentityWriter.find(CONSULTANT_ID))
+        .thenReturn(Optional.of(incompleteConsultant));
+    when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
+        .thenReturn("@anna.beispiel:matrix.local");
+    when(consultantChatIdentityWriter.attachChatIdentity(eq(CONSULTANT_ID), anyString()))
+        .thenReturn(incompleteConsultant);
+
+    consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID);
+
+    var published = ArgumentCaptor.forClass(String.class);
+    verify(matrixUserClient)
+        .createUserIdWithoutReactivation(anyString(), anyString(), published.capture());
+    assertThat(published.getValue())
+        .isEqualTo("Beraterin Sonnenblume")
+        .doesNotContainIgnoringCase("Anna")
+        .doesNotContainIgnoringCase("Beispiel");
   }
 
   @Test
@@ -224,6 +253,7 @@ class ConsultantChatIdentityServiceTest {
     when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenThrow(new MatrixCreateUserException("Matrix user (anna.beispiel) is already active"));
     when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
+    when(matrixUserClient.updateUserDisplayName(anyString(), anyString())).thenReturn(true);
     doAnswer(
             invocation -> {
               incompleteConsultant.setMatrixUserId(invocation.getArgument(1));
@@ -300,14 +330,38 @@ class ConsultantChatIdentityServiceTest {
     when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
     when(consultantRepository.findByMatrixUserId("@anna.beispiel:matrix.local"))
         .thenReturn(List.of());
+    when(matrixUserClient.updateUserDisplayName("@anna.beispiel:matrix.local", "anna.beispiel"))
+        .thenReturn(true);
     when(consultantChatIdentityWriter.attachChatIdentity(
             CONSULTANT_ID, "@anna.beispiel:matrix.local"))
         .thenReturn(incompleteConsultant);
 
     consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID);
 
+    // The adopted account was minted by an earlier attempt, possibly under the real name.
+    verify(matrixUserClient).updateUserDisplayName("@anna.beispiel:matrix.local", "anna.beispiel");
     verify(consultantChatIdentityWriter)
         .attachChatIdentity(CONSULTANT_ID, "@anna.beispiel:matrix.local");
+  }
+
+  @Test
+  void provisionMissingChatIdentity_Should_notAttach_When_theAdoptedAccountKeepsItsOldName()
+      throws Exception {
+    when(consultantChatIdentityWriter.find(CONSULTANT_ID))
+        .thenReturn(Optional.of(incompleteConsultant));
+    when(userHelper.getRandomPassword()).thenReturn("s3cret-Pass!");
+    when(matrixUserClient.createUserIdWithoutReactivation(anyString(), anyString(), any()))
+        .thenThrow(new MatrixCreateUserException("Matrix user is already active"));
+    when(matrixUserClient.findUserId("anna.beispiel")).thenReturn("@anna.beispiel:matrix.local");
+    when(consultantRepository.findByMatrixUserId("@anna.beispiel:matrix.local"))
+        .thenReturn(List.of());
+    when(matrixUserClient.updateUserDisplayName(anyString(), anyString())).thenReturn(false);
+
+    assertThatThrownBy(
+            () -> consultantChatIdentityService.provisionMissingChatIdentity(CONSULTANT_ID))
+        .isInstanceOf(DistributedTransactionException.class);
+
+    verify(consultantChatIdentityWriter, never()).attachChatIdentity(anyString(), anyString());
   }
 
   @Test

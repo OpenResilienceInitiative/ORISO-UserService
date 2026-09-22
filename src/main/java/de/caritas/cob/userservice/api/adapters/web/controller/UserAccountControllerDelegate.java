@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
 import de.caritas.cob.userservice.api.config.VideoChatConfig;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.userdata.AgencyAdminDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
@@ -257,6 +258,13 @@ class UserAccountControllerDelegate {
   }
 
   ResponseEntity<Void> updatePassword(PasswordDTO passwordDTO) {
+    // Re-submitting the current password changes nothing, yet it would clear the account-setup
+    // requirement and leave the account on the password its administrator still knows.
+    if (passwordDTO.getNewPassword() != null
+        && passwordDTO.getNewPassword().equals(passwordDTO.getOldPassword())) {
+      throw new ConflictException("The new password must differ from the current one");
+    }
+
     var username = authenticatedUser.getUsername();
     var encodedUsername = usernameTranscoder.encodeUsername(username);
     if (!identityManager.validatePasswordIgnoring2fa(
