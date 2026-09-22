@@ -179,7 +179,8 @@ class DpaSignedNoticeServiceTest {
     // tenant, version, timestamp and signer as recorded
     assertTrue(body.getValue().contains("Träger Nord e.V."));
     assertTrue(body.getValue().contains("2026-07-01 12:00"));
-    // signedAt 09:15 UTC is German summer time 11:15; the version stays a verbatim identifier
+    // signedAt 09:15 UTC is German summer time 11:15; the version is date-formatted like the
+    // Admin's version label but never zone-shifted, so both show the same text for one version
     assertTrue(body.getValue().contains("2026-08-14 11:15"));
     assertTrue(body.getValue().contains("Erika Mustermann"));
     assertTrue(body.getValue().contains("Geschäftsführerin"));
