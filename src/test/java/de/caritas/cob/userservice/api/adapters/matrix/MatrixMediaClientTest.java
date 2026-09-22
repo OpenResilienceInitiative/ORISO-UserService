@@ -65,7 +65,7 @@ class MatrixMediaClientTest {
     var sendResponse = Map.of("event_id", "$event");
 
     when(restTemplate.postForEntity(
-            eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
+            eq(BASE_URL + "/_matrix/media/v3/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(new ResponseEntity<>(uploadResponse, HttpStatus.OK));
     when(restTemplate.exchange(
             uriContaining(ENCODED_SEND_MSG_PATH),
@@ -88,7 +88,7 @@ class MatrixMediaClientTest {
     byte[] expectedBytes = "content".getBytes();
 
     when(restTemplate.exchange(
-            eq(uri(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id")),
+            eq(uri(BASE_URL + "/_matrix/client/v1/media/download/matrix.local/media-id")),
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             eq(byte[].class)))
@@ -99,10 +99,41 @@ class MatrixMediaClientTest {
     assertThat(result).isEqualTo(expectedBytes);
     verify(restTemplate)
         .exchange(
-            eq(uri(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id")),
+            eq(uri(BASE_URL + "/_matrix/client/v1/media/download/matrix.local/media-id")),
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             eq(byte[].class));
+  }
+
+  /**
+   * Authenticated media (#1487). Synapse's enable_authenticated_media makes
+   * /_matrix/media/{r0,v1,v3}/download answer 404 M_NOT_FOUND for every file uploaded after the
+   * flip, while grandfathered media keeps working — so a passing smoke test on an old attachment
+   * proves nothing. This pins BOTH halves of the contract that survives the flip: the request goes
+   * to /_matrix/client/v1/media/download, and it carries the Matrix access token as a bearer.
+   */
+  @Test
+  void downloadFile_Should_UseAuthenticatedEndpointWithBearerToken() {
+    var uriCaptor = ArgumentCaptor.forClass(URI.class);
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<HttpEntity<Void>> entityCaptor = ArgumentCaptor.forClass(HttpEntity.class);
+
+    when(restTemplate.exchange(
+            any(URI.class), eq(HttpMethod.GET), any(HttpEntity.class), eq(byte[].class)))
+        .thenReturn(new ResponseEntity<>("content".getBytes(), HttpStatus.OK));
+
+    matrixMediaClient.downloadFile("matrix.local", "media-id", ACCESS_TOKEN);
+
+    verify(restTemplate)
+        .exchange(
+            uriCaptor.capture(), eq(HttpMethod.GET), entityCaptor.capture(), eq(byte[].class));
+
+    assertThat(uriCaptor.getValue().toString())
+        .isEqualTo(BASE_URL + "/_matrix/client/v1/media/download/matrix.local/media-id")
+        .doesNotContain("/_matrix/media/");
+
+    assertThat(entityCaptor.getValue().getHeaders().getFirst("Authorization"))
+        .isEqualTo("Bearer " + ACCESS_TOKEN);
   }
 
   // -------------------------------------------------------------------------
@@ -114,7 +145,7 @@ class MatrixMediaClientTest {
     var file = new MockMultipartFile("file", "test.txt", "text/plain", "content".getBytes());
 
     when(restTemplate.postForEntity(
-            eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
+            eq(BASE_URL + "/_matrix/media/v3/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(ResponseEntity.status(HttpStatus.OK).build());
 
     assertThatThrownBy(() -> matrixMediaClient.uploadFile(file, ROOM_ID, ACCESS_TOKEN))
@@ -127,7 +158,7 @@ class MatrixMediaClientTest {
     var file = new MockMultipartFile("file", "test.txt", "text/plain", "content".getBytes());
 
     when(restTemplate.postForEntity(
-            eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
+            eq(BASE_URL + "/_matrix/media/v3/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(new ResponseEntity<>(Map.of("some_other_key", "value"), HttpStatus.OK));
 
     assertThatThrownBy(() -> matrixMediaClient.uploadFile(file, ROOM_ID, ACCESS_TOKEN))
@@ -156,7 +187,7 @@ class MatrixMediaClientTest {
     var file = new MockMultipartFile("file", "photo.png", "image/png", "imagedata".getBytes());
 
     when(restTemplate.postForEntity(
-            eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
+            eq(BASE_URL + "/_matrix/media/v3/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/img-id"), HttpStatus.OK));
@@ -187,7 +218,7 @@ class MatrixMediaClientTest {
     var file = new MockMultipartFile("file", "video.mp4", "video/mp4", "videodata".getBytes());
 
     when(restTemplate.postForEntity(
-            eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
+            eq(BASE_URL + "/_matrix/media/v3/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/vid-id"), HttpStatus.OK));
@@ -218,7 +249,7 @@ class MatrixMediaClientTest {
     var file = new MockMultipartFile("file", "audio.mp3", "audio/mpeg", "audiodata".getBytes());
 
     when(restTemplate.postForEntity(
-            eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
+            eq(BASE_URL + "/_matrix/media/v3/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/aud-id"), HttpStatus.OK));
@@ -249,7 +280,7 @@ class MatrixMediaClientTest {
     var file = new MockMultipartFile("file", "doc.pdf", "application/pdf", "pdfdata".getBytes());
 
     when(restTemplate.postForEntity(
-            eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
+            eq(BASE_URL + "/_matrix/media/v3/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/doc-id"), HttpStatus.OK));
@@ -281,7 +312,7 @@ class MatrixMediaClientTest {
     var file = new MockMultipartFile("file", "unknown.bin", null, "binary".getBytes());
 
     when(restTemplate.postForEntity(
-            eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
+            eq(BASE_URL + "/_matrix/media/v3/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/bin-id"), HttpStatus.OK));
@@ -312,7 +343,7 @@ class MatrixMediaClientTest {
     var file = new MockMultipartFile("file", "test.txt", "text/plain", "content".getBytes());
 
     when(restTemplate.postForEntity(
-            eq(BASE_URL + "/_matrix/media/r0/upload"), any(HttpEntity.class), eq(Map.class)))
+            eq(BASE_URL + "/_matrix/media/v3/upload"), any(HttpEntity.class), eq(Map.class)))
         .thenReturn(
             new ResponseEntity<>(
                 Map.of("content_uri", "mxc://matrix.local/media-id"), HttpStatus.OK));
@@ -336,7 +367,7 @@ class MatrixMediaClientTest {
   @Test
   void downloadFile_Should_ThrowException_When_ResponseBodyIsNull() {
     when(restTemplate.exchange(
-            eq(uri(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id")),
+            eq(uri(BASE_URL + "/_matrix/client/v1/media/download/matrix.local/media-id")),
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             eq(byte[].class)))
@@ -351,7 +382,7 @@ class MatrixMediaClientTest {
   @Test
   void downloadFile_Should_ThrowException_When_RestTemplateThrows() {
     when(restTemplate.exchange(
-            eq(uri(BASE_URL + "/_matrix/media/r0/download/matrix.local/media-id")),
+            eq(uri(BASE_URL + "/_matrix/client/v1/media/download/matrix.local/media-id")),
             eq(HttpMethod.GET),
             any(HttpEntity.class),
             eq(byte[].class)))

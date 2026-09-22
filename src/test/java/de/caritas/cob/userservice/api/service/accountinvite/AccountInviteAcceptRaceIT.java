@@ -41,7 +41,7 @@ import org.springframework.transaction.annotation.Transactional;
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import(AccountInviteService.class)
+@Import({AccountInviteService.class, AccountInviteAccessPolicy.class})
 class AccountInviteAcceptRaceIT {
 
   private static final String RAW_TOKEN = "race-raw-token";
@@ -50,6 +50,7 @@ class AccountInviteAcceptRaceIT {
   @Autowired private AccountInviteRepository accountInviteRepository;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;

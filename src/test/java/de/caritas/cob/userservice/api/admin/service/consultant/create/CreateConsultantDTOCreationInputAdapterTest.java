@@ -87,4 +87,26 @@ class CreateConsultantDTOCreationInputAdapterTest {
     assertThat(input.isAbsent(), is(false));
     assertThat(input.isLanguageFormal(), is(false));
   }
+
+  @Test
+  void isTwoFactorRequired_Should_beTrue_When_creationCameThroughTheAdminApi() {
+    CreateConsultantDTO dto = new CreateConsultantDTO();
+    dto.setUsername(USERNAME);
+    dto.setPassword(PASSWORD);
+
+    ConsultantCreationInput input = new CreateConsultantDTOCreationInputAdapter(dto);
+
+    assertThat(input.isTwoFactorRequired(), is(true));
+  }
+
+  @Test
+  void isPasswordChangeRequired_Should_beTrue_When_creationCameThroughTheAdminApi() {
+    CreateConsultantDTO dto = new CreateConsultantDTO();
+    dto.setUsername(USERNAME);
+    dto.setPassword(PASSWORD);
+
+    ConsultantCreationInput input = new CreateConsultantDTOCreationInputAdapter(dto);
+
+    assertThat(input.isPasswordChangeRequired(), is(true));
+  }
 }

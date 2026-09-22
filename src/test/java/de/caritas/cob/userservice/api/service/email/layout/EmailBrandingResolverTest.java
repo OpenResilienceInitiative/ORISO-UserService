@@ -70,33 +70,105 @@ class EmailBrandingResolverTest {
         .isEqualTo("https://cdn.example.org/platform.png");
   }
 
+  /**
+   * Even with a real subdomain (standard multitenancy), the id pins the tenant: the link neither
+   * depends on the tenant's DNS name nor on host-based tenant resolution in TenantService.
+   */
   @Test
-  void resolve_ShouldProxyStoredLogosThroughTheTenantsPublicBrandingEndpoint() {
+  void resolve_Should_pinAStoredLogoToTheTenantId_Even_WhenTheTenantHasItsOwnSubdomain() {
     Theming base64Logo = new Theming();
     base64Logo.setLogo("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQ");
     base64Logo.setAssociationLogo("data:image/png;base64,iVBORw0KGgo=");
     RestrictedTenantDTO resolvedTenant = tenant("Nord", base64Logo);
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolvedTenant);
-    when(tenantTemplateSupplier.getTenantBaseUrl(resolvedTenant)).thenReturn("https://nord.org");
+    resolvedTenant.setId(12L);
+    resolvedTenant.setSubdomain("nord");
+    when(tenantService.getRestrictedTenantData(12L)).thenReturn(resolvedTenant);
+    lenient()
+        .when(tenantTemplateSupplier.getTenantBaseUrl(resolvedTenant))
+        .thenReturn("https://nord.app.oriso.org");
 
-    EmailBranding branding = resolver("").resolve(7L);
+    EmailBranding branding = resolver("").resolve(12L);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://nord.org/service/tenant/public/branding/logo");
+        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/12/logo");
     assertThat(branding.hasLogo()).isTrue();
   }
 
   @Test
-  void resolve_ShouldUseThePlatformBrandingEndpointWhenNoTenantIsKnown() {
+  void resolve_Should_pinThePlatformTenantsStoredLogoToItsId_When_NoTenantIsKnown() {
     givenNoTemplateAttributes();
     Theming platformTheming = new Theming();
     platformTheming.setLogo("data:image/png;base64,iVBORw0KGgo=");
-    when(tenantService.getPlatformTenantData()).thenReturn(tenant("ORISO", platformTheming));
+    RestrictedTenantDTO platform = tenant("ORISO", platformTheming);
+    platform.setId(1L);
+    when(tenantService.getPlatformTenantData()).thenReturn(platform);
 
     EmailBranding branding = resolver("").resolve(null);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/logo");
+        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/1/logo");
+  }
+
+  /**
+   * Measured on staging 2026-09-21/22: Träger there have an empty subdomain, so the tenant base URL
+   * degenerates to {@code https://.<host>}. The mail logo must still point at this tenant's own
+   * image, pinned by id on the application origin.
+   */
+  @Test
+  void resolve_Should_pinAStoredLogoToTheTenantId_When_TheTenantHasAnEmptySubdomain() {
+    Theming stored = new Theming();
+    stored.setLogo("data:image/png;base64,iVBORw0KGgo=");
+    RestrictedTenantDTO tenant12 = tenant("Traeger Zwoelf", stored);
+    tenant12.setId(12L);
+    tenant12.setSubdomain("");
+    when(tenantService.getRestrictedTenantData(12L)).thenReturn(tenant12);
+    lenient()
+        .when(tenantTemplateSupplier.getTenantBaseUrl(tenant12))
+        .thenReturn("https://.online-beratung.neusta-integrate.de");
+
+    EmailBranding branding = resolver("").resolve(12L);
+
+    assertThat(branding.logoUrl())
+        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/12/logo");
+  }
+
+  @Test
+  void firstAbsoluteUrl_Should_rejectUrlsWithoutARealHost() {
+    assertThat(EmailBrandingResolver.firstAbsoluteUrl("https://.example.org")).isNull();
+    assertThat(EmailBrandingResolver.firstAbsoluteUrl("https://")).isNull();
+    assertThat(EmailBrandingResolver.firstAbsoluteUrl("https:///x")).isNull();
+    assertThat(
+            EmailBrandingResolver.firstAbsoluteUrl(
+                "https://.online-beratung.neusta-integrate.de/impressum"))
+        .isNull();
+    assertThat(EmailBrandingResolver.firstAbsoluteUrl("https://.example.org", "https://ok.org/a"))
+        .isEqualTo("https://ok.org/a");
+  }
+
+  /** The empty-subdomain base URL must not leak into the footer either. */
+  @Test
+  void resolve_Should_fallBackToTheApplicationFooter_When_TheTenantBaseUrlHasNoHost() {
+    RestrictedTenantDTO tenant12 = tenant("Traeger Zwoelf", null);
+    tenant12.setId(12L);
+    when(tenantService.getRestrictedTenantData(12L)).thenReturn(tenant12);
+    when(tenantTemplateSupplier.getTenantBaseUrl(tenant12))
+        .thenReturn("https://.online-beratung.neusta-integrate.de");
+
+    EmailBranding branding = resolver("").resolve(12L);
+
+    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+  }
+
+  @Test
+  void resolve_Should_keepTheConfiguredPlatformLogo_When_TheTenantHasNoLogoOfItsOwn() {
+    givenNoTemplateAttributes();
+    RestrictedTenantDTO tenant12 = tenant("Traeger Zwoelf", new Theming());
+    tenant12.setId(12L);
+    when(tenantService.getRestrictedTenantData(12L)).thenReturn(tenant12);
+
+    assertThat(resolver("https://cdn.example.org/platform.png").resolve(12L).logoUrl())
+        .isEqualTo("https://cdn.example.org/platform.png");
   }
 
   // --- colour ---------------------------------------------------------------------------

@@ -159,6 +159,32 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("searchTenantId") Long searchTenantId,
       Pageable pageable);
 
+  /**
+   * {@link #findAllByFilters} narrowed to the given agencies — the listing a Beratungsstellen admin
+   * gets (restricted agency admin, cross-Träger isolation). The caller never passes an empty
+   * collection; an admin without agencies gets an empty page without a query.
+   */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.agencyId IN :agencyIds"
+          + " AND (:tenantId IS NULL OR i.tenantId = :tenantId)"
+          + " AND (:targetRole IS NULL OR i.targetRole = :targetRole)"
+          + " AND (:status IS NULL OR i.status = :status)"
+          + " AND (:search IS NULL"
+          + "      OR LOWER(i.recipientEmail) LIKE CONCAT('%', :search, '%')"
+          + "      OR LOWER(i.firstName) LIKE CONCAT('%', :search, '%')"
+          + "      OR LOWER(i.lastName) LIKE CONCAT('%', :search, '%')"
+          + "      OR (:searchTenantId IS NOT NULL AND i.tenantId = :searchTenantId))"
+          + " ORDER BY i.createDate DESC")
+  Page<AccountInvite> findAllByFiltersWithinAgencies(
+      @Param("tenantId") Long tenantId,
+      @Param("targetRole") AccountInviteTargetRole targetRole,
+      @Param("status") AccountInviteStatus status,
+      @Param("search") String search,
+      @Param("searchTenantId") Long searchTenantId,
+      @Param("agencyIds") Collection<Long> agencyIds,
+      Pageable pageable);
+
   List<AccountInvite> findAllByAcceptedByUserIdAndTwoFactorStatus(
       String acceptedByUserId, TwoFactorGateStatus twoFactorStatus);
 

@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepositor
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteAccessPolicy.InviteListScope;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
@@ -91,15 +92,18 @@ public class AccountInviteService {
   private final @NonNull IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
   private final @NonNull IdReservationReleaseProcessor reservationReleaseProcessor;
   private final @NonNull PlatformTransactionManager transactionManager;
+  private final @NonNull AccountInviteAccessPolicy accessPolicy;
 
   @Transactional
-  public AccountInvite createInvite(CreateAccountInviteCommand command) {
-    if (command == null) {
+  public AccountInvite createInvite(CreateAccountInviteCommand requestedCommand) {
+    if (requestedCommand == null) {
       throw new BadRequestException("Request body is required");
     }
-    if (command.targetRole() == null) {
+    if (requestedCommand.targetRole() == null) {
       throw new BadRequestException("targetRole is required");
     }
+    // Cross-Träger guard: the target tenant, agency and role come from the request body.
+    CreateAccountInviteCommand command = accessPolicy.authorizeCreate(requestedCommand);
     if (isBlank(command.recipientEmail())) {
       throw new BadRequestException("recipientEmail is required");
     }
@@ -479,13 +483,29 @@ public class AccountInviteService {
       int page,
       int size) {
     String search = normalizeSearch(query);
+    PageRequest pageRequest = PageRequest.of(Math.max(page, 0), clampSize(size));
+    // Cross-Träger guard: without it an absent tenant_id listed the invites of every Träger.
+    InviteListScope scope = accessPolicy.scopeForListing(tenantId, targetRole);
+    if (scope.empty()) {
+      return Page.empty(pageRequest);
+    }
+    if (scope.restrictedToAgencies()) {
+      return accountInviteRepository.findAllByFiltersWithinAgencies(
+          scope.tenantId(),
+          scope.targetRole(),
+          status,
+          search,
+          parseNumericSearch(search),
+          scope.agencyIds(),
+          pageRequest);
+    }
     return accountInviteRepository.findAllByFilters(
-        tenantId,
-        targetRole,
+        scope.tenantId(),
+        scope.targetRole(),
         status,
         search,
         parseNumericSearch(search),
-        PageRequest.of(Math.max(page, 0), clampSize(size)));
+        pageRequest);
   }
 
   /**
@@ -514,7 +534,7 @@ public class AccountInviteService {
 
   @Transactional
   public InviteSendResult sendInvite(SendInviteCommand command) {
-    AccountInvite invite = findInvite(command.inviteId());
+    AccountInvite invite = findAuthorizedInvite(command.inviteId());
     InviteEmailTemplate template = findTemplate(command.templateId());
     // The invite was committed by an earlier createInvite transaction, so its id is a safe
     // audit anchor for a FAILED delivery row written in an independent transaction.
@@ -534,7 +554,7 @@ public class AccountInviteService {
     return requiresNewTransaction()
         .execute(
             transaction -> {
-              AccountInvite initialOldInvite = findInvite(command.inviteId());
+              AccountInvite initialOldInvite = findAuthorizedInvite(command.inviteId());
               if (initialOldInvite.getStatus() == AccountInviteStatus.ACCEPTED) {
                 throw new BadRequestException("Accepted invites cannot be resent");
               }
@@ -689,7 +709,7 @@ public class AccountInviteService {
 
   @Transactional
   public AccountInvite revokeInvite(Long inviteId) {
-    AccountInvite invite = findInvite(inviteId);
+    AccountInvite invite = findAuthorizedInvite(inviteId);
     if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
       throw new BadRequestException("Accepted invites cannot be revoked");
     }
@@ -850,10 +870,12 @@ public class AccountInviteService {
     return waiveTwoFactor(findInvite(inviteId), command);
   }
 
+  /** Waives the 2FA gate; applies the cross-Träger guard itself, whichever overload is used. */
   public AccountInvite waiveTwoFactor(AccountInvite invite, WaiveTwoFactorCommand command) {
     if (invite == null) {
       throw new BadRequestException("Invite is required");
     }
+    accessPolicy.authorizeAccess(invite);
     if (command == null || isBlank(command.reason())) {
       throw new BadRequestException("Waiver reason is required");
     }
@@ -1010,6 +1032,13 @@ public class AccountInviteService {
       }
       throw exception;
     }
+  }
+
+  /** Loads an invite for an admin action and applies the cross-Träger guard. */
+  private AccountInvite findAuthorizedInvite(Long inviteId) {
+    AccountInvite invite = findInvite(inviteId);
+    accessPolicy.authorizeAccess(invite);
+    return invite;
   }
 
   private AccountInvite findInvite(Long inviteId) {

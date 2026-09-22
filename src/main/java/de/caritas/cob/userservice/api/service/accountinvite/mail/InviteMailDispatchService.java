@@ -7,10 +7,6 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
-import de.caritas.cob.userservice.api.service.email.layout.BrandedEmailLayoutRenderer;
-import de.caritas.cob.userservice.api.service.email.layout.BrandedEmailRequest;
-import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
-import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import java.util.Map;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -32,12 +28,13 @@ import org.springframework.web.client.RestTemplate;
  * smtp.password} properties, falling back to the super-admin-guarded credentials endpoint when the
  * request context allows it.
  *
- * <p>Since ORISO-UserService#914 this service is also the single choke point where the branded
- * layout is applied: callers hand over the <em>authored content</em> and the primary action, never
- * finished markup. Wrapping here (instead of in each caller) is what guarantees that every mail on
- * this path — tenant-admin invite, counsellor invite, resend — is branded, and that the Admin
- * preview endpoint and the dispatcher cannot drift apart. The send contract itself is untouched:
- * receipt after acceptance, {@link SmtpSendException} otherwise.
+ * <p>Since ORISO-UserService#914 this service is also the single choke point where the frame is
+ * applied: callers hand over the <em>authored content</em> and the primary action, never finished
+ * markup. Wrapping here (instead of in each caller) is what guarantees that every mail on this path
+ * — tenant-admin invite, counsellor invite, resend — carries the frame, and that the Admin preview
+ * endpoint and the dispatcher cannot drift apart. The frame itself is the ORISO e-mail design
+ * system (see {@link InviteFrameMailRenderer}); the send contract is untouched: receipt after
+ * acceptance, {@link SmtpSendException} otherwise.
  */
 @Slf4j
 @Service
@@ -46,8 +43,7 @@ public class InviteMailDispatchService {
   private final @NonNull RestTemplate restTemplate;
   private final @NonNull ApplicationSettingsService applicationSettingsService;
   private final @NonNull InviteMailTransport inviteMailTransport;
-  private final @NonNull EmailBrandingResolver emailBrandingResolver;
-  private final @NonNull BrandedEmailLayoutRenderer brandedEmailLayoutRenderer;
+  private final @NonNull InviteFrameMailRenderer inviteFrameMailRenderer;
   private final String consultingTypeServiceApiUrl;
   private final String configuredSmtpUsername;
   private final String configuredSmtpPassword;
@@ -56,16 +52,14 @@ public class InviteMailDispatchService {
       @NonNull RestTemplate restTemplate,
       @NonNull ApplicationSettingsService applicationSettingsService,
       @NonNull InviteMailTransport inviteMailTransport,
-      @NonNull EmailBrandingResolver emailBrandingResolver,
-      @NonNull BrandedEmailLayoutRenderer brandedEmailLayoutRenderer,
+      @NonNull InviteFrameMailRenderer inviteFrameMailRenderer,
       @Value("${consulting.type.service.api.url:}") String consultingTypeServiceApiUrl,
       @Value("${smtp.user:}") String configuredSmtpUsername,
       @Value("${smtp.password:}") String configuredSmtpPassword) {
     this.restTemplate = restTemplate;
     this.applicationSettingsService = applicationSettingsService;
     this.inviteMailTransport = inviteMailTransport;
-    this.emailBrandingResolver = emailBrandingResolver;
-    this.brandedEmailLayoutRenderer = brandedEmailLayoutRenderer;
+    this.inviteFrameMailRenderer = inviteFrameMailRenderer;
     this.consultingTypeServiceApiUrl = consultingTypeServiceApiUrl;
     this.configuredSmtpUsername = configuredSmtpUsername;
     this.configuredSmtpPassword = configuredSmtpPassword;
@@ -83,8 +77,8 @@ public class InviteMailDispatchService {
   }
 
   /**
-   * Renders the authored content into the canonical branded layout and sends it as a genuine
-   * multipart mail.
+   * Renders the authored content into the canonical ORISO frame and sends it as a genuine multipart
+   * mail.
    *
    * @param bodyContent the authored template body — plain text or simple markup, sanitised by the
    *     layout renderer; callers must not pass finished HTML
@@ -145,9 +139,8 @@ public class InviteMailDispatchService {
    */
   public BrandedEmail renderBrandedMail(
       String subject, String bodyContent, String primaryActionUrl, Long tenantId, String language) {
-    EmailBranding branding = emailBrandingResolver.resolve(tenantId);
-    return brandedEmailLayoutRenderer.render(
-        branding, new BrandedEmailRequest(subject, bodyContent, primaryActionUrl, null, language));
+    return inviteFrameMailRenderer.render(
+        subject, bodyContent, primaryActionUrl, tenantId, language);
   }
 
   /**
