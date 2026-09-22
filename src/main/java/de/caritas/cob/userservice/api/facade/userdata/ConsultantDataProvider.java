@@ -101,6 +101,7 @@ public class ConsultantDataProvider {
         .userRoles(authenticatedUser.getRoles())
         .grantedAuthorities(authenticatedUser.getGrantedAuthorities())
         .isWalkThroughEnabled(consultant.getWalkThroughEnabled())
+        .liveChatViaSidebar(Boolean.TRUE.equals(consultant.getLiveChatViaSidebar()))
         .emailToggles(emailTogglesOf(consultant))
         .hasAnonymousConversations(hasAtLeastOneTypeWithAllowedAnonymousConversations(agencies))
         .hasArchive(hasArchive(consultant))
