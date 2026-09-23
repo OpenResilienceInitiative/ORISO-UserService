@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.Tone;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -104,13 +107,34 @@ class InviteFrameMailRendererTest {
 
     assertThat(mail.html())
         .contains("<img src=\"https://nord.oriso.org/service/tenant/public/branding/logo\"")
-        .as("the tenant name brands the header and the footer")
+        .as("the tenant name brands the header")
         .contains("Träger Nord e.V.")
         .as("the tenant colour reaches the accent bar and the button")
         .contains("#1c4f8f")
         .as("tenant imprint and privacy pointers, not the platform's")
         .contains("https://nord.oriso.org/impressum")
         .contains("https://nord.oriso.org/datenschutz");
+  }
+
+  /**
+   * The Träger brands the header, but the footer's "X ist ein Angebot von Y" describes the
+   * platform: X is the platform name, Y the operator (Frank, 2026-09-23).
+   */
+  @Test
+  void footerNamesThePlatformAndItsOperator_evenWhenATraegerBrandsTheHeader() {
+    BrandedEmail mail =
+        render(
+            new EmailBranding("Caritasverband Musterstadt e.V.", null, "#1c4f8f", null, null),
+            "Einladung",
+            "Hallo",
+            ACCEPT_URL);
+
+    assertThat(mail.html())
+        .contains(">Online-Beratung ist ein Angebot von ORISO.</div>")
+        .doesNotContain("Musterstadt e.V. ist ein Angebot von");
+    assertThat(mail.plainText())
+        .contains("\nOnline-Beratung ist ein Angebot von ORISO.\n")
+        .doesNotContain("Musterstadt e.V. ist ein Angebot von");
   }
 
   /** No logo means the text wordmark carries the header — never an {@code <img src="">}. */
@@ -158,6 +182,105 @@ class InviteFrameMailRendererTest {
         .doesNotContain("{{ctaBlock}}")
         .contains("Der Vertrag ist unterschrieben.");
     assertThat(mail.plainText()).doesNotContain("Einladung annehmen").doesNotContain("{{");
+  }
+
+  /**
+   * The same frame also carries mails that are not invitations and have no link at all — the
+   * "contract signed" notice ({@code DpaSignedNoticeService}) is one. Its recipients must not be
+   * told to keep a link to themselves that does not exist, nor that the mail belongs to an
+   * invitation it has nothing to do with.
+   */
+  @ParameterizedTest
+  @CsvSource(
+      delimiter = '|',
+      value = {
+        "de | diesen Link | Einladung | Diese E-Mail wurde automatisch versendet. Bitte antworten Sie"
+            + " nicht darauf.",
+        "en | this link | invitation | This email was sent automatically. Please do not reply to it."
+      })
+  void withoutAnActionSaysNothingAboutALinkOrAnInvitation(
+      String language, String linkSentence, String invitation, String neutralNote) {
+    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+
+    BrandedEmail mail =
+        InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver)
+            .render("Notice", "Der Vertrag ist unterschrieben.", null, 42L, language);
+
+    assertNeutralFrame(mail, linkSentence, invitation, neutralNote);
+  }
+
+  /**
+   * The informal German tone is in the catalogue too; no invite selects it yet, but its frame must
+   * follow the same rule the day one does.
+   */
+  @Test
+  void withoutAnActionTheInformalToneIsNeutralToo() {
+    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+
+    BrandedEmail mail =
+        InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver)
+            .render(
+                "Hinweis",
+                "Der Vertrag ist unterschrieben.",
+                null,
+                42L,
+                InviteFrameMailRenderer.Labels.of(Tone.DE_INFORMAL));
+
+    assertNeutralFrame(
+        mail,
+        "diesen Link",
+        "Einladung",
+        "Diese E-Mail wurde automatisch versendet. Bitte antworte nicht darauf.");
+  }
+
+  /** With an action the invitation frame is unchanged: security line plus invitation footer. */
+  @ParameterizedTest
+  @CsvSource(
+      delimiter = '|',
+      value = {
+        "de | Wir fragen Sie nie per E-Mail nach Ihrem Passwort. Geben Sie diesen Link an niemanden"
+            + " weiter. | Diese E-Mail gehört zu Ihrer Einladung und lässt sich nicht abbestellen."
+            + " Bitte antworten Sie nicht darauf.",
+        "en | We will never ask for your password by email. Do not pass this link on to anyone. |"
+            + " This email is part of your invitation and cannot be unsubscribed from. Please do"
+            + " not reply to it."
+      })
+  void withAnActionKeepsTheLinkSecurityLineAndTheInvitationFooter(
+      String language, String securityLine, String invitationNote) {
+    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+
+    BrandedEmail mail =
+        InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver)
+            .render("Einladung", "Hallo", ACCEPT_URL, 42L, language);
+
+    assertThat(mail.html()).contains(securityLine).contains(invitationNote).doesNotContain("{{");
+    assertThat(mail.plainText())
+        .contains(TEXT_RULE + "\n" + securityLine)
+        .contains(invitationNote)
+        .doesNotContain("{{");
+  }
+
+  /**
+   * The plain-text divider that opens the fine print. It belongs to the fine print, as the HTML
+   * divider does: a mail without the security line has no divider left over either.
+   */
+  private static final String TEXT_RULE = "-".repeat(64);
+
+  private static void assertNeutralFrame(
+      BrandedEmail mail, String linkSentence, String invitation, String neutralNote) {
+    assertThat(mail.html())
+        .contains("Der Vertrag ist unterschrieben.")
+        .doesNotContain(linkSentence)
+        .doesNotContain(invitation)
+        .contains(neutralNote)
+        .doesNotContain("{{");
+    assertThat(mail.plainText())
+        .contains("Der Vertrag ist unterschrieben.")
+        .doesNotContain(linkSentence)
+        .doesNotContain(invitation)
+        .contains(neutralNote)
+        .doesNotContain(TEXT_RULE)
+        .doesNotContain("{{");
   }
 
   /** A relative or {@code javascript:} action is dropped, never interpolated into an href. */

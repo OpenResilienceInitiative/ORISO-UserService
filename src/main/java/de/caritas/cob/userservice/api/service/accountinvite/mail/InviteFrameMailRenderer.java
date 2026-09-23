@@ -6,16 +6,14 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.RenderedEmail;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.Tone;
+import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
-import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
 import de.caritas.cob.userservice.api.service.email.layout.EmailContentSanitizer;
-import java.util.LinkedHashMap;
 import java.util.Locale;
 import java.util.Map;
 import lombok.NonNull;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -36,10 +34,9 @@ import org.springframework.stereotype.Component;
  * <p><b>Why the branding is an overlay.</b> {@link OrisoEmailBrand} is platform-level by contract
  * (ADR-021) and has no TenantService wiring; {@link EmailBrandingResolver} already resolves the
  * tenant-varying half — name, absolute logo URL, accent colour, imprint and privacy URLs — with
- * every fallback the invite path needs, including "the tenant does not exist yet". Overlaying the
- * resolver's five values onto the platform value map is therefore strictly smaller than teaching
- * {@code OrisoEmailBrand} to talk to TenantService, and it leaves exactly one implementation of
- * tenant branding resolution in the service rather than two that can disagree.
+ * every fallback the invite path needs, including "the tenant does not exist yet". The overlay
+ * itself lives in {@link TenantEmailBrandValues}, shared with the DPA signing mail, so there is
+ * exactly one implementation of tenant branding in the service rather than two that can disagree.
  */
 @Component
 public class InviteFrameMailRenderer {
@@ -51,21 +48,18 @@ public class InviteFrameMailRenderer {
 
   private final EmailBrandingResolver emailBrandingResolver;
   private final EmailContentSanitizer sanitizer;
-  private final OrisoEmailBrand orisoEmailBrand;
+  private final TenantEmailBrandValues tenantEmailBrandValues;
   private final OrisoEmailRenderer orisoEmailRenderer;
-  private final String applicationBaseUrl;
 
   public InviteFrameMailRenderer(
       @NonNull EmailBrandingResolver emailBrandingResolver,
       @NonNull EmailContentSanitizer sanitizer,
-      @NonNull OrisoEmailBrand orisoEmailBrand,
-      @NonNull OrisoEmailRenderer orisoEmailRenderer,
-      @Value("${app.base.url}") String applicationBaseUrl) {
+      @NonNull TenantEmailBrandValues tenantEmailBrandValues,
+      @NonNull OrisoEmailRenderer orisoEmailRenderer) {
     this.emailBrandingResolver = emailBrandingResolver;
     this.sanitizer = sanitizer;
-    this.orisoEmailBrand = orisoEmailBrand;
+    this.tenantEmailBrandValues = tenantEmailBrandValues;
     this.orisoEmailRenderer = orisoEmailRenderer;
-    this.applicationBaseUrl = applicationBaseUrl;
   }
 
   /**
@@ -78,23 +72,33 @@ public class InviteFrameMailRenderer {
    */
   public BrandedEmail render(
       String subject, String bodyContent, String primaryActionUrl, Long tenantId, String language) {
+    return render(subject, bodyContent, primaryActionUrl, tenantId, Labels.forLanguage(language));
+  }
+
+  /** As above, with the frame wording already chosen; lets a test reach every catalogue tone. */
+  BrandedEmail render(
+      String subject, String bodyContent, String primaryActionUrl, Long tenantId, Labels labels) {
     EmailBranding branding = emailBrandingResolver.resolve(tenantId);
-    Labels labels = Labels.forLanguage(language);
 
     String safeSubject = isBlank(subject) ? "" : subject.trim();
     String bodyHtml = sanitizer.toContentHtml(bodyContent, branding.linkColor());
     String bodyText = sanitizer.toPlainText(bodyHtml);
 
-    Map<String, String> values = brandValues(branding);
+    Map<String, String> values = tenantEmailBrandValues.values(branding);
     values.put("subject", safeSubject);
     values.put("preheader", preheader(bodyText));
     values.put("linkColor", branding.linkColor());
     values.put("actionLabel", labels.ctaLabel());
     values.put("fallbackHint", labels.fallbackHint());
+    values.put("assurance", labels.assurance());
     String actionUrl = safeActionUrl(primaryActionUrl);
     if (actionUrl != null) {
       values.put("actionUrl", actionUrl);
     }
+    // Without an action this frame carries a notice, not an invitation (the "contract signed"
+    // mail is one): {{assuranceBlock}} then drops the "do not pass this link on" line, and the
+    // footer must not claim the mail belongs to an invitation either.
+    values.put("footerNote", actionUrl != null ? labels.invitationNote() : labels.neutralNote());
 
     RenderedEmail rendered =
         orisoEmailRenderer.render(
@@ -104,40 +108,6 @@ public class InviteFrameMailRenderer {
     // operator's, unchanged — the Admin preview and the sent mail therefore show the same line.
     return new BrandedEmail(
         rendered.subject(), rendered.html(), rendered.text().replaceAll("\n{3,}", "\n\n"));
-  }
-
-  /**
-   * The platform value map with the tenant-varying values overlaid. Everything the resolver
-   * produces is already validated: the logo is {@code null} or an absolute http(s) URL, the accent
-   * is a {@code #rrggbb} literal, the footer URLs are absolute or {@code null}.
-   */
-  private Map<String, String> brandValues(EmailBranding branding) {
-    Map<String, String> values =
-        new LinkedHashMap<>(orisoEmailBrand.values(applicationBaseUrl, branding.accentColor()));
-
-    // Header wordmark and the "is a service provided by" line: the Träger's name, the platform's
-    // operator. brandName already falls back to the configured platform name.
-    values.put("platformName", branding.brandName());
-
-    // Blank rather than absent: {{logoCell}} expands to nothing for a blank logo URL, and an
-    // <img src=""> next to the wordmark is a broken-image icon in every mail client.
-    values.put("logoUrl", branding.logoUrl() == null ? "" : branding.logoUrl());
-
-    // The button fill is contrast-guarded (its label is white in the template); the 4px accent bar
-    // only follows the tenant when the tenant actually configured a colour — otherwise the
-    // platform's two-tone header (lighter bar, darker button) would collapse into one flat red.
-    values.put("primaryColor", orisoEmailBrand.readablePrimary(branding.accentColor()));
-    if (!EmailColors.PLATFORM_ACCENT_DARK.equals(branding.accentColor())) {
-      values.put("accentColor", branding.accentColor());
-    }
-
-    if (branding.imprintUrl() != null) {
-      values.put("imprintUrl", branding.imprintUrl());
-    }
-    if (branding.privacyUrl() != null) {
-      values.put("privacyUrl", branding.privacyUrl());
-    }
-    return values;
   }
 
   /** The hidden line mail clients show next to the subject in the inbox list. */
@@ -165,20 +135,57 @@ public class InviteFrameMailRenderer {
    * in the {@code InviteEmailTemplate} rows. German is the platform default and resolves to the
    * formal tone, exactly as the previous layout did; the informal German templates exist in the
    * catalogue but no invite reaches them yet.
+   *
+   * <p>{@code assurance} and {@code invitationNote} are only true of a mail with an action link;
+   * {@code neutralNote} is the footer line for one without.
    */
-  record Labels(Tone tone, String ctaLabel, String fallbackHint) {
+  record Labels(
+      Tone tone,
+      String ctaLabel,
+      String fallbackHint,
+      String assurance,
+      String invitationNote,
+      String neutralNote) {
 
     private static final Labels GERMAN =
         new Labels(
             Tone.DE_FORMAL,
             "Einladung annehmen",
-            "Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:");
+            "Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:",
+            "Wir fragen Sie nie per E-Mail nach Ihrem Passwort. Geben Sie diesen Link an niemanden"
+                + " weiter.",
+            "Diese E-Mail gehört zu Ihrer Einladung und lässt sich nicht abbestellen. Bitte antworten"
+                + " Sie nicht darauf.",
+            "Diese E-Mail wurde automatisch versendet. Bitte antworten Sie nicht darauf.");
+
+    private static final Labels GERMAN_INFORMAL =
+        new Labels(
+            Tone.DE_INFORMAL,
+            "Einladung annehmen",
+            "Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:",
+            "Wir fragen dich nie per E-Mail nach deinem Passwort. Gib diesen Link an niemanden"
+                + " weiter.",
+            "Diese E-Mail gehört zu deiner Einladung und lässt sich nicht abbestellen. Bitte"
+                + " antworte nicht darauf.",
+            "Diese E-Mail wurde automatisch versendet. Bitte antworte nicht darauf.");
 
     private static final Labels ENGLISH =
         new Labels(
             Tone.EN,
             "Accept invitation",
-            "If the button does not work, copy this link into your browser:");
+            "If the button does not work, copy this link into your browser:",
+            "We will never ask for your password by email. Do not pass this link on to anyone.",
+            "This email is part of your invitation and cannot be unsubscribed from. Please do not"
+                + " reply to it.",
+            "This email was sent automatically. Please do not reply to it.");
+
+    static Labels of(Tone tone) {
+      return switch (tone) {
+        case EN -> ENGLISH;
+        case DE_INFORMAL -> GERMAN_INFORMAL;
+        case DE_FORMAL -> GERMAN;
+      };
+    }
 
     static Labels forLanguage(String language) {
       if (language != null && language.trim().toLowerCase(Locale.ROOT).startsWith("en")) {
