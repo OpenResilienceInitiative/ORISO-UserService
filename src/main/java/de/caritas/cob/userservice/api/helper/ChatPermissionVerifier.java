@@ -47,7 +47,13 @@ public class ChatPermissionVerifier {
   public void verifyCanModerateChat(Chat chat) {
     Set<String> roles = authenticatedUser.getRoles();
     if (roles.contains(UserRole.CONSULTANT.getValue())) {
-      this.verifyConsultantPermissionForChat(chat);
+      var consultant = retrieveConsultant();
+      if (!groupChatConsultantAccess.mayModerate(chat, consultant)) {
+        throw new ForbiddenException(
+            String.format(
+                "Consultant with id %s may not moderate chat with id %s",
+                consultant.getId(), chat.getId()));
+      }
     } else {
       throw new ForbiddenException("User is not a consultant");
     }
@@ -61,13 +67,7 @@ public class ChatPermissionVerifier {
    * @param chat the {@link Chat}
    */
   private void verifyConsultantPermissionForChat(Chat chat) {
-    Consultant consultant =
-        consultantService
-            .getConsultantViaAuthenticatedUser(authenticatedUser)
-            .orElseThrow(
-                () ->
-                    new NotFoundException(
-                        "Consultant with id %s not found", authenticatedUser.getUserId()));
+    Consultant consultant = retrieveConsultant();
 
     if (!groupChatConsultantAccess.mayAccess(chat, consultant)) {
       throw new ForbiddenException(
@@ -75,6 +75,15 @@ public class ChatPermissionVerifier {
               "Consultant with id %s has no permission for chat with id %s",
               consultant.getId(), chat.getId()));
     }
+  }
+
+  private Consultant retrieveConsultant() {
+    return consultantService
+        .getConsultantViaAuthenticatedUser(authenticatedUser)
+        .orElseThrow(
+            () ->
+                new NotFoundException(
+                    "Consultant with id %s not found", authenticatedUser.getUserId()));
   }
 
   /**

@@ -292,6 +292,31 @@ class GroupChatCrossTenantAccessE2EIT {
     mockMvc.perform(consultantGet("/users/chat/" + group.getId())).andExpect(status().isOk());
   }
 
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void anAdmittedMemberOfAnotherTragerIsNoModerator() throws Exception {
+    givenTheGroupIsStarted();
+    givenParticipant(foreignCounsellor, ParticipantRole.PARTICIPANT);
+    actingAs(foreignCounsellor);
+
+    mockMvc
+        .perform(consultantPut("/users/chat/" + group.getId() + "/verify"))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void aCoModeratorFromAnotherBeratungsstelleIsAModerator() throws Exception {
+    givenTheGroupIsStarted();
+    var coModerator = inTenantAndAgency(thirdConsultant(), OWN_TENANT, OTHER_AGENCY_SAME_TENANT);
+    givenParticipant(coModerator, ParticipantRole.CO_MODERATOR);
+    actingAs(coModerator);
+
+    mockMvc
+        .perform(consultantPut("/users/chat/" + group.getId() + "/verify"))
+        .andExpect(status().isOk());
+  }
+
   private Consultant inTenantAndAgency(Consultant consultant, long tenantId, long agencyId) {
     consultant.setTenantId(tenantId);
     var saved = consultantRepository.save(consultant);

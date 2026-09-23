@@ -4,9 +4,12 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant;
+import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import java.util.Collection;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
@@ -34,11 +37,30 @@ public class GroupChatConsultantAccess {
         || (isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant));
   }
 
+  /**
+   * Whether the counsellor may act as a moderator of the group: an Owner or Co-Moderator of the
+   * group, or a same-Träger colleague of its Beratungsstelle. A plain member — also one admitted
+   * from another Träger — may not.
+   */
+  public boolean mayModerate(Chat chat, Consultant consultant) {
+    if (chat == null || consultant == null) {
+      return false;
+    }
+    return participationOf(chat, consultant)
+            .map(GroupChatParticipant::getRole)
+            .filter(role -> role == ParticipantRole.OWNER || role == ParticipantRole.CO_MODERATOR)
+            .isPresent()
+        || (isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant));
+  }
+
   private boolean isParticipant(Chat chat, Consultant consultant) {
-    return chat.getId() != null
-        && participantRepository
-            .findBySeriesIdAndConsultantId(chat.getId(), consultant.getId())
-            .isPresent();
+    return participationOf(chat, consultant).isPresent();
+  }
+
+  private Optional<GroupChatParticipant> participationOf(Chat chat, Consultant consultant) {
+    return chat.getId() == null
+        ? Optional.empty()
+        : participantRepository.findBySeriesIdAndConsultantId(chat.getId(), consultant.getId());
   }
 
   private static boolean isSameTenantAsOwner(Chat chat, Consultant consultant) {
