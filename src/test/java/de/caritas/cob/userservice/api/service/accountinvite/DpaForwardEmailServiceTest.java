@@ -50,6 +50,7 @@ class DpaForwardEmailServiceTest {
 
     verify(dpaSigningEmailDispatchService)
         .send(
+            84L,
             "bart.simpson@oriso.org",
             "E2E Full Gate 202607191747",
             "https://app.oriso-dev.site/dpa-sign/single-use-token",
@@ -57,11 +58,11 @@ class DpaForwardEmailServiceTest {
   }
 
   /**
-   * A reserved-but-unregistered tenant has no name yet. The fallback lands after "für" in the
-   * signing mail ("Vertragsunterlagen für …"), which takes the accusative: "Ihre Organisation".
+   * A reserved-but-unregistered tenant has no name yet. No name is passed on: the renderer words
+   * the fallback in the case each sentence needs (DpaSigningMailDesignSystemTest pins the wording).
    */
   @Test
-  void sendSigningLink_unknownTenant_fallsBackToGrammaticalGenericName() {
+  void sendSigningLink_unknownTenant_passesNoNameSoTheRendererWordsTheFallback() {
     when(tenantService.getRestrictedTenantData(84L))
         .thenThrow(
             org.springframework.web.client.HttpClientErrorException.create(
@@ -76,8 +77,9 @@ class DpaForwardEmailServiceTest {
 
     verify(dpaSigningEmailDispatchService)
         .send(
+            84L,
             "bart.simpson@oriso.org",
-            "Ihre Organisation",
+            null,
             "https://app.oriso-dev.site/dpa-sign/single-use-token",
             LocalDateTime.parse("2026-08-03T13:27:28.243207790"));
   }
@@ -101,6 +103,7 @@ class DpaForwardEmailServiceTest {
 
     verify(dpaSigningEmailDispatchService)
         .send(
+            84L,
             "bart.simpson@oriso.org",
             "E2E Full Gate 202607191747",
             "https://app.oriso-dev.site/dpa-sign/single-use-token",
@@ -126,7 +129,7 @@ class DpaForwardEmailServiceTest {
 
     verifyNoInteractions(tenantService);
     verify(dpaSigningEmailDispatchService, org.mockito.Mockito.never())
-        .send(anyString(), anyString(), anyString(), any(LocalDateTime.class));
+        .send(any(), anyString(), anyString(), anyString(), any(LocalDateTime.class));
   }
 
   /** A relative path outside the signing route stays rejected. */
@@ -145,7 +148,7 @@ class DpaForwardEmailServiceTest {
 
     verifyNoInteractions(tenantService);
     verify(dpaSigningEmailDispatchService, org.mockito.Mockito.never())
-        .send(anyString(), anyString(), anyString(), any(LocalDateTime.class));
+        .send(any(), anyString(), anyString(), anyString(), any(LocalDateTime.class));
   }
 
   @Test
@@ -163,7 +166,7 @@ class DpaForwardEmailServiceTest {
 
     verifyNoInteractions(tenantService);
     verify(dpaSigningEmailDispatchService, org.mockito.Mockito.never())
-        .send(anyString(), anyString(), anyString(), any(LocalDateTime.class));
+        .send(any(), anyString(), anyString(), anyString(), any(LocalDateTime.class));
   }
 
   @Test
@@ -173,6 +176,7 @@ class DpaForwardEmailServiceTest {
     DpaSigningEmailPreview expected =
         new DpaSigningEmailPreview("Vertragsunterlagen", "<p>canonical preview</p>");
     when(dpaSigningEmailDispatchService.preview(
+            org.mockito.ArgumentMatchers.eq(84L),
             org.mockito.ArgumentMatchers.eq("preview@example.org"),
             org.mockito.ArgumentMatchers.eq("E2E Full Gate 202607191747"),
             org.mockito.ArgumentMatchers.eq(
@@ -184,13 +188,14 @@ class DpaForwardEmailServiceTest {
 
     verify(dpaSigningEmailDispatchService)
         .preview(
+            org.mockito.ArgumentMatchers.eq(84L),
             org.mockito.ArgumentMatchers.eq("preview@example.org"),
             org.mockito.ArgumentMatchers.eq("E2E Full Gate 202607191747"),
             org.mockito.ArgumentMatchers.eq(
                 "https://app.oriso-dev.site/dpa-sign/SAMPLE-PREVIEW-TOKEN"),
             any(LocalDateTime.class));
     verify(dpaSigningEmailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), any(LocalDateTime.class));
+        .send(any(), anyString(), anyString(), anyString(), any(LocalDateTime.class));
   }
 
   @Test

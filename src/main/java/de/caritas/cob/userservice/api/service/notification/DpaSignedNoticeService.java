@@ -67,15 +67,15 @@ public class DpaSignedNoticeService {
   // TenantService timestamps are zoneless UTC; the notice must show German wall-clock time.
   private static final ZoneId MAIL_ZONE = ZoneId.of("Europe/Berlin");
 
-  static final String DEFAULT_SUBJECT_DE =
-      "Auftragsverarbeitungsvertrag unterzeichnet – {{tenantName}}";
-  static final String DEFAULT_SUBJECT_EN = "Data processing agreement signed – {{tenantName}}";
+  // Mail copy says "Vertragsunterlagen" / "contract documents", never "AVV" (Frank, 2026-09-23).
+  static final String DEFAULT_SUBJECT_DE = "Vertragsunterlagen unterzeichnet – {{tenantName}}";
+  static final String DEFAULT_SUBJECT_EN = "Contract documents signed – {{tenantName}}";
 
   static final String DEFAULT_BODY_DE =
       """
       Guten Tag,
 
-      der Auftragsverarbeitungsvertrag für {{tenantName}} wurde unterzeichnet.
+      die Vertragsunterlagen für {{tenantName}} wurden unterzeichnet.
 
       Vertragsversion: {{dpaVersion}}
       Unterzeichnet am: {{signedAt}}
@@ -90,7 +90,7 @@ public class DpaSignedNoticeService {
       """
       Hello,
 
-      the data processing agreement for {{tenantName}} has been signed.
+      the contract documents for {{tenantName}} have been signed.
 
       Contract version: {{dpaVersion}}
       Signed at: {{signedAt}}

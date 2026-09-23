@@ -289,16 +289,23 @@ public class OrisoEmailRenderer {
   private String substitute(String source, Map<String, String> values, boolean escape) {
     Matcher matcher = PLACEHOLDER.matcher(source);
     StringBuilder out = new StringBuilder();
+    int tail = 0;
     while (matcher.find()) {
+      out.append(source, tail, matcher.start());
+      tail = matcher.end();
       String replacement = values.get(matcher.group(1));
       if (replacement == null) {
-        matcher.appendReplacement(out, Matcher.quoteReplacement(matcher.group()));
+        out.append(matcher.group());
         continue;
       }
-      matcher.appendReplacement(
-          out, Matcher.quoteReplacement(escape ? escapeHtml(replacement) : replacement));
+      out.append(escape ? escapeHtml(replacement) : replacement);
+      // A value ending in an abbreviation ("… e.V.") at the end of a sentence: its dot is the
+      // full stop too, so the template's own one would print "e.V..".
+      if (replacement.endsWith(".") && source.startsWith(".", tail)) {
+        tail++;
+      }
     }
-    matcher.appendTail(out);
+    out.append(source, tail, source.length());
     return out.toString();
   }
 

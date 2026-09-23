@@ -67,6 +67,8 @@ public class OrisoEmailBrand {
     Map<String, String> values = new LinkedHashMap<>();
 
     values.put("platformName", platformName);
+    // The offered-by line describes the platform; unlike platformName, no sender brands it.
+    values.put("offeringName", platformName);
     values.put("orgName", orgName);
     values.put("orgAddress", orgAddress);
     values.put("contactLine", contactLine);
