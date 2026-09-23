@@ -1,0 +1,85 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <!-- #1536: replace the retired, health-revealing reason codes in the legacy policy table with
+       four neutral codes. Old rows are disabled, never deleted, so stored handover requests that
+       reference them stay readable. Admin settings are carried over to the neutral rows. -->
+  <changeSet id="20260923-case-handover-neutral-reasons" author="oriso">
+    <preConditions onFail="MARK_RAN">
+      <tableExists tableName="case_handover_reason_policy" />
+    </preConditions>
+    <addColumn tableName="case_handover_reason_policy">
+      <column name="retired_by_neutral_reasons" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false" />
+      </column>
+    </addColumn>
+    <sql>
+      INSERT INTO case_handover_reason_policy (
+        code, label, client_consent_required, client_consent_mode, access_allowed, enabled,
+        display_order, policy_authority, client_notification_templates,
+        max_access_duration_minutes, updated_at)
+      SELECT 'ADVICE_REQUESTED', 'Advice requested', client_consent_required, client_consent_mode,
+        access_allowed, enabled, display_order, policy_authority, client_notification_templates,
+        max_access_duration_minutes, CURRENT_TIMESTAMP
+      FROM case_handover_reason_policy
+      WHERE code = 'COUNSELLOR_ASKED_FOR_ADVICE'
+        AND NOT EXISTS (
+          SELECT 1 FROM case_handover_reason_policy WHERE code = 'ADVICE_REQUESTED');
+
+      INSERT INTO case_handover_reason_policy (
+        code, label, client_consent_required, client_consent_mode, access_allowed, enabled,
+        display_order, policy_authority, client_notification_templates,
+        max_access_duration_minutes, updated_at)
+      SELECT 'PLANNED_ABSENCE', 'Planned absence', client_consent_required, client_consent_mode,
+        access_allowed, enabled, display_order, policy_authority, client_notification_templates,
+        NULL, CURRENT_TIMESTAMP
+      FROM case_handover_reason_policy
+      WHERE code = 'COUNSELLOR_ON_HOLIDAY'
+        AND NOT EXISTS (
+          SELECT 1 FROM case_handover_reason_policy WHERE code = 'PLANNED_ABSENCE');
+
+      -- Templates are not copied: the old ones may name the illness.
+      INSERT INTO case_handover_reason_policy (
+        code, label, client_consent_required, client_consent_mode, access_allowed, enabled,
+        display_order, policy_authority, client_notification_templates,
+        max_access_duration_minutes, updated_at)
+      SELECT 'UNPLANNED_ABSENCE', 'Unplanned absence', client_consent_required,
+        client_consent_mode, access_allowed, enabled, display_order, policy_authority, NULL,
+        NULL, CURRENT_TIMESTAMP
+      FROM case_handover_reason_policy
+      WHERE code = 'COUNSELLOR_IS_ILL'
+        AND NOT EXISTS (
+          SELECT 1 FROM case_handover_reason_policy WHERE code = 'UNPLANNED_ABSENCE');
+
+      INSERT INTO case_handover_reason_policy (
+        code, label, client_consent_required, client_consent_mode, access_allowed, enabled,
+        display_order, policy_authority, client_notification_templates,
+        max_access_duration_minutes, updated_at)
+      SELECT 'ASSIGNMENT_ENDED', 'Assignment ended', client_consent_required, client_consent_mode,
+        access_allowed, enabled, display_order, policy_authority, client_notification_templates,
+        NULL, CURRENT_TIMESTAMP
+      FROM case_handover_reason_policy
+      WHERE code = 'COUNSELLOR_LEFT'
+        AND NOT EXISTS (
+          SELECT 1 FROM case_handover_reason_policy WHERE code = 'ASSIGNMENT_ENDED');
+
+      UPDATE case_handover_reason_policy
+      SET enabled = 0, retired_by_neutral_reasons = 1
+      WHERE code IN (
+          'COUNSELLOR_ASKED_FOR_ADVICE', 'COUNSELLOR_ON_HOLIDAY', 'COUNSELLOR_IS_ILL',
+          'COUNSELLOR_LEFT')
+        AND enabled = 1;
+    </sql>
+    <rollback>
+      <sql>
+        UPDATE case_handover_reason_policy
+        SET enabled = 1
+        WHERE retired_by_neutral_reasons = 1;
+        DELETE FROM case_handover_reason_policy
+        WHERE code IN ('ADVICE_REQUESTED', 'PLANNED_ABSENCE', 'UNPLANNED_ABSENCE', 'ASSIGNMENT_ENDED');
+      </sql>
+      <dropColumn tableName="case_handover_reason_policy" columnName="retired_by_neutral_reasons" />
+    </rollback>
+  </changeSet>
+</databaseChangeLog>

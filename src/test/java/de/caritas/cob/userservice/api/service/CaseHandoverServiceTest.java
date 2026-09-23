@@ -364,7 +364,7 @@ class CaseHandoverServiceTest {
 
       var response =
           updated.stream()
-              .filter(reason -> "COUNSELLOR_ASKED_FOR_ADVICE".equals(reason.getCode()))
+              .filter(reason -> "ADVICE_REQUESTED".equals(reason.getCode()))
               .findFirst()
               .orElseThrow();
       assertEquals(90, response.getMaxAccessDurationMinutes());
@@ -876,7 +876,7 @@ class CaseHandoverServiceTest {
     caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Illness cover.");
 
     verify(eventNotificationService, atLeastOnce())
-        .buildCaseHandoverParams(any(), anyString(), eq("COUNSELLOR_IS_ILL"), any(), any());
+        .buildCaseHandoverParams(any(), anyString(), eq("UNPLANNED_ABSENCE"), any(), any());
   }
 
   @Test
@@ -1543,7 +1543,7 @@ class CaseHandoverServiceTest {
 
     verify(caseHandoverRequestRepository).save(captor.capture());
     CaseHandoverRequest saved = captor.getValue();
-    assertEquals("COUNSELLOR_IS_ILL", saved.getReasonCode());
+    assertEquals("UNPLANNED_ABSENCE", saved.getReasonCode());
     assertEquals("Unplanned absence", saved.getReasonLabel());
     assertEquals("Illness cover.", saved.getExplanation());
     assertEquals("ACCESS_GRANTED", saved.getAuditOutcome());
@@ -2262,6 +2262,153 @@ class CaseHandoverServiceTest {
     return new de.caritas.cob.userservice.tenantadminservice.generated.web.model
             .CaseHandoverPolicies()
         .reasons(java.util.Map.of(advice.getCode().getValue(), advice));
+  }
+
+  // #1536: the four neutral reason codes replace the retired, health-revealing ones.
+  private static final List<String> NEUTRAL_CODES =
+      List.of("ADVICE_REQUESTED", "PLANNED_ABSENCE", "UNPLANNED_ABSENCE", "ASSIGNMENT_ENDED");
+
+  @Test
+  void listReasons_servesTheFourNeutralCodesForTenantPoliciesStillKeyedByRetiredCodes() {
+    var reasons = caseHandoverService.listReasons(7L);
+
+    assertThat(reasons)
+        .extracting(CaseHandoverService.CaseHandoverReason::getCode)
+        .containsExactlyElementsOf(NEUTRAL_CODES);
+  }
+
+  @Test
+  void listReasons_withoutTenantServesOnlyNeutralBuiltInDefaults() {
+    var reasons = caseHandoverService.listReasons(null);
+
+    assertThat(reasons)
+        .extracting(CaseHandoverService.CaseHandoverReason::getCode)
+        .containsExactlyElementsOf(NEUTRAL_CODES);
+    assertThat(caseHandoverService.listReasonPolicies())
+        .allSatisfy(
+            reason -> {
+              assertThat(reason.getLabel()).doesNotContainIgnoringCase("ill");
+              assertThat(
+                      reason.getClientNotificationTemplates() == null
+                          ? List.<String>of()
+                          : reason.getClientNotificationTemplates().values())
+                  .noneMatch(text -> text.matches("(?is).*(erkrankt|\\bill\\b|hastal|захвор).*"));
+            });
+  }
+
+  @Test
+  void listReasonPolicies_hidesRetiredRowsOfTheLegacyPolicyTable() {
+    when(caseHandoverReasonPolicyRepository.findAllByOrderByDisplayOrderAscCodeAsc())
+        .thenReturn(
+            List.of(
+                reasonPolicy("COUNSELLOR_IS_ILL", "Counsellor is ill", false, false, false, 40),
+                reasonPolicy("UNPLANNED_ABSENCE", "Unplanned absence", false, true, true, 40)));
+
+    var reasons = caseHandoverService.listReasonPolicies();
+
+    assertThat(reasons)
+        .extracting(CaseHandoverService.CaseHandoverReason::getCode)
+        .containsExactly("UNPLANNED_ABSENCE");
+  }
+
+  @Test
+  void requestAccess_storesTheNeutralCodeItWasGiven() {
+    caseHandoverService.requestAccess(123L, "UNPLANNED_ABSENCE", "Cover.");
+
+    var saved = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+    verify(caseHandoverRequestRepository, atLeastOnce()).save(saved.capture());
+    assertEquals("UNPLANNED_ABSENCE", saved.getValue().getReasonCode());
+    assertEquals(CaseHandoverRequest.AccessType.TAKEOVER, saved.getValue().getAccessType());
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "COUNSELLOR_ON_HOLIDAY,PLANNED_ABSENCE",
+    "COUNSELLOR_IS_ILL,UNPLANNED_ABSENCE",
+    "COUNSELLOR_LEFT,ASSIGNMENT_ENDED"
+  })
+  void requestAccess_mapsARetiredCodeFromAnOlderClientToItsNeutralCode(
+      String retired, String neutral) {
+    caseHandoverService.requestAccess(123L, retired, "Cover.");
+
+    var saved = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+    verify(caseHandoverRequestRepository, atLeastOnce()).save(saved.capture());
+    assertEquals(neutral, saved.getValue().getReasonCode());
+  }
+
+  @Test
+  void requestAccess_adviceRequestedStillGrantsTimeLimitedCoAccess() {
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(tenantPolicies("Rat benötigt", 45, CaseHandoverConsentValue.NONE, Set.of()));
+
+    caseHandoverService.requestAccess(123L, "ADVICE_REQUESTED", "Zweitmeinung");
+
+    var saved = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+    verify(caseHandoverRequestRepository, atLeastOnce()).save(saved.capture());
+    assertEquals("ADVICE_REQUESTED", saved.getValue().getReasonCode());
+    assertEquals(CaseHandoverRequest.AccessType.CO_ACCESS, saved.getValue().getAccessType());
+    assertEquals(45, saved.getValue().getMaxAccessDurationMinutes());
+  }
+
+  @Test
+  void updateReasonPolicies_writesANeutralCodeToTheTenantPolicyKeyedByItsRetiredCode() {
+    when(caseHandoverPolicyCacheService.updateEffective(eq(7L), any()))
+        .thenAnswer(invocation -> invocation.getArgument(1));
+    TenantContext.setCurrentTenant(7L);
+    try {
+      caseHandoverService.updateReasonPolicies(
+          List.of(
+              CaseHandoverService.CaseHandoverReason.builder()
+                  .code("UNPLANNED_ABSENCE")
+                  .label("Ausfall")
+                  .enabled(true)
+                  .accessAllowed(true)
+                  .clientConsent(CaseHandoverConsentMode.NONE)
+                  .build()));
+
+      var written =
+          ArgumentCaptor.forClass(
+              de.caritas.cob.userservice.tenantadminservice.generated.web.model.CaseHandoverPolicies
+                  .class);
+      verify(caseHandoverPolicyCacheService).updateEffective(eq(7L), written.capture());
+      assertEquals(
+          "Ausfall",
+          written
+              .getValue()
+              .getReasons()
+              .get("COUNSELLOR_IS_ILL")
+              .getLabels()
+              .getValue()
+              .get("de"));
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void getStatus_keepsAHistoricalRecordReadableWithoutItsHealthRevealingLabel() {
+    var historical =
+        CaseHandoverRequest.builder()
+            .id(5L)
+            .session(session)
+            .requesterConsultant(requester)
+            .previousConsultant(previous)
+            .reasonCode("COUNSELLOR_IS_ILL")
+            .reasonLabel("Counsellor is ill")
+            .explanation("Cover")
+            .status(CaseHandoverRequest.Status.GRANTED)
+            .clientConsentRequired(false)
+            .createdAt(LocalDateTime.of(2026, 8, 1, 10, 0))
+            .build();
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(historical));
+
+    CaseHandoverStatus status = caseHandoverService.getStatus(123L);
+
+    assertEquals("COUNSELLOR_IS_ILL", status.getReasonCode());
+    assertEquals("Unplanned absence", status.getReasonLabel());
+    assertEquals("TAKEOVER", status.getAccessType());
   }
 
   private CaseHandoverReasonPolicy reasonPolicy(
