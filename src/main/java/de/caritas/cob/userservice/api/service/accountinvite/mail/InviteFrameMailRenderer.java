@@ -72,8 +72,13 @@ public class InviteFrameMailRenderer {
    */
   public BrandedEmail render(
       String subject, String bodyContent, String primaryActionUrl, Long tenantId, String language) {
+    return render(subject, bodyContent, primaryActionUrl, tenantId, Labels.forLanguage(language));
+  }
+
+  /** As above, with the frame wording already chosen; lets a test reach every catalogue tone. */
+  BrandedEmail render(
+      String subject, String bodyContent, String primaryActionUrl, Long tenantId, Labels labels) {
     EmailBranding branding = emailBrandingResolver.resolve(tenantId);
-    Labels labels = Labels.forLanguage(language);
 
     String safeSubject = isBlank(subject) ? "" : subject.trim();
     String bodyHtml = sanitizer.toContentHtml(bodyContent, branding.linkColor());
@@ -85,10 +90,15 @@ public class InviteFrameMailRenderer {
     values.put("linkColor", branding.linkColor());
     values.put("actionLabel", labels.ctaLabel());
     values.put("fallbackHint", labels.fallbackHint());
+    values.put("assurance", labels.assurance());
     String actionUrl = safeActionUrl(primaryActionUrl);
     if (actionUrl != null) {
       values.put("actionUrl", actionUrl);
     }
+    // Without an action this frame carries a notice, not an invitation (the "contract signed"
+    // mail is one): {{assuranceBlock}} then drops the "do not pass this link on" line, and the
+    // footer must not claim the mail belongs to an invitation either.
+    values.put("footerNote", actionUrl != null ? labels.invitationNote() : labels.neutralNote());
 
     RenderedEmail rendered =
         orisoEmailRenderer.render(
@@ -125,20 +135,57 @@ public class InviteFrameMailRenderer {
    * in the {@code InviteEmailTemplate} rows. German is the platform default and resolves to the
    * formal tone, exactly as the previous layout did; the informal German templates exist in the
    * catalogue but no invite reaches them yet.
+   *
+   * <p>{@code assurance} and {@code invitationNote} are only true of a mail with an action link;
+   * {@code neutralNote} is the footer line for one without.
    */
-  record Labels(Tone tone, String ctaLabel, String fallbackHint) {
+  record Labels(
+      Tone tone,
+      String ctaLabel,
+      String fallbackHint,
+      String assurance,
+      String invitationNote,
+      String neutralNote) {
 
     private static final Labels GERMAN =
         new Labels(
             Tone.DE_FORMAL,
             "Einladung annehmen",
-            "Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:");
+            "Falls der Button nicht funktioniert, kopieren Sie diesen Link in Ihren Browser:",
+            "Wir fragen Sie nie per E-Mail nach Ihrem Passwort. Geben Sie diesen Link an niemanden"
+                + " weiter.",
+            "Diese E-Mail gehört zu Ihrer Einladung und lässt sich nicht abbestellen. Bitte antworten"
+                + " Sie nicht darauf.",
+            "Diese E-Mail wurde automatisch versendet. Bitte antworten Sie nicht darauf.");
+
+    private static final Labels GERMAN_INFORMAL =
+        new Labels(
+            Tone.DE_INFORMAL,
+            "Einladung annehmen",
+            "Falls der Button nicht funktioniert, kopiere diesen Link in deinen Browser:",
+            "Wir fragen dich nie per E-Mail nach deinem Passwort. Gib diesen Link an niemanden"
+                + " weiter.",
+            "Diese E-Mail gehört zu deiner Einladung und lässt sich nicht abbestellen. Bitte"
+                + " antworte nicht darauf.",
+            "Diese E-Mail wurde automatisch versendet. Bitte antworte nicht darauf.");
 
     private static final Labels ENGLISH =
         new Labels(
             Tone.EN,
             "Accept invitation",
-            "If the button does not work, copy this link into your browser:");
+            "If the button does not work, copy this link into your browser:",
+            "We will never ask for your password by email. Do not pass this link on to anyone.",
+            "This email is part of your invitation and cannot be unsubscribed from. Please do not"
+                + " reply to it.",
+            "This email was sent automatically. Please do not reply to it.");
+
+    static Labels of(Tone tone) {
+      return switch (tone) {
+        case EN -> ENGLISH;
+        case DE_INFORMAL -> GERMAN_INFORMAL;
+        case DE_FORMAL -> GERMAN;
+      };
+    }
 
     static Labels forLanguage(String language) {
       if (language != null && language.trim().toLowerCase(Locale.ROOT).startsWith("en")) {
