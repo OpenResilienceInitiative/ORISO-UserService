@@ -7,6 +7,10 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisation;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
+import java.util.Map;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
@@ -114,8 +118,9 @@ class InviteFrameMailRendererTest {
   }
 
   /**
-   * The Träger brands the header, but the footer's "X ist ein Angebot von Y" describes the
-   * platform: X is the platform name, Y the operator (Frank, 2026-09-23).
+   * The Träger brands the header, but X in the footer's "X ist ein Angebot von Y" stays the platform
+   * name (Frank, 2026-09-23). Y is the sender organisation: the operator here, because this Träger
+   * has no organisation data of its own — see the sender-block tests below for the Träger case.
    */
   @Test
   void footerNamesThePlatformAndItsOperator_evenWhenATraegerBrandsTheHeader() {
@@ -215,5 +220,66 @@ class InviteFrameMailRendererTest {
       count++;
     }
     return count;
+  }
+
+  // --- Sender block (Frank, 2026-09-23): Admin master data, Träger overrides field by field ---
+
+  private static final long TRAEGER_ID = 42L;
+
+  private BrandedEmail renderWithSenders(SenderOrganisationResolver senderOrganisations) {
+    when(emailBrandingResolver.resolve(any()))
+        .thenReturn(new EmailBranding("Träger Nord e.V.", null, "#1c4f8f", null, null));
+    return InviteFrameMailRendererFixture.inviteFrameMailRenderer(
+            emailBrandingResolver, senderOrganisations)
+        .render("Einladung", "Hallo", ACCEPT_URL, TRAEGER_ID, "de");
+  }
+
+  @Test
+  void footer_namesTheTraeger_withThePlatformOwnersAddress_When_theTraegerHasNone() {
+    BrandedEmail mail =
+        renderWithSenders(
+            SenderOrganisationFixture.resolving(
+                SenderOrganisationFixture.PLATFORM_OWNER,
+                Map.of(TRAEGER_ID, new SenderOrganisation("Träger Nord e.V.", null, null))));
+
+    assertThat(mail.html())
+        .contains(">Träger Nord e.V.</div>")
+        .contains(">Betreiberweg 1, 10115 Berlin</div>")
+        .contains(">info@betreiber.example</div>")
+        .contains(">Online-Beratung ist ein Angebot von Träger Nord e.V.</div>");
+    assertThat(mail.plainText())
+        .contains("\nTräger Nord e.V.\nBetreiberweg 1, 10115 Berlin\ninfo@betreiber.example\n");
+  }
+
+  @Test
+  void footer_usesTheTraegersOwnAddress_When_itHasOne() {
+    BrandedEmail mail =
+        renderWithSenders(
+            SenderOrganisationFixture.resolving(
+                SenderOrganisationFixture.PLATFORM_OWNER,
+                Map.of(
+                    TRAEGER_ID,
+                    new SenderOrganisation("Träger Nord e.V.", "Nordstraße 5, 24103 Kiel", null))));
+
+    assertThat(mail.html())
+        .contains(">Nordstraße 5, 24103 Kiel</div>")
+        .doesNotContain("Betreiberweg");
+    assertThat(mail.plainText())
+        .contains("\nTräger Nord e.V.\nNordstraße 5, 24103 Kiel\ninfo@betreiber.example\n");
+  }
+
+  @Test
+  void footer_hasNoSenderLines_When_nobodyEnteredAny() {
+    BrandedEmail mail = renderWithSenders(SenderOrganisationFixture.nobody());
+
+    for (String part : new String[] {mail.html(), mail.plainText()}) {
+      assertThat(part)
+          .doesNotContain("Musterstraße")
+          .doesNotContain("ist ein Angebot von")
+          .doesNotContain("{{")
+          .contains("Datenschutz")
+          .contains("Impressum");
+    }
+    assertThat(mail.plainText()).doesNotContain("\n\n\n");
   }
 }

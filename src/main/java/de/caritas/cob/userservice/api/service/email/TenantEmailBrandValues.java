@@ -40,6 +40,8 @@ public class TenantEmailBrandValues {
    * produces is already validated: the logo is {@code null} or an absolute http(s) URL, the accent
    * is a {@code #rrggbb} literal, the footer URLs are absolute or {@code null}.
    *
+   * @param senderTenantId the Träger whose own organisation data overrides the platform owner's in
+   *     the footer's sender block, or {@code null} when the platform operator is the sender
    * @return a mutable map, so a caller can add its own content values
    */
   public Map<String, String> values(EmailBranding branding, Long senderTenantId) {
@@ -68,6 +70,12 @@ public class TenantEmailBrandValues {
     }
     if (branding.privacyUrl() != null) {
       values.put("privacyUrl", branding.privacyUrl());
+    }
+
+    // The sender block: the Träger's own name and address over the platform owner's master data,
+    // field by field (Frank, 2026-09-23). offeringName stays the platform's.
+    if (senderTenantId != null) {
+      OrisoEmailBrand.putSender(values, senderOrganisations.forTenant(senderTenantId));
     }
     return values;
   }
