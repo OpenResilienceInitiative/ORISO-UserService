@@ -13,15 +13,18 @@
       <column name="retired_by_neutral_reasons" type="BOOLEAN" defaultValueBoolean="false">
         <constraints nullable="false" />
       </column>
+      <column name="seeded_by_neutral_reasons" type="BOOLEAN" defaultValueBoolean="false">
+        <constraints nullable="false" />
+      </column>
     </addColumn>
     <sql>
       INSERT INTO case_handover_reason_policy (
         code, label, client_consent_required, client_consent_mode, access_allowed, enabled,
         display_order, policy_authority, client_notification_templates,
-        max_access_duration_minutes, updated_at)
+        max_access_duration_minutes, updated_at, seeded_by_neutral_reasons)
       SELECT 'ADVICE_REQUESTED', 'Advice requested', client_consent_required, client_consent_mode,
         access_allowed, enabled, display_order, policy_authority, client_notification_templates,
-        max_access_duration_minutes, CURRENT_TIMESTAMP
+        max_access_duration_minutes, CURRENT_TIMESTAMP, 1
       FROM case_handover_reason_policy
       WHERE code = 'COUNSELLOR_ASKED_FOR_ADVICE'
         AND NOT EXISTS (
@@ -30,10 +33,10 @@
       INSERT INTO case_handover_reason_policy (
         code, label, client_consent_required, client_consent_mode, access_allowed, enabled,
         display_order, policy_authority, client_notification_templates,
-        max_access_duration_minutes, updated_at)
+        max_access_duration_minutes, updated_at, seeded_by_neutral_reasons)
       SELECT 'PLANNED_ABSENCE', 'Planned absence', client_consent_required, client_consent_mode,
         access_allowed, enabled, display_order, policy_authority, client_notification_templates,
-        NULL, CURRENT_TIMESTAMP
+        NULL, CURRENT_TIMESTAMP, 1
       FROM case_handover_reason_policy
       WHERE code = 'COUNSELLOR_ON_HOLIDAY'
         AND NOT EXISTS (
@@ -43,10 +46,10 @@
       INSERT INTO case_handover_reason_policy (
         code, label, client_consent_required, client_consent_mode, access_allowed, enabled,
         display_order, policy_authority, client_notification_templates,
-        max_access_duration_minutes, updated_at)
+        max_access_duration_minutes, updated_at, seeded_by_neutral_reasons)
       SELECT 'UNPLANNED_ABSENCE', 'Unplanned absence', client_consent_required,
         client_consent_mode, access_allowed, enabled, display_order, policy_authority, NULL,
-        NULL, CURRENT_TIMESTAMP
+        NULL, CURRENT_TIMESTAMP, 1
       FROM case_handover_reason_policy
       WHERE code = 'COUNSELLOR_IS_ILL'
         AND NOT EXISTS (
@@ -55,10 +58,10 @@
       INSERT INTO case_handover_reason_policy (
         code, label, client_consent_required, client_consent_mode, access_allowed, enabled,
         display_order, policy_authority, client_notification_templates,
-        max_access_duration_minutes, updated_at)
+        max_access_duration_minutes, updated_at, seeded_by_neutral_reasons)
       SELECT 'ASSIGNMENT_ENDED', 'Assignment ended', client_consent_required, client_consent_mode,
         access_allowed, enabled, display_order, policy_authority, client_notification_templates,
-        NULL, CURRENT_TIMESTAMP
+        NULL, CURRENT_TIMESTAMP, 1
       FROM case_handover_reason_policy
       WHERE code = 'COUNSELLOR_LEFT'
         AND NOT EXISTS (
@@ -76,9 +79,11 @@
         UPDATE case_handover_reason_policy
         SET enabled = 1
         WHERE retired_by_neutral_reasons = 1;
+        -- Only rows this changeset inserted; pre-existing neutral rows stay.
         DELETE FROM case_handover_reason_policy
-        WHERE code IN ('ADVICE_REQUESTED', 'PLANNED_ABSENCE', 'UNPLANNED_ABSENCE', 'ASSIGNMENT_ENDED');
+        WHERE seeded_by_neutral_reasons = 1;
       </sql>
+      <dropColumn tableName="case_handover_reason_policy" columnName="seeded_by_neutral_reasons" />
       <dropColumn tableName="case_handover_reason_policy" columnName="retired_by_neutral_reasons" />
     </rollback>
   </changeSet>
