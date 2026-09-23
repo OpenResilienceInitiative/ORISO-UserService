@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -43,7 +44,10 @@ class SupervisorAddedEmailNotificationServiceTest {
   // design system. A mock here would assert that a method was called; this
   // asserts that a mail comes out.
   @Spy private OrisoEmailRenderer emailRenderer = new OrisoEmailRenderer();
-  @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand();
+
+  @Spy
+  private OrisoEmailBrand emailBrand =
+      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
 
   @InjectMocks private SupervisorAddedEmailNotificationService service;
 

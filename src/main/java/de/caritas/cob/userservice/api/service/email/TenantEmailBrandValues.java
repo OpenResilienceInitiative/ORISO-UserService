@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.email;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import lombok.NonNull;
@@ -22,12 +23,15 @@ import org.springframework.stereotype.Component;
 public class TenantEmailBrandValues {
 
   private final OrisoEmailBrand orisoEmailBrand;
+  private final SenderOrganisationResolver senderOrganisations;
   private final String applicationBaseUrl;
 
   public TenantEmailBrandValues(
       @NonNull OrisoEmailBrand orisoEmailBrand,
+      @NonNull SenderOrganisationResolver senderOrganisations,
       @Value("${app.base.url}") String applicationBaseUrl) {
     this.orisoEmailBrand = orisoEmailBrand;
+    this.senderOrganisations = senderOrganisations;
     this.applicationBaseUrl = applicationBaseUrl;
   }
 
@@ -38,7 +42,7 @@ public class TenantEmailBrandValues {
    *
    * @return a mutable map, so a caller can add its own content values
    */
-  public Map<String, String> values(EmailBranding branding) {
+  public Map<String, String> values(EmailBranding branding, Long senderTenantId) {
     Map<String, String> values =
         new LinkedHashMap<>(orisoEmailBrand.values(applicationBaseUrl, branding.accentColor()));
 

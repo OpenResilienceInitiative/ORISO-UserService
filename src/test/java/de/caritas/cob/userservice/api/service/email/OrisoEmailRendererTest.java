@@ -279,8 +279,9 @@ class OrisoEmailRendererTest {
         .doesNotContain("<div style=\"padding-top:2px;\"></div>")
         .doesNotContain("<div></div>");
     assertThat(email.text())
-        .contains("\nCaritasverband Mainz\n\nOnline-Beratung ist ein Angebot von Caritasverband"
-            + " Mainz.\n")
+        .contains(
+            "\nCaritasverband Mainz\n\nOnline-Beratung ist ein Angebot von Caritasverband"
+                + " Mainz.\n")
         .doesNotContain("\n\n\n");
   }
 
@@ -305,7 +306,7 @@ class OrisoEmailRendererTest {
         .doesNotContain("\n\n\n");
   }
 
-  /** A contract mail whose operator is unknown drops the sentence rather than "zwischen  und". */
+  /** A contract mail whose operator is unknown drops the sentence rather than "zwischen und". */
   @Test
   void dropsTheContractSentence_When_theOperatorIsUnknown() {
     Map<String, String> values = brand();

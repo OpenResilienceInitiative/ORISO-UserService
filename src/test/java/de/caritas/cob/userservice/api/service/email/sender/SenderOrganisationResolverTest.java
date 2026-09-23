@@ -62,7 +62,8 @@ class SenderOrganisationResolverTest {
   void forTenant_usesTheTraegersOwnAddress_When_itHasOne() {
     when(traeger.fetch(TRAEGER_ID))
         .thenReturn(
-            Optional.of(new SenderOrganisation("Träger Nord e.V.", "Nordstraße 5, 24103 Kiel", "")));
+            Optional.of(
+                new SenderOrganisation("Träger Nord e.V.", "Nordstraße 5, 24103 Kiel", "")));
 
     SenderOrganisation sender = resolver.forTenant(TRAEGER_ID);
 

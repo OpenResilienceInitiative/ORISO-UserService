@@ -79,7 +79,7 @@ public class InviteFrameMailRenderer {
     String bodyHtml = sanitizer.toContentHtml(bodyContent, branding.linkColor());
     String bodyText = sanitizer.toPlainText(bodyHtml);
 
-    Map<String, String> values = tenantEmailBrandValues.values(branding);
+    Map<String, String> values = tenantEmailBrandValues.values(branding, tenantId);
     values.put("subject", safeSubject);
     values.put("preheader", preheader(bodyText));
     values.put("linkColor", branding.linkColor());

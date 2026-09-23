@@ -36,7 +36,8 @@ class PlatformOperatorOrganisationClientTest {
   }
 
   private void givenOperator(Map<String, Object> operator) {
-    when(restTemplate.getForObject(eq(URL), eq(Map.class))).thenReturn(Map.of("operator", operator));
+    when(restTemplate.getForObject(eq(URL), eq(Map.class)))
+        .thenReturn(Map.of("operator", operator));
   }
 
   @Test

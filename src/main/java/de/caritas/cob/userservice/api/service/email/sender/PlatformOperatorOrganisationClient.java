@@ -16,12 +16,12 @@ import org.springframework.web.client.RestTemplate;
 
 /**
  * The platform owner's organisation: the "Betreiber" block the super admin maintains under Admin →
- * Globale Einstellungen → Dokument-Stammdaten (ORISO-Admin#735), which TenantService serves
- * without authentication at {@code /tenant/public/dpia}.
+ * Globale Einstellungen → Dokument-Stammdaten (ORISO-Admin#735), which TenantService serves without
+ * authentication at {@code /tenant/public/dpia}.
  *
  * <p>Every failure degrades to "nothing entered": a mail must not fail because its footer could not
- * be read. Only an answer is cached, so a freshly saved address shows in the next mail after at most
- * {@link #CACHE_TTL}.
+ * be read. Only an answer is cached, so a freshly saved address shows in the next mail after at
+ * most {@link #CACHE_TTL}.
  */
 @Slf4j
 @Component
@@ -51,7 +51,8 @@ public class PlatformOperatorOrganisationClient {
     try {
       organisation = read();
     } catch (RuntimeException exception) {
-      log.warn("Could not read the platform operator's master data — mail footers omit it", exception);
+      log.warn(
+          "Could not read the platform operator's master data — mail footers omit it", exception);
       return Optional.empty();
     }
     cache.set(new Cached(organisation, System.nanoTime() + CACHE_TTL.toNanos()));

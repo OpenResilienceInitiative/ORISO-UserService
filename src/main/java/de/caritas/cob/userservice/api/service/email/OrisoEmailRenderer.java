@@ -268,9 +268,10 @@ public class OrisoEmailRenderer {
   /**
    * Drops every footer line that names a sender value nobody entered (Frank, 2026-09-23): no
    * address means no address line, no organisation means neither its name nor "… ist ein Angebot
-   * von …" — never an empty line and never a sample. A {@code div} goes entirely; a {@code td} keeps
-   * its cell, because the table around it needs it, and loses its sentence. A value that is missing
-   * from {@code values} altogether is left alone, so the placeholder stays visible as a bug report.
+   * von …" — never an empty line and never a sample. A {@code div} goes entirely; a {@code td}
+   * keeps its cell, because the table around it needs it, and loses its sentence. A value that is
+   * missing from {@code values} altogether is left alone, so the placeholder stays visible as a bug
+   * report.
    */
   private static String withoutBlankSenderLines(
       String template, Map<String, String> values, boolean html) {

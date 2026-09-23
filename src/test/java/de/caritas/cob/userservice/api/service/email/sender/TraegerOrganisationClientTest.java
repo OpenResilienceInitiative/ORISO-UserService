@@ -60,7 +60,10 @@ class TraegerOrganisationClientTest {
     when(tenantControllerApi.getApiClient()).thenReturn(apiClient);
     client =
         new TraegerOrganisationClient(
-            securityHeaderSupplier, identityAuthentication, identityClientConfig, controllerFactory);
+            securityHeaderSupplier,
+            identityAuthentication,
+            identityClientConfig,
+            controllerFactory);
   }
 
   @Test
