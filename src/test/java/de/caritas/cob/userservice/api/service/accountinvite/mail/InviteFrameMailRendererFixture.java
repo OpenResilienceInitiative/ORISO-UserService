@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite.mail;
 
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.layout.EmailContentSanitizer;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -25,9 +26,8 @@ public final class InviteFrameMailRendererFixture {
     return new InviteFrameMailRenderer(
         resolver,
         new EmailContentSanitizer(),
-        platformBrand(),
-        new OrisoEmailRenderer(),
-        APP_BASE_URL);
+        new TenantEmailBrandValues(platformBrand(), APP_BASE_URL),
+        new OrisoEmailRenderer());
   }
 
   /**
