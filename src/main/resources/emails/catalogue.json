@@ -610,6 +610,8 @@
         "{{fallbackHint}}",
         "{{assurance}}",
         "{{footerNote}}",
+        "{{offeringName}}",
+        "{{operatorName}}",
         "{{privacyUrl}}",
         "{{imprintUrl}}"
       ],
