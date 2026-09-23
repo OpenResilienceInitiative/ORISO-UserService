@@ -234,10 +234,16 @@ class InviteFrameMailRendererTest {
 
     assertThat(mail.html()).contains(securityLine).contains(invitationNote).doesNotContain("{{");
     assertThat(mail.plainText())
-        .contains(securityLine)
+        .contains(TEXT_RULE + "\n" + securityLine)
         .contains(invitationNote)
         .doesNotContain("{{");
   }
+
+  /**
+   * The plain-text divider that opens the fine print. It belongs to the fine print, as the HTML
+   * divider does: a mail without the security line has no divider left over either.
+   */
+  private static final String TEXT_RULE = "-".repeat(64);
 
   private static void assertNeutralFrame(
       BrandedEmail mail, String linkSentence, String invitation, String neutralNote) {
@@ -252,6 +258,7 @@ class InviteFrameMailRendererTest {
         .doesNotContain(linkSentence)
         .doesNotContain(invitation)
         .contains(neutralNote)
+        .doesNotContain(TEXT_RULE)
         .doesNotContain("{{");
   }
 

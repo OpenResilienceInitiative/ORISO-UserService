@@ -99,8 +99,8 @@ public class OrisoEmailRenderer {
           + "font-family:Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif;font-size:12px;"
           + "line-height:18px;color:#5c5555;\">{{assurance}}</td></tr>";
 
-  /** The plain-text half of {@link #ASSURANCE_BLOCK_HTML}. */
-  private static final String ASSURANCE_BLOCK_TEXT = "{{assurance}}";
+  /** The plain-text half of {@link #ASSURANCE_BLOCK_HTML}, divider included like the HTML. */
+  private static final String ASSURANCE_BLOCK_TEXT = "-".repeat(64) + "\n{{assurance}}";
 
   private final Map<String, String> templateCache = new ConcurrentHashMap<>();
 
