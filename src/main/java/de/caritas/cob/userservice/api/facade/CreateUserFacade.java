@@ -128,6 +128,9 @@ public class CreateUserFacade {
           () -> deleteDatabaseUser(identityUserId, provisionedUser.get()));
 
       User user = updateIdentityAndCreateAccount(identityUserId, userDTO, UserRole.USER, snapshot);
+      if (user != null) {
+        user.setTemporaryAccount(userDTO.isTemporary());
+      }
       provisionedUser.set(user);
       User savedUser = userService.saveUser(user);
       if (savedUser != null) {
