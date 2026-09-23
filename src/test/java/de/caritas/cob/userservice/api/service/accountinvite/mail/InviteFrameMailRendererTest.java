@@ -430,4 +430,38 @@ class InviteFrameMailRendererTest {
     }
     assertThat(mail.plainText()).doesNotContain("\n\n\n");
   }
+
+  /**
+   * End to end from what TenantService serves to what the recipient reads: the Träger's full legal
+   * name is the sender, its own contact line replaces the platform owner's, and the address it did
+   * not enter still comes from the platform owner.
+   */
+  @Test
+  void footer_namesTheTraegersLegalNameAndContact_fromTheTenantServiceData() {
+    BrandedEmail mail =
+        renderWithSenders(
+            SenderOrganisationFixture.resolvingTraegerFromTenantService(
+                SenderOrganisationFixture.PLATFORM_OWNER,
+                new de.caritas.cob.userservice.tenantadminservice.generated.web.model.TenantDTO()
+                    .id(TRAEGER_ID)
+                    .name("Caritas Nord")
+                    .subdomain("nord")
+                    .legalName("Caritasverband für die Erzdiözese Nord e.V.")
+                    .contactEmail("beratung@caritas-nord.example")
+                    .contactPhone("+49 431 123-0")));
+
+    assertThat(mail.html())
+        .contains(">Caritasverband für die Erzdiözese Nord e.V.</div>")
+        .contains(">Betreiberweg 1, 10115 Berlin</div>")
+        .contains(">beratung@caritas-nord.example · +49 431 123-0</div>")
+        .doesNotContain("info@betreiber.example")
+        // The Träger's legal name is the sender, never the operator in "X ist ein Angebot von Y".
+        .contains(">Online-Beratung ist ein Angebot von ORISO.</div>")
+        .doesNotContain("ist ein Angebot von Caritasverband");
+    assertThat(mail.plainText())
+        .contains(
+            "\nCaritasverband für die Erzdiözese Nord e.V.\nBetreiberweg 1, 10115 Berlin\n"
+                + "beratung@caritas-nord.example · +49 431 123-0\n")
+        .doesNotContain("info@betreiber.example");
+  }
 }

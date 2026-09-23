@@ -73,6 +73,28 @@ class SenderOrganisationResolverTest {
         .isEqualTo("info@betreiber.example");
   }
 
+  /**
+   * The contact line is one field: a Träger that entered only its phone gets a line with only its
+   * phone, never its phone next to the platform owner's e-mail — that would name two organisations
+   * in one line.
+   */
+  @Test
+  void forTenant_replacesThePlatformOwnersWholeContactLine_When_theTraegerEnteredAnyContact() {
+    when(traeger.fetch(TRAEGER_ID))
+        .thenReturn(
+            Optional.of(
+                new SenderOrganisation(
+                    "Caritasverband Nord e.V.",
+                    null,
+                    SenderOrganisation.contactLine(null, "+49 431 123-0"))));
+
+    SenderOrganisation sender = resolver.forTenant(TRAEGER_ID);
+
+    assertThat(sender.name()).isEqualTo("Caritasverband Nord e.V.");
+    assertThat(sender.address()).isEqualTo("Betreiberweg 1, 10115 Berlin");
+    assertThat(sender.contactLine()).isEqualTo("+49 431 123-0");
+  }
+
   @Test
   void forTenant_isThePlatformOwner_When_theTenantDoesNotExistYet() {
     assertThat(resolver.forTenant(TRAEGER_ID)).isEqualTo(OPERATOR);

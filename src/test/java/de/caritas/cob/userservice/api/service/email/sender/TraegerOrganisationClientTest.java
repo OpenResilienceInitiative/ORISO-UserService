@@ -27,9 +27,10 @@ import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
 
 /**
- * A Träger's own organisation data: its name and the address it entered at onboarding (or a
- * platform admin entered under Träger → Allgemein). The address is not in the public tenant view,
- * so the read goes through the admin view as the technical user.
+ * A Träger's own organisation data: its legal name (else its display name), the address it entered
+ * at onboarding (or a platform admin entered under Träger → Allgemein) and its contact e-mail and
+ * phone. The address is not in the public tenant view, so the read goes through the admin view as
+ * the technical user.
  */
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -67,13 +68,64 @@ class TraegerOrganisationClientTest {
   }
 
   @Test
-  void mapsNameAndAddress_andHasNoContactLineBecauseATraegerHasNoSuchField() {
+  void mapsNameAndAddress_andHasNoContactLine_When_theTraegerEnteredNoContact() {
     when(tenantControllerApi.getTenantById(TRAEGER_ID))
         .thenReturn(
             new TenantDTO().id(TRAEGER_ID).name("Träger Nord e.V.").address("Nordstraße 5, Kiel"));
 
     assertThat(client.fetch(TRAEGER_ID))
         .contains(new SenderOrganisation("Träger Nord e.V.", "Nordstraße 5, Kiel", null));
+  }
+
+  // --- Träger legal name and contact (Frank, 2026-09-23) ---
+
+  @Test
+  void namesTheTraegerByItsFullLegalName_When_itEnteredOne() {
+    when(tenantControllerApi.getTenantById(TRAEGER_ID))
+        .thenReturn(
+            new TenantDTO()
+                .id(TRAEGER_ID)
+                .name("Caritas Nord")
+                .legalName("Caritasverband für die Erzdiözese Nord e.V."));
+
+    assertThat(client.fetch(TRAEGER_ID))
+        .contains(
+            new SenderOrganisation("Caritasverband für die Erzdiözese Nord e.V.", null, null));
+  }
+
+  @Test
+  void fallsBackToTheDisplayName_When_theLegalNameIsBlank() {
+    when(tenantControllerApi.getTenantById(TRAEGER_ID))
+        .thenReturn(new TenantDTO().id(TRAEGER_ID).name("Caritas Nord").legalName("  "));
+
+    assertThat(client.fetch(TRAEGER_ID))
+        .contains(new SenderOrganisation("Caritas Nord", null, null));
+  }
+
+  @Test
+  void buildsTheContactLineFromTheTraegersEmailAndPhone_likeThePlatformOwners() {
+    when(tenantControllerApi.getTenantById(TRAEGER_ID))
+        .thenReturn(
+            new TenantDTO()
+                .id(TRAEGER_ID)
+                .name("Caritas Nord")
+                .contactEmail("beratung@caritas-nord.example")
+                .contactPhone("+49 431 123-0"));
+
+    assertThat(client.fetch(TRAEGER_ID))
+        .contains(
+            new SenderOrganisation(
+                "Caritas Nord", null, "beratung@caritas-nord.example · +49 431 123-0"));
+  }
+
+  @Test
+  void buildsTheContactLineFromWhatIsThere_When_onlyThePhoneWasEntered() {
+    when(tenantControllerApi.getTenantById(TRAEGER_ID))
+        .thenReturn(
+            new TenantDTO().id(TRAEGER_ID).name("Caritas Nord").contactPhone("+49 431 123-0"));
+
+    assertThat(client.fetch(TRAEGER_ID))
+        .contains(new SenderOrganisation("Caritas Nord", null, "+49 431 123-0"));
   }
 
   @Test

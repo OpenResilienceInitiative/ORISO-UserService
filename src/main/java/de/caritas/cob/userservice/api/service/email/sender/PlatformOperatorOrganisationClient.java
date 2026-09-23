@@ -6,8 +6,6 @@ import java.time.Duration;
 import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.atomic.AtomicReference;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -29,7 +27,6 @@ public class PlatformOperatorOrganisationClient {
 
   static final String PATH = "/tenant/public/dpia";
   static final Duration CACHE_TTL = Duration.ofMinutes(5);
-  private static final String CONTACT_SEPARATOR = " · ";
 
   private final RestTemplate restTemplate;
   private final String url;
@@ -71,10 +68,8 @@ public class PlatformOperatorOrganisationClient {
         new SenderOrganisation(
             isBlank(legalName) ? text(fields, "shortName") : legalName,
             text(fields, "address"),
-            Stream.of(text(fields, "contactEmail"), text(fields, "contactPhone"))
-                .filter(value -> !isBlank(value))
-                .map(String::trim)
-                .collect(Collectors.joining(CONTACT_SEPARATOR)));
+            SenderOrganisation.contactLine(
+                text(fields, "contactEmail"), text(fields, "contactPhone")));
     return organisation.isEmpty() ? Optional.empty() : Optional.of(organisation);
   }
 
