@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.email;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import lombok.NonNull;
@@ -22,12 +23,15 @@ import org.springframework.stereotype.Component;
 public class TenantEmailBrandValues {
 
   private final OrisoEmailBrand orisoEmailBrand;
+  private final SenderOrganisationResolver senderOrganisations;
   private final String applicationBaseUrl;
 
   public TenantEmailBrandValues(
       @NonNull OrisoEmailBrand orisoEmailBrand,
+      @NonNull SenderOrganisationResolver senderOrganisations,
       @Value("${app.base.url}") String applicationBaseUrl) {
     this.orisoEmailBrand = orisoEmailBrand;
+    this.senderOrganisations = senderOrganisations;
     this.applicationBaseUrl = applicationBaseUrl;
   }
 
@@ -36,9 +40,11 @@ public class TenantEmailBrandValues {
    * produces is already validated: the logo is {@code null} or an absolute http(s) URL, the accent
    * is a {@code #rrggbb} literal, the footer URLs are absolute or {@code null}.
    *
+   * @param senderTenantId the Träger whose own organisation data overrides the platform owner's in
+   *     the footer's sender block, or {@code null} when the platform operator is the sender
    * @return a mutable map, so a caller can add its own content values
    */
-  public Map<String, String> values(EmailBranding branding) {
+  public Map<String, String> values(EmailBranding branding, Long senderTenantId) {
     Map<String, String> values =
         new LinkedHashMap<>(orisoEmailBrand.values(applicationBaseUrl, branding.accentColor()));
 
@@ -64,6 +70,12 @@ public class TenantEmailBrandValues {
     }
     if (branding.privacyUrl() != null) {
       values.put("privacyUrl", branding.privacyUrl());
+    }
+
+    // The sender block: the Träger's own name and address over the platform owner's master data,
+    // field by field (Frank, 2026-09-23). offeringName and operatorName stay the platform's.
+    if (senderTenantId != null) {
+      OrisoEmailBrand.putSender(values, senderOrganisations.forTenant(senderTenantId));
     }
     return values;
   }

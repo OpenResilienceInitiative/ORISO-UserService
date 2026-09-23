@@ -15,8 +15,10 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendR
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailTransport;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
-import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisation;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.notification.DefaultDpaSigningEmailDispatchService;
 import de.caritas.cob.userservice.api.service.notification.DpaSigningMailRenderer;
@@ -77,30 +79,35 @@ class DpaSigningMailDesignSystemTest {
 
   @BeforeEach
   void setUp() {
+    when(restTemplate.getForObject(anyString(), any())).thenReturn(completeSmtpSettings());
+    when(inviteMailTransport.send(any(), any(), any(), any(), any()))
+        .thenReturn(new InviteMailSendReceipt("legal@example.org", Instant.now()));
+    when(tenantTemplateSupplier.getTenantBaseUrl(any(RestrictedTenantDTO.class))).thenReturn("");
+    wireWith(SenderOrganisationFixture.platformOwner());
+  }
+
+  /** Builds the production chain with the given Admin master data behind the footer. */
+  private void wireWith(SenderOrganisationResolver senderOrganisations) {
     EmailBrandingResolver brandingResolver =
         new EmailBrandingResolver(
             tenantService, tenantTemplateSupplier, "Online-Beratung", "", APP_ORIGIN);
     DpaSigningMailRenderer renderer =
         new DpaSigningMailRenderer(
             brandingResolver,
-            new TenantEmailBrandValues(InviteFrameMailRendererFixture.platformBrand(), APP_ORIGIN),
+            InviteFrameMailRendererFixture.tenantEmailBrandValues(senderOrganisations, APP_ORIGIN),
             new OrisoEmailRenderer());
     InviteMailDispatchService mailDispatch =
         new InviteMailDispatchService(
             restTemplate,
             applicationSettingsService,
             inviteMailTransport,
-            InviteFrameMailRendererFixture.inviteFrameMailRenderer(brandingResolver),
+            InviteFrameMailRendererFixture.inviteFrameMailRenderer(
+                brandingResolver, senderOrganisations),
             "http://consultingtypeservice:8080/service",
             "smtp-user",
             "smtp-pass");
     dispatch = new DefaultDpaSigningEmailDispatchService(renderer, mailDispatch, CLOCK);
     forward = new DpaForwardEmailService(tenantService, dispatch, APP_ORIGIN);
-
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(completeSmtpSettings());
-    when(inviteMailTransport.send(any(), any(), any(), any(), any()))
-        .thenReturn(new InviteMailSendReceipt("legal@example.org", Instant.now()));
-    when(tenantTemplateSupplier.getTenantBaseUrl(any(RestrictedTenantDTO.class))).thenReturn("");
   }
 
   @Test
@@ -281,6 +288,64 @@ class DpaSigningMailDesignSystemTest {
 
     List<String> urls = urlsIn(mail.html() + "\n" + mail.text());
     assertThat(urls).isNotEmpty().allMatch(url -> url.startsWith(APP_ORIGIN + "/"));
+  }
+
+  // --- Sender block (Frank, 2026-09-23) ---
+
+  @Test
+  void footer_namesThePlatformOwner_withItsAddress_When_theTraegerHasNoAddress() {
+    wireWith(
+        SenderOrganisationFixture.resolving(
+            SenderOrganisationFixture.PLATFORM_OWNER,
+            Map.of(TENANT_ID, new SenderOrganisation(TENANT_NAME, null, null))));
+    givenRegisteredTenant();
+
+    SentMail mail = sendSigningLink();
+
+    assertThat(mail.html())
+        .contains(">ORISO</div>")
+        .contains(">Betreiberweg 1, 10115 Berlin</div>")
+        .contains(">info@betreiber.example</div>");
+    assertThat(mail.text())
+        .contains("\nORISO\nBetreiberweg 1, 10115 Berlin\ninfo@betreiber.example\n");
+  }
+
+  /**
+   * Deliberately not the Träger's own address: the signing mail is the operator's, and its fine
+   * print names the operator as the Träger's contract partner. A Träger overlay would make it read
+   * "zwischen Träger Nord … und Träger Nord …".
+   */
+  @Test
+  void footer_staysTheOperators_When_theTraegerHasItsOwnAddress() {
+    wireWith(
+        SenderOrganisationFixture.resolving(
+            SenderOrganisationFixture.PLATFORM_OWNER,
+            Map.of(
+                TENANT_ID, new SenderOrganisation(TENANT_NAME, "Nordstraße 5, 24103 Kiel", null))));
+    givenRegisteredTenant();
+
+    SentMail mail = sendSigningLink();
+
+    assertThat(mail.html() + mail.text()).doesNotContain("Nordstraße 5");
+    assertThat(mail.text())
+        .contains("Vertragsverhältnis zwischen ORISO und Träger Nord & Söhne e.V.\n")
+        .contains("\nORISO\nBetreiberweg 1, 10115 Berlin\n");
+  }
+
+  @Test
+  void footer_hasNoSenderLinesAndNoContractSentence_When_nobodyEnteredAny() {
+    wireWith(SenderOrganisationFixture.nobody());
+    givenRegisteredTenant();
+
+    SentMail mail = sendSigningLink();
+
+    for (String part : List.of(mail.html(), mail.text())) {
+      assertThat(part)
+          .doesNotContain("Musterstraße")
+          .doesNotContain("ist ein Angebot von")
+          .doesNotContain("Vertragsverhältnis zwischen")
+          .doesNotContain("{{");
+    }
   }
 
   private SentMail sendSigningLink() {

@@ -29,6 +29,13 @@ public class DpaSigningMailRenderer {
   static final String GENERIC_TENANT_NAME = "Ihre Organisation";
   static final String GENERIC_TENANT_NAME_DATIVE = "Ihrer Organisation";
 
+  /**
+   * The footer's sender is the platform operator, not the Träger the mail is about: the fine print
+   * reads "Vertragsverhältnis zwischen {{orgName}} und {{tenantNameDative}}", so a Träger overlay
+   * would name the Träger as its own contract partner.
+   */
+  private static final Long OPERATOR_IS_SENDER = null;
+
   private static final DateTimeFormatter DATE_TIME =
       DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm 'Uhr'", Locale.GERMAN);
 
@@ -58,7 +65,7 @@ public class DpaSigningMailRenderer {
   public RenderedEmail render(
       Long tenantId, String tenantName, String signLink, Instant providedAt, Instant expiresAt) {
     Map<String, String> values =
-        tenantEmailBrandValues.values(emailBrandingResolver.resolve(tenantId));
+        tenantEmailBrandValues.values(emailBrandingResolver.resolve(tenantId), OPERATOR_IS_SENDER);
     boolean named = StringUtils.isNotBlank(tenantName);
     values.put("tenantName", named ? tenantName : GENERIC_TENANT_NAME);
     values.put("tenantNameDative", named ? tenantName : GENERIC_TENANT_NAME_DATIVE);
