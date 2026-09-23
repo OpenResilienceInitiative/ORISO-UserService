@@ -1980,6 +1980,141 @@ paths:
         '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
         '403': { description: Caller is not an Owner }
 
+  /users/chat-series/{seriesId}/join-requests:
+    post:
+      tags: [chat-series-controller]
+      operationId: createChatSeriesJoinRequest
+      summary: Knock to join a self-help group via its invite link
+      description: >-
+        Any consultant may knock. The response carries only the request status, never any
+        group data. A second knock while a request is pending returns the pending request.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: A pending request of the caller already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupChatJoinRequestStatusDTO' }
+        '201':
+          description: Join request created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupChatJoinRequestStatusDTO' }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not a consultant }
+        '404': { description: Unknown Series }
+        '409': { description: Caller already has access to this Series }
+  /users/chat-series/{seriesId}/join-requests/mine:
+    get:
+      tags: [chat-series-controller]
+      operationId: getOwnChatSeriesJoinRequest
+      summary: Returns the caller's newest join request for this Series
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: The caller's newest join request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupChatJoinRequestStatusDTO' }
+        '204': { description: The caller never knocked on this Series }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not a consultant }
+    delete:
+      tags: [chat-series-controller]
+      operationId: cancelOwnChatSeriesJoinRequest
+      summary: Cancels the caller's pending join request (idempotent)
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '204': { description: No pending request remains }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not a consultant }
+  /users/chat-series/join-requests:
+    get:
+      tags: [chat-series-controller]
+      operationId: getPendingChatSeriesJoinRequests
+      summary: Pending join requests of every Series the caller owns or co-moderates
+      security:
+        - Bearer: [ ]
+      responses:
+        '200':
+          description: Pending join requests, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GroupChatJoinRequestDTO' }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not a consultant }
+  /users/chat-series/{seriesId}/join-requests/{requestId}/admit:
+    post:
+      tags: [chat-series-controller]
+      operationId: admitChatSeriesJoinRequest
+      summary: Admits a pending join request as Participant or Co-Moderator
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupChatJoinRequestAdmitDTO' }
+      responses:
+        '204': { description: Requester admitted and added to the Matrix room }
+        '400': { description: Co-Moderator requested for a consultant of another tenant }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller may not admit (or may not grant Co-Moderator) }
+        '404': { description: Unknown join request for this Series }
+        '409': { description: Join request is not pending }
+        '500': { description: Requester could not be added to the Matrix room }
+  /users/chat-series/{seriesId}/join-requests/{requestId}/decline:
+    post:
+      tags: [chat-series-controller]
+      operationId: declineChatSeriesJoinRequest
+      summary: Declines a pending join request
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '204': { description: Join request declined }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller may not decline }
+        '404': { description: Unknown join request for this Series }
+        '409': { description: Join request is not pending }
+
 components:
   schemas:
     GuestIdentitySuggestionRequest:
@@ -2029,6 +2164,55 @@ components:
       required: [consultantId]
       properties:
         consultantId: { type: string }
+    GroupChatJoinRequestStatusDTO:
+      type: object
+      description: Requester view of a join request. Deliberately carries no group data.
+      required: [id, status, requestedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        status: { $ref: '#/components/schemas/GroupChatJoinRequestStatus' }
+        requestedAt: { type: string, format: date-time }
+        decidedAt: { type: string, format: date-time, nullable: true }
+    GroupChatJoinRequestStatus:
+      type: string
+      enum: [PENDING, ADMITTED, DECLINED, CANCELLED]
+    GroupChatJoinRequestDTO:
+      type: object
+      description: Moderator view of a pending join request.
+      required: [id, seriesId, status, requestedAt, via, viewerRole, requester]
+      properties:
+        id: { type: integer, format: int64 }
+        seriesId: { type: integer, format: int64 }
+        groupTitle: { type: string }
+        status: { $ref: '#/components/schemas/GroupChatJoinRequestStatus' }
+        requestedAt: { type: string, format: date-time }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        via: { type: string, enum: [INVITE_LINK] }
+        viewerRole:
+          type: string
+          enum: [OWNER, CO_MODERATOR]
+          description: >-
+            The caller's own role in this Series. Only an OWNER may admit as CO_MODERATOR.
+        requester: { $ref: '#/components/schemas/GroupChatJoinRequesterDTO' }
+    GroupChatJoinRequesterDTO:
+      type: object
+      required: [consultantId, sameAgency, sameTenant]
+      properties:
+        consultantId: { type: string }
+        displayName: { type: string, nullable: true }
+        firstName: { type: string, nullable: true }
+        lastName: { type: string, nullable: true }
+        agencyName: { type: string, nullable: true }
+        tenantName: { type: string, nullable: true }
+        sameAgency: { type: boolean }
+        sameTenant: { type: boolean }
+    GroupChatJoinRequestAdmitDTO:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [PARTICIPANT, CO_MODERATOR]
+          default: PARTICIPANT
     UserDTO:
       allOf:
         - $ref: '#/components/schemas/SessionDataDTO'

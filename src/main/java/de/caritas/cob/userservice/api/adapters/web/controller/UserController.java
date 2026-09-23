@@ -15,6 +15,9 @@ import de.caritas.cob.userservice.api.adapters.web.dto.EmailDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EmailNotificationsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.EnquiryMessageDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GetChatSeriesOccurrences200ResponseInner;
+import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestAdmitDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestStatusDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupSessionListResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.MagicLinkConsumeDTO;
@@ -140,6 +143,7 @@ public class UserController implements UsersApi {
   private final @NotNull ChatOccurrenceQueryService chatOccurrenceQueryService;
   private final @NotNull ChatOccurrenceCommandService chatOccurrenceCommandService;
   private final @NotNull GroupChatRoleService groupChatRoleService;
+  private final @NotNull GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   private final @NotNull AuthenticatedUser authenticatedUser;
   private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
 
@@ -568,6 +572,37 @@ public class UserController implements UsersApi {
   @Override
   public ResponseEntity<List<ConsultantResponseDTO>> getChatSeriesConsultants() {
     return userConsultantControllerDelegate.getTenantConsultants();
+  }
+
+  @Override
+  public ResponseEntity<GroupChatJoinRequestStatusDTO> createChatSeriesJoinRequest(Long seriesId) {
+    return groupChatJoinRequestDelegate.knock(seriesId);
+  }
+
+  @Override
+  public ResponseEntity<GroupChatJoinRequestStatusDTO> getOwnChatSeriesJoinRequest(Long seriesId) {
+    return groupChatJoinRequestDelegate.getOwn(seriesId);
+  }
+
+  @Override
+  public ResponseEntity<Void> cancelOwnChatSeriesJoinRequest(Long seriesId) {
+    return groupChatJoinRequestDelegate.cancelOwn(seriesId);
+  }
+
+  @Override
+  public ResponseEntity<List<GroupChatJoinRequestDTO>> getPendingChatSeriesJoinRequests() {
+    return groupChatJoinRequestDelegate.getPending();
+  }
+
+  @Override
+  public ResponseEntity<Void> admitChatSeriesJoinRequest(
+      Long seriesId, Long requestId, GroupChatJoinRequestAdmitDTO groupChatJoinRequestAdmitDTO) {
+    return groupChatJoinRequestDelegate.admit(seriesId, requestId, groupChatJoinRequestAdmitDTO);
+  }
+
+  @Override
+  public ResponseEntity<Void> declineChatSeriesJoinRequest(Long seriesId, Long requestId) {
+    return groupChatJoinRequestDelegate.decline(seriesId, requestId);
   }
 
   @Override
