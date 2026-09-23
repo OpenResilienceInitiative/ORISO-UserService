@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
 import java.time.DateTimeException;
 import java.time.LocalDate;
@@ -63,6 +64,7 @@ public class ChatService {
   private final @NonNull GroupChatParticipantReconciliationService participantReconciliationService;
 
   private final @NonNull AgencyService agencyService;
+  private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
 
   /**
    * Returns a list of current chats for the provided {@link Consultant}
@@ -370,17 +372,21 @@ public class ChatService {
   }
 
   /**
-   * Returns chat sessions for a consultant by chat IDs. This method retrieves chats from the
-   * database without checking consultant access - access control should be handled at a higher
-   * level (e.g., by checking Matrix room membership or chat ownership).
+   * Returns the chat sessions with the given IDs that the consultant may see. Chats of another
+   * Träger the consultant is not part of are left out (#1237).
    *
    * @param chatIds Set of chat IDs
+   * @param consultant the consultant asking
    * @return List of {@link ConsultantSessionResponseDTO}
    */
-  public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByIds(Set<Long> chatIds) {
+  public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByIds(
+      Set<Long> chatIds, Consultant consultant) {
     log.info("🔍 ChatService.getChatSessionsForConsultantByIds - chatIds: {}", chatIds);
 
-    var chats = chatRepository.findByIdsWithChatAgencies(chatIds);
+    var chats =
+        chatRepository.findByIdsWithChatAgencies(chatIds).stream()
+            .filter(chat -> groupChatConsultantAccess.mayAccess(chat, consultant))
+            .toList();
 
     log.info("🔍 ChatService: Found {} chats in database", chats.size());
     chats.forEach(
@@ -425,9 +431,15 @@ public class ChatService {
         .collect(Collectors.toList());
   }
 
+  /**
+   * Returns the chat sessions with the given Matrix room IDs that the consultant may see (#1237).
+   */
   public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByRoomIds(
-      Set<String> matrixRoomIds) {
-    var chats = chatRepository.findByMatrixRoomIdIn(matrixRoomIds);
+      Set<String> matrixRoomIds, Consultant consultant) {
+    var chats =
+        chatRepository.findByMatrixRoomIdIn(matrixRoomIds).stream()
+            .filter(chat -> groupChatConsultantAccess.mayAccess(chat, consultant))
+            .toList();
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
     return chats.stream()
         .map(

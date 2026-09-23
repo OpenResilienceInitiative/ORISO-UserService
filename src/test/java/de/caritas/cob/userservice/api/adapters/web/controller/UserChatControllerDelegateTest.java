@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
+import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -58,6 +59,7 @@ class UserChatControllerDelegateTest {
   @Mock private UserDtoMapper userDtoMapper;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private GroupChatFeatureGate groupChatFeatureGate;
+  @Mock private GroupChatPermissionService groupChatPermissionService;
 
   @InjectMocks private UserChatControllerDelegate delegate;
 
@@ -221,7 +223,7 @@ class UserChatControllerDelegateTest {
     var adviceSeeker = adviceSeeker();
     when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker));
-    when(messenger.existsChat(1L)).thenReturn(true);
+    when(chatService.getChat(1L)).thenReturn(Optional.of(chat()));
     when(messenger.banUserFromChat("advice-seeker-id", 1L)).thenReturn(true);
 
     var response = delegate.banFromChat("chat-user-id", 1L);
@@ -243,7 +245,7 @@ class UserChatControllerDelegateTest {
   void banFromChatShouldThrowNotFoundWhenChatDoesNotExist() {
     when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker()));
-    when(messenger.existsChat(1L)).thenReturn(false);
+    when(chatService.getChat(1L)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> delegate.banFromChat("chat-user-id", 1L))
         .isInstanceOf(NotFoundException.class);
@@ -253,7 +255,7 @@ class UserChatControllerDelegateTest {
   void banFromChatShouldThrowNotFoundWhenBanFails() {
     when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker()));
-    when(messenger.existsChat(1L)).thenReturn(true);
+    when(chatService.getChat(1L)).thenReturn(Optional.of(chat()));
     when(messenger.banUserFromChat(any(), anyLong())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.banFromChat("chat-user-id", 1L))

@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
@@ -136,6 +137,13 @@ class UserSessionControllerDelegate {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
       groupSessionList =
           sessionListFacade.retrieveChatsForConsultantByChatIds(consultant, singletonList(chatId));
+      // The chat exists but was filtered out: answer like /users/chat/{chatId} does (#1237).
+      if (!isNotEmpty(groupSessionList.getSessions()) && messenger.existsChat(chatId)) {
+        throw new ForbiddenException(
+            String.format(
+                "Consultant with id %s has no permission for chat with id %s",
+                consultant.getId(), chatId));
+      }
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
       groupSessionList =
