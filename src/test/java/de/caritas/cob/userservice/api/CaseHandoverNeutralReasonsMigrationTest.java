@@ -38,8 +38,10 @@ class CaseHandoverNeutralReasonsMigrationTest {
             .containsEntry("COUNSELLOR_ASKED_FOR_ADVICE", "enabled=false")
             .containsEntry("COUNSELLOR_IS_ILL", "enabled=false")
             .containsEntry("COUNSELLOR_ON_HOLIDAY", "enabled=false")
+            .containsEntry("COUNSELLOR_LEFT", "enabled=false")
             .containsEntry("ADVICE_REQUESTED", "enabled=true")
             .containsEntry("UNPLANNED_ABSENCE", "enabled=true")
+            .containsEntry("ASSIGNMENT_ENDED", "enabled=true")
             // Pre-existing neutral row is left as it was.
             .containsEntry("PLANNED_ABSENCE", "enabled=true label=Custom planned");
         assertThat(templatesOf(c, "UNPLANNED_ABSENCE")).isNull();
@@ -69,6 +71,7 @@ class CaseHandoverNeutralReasonsMigrationTest {
               + " retired_by_0096 BOOLEAN NOT NULL DEFAULT FALSE)");
       insert(sql, "COUNSELLOR_ASKED_FOR_ADVICE", "Counsellor asked for advice", 1, "{}");
       insert(sql, "COUNSELLOR_IS_ILL", "Counsellor is ill", 1, "{\"de\":\"ist leider erkrankt\"}");
+      insert(sql, "COUNSELLOR_LEFT", "Counsellor does not work here anymore", 1, null);
       // Admin-disabled before the migration: must stay disabled after rollback.
       insert(sql, "COUNSELLOR_ON_HOLIDAY", "Counsellor is on holiday", 0, null);
       // Neutral row that already existed, e.g. from a manual seed.
