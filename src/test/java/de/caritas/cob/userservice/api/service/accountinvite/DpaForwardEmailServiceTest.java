@@ -57,6 +57,32 @@ class DpaForwardEmailServiceTest {
   }
 
   /**
+   * A reserved-but-unregistered tenant has no name yet. The fallback lands after "für" in the
+   * signing mail ("Vertragsunterlagen für …"), which takes the accusative: "Ihre Organisation".
+   */
+  @Test
+  void sendSigningLink_unknownTenant_fallsBackToGrammaticalGenericName() {
+    when(tenantService.getRestrictedTenantData(84L))
+        .thenThrow(
+            org.springframework.web.client.HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.NOT_FOUND, "Not Found", null, null, null));
+
+    service.sendSigningLink(
+        new DpaForwardEmailService.DpaForwardEmailCommand(
+            84L,
+            "bart.simpson@oriso.org",
+            "https://app.oriso-dev.site/dpa-sign/single-use-token",
+            LocalDateTime.parse("2026-08-03T13:27:28.243207790")));
+
+    verify(dpaSigningEmailDispatchService)
+        .send(
+            "bart.simpson@oriso.org",
+            "Ihre Organisation",
+            "https://app.oriso-dev.site/dpa-sign/single-use-token",
+            LocalDateTime.parse("2026-08-03T13:27:28.243207790"));
+  }
+
+  /**
    * Reproduces the pre-dev break: the TenantService has no {@code app.base.url} configured, so it
    * emits a path-only sign link. The mail service used to answer 400 "signLink is invalid", which
    * the Admin panel renders as "please enter a valid e-mail address".
