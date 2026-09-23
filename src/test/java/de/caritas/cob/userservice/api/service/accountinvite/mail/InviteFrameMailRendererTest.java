@@ -454,7 +454,10 @@ class InviteFrameMailRendererTest {
         .contains(">Caritasverband für die Erzdiözese Nord e.V.</div>")
         .contains(">Betreiberweg 1, 10115 Berlin</div>")
         .contains(">beratung@caritas-nord.example · +49 431 123-0</div>")
-        .doesNotContain("info@betreiber.example");
+        .doesNotContain("info@betreiber.example")
+        // The Träger's legal name is the sender, never the operator in "X ist ein Angebot von Y".
+        .contains(">Online-Beratung ist ein Angebot von ORISO.</div>")
+        .doesNotContain("ist ein Angebot von Caritasverband");
     assertThat(mail.plainText())
         .contains(
             "\nCaritasverband für die Erzdiözese Nord e.V.\nBetreiberweg 1, 10115 Berlin\n"
