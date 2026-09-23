@@ -58,6 +58,7 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.OtpType;
@@ -71,6 +72,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.testConfig.TestAgencyControllerApi;
@@ -84,6 +86,7 @@ import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
 import java.net.URI;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -187,6 +190,8 @@ class UserControllerE2EIT {
 
   @Autowired private UserAgencyRepository userAgencyRepository;
 
+  @Autowired private UserChatRepository userChatRepository;
+
   @MockitoBean private ConsultingTypeControllerApi consultingTypeControllerApi;
 
   @Autowired private VideoChatConfig videoChatConfig;
@@ -271,14 +276,15 @@ class UserControllerE2EIT {
     consultantAgencies = new ArrayList<>();
     patchUserDTO = null;
     userDTO = null;
-    if (nonNull(chat) && chatRepository.existsById(chat.getId())) {
-      chatRepository.deleteById(chat.getId());
-    }
-    chat = null;
     if (nonNull(chatAgency) && chatAgencyRepository.existsById(chatAgency.getId())) {
       chatAgencyRepository.deleteById(chatAgency.getId());
     }
     chatAgency = null;
+    if (nonNull(chat) && chatRepository.existsById(chat.getId())) {
+      userChatRepository.deleteAll(userChatRepository.findByChat(chat));
+      chatRepository.deleteById(chat.getId());
+    }
+    chat = null;
     if (nonNull(userAgency) && userAgencyRepository.existsById(userAgency.getId())) {
       userAgencyRepository.deleteById(userAgency.getId());
     }
@@ -1678,6 +1684,131 @@ class UserControllerE2EIT {
   }
 
   @Test
+  void registerUserThroughAGroupInviteShouldAssignTheGroupAndOpenNoEnquiry() throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
+    userDTO.setGroupChatId(chat.getId());
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isCreated());
+
+    var savedUser = registeredUser();
+    assertThat(sessionRepository.findByUserUserId(savedUser.getUserId())).isEmpty();
+    assertThat(userChatRepository.findByUser(savedUser))
+        .extracting(userChat -> userChat.getChat().getId())
+        .containsExactly(chat.getId());
+  }
+
+  @Test
+  void registerUserThroughAGroupInviteOfAnotherAgencyShouldBeRejectedWithoutAnAccount()
+      throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId() == 1L ? 2L : 1L);
+    userDTO.setGroupChatId(chat.getId());
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isBadRequest());
+
+    assertThat(userRepository.findAll())
+        .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
+  }
+
+  @Test
+  void registerUserThroughAnInternalGroupShouldBeRejectedWithoutAnAccount() throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenAGroupChatOfAgency(userDTO.getAgencyId(), ConversationType.INTERNAL_GROUP);
+    userDTO.setGroupChatId(chat.getId());
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isBadRequest());
+
+    assertThat(userRepository.findAll())
+        .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
+  }
+
+  @Test
+  void registerUserThroughAGroupInviteAndAConsultantLinkShouldBeRejectedWithoutAnAccount()
+      throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO(consultantRepository.findAll().iterator().next().getId());
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
+    userDTO.setGroupChatId(chat.getId());
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isBadRequest());
+
+    assertThat(userRepository.findAll())
+        .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_DEFAULT})
+  void aClientWhoOnlyJoinedAGroupShouldStillLoadTheirAccountData() throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
+    userDTO.setGroupChatId(chat.getId());
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isCreated());
+    givenABearerToken();
+    givenTheAuthenticatedClient(registeredUser());
+    givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
+
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("userId", is(user.getUserId())))
+        .andExpect(jsonPath("sessions").doesNotExist());
+  }
+
+  @Test
   void registerUserWithoutConsultingIdShouldSaveCreateUserWithDemographicsData() throws Exception {
     ReflectionTestUtils.setField(userVerifier, "demographicsFeatureEnabled", true);
     givenAValidTopicServiceResponse();
@@ -1840,6 +1971,41 @@ class UserControllerE2EIT {
     userDTO.setAgencyId(aPositiveLong());
     userDTO.setEmail(givenAValidEmail());
     userDTO.setReferer("validRef");
+    userDTO.setGroupChatId(null);
+  }
+
+  private User registeredUser() {
+    return StreamSupport.stream(userRepository.findAll().spliterator(), false)
+        .filter(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()))
+        .findFirst()
+        .orElseThrow();
+  }
+
+  private void givenASelfHelpGroupOfAgency(Long agencyId) {
+    givenAGroupChatOfAgency(agencyId, ConversationType.SELF_HELP);
+  }
+
+  private void givenAGroupChatOfAgency(Long agencyId, ConversationType conversationType) {
+    var start = LocalDateTime.now().plusDays(1);
+    chat =
+        chatRepository.save(
+            Chat.builder()
+                .topic("Gesprächskreis")
+                .consultingTypeId(1)
+                .initialStartDate(start)
+                .startDate(start)
+                .duration(60)
+                .repeatCount(1)
+                .timezone("Europe/Berlin")
+                .chatModality(Chat.ChatModality.TEXT)
+                .conversationType(conversationType)
+                .maxParticipants(10)
+                .chatOwner(consultantRepository.findAll().iterator().next())
+                .sourceLanguage("de")
+                .createDate(LocalDateTime.now())
+                .updateDate(LocalDateTime.now())
+                .build());
+    chatAgency = chatAgencyRepository.save(new ChatAgency(chat, agencyId));
   }
 
   private void givenAUserDTOWithDemographics() {
@@ -2080,6 +2246,16 @@ class UserControllerE2EIT {
     when(authenticatedUser.getUsername()).thenReturn(consultant.getUsername());
     when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.CONSULTANT.getValue()));
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
+  }
+
+  private void givenTheAuthenticatedClient(User client) {
+    user = client;
+    when(authenticatedUser.getUserId()).thenReturn(client.getUserId());
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(true);
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(authenticatedUser.getUsername()).thenReturn(client.getUsername());
+    when(authenticatedUser.getRoles()).thenReturn(Set.of(UserRole.USER.getValue()));
+    when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anotherAuthority"));
   }
 
   private void givenAValidUser() {

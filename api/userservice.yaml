@@ -2082,6 +2082,14 @@ components:
           example: 'DIVERSE'
         preferredLanguage:
           $ref: "#/components/schemas/LanguageCode"
+        groupChatId:
+          type: integer
+          format: int64
+          description: >-
+            Self-help group the person joins through its invite link. When set, the
+            registration assigns that group and opens no counselling enquiry. It must be a
+            self-help group of `agencyId`, and it cannot be combined with `consultantId`.
+          example: 19
 
 
     SessionDataDTO:

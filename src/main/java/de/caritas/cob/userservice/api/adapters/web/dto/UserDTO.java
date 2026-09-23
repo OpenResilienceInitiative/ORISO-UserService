@@ -134,6 +134,14 @@ public class UserDTO implements UserRegistrationDTO {
   @JsonProperty("referer")
   private String referer;
 
+  /**
+   * Self-help group the person joins through its invite link. Set, the registration assigns the
+   * group instead of opening a counselling enquiry at the agency.
+   */
+  @ApiModelProperty(required = false, example = "19")
+  @JsonProperty("groupChatId")
+  private Long groupChatId;
+
   public Integer getUserAge() {
     return StringUtils.isNumeric(age) ? Integer.valueOf(age) : null;
   }
@@ -208,6 +216,8 @@ public class UserDTO implements UserRegistrationDTO {
         + ", counsellingRelation='"
         + counsellingRelation
         + '\''
+        + ", groupChatId="
+        + groupChatId
         + '}';
   }
 }
