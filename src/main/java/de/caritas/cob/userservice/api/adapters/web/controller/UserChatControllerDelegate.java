@@ -83,10 +83,10 @@ class UserChatControllerDelegate {
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 
-  ResponseEntity<Void> assignChat(String chatReference) {
+  ResponseEntity<Void> assignChat(String chatReference, String inviteToken) {
     if (chatReference.matches("\\d+")) {
       try {
-        assignChatFacade.assignChat(Long.parseLong(chatReference), authenticatedUser);
+        assignChatFacade.assignChat(Long.parseLong(chatReference), inviteToken, authenticatedUser);
       } catch (NumberFormatException exception) {
         throw new BadRequestException("Numeric chat id is outside the supported range.");
       }

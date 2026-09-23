@@ -127,7 +127,7 @@ class UserChatControllerDelegateTest {
 
   @Test
   void assignChatShouldDelegateAndReturnOk() {
-    var response = delegate.assignChat("!group:matrix.example");
+    var response = delegate.assignChat("!group:matrix.example", null);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(assignChatFacade).assignChat("!group:matrix.example", authenticatedUser);
@@ -135,18 +135,18 @@ class UserChatControllerDelegateTest {
 
   @Test
   void assignChatDelegatesStableNumericSeriesIdentifier() {
-    var response = delegate.assignChat("1013");
+    var response = delegate.assignChat("1013", "link-token");
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(assignChatFacade).assignChat(1013L, authenticatedUser);
+    verify(assignChatFacade).assignChat(1013L, "link-token", authenticatedUser);
   }
 
   @Test
   void assignChatRejectsNumericSeriesIdentifierAboveLongRange() {
-    assertThatThrownBy(() -> delegate.assignChat("9223372036854775808"))
+    assertThatThrownBy(() -> delegate.assignChat("9223372036854775808", null))
         .isInstanceOf(BadRequestException.class);
 
-    verify(assignChatFacade, never()).assignChat(anyLong(), any());
+    verify(assignChatFacade, never()).assignChat(anyLong(), any(), any());
   }
 
   @Test

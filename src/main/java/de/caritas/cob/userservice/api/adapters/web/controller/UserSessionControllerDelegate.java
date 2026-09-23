@@ -148,6 +148,11 @@ class UserSessionControllerDelegate {
       var user = userAccountProvider.retrieveValidatedUser();
       groupSessionList =
           sessionListFacade.retrieveChatsForUserByChatIds(user.getUserId(), singletonList(chatId));
+      if (!isNotEmpty(groupSessionList.getSessions()) && messenger.existsChat(chatId)) {
+        throw new ForbiddenException(
+            String.format(
+                "User with id %s has no permission for chat with id %s", user.getUserId(), chatId));
+      }
     }
 
     consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);

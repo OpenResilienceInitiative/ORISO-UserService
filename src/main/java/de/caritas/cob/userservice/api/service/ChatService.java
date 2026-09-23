@@ -29,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
+import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
 import java.time.DateTimeException;
 import java.time.LocalDate;
@@ -115,14 +116,25 @@ public class ChatService {
 
   private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(
       Chat chat, Set<ChatAgency> chatAgencies) {
+    var userChat = createUserChat(chat, chatAgencies);
+    userChat.setInviteToken(inviteTokenOf(chat));
     return new ConsultantSessionResponseDTO()
-        .chat(createUserChat(chat, chatAgencies))
+        .chat(userChat)
         .consultant(
             new SessionConsultantForConsultantDTO()
                 .id(chat.getChatOwner().getId())
                 .firstName(chat.getChatOwner().getFirstName())
                 .lastName(chat.getChatOwner().getLastName())
                 .username(chat.getChatOwner().getUsername()));
+  }
+
+  /** Groups created before #1237 have no token yet; the first counsellor view mints it. */
+  private String inviteTokenOf(Chat chat) {
+    if (chat.getInviteToken() == null && chat.getId() != null) {
+      chat.setInviteToken(GroupChatInviteTokens.newToken());
+      chatRepository.save(chat);
+    }
+    return chat.getInviteToken();
   }
 
   private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(Chat chat) {

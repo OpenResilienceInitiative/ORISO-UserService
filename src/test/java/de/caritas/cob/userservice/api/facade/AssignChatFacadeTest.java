@@ -11,6 +11,8 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -74,13 +76,22 @@ class AssignChatFacadeTest {
   }
 
   @Test
-  void assignChatBySeriesId_Should_AddUserToChat() {
-    when(chatService.getChat(ACTIVE_CHAT.getId())).thenReturn(Optional.of(ACTIVE_CHAT));
+  void assignChatBySeriesId_Should_AddUserToChat_When_InviteTokenMatches() {
+    var selfHelpGroup =
+        Chat.builder()
+            .id(ACTIVE_CHAT.getId())
+            .topic("group")
+            .initialStartDate(ACTIVE_CHAT.getStartDate())
+            .startDate(ACTIVE_CHAT.getStartDate())
+            .conversationType(ConversationType.SELF_HELP)
+            .inviteToken("link-token")
+            .build();
+    when(chatService.getChat(selfHelpGroup.getId())).thenReturn(Optional.of(selfHelpGroup));
     when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(USER));
 
-    assignChatFacade.assignChat(ACTIVE_CHAT.getId(), authenticatedUser);
+    assignChatFacade.assignChat(selfHelpGroup.getId(), "link-token", authenticatedUser);
 
     verify(chatService)
-        .saveUserChatRelation(UserChat.builder().user(USER).chat(ACTIVE_CHAT).build());
+        .saveUserChatRelation(UserChat.builder().user(USER).chat(selfHelpGroup).build());
   }
 }
