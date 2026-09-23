@@ -103,10 +103,11 @@ public class OrisoEmailRenderer {
   private static final String ASSURANCE_BLOCK_TEXT = "-".repeat(64) + "\n{{assurance}}";
 
   /**
-   * The sender organisation's footer values. Each is entered in the Admin panel or not at all, and
-   * one nobody entered takes its whole line with it (see {@link #withoutBlankSenderLines}).
+   * The sender organisation's footer values plus the operator's name in the offered-by line. Each
+   * is entered in the Admin panel or not at all, and one nobody entered takes its whole line with
+   * it (see {@link #withoutBlankSenderLines}).
    */
-  private static final String SENDER_KEYS = "orgName|orgAddress|contactLine";
+  private static final String SENDER_KEYS = "orgName|orgAddress|contactLine|operatorName";
 
   /** A footer element holding only text with a sender placeholder in it. */
   private static final Pattern SENDER_ELEMENT =

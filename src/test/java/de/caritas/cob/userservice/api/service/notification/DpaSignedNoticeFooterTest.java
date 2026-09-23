@@ -135,6 +135,12 @@ class DpaSignedNoticeFooterTest {
         .contains(">Nordstraße 5, 24103 Kiel</div>")
         .doesNotContain("Betreiberweg");
     assertThat(mail.text()).contains("\nTräger Nord e.V.\nNordstraße 5, 24103 Kiel\n");
+    // The offered-by line names the platform operator, never the Träger (Frank, 2026-09-23).
+    for (String part : List.of(mail.html(), mail.text())) {
+      assertThat(part)
+          .contains("Online-Beratung ist ein Angebot von ORISO.")
+          .doesNotContain("ist ein Angebot von Träger Nord");
+    }
   }
 
   @Test

@@ -68,7 +68,11 @@ public class OrisoEmailBrand {
     values.put("platformName", platformName);
     // The offered-by line describes the platform; unlike platformName, no sender brands it.
     values.put("offeringName", platformName);
-    putSender(values, senderOrganisations.platform());
+    SenderOrganisation operator = senderOrganisations.platform();
+    putSender(values, operator);
+    // Y in "X ist ein Angebot von Y": always the platform operator, never a Träger that overlays
+    // the sender block (Frank, 2026-09-23). Blank when not entered, so the line is dropped.
+    values.put("operatorName", orBlank(operator.name()));
     values.put("logoUrl", logoUrl);
     values.put("primaryColor", readablePrimary(tenantThemeColor));
     values.put("accentColor", DEFAULT_ACCENT);

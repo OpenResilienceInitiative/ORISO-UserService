@@ -73,7 +73,7 @@ public class TenantEmailBrandValues {
     }
 
     // The sender block: the Träger's own name and address over the platform owner's master data,
-    // field by field (Frank, 2026-09-23). offeringName stays the platform's.
+    // field by field (Frank, 2026-09-23). offeringName and operatorName stay the platform's.
     if (senderTenantId != null) {
       OrisoEmailBrand.putSender(values, senderOrganisations.forTenant(senderTenantId));
     }

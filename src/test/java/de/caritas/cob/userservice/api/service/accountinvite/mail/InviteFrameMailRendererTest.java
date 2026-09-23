@@ -349,9 +349,12 @@ class InviteFrameMailRendererTest {
         .contains(">Träger Nord e.V.</div>")
         .contains(">Betreiberweg 1, 10115 Berlin</div>")
         .contains(">info@betreiber.example</div>")
-        .contains(">Online-Beratung ist ein Angebot von Träger Nord e.V.</div>");
+        .contains(">Online-Beratung ist ein Angebot von ORISO.</div>")
+        .doesNotContain("ist ein Angebot von Träger Nord");
     assertThat(mail.plainText())
-        .contains("\nTräger Nord e.V.\nBetreiberweg 1, 10115 Berlin\ninfo@betreiber.example\n");
+        .contains("\nTräger Nord e.V.\nBetreiberweg 1, 10115 Berlin\ninfo@betreiber.example\n")
+        .contains("\nOnline-Beratung ist ein Angebot von ORISO.\n")
+        .doesNotContain("ist ein Angebot von Träger Nord");
   }
 
   @Test
@@ -369,6 +372,48 @@ class InviteFrameMailRendererTest {
         .doesNotContain("Betreiberweg");
     assertThat(mail.plainText())
         .contains("\nTräger Nord e.V.\nNordstraße 5, 24103 Kiel\ninfo@betreiber.example\n");
+  }
+
+  /**
+   * "X ist ein Angebot von Y" names the platform operator (Admin → Dokument-Stammdaten →
+   * Betreiber), never the Träger — even when the Träger's own name and address fill the sender
+   * block above it (Frank, 2026-09-23).
+   */
+  @Test
+  void offeredByLine_namesThePlatformOperator_When_theTraegerHasItsOwnNameAndAddress() {
+    BrandedEmail mail =
+        renderWithSenders(
+            SenderOrganisationFixture.resolving(
+                SenderOrganisationFixture.PLATFORM_OWNER,
+                Map.of(
+                    TRAEGER_ID,
+                    new SenderOrganisation("Träger Nord e.V.", "Nordstraße 5, 24103 Kiel", null))));
+
+    assertThat(mail.html())
+        .contains(">Träger Nord e.V.</div>")
+        .contains(">Online-Beratung ist ein Angebot von ORISO.</div>")
+        .doesNotContain("ist ein Angebot von Träger Nord");
+    assertThat(mail.plainText())
+        .contains("\nOnline-Beratung ist ein Angebot von ORISO.\n")
+        .doesNotContain("ist ein Angebot von Träger Nord");
+  }
+
+  /** Without an operator name the sentence goes; the Träger never stands in for the operator. */
+  @Test
+  void offeredByLine_isOmitted_notFilledWithTheTraeger_When_theOperatorHasNoName() {
+    BrandedEmail mail =
+        renderWithSenders(
+            SenderOrganisationFixture.resolving(
+                new SenderOrganisation(null, "Betreiberweg 1, 10115 Berlin", null),
+                Map.of(TRAEGER_ID, new SenderOrganisation("Träger Nord e.V.", null, null))));
+
+    for (String part : new String[] {mail.html(), mail.plainText()}) {
+      assertThat(part)
+          .contains("Träger Nord e.V.")
+          .doesNotContain("ist ein Angebot von")
+          .doesNotContain("{{");
+    }
+    assertThat(mail.plainText()).doesNotContain("\n\n\n");
   }
 
   @Test
