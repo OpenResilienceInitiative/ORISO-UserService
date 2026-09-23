@@ -1,5 +1,7 @@
 package de.caritas.cob.userservice.api.service.email.sender;
 
+import static org.apache.commons.lang3.StringUtils.isBlank;
+
 import de.caritas.cob.userservice.api.config.apiclient.TenantAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
@@ -17,9 +19,9 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 
 /**
- * A Träger's own organisation data: its name and the postal address entered at onboarding or under
- * Träger → Allgemein. A Träger has no contact e-mail or phone field, so its contact line is always
- * absent and the platform owner's applies.
+ * A Träger's own organisation data, entered at onboarding or under Träger → Allgemein: its full
+ * legal name (else its display name), its postal address, and its contact e-mail and phone as one
+ * contact line. What the Träger did not enter stays empty, and the platform owner's value applies.
  *
  * <p>The address is only in the admin view of a tenant ({@code GET /tenant/{id}}), which needs the
  * {@code tenant-admin} role; mails are also sent where no such user is logged in, so the read
@@ -65,7 +67,11 @@ public class TraegerOrganisationClient {
       SenderOrganisation organisation =
           tenant == null
               ? SenderOrganisation.NONE
-              : new SenderOrganisation(tenant.getName(), tenant.getAddress(), null);
+              : new SenderOrganisation(
+                  isBlank(tenant.getLegalName()) ? tenant.getName() : tenant.getLegalName(),
+                  tenant.getAddress(),
+                  SenderOrganisation.contactLine(
+                      tenant.getContactEmail(), tenant.getContactPhone()));
       if (organisation.isEmpty()) {
         return Optional.empty();
       }

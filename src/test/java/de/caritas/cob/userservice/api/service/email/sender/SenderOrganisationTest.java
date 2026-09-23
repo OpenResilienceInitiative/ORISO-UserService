@@ -25,4 +25,14 @@ class SenderOrganisationTest {
     assertThat(merged)
         .isEqualTo(new SenderOrganisation("Träger", "Betreiberweg 1", "info@b.example"));
   }
+
+  @org.junit.jupiter.api.Test
+  void contactLine_joinsWhatWasEntered_andIsNullWhenNothingWas() {
+    org.assertj.core.api.Assertions.assertThat(
+            SenderOrganisation.contactLine(" a@b.example ", "+49 1"))
+        .isEqualTo("a@b.example · +49 1");
+    org.assertj.core.api.Assertions.assertThat(SenderOrganisation.contactLine("", "+49 1"))
+        .isEqualTo("+49 1");
+    org.assertj.core.api.Assertions.assertThat(SenderOrganisation.contactLine(null, " ")).isNull();
+  }
 }
