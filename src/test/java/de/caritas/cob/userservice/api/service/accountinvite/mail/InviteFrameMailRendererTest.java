@@ -118,9 +118,10 @@ class InviteFrameMailRendererTest {
   }
 
   /**
-   * The Träger brands the header, but X in the footer's "X ist ein Angebot von Y" stays the platform
-   * name (Frank, 2026-09-23). Y is the sender organisation: the operator here, because this Träger
-   * has no organisation data of its own — see the sender-block tests below for the Träger case.
+   * The Träger brands the header, but X in the footer's "X ist ein Angebot von Y" stays the
+   * platform name (Frank, 2026-09-23). Y is the sender organisation: the operator here, because
+   * this Träger has no organisation data of its own — see the sender-block tests below for the
+   * Träger case.
    */
   @Test
   void footerNamesThePlatformAndItsOperator_evenWhenATraegerBrandsTheHeader() {
