@@ -203,6 +203,25 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void showsTheNameBesideADecorativeLogoSoAFailedImageRepeatsNothing() {
+    // Frank, 2026-09-23: logo AND name. The name is text in the next cell, so the
+    // logo is decorative: alt="" and never the platform name a second time.
+    Map<String, String> values = brand();
+    values.put("loginUrl", "https://example.org/login");
+    values.put("expiryMinutes", "15");
+
+    String html = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values).html();
+    String img = html.substring(html.indexOf("<img"), html.indexOf('>', html.indexOf("<img")) + 1);
+
+    assertThat(img)
+        .contains(" alt=\"\"")
+        .contains("width=\"36\" height=\"36\"")
+        .contains("border:0")
+        .doesNotContain("Online-Beratung");
+    assertThat(html.substring(html.indexOf("<img"))).contains(">Online-Beratung</td>");
+  }
+
+  @Test
   void omitsTheLogoImageEntirelyWhenNoLogoUrlIsConfigured() {
     // email.brand.logo-url defaults to empty and is not set on any environment. An
     // <img src=""> renders as a broken-image icon next to the platform name, so a
