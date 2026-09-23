@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateCons
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -34,6 +35,7 @@ public class CounsellorInviteProvisioningService {
   private final @NonNull CreateConsultantSaga createConsultantSaga;
   private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull IdentityClientConfig identityClientConfig;
+  private final @NonNull CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService;
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
@@ -84,6 +86,13 @@ public class CounsellorInviteProvisioningService {
           new CreateConsultantAgencyDTO()
               .agencyId(invite.getAgencyId())
               .roleSetKey(DEFAULT_ROLE_SET));
+
+      if (Boolean.TRUE.equals(command.grantAgencyAdmin())) {
+        // The invitee brought this Beratungsstelle into existence, so they administrate it
+        // (ORISO-Admin#998) — a brand new agency has no other admin who could.
+        counsellorAgencyAdminGrantService.grantAgencyAdmin(
+            consultantId, invite.getAgencyId(), invite);
+      }
 
       AccountInvite accepted = accountInviteService.acceptInvite(rawToken, consultantId);
       accepted.setProvisionedUserId(consultantId);
@@ -164,7 +173,16 @@ public class CounsellorInviteProvisioningService {
         .position(command.position())
         .title(command.title())
         .displayName(command.displayName())
-        .internalDisplayName(command.internalDisplayName());
+        .internalDisplayName(command.internalDisplayName())
+        // #1046 avatar choice. Parsed through the one shared null-safe helper: an unknown wire
+        // value from the public wizard is simply "no choice", never a 500.
+        .avatarKind(toWireAvatarKind(command.avatarKind()))
+        .avatarId(command.avatarId());
+  }
+
+  private static CreateConsultantDTO.AvatarKindEnum toWireAvatarKind(String avatarKind) {
+    ConsultantAvatarKind kind = ConsultantAvatarKind.fromNameOrNull(avatarKind);
+    return kind == null ? null : CreateConsultantDTO.AvatarKindEnum.fromValue(kind.name());
   }
 
   private static void validate(ProvisionCounsellorCommand command, AccountInvite invite) {
@@ -180,9 +198,15 @@ public class CounsellorInviteProvisioningService {
     if (command.formalLanguage() == null) {
       throw new BadRequestException("formalLanguage is required");
     }
-    if (invite.getTenantId() == null
-        || invite.getAgencyId() == null
-        || invite.getDepartmentId() == null) {
+    if (invite.getTenantId() == null || invite.getAgencyId() == null) {
+      throw new BadRequestException("Counsellor invite requires tenant and agency");
+    }
+    // A new-Beratungsstelle invite (#998) routes to a reserved agency ID that carries no
+    // department yet — the invitee picks the topics in the wizard and the first one becomes the
+    // agency's department. Only when NO topics were chosen does the routed department have to
+    // exist, because it is then the sole source of the consultant's topic assignment.
+    if (invite.getDepartmentId() == null
+        && (command.topicIds() == null || command.topicIds().isEmpty())) {
       throw new BadRequestException("Counsellor invite requires tenant, agency and department");
     }
     if (isBlank(invite.getFirstName()) || isBlank(invite.getLastName())) {
@@ -209,13 +233,120 @@ public class CounsellorInviteProvisioningService {
       String title,
       String displayName,
       String internalDisplayName,
-      List<Long> topicIds) {
+      List<Long> topicIds,
+      String avatarKind,
+      String avatarId,
+      /**
+       * True when the wizard just created this invite's Beratungsstelle (#998): the provisioned
+       * consultant then also becomes its Beratungsstellen-Admin. Never set on the plain accept
+       * flow, where the agency already exists and has its own admins.
+       */
+      Boolean grantAgencyAdmin) {
 
     /** Plain accept-flow shape (no wizard profile fields). */
     public ProvisionCounsellorCommand(
         String username, String password, Boolean formalLanguage, String acceptedByUserId) {
       this(
-          username, password, formalLanguage, acceptedByUserId, null, null, null, null, null, null);
+          username,
+          password,
+          formalLanguage,
+          acceptedByUserId,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          null,
+          false);
+    }
+
+    /** Wizard shape before #998 (existing agency, no admin grant). */
+    public ProvisionCounsellorCommand(
+        String username,
+        String password,
+        Boolean formalLanguage,
+        String acceptedByUserId,
+        String salutation,
+        String position,
+        String title,
+        String displayName,
+        String internalDisplayName,
+        List<Long> topicIds) {
+      this(
+          username,
+          password,
+          formalLanguage,
+          acceptedByUserId,
+          salutation,
+          position,
+          title,
+          displayName,
+          internalDisplayName,
+          topicIds,
+          null,
+          null,
+          false);
+    }
+
+    /** Wizard shape with avatar, no admin grant (#1046). */
+    public ProvisionCounsellorCommand(
+        String username,
+        String password,
+        Boolean formalLanguage,
+        String acceptedByUserId,
+        String salutation,
+        String position,
+        String title,
+        String displayName,
+        String internalDisplayName,
+        List<Long> topicIds,
+        String avatarKind,
+        String avatarId) {
+      this(
+          username,
+          password,
+          formalLanguage,
+          acceptedByUserId,
+          salutation,
+          position,
+          title,
+          displayName,
+          internalDisplayName,
+          topicIds,
+          avatarKind,
+          avatarId,
+          false);
+    }
+
+    /** New-Beratungsstelle grant without an avatar choice. */
+    public ProvisionCounsellorCommand(
+        String username,
+        String password,
+        Boolean formalLanguage,
+        String acceptedByUserId,
+        String salutation,
+        String position,
+        String title,
+        String displayName,
+        String internalDisplayName,
+        List<Long> topicIds,
+        Boolean grantAgencyAdmin) {
+      this(
+          username,
+          password,
+          formalLanguage,
+          acceptedByUserId,
+          salutation,
+          position,
+          title,
+          displayName,
+          internalDisplayName,
+          topicIds,
+          null,
+          null,
+          grantAgencyAdmin);
     }
   }
 }

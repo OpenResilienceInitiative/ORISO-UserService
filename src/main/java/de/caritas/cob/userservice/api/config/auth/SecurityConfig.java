@@ -107,12 +107,77 @@ public class SecurityConfig {
     }
     enableTenantFilterIfMultitenancyEnabled(http);
 
+    http.addFilterAfter(
+        new de.caritas.cob.userservice.api.picture.PictureRequestFilter(),
+        org.springframework.security.web.access.intercept.AuthorizationFilter.class);
+
     http.sessionManagement(
         session -> session.sessionCreationPolicy(SessionCreationPolicy.STATELESS));
 
     http.authorizeHttpRequests(
         authorize ->
             authorize
+                // Private consultant-owned pictures: keep child routes above all useradmin
+                // catch-alls.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/consultants/{consultantId}/picture",
+                    "/service/useradmin/consultants/{consultantId}/picture")
+                .hasAnyAuthority(
+                    CONSULTANT_DEFAULT,
+                    USER_ADMIN,
+                    CONSULTANT_UPDATE,
+                    TENANT_ADMIN,
+                    SINGLE_TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN,
+                    TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/consultants/{consultantId}/picture",
+                    "/service/useradmin/consultants/{consultantId}/picture")
+                .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.DELETE,
+                    "/useradmin/consultants/{consultantId}/picture",
+                    "/service/useradmin/consultants/{consultantId}/picture")
+                .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Issue #1049 publish switch: reading the flag follows the internal read roles,
+                // changing it follows the write roles. Both stay above every useradmin catch-all.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/useradmin/consultants/{consultantId}/picture/visibility",
+                    "/service/useradmin/consultants/{consultantId}/picture/visibility")
+                .hasAnyAuthority(
+                    CONSULTANT_DEFAULT,
+                    USER_ADMIN,
+                    CONSULTANT_UPDATE,
+                    TENANT_ADMIN,
+                    SINGLE_TENANT_ADMIN,
+                    RESTRICTED_AGENCY_ADMIN,
+                    TECHNICAL_DEFAULT)
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/useradmin/consultants/{consultantId}/picture/visibility",
+                    "/service/useradmin/consultants/{consultantId}/picture/visibility")
+                .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Issue #1049 advice-seeker read of a published picture. Authentication is still
+                // required; the store refuses every internal-only picture with 404.
+                .requestMatchers(
+                    HttpMethod.GET,
+                    "/users/consultants/{consultantId}/picture",
+                    "/service/users/consultants/{consultantId}/picture")
+                .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
+                // Issue #1049 onboarding picture step: the invitee has no session yet, so the raw
+                // invite token is the credential — the same arrangement the register and
+                // two-factor steps of this flow already use. The controller resolves the token to
+                // the consultant it created before any bytes are read.
+                .requestMatchers(
+                    HttpMethod.PUT,
+                    "/users/account-invites/{token}/onboarding/picture",
+                    "/service/users/account-invites/{token}/onboarding/picture",
+                    "/users/account-invites/{token}/onboarding/picture/visibility",
+                    "/service/users/account-invites/{token}/onboarding/picture/visibility")
+                .permitAll()
                 .requestMatchers(
                     "/users/docs",
                     "/users/docs/**",
@@ -175,7 +240,9 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.GET,
                     "/users/account-invites/{token}/onboarding",
-                    "/service/users/account-invites/{token}/onboarding")
+                    "/service/users/account-invites/{token}/onboarding",
+                    "/users/account-invites/{token}/onboarding/dpa-mail-preview",
+                    "/service/users/account-invites/{token}/onboarding/dpa-mail-preview")
                 .permitAll()
                 .requestMatchers(
                     HttpMethod.POST,

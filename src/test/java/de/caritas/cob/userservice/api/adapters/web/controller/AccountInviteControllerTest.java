@@ -309,12 +309,12 @@ class AccountInviteControllerTest {
   @Test
   void listInvites_Should_delegateWithDefaults_When_paramsNull() {
     Page<AccountInvite> page = new PageImpl<>(List.of(sampleInvite()), PageRequest.of(0, 20), 1);
-    when(accountInviteService.listInvites(null, null, null, 0, 20)).thenReturn(page);
+    when(accountInviteService.listInvites(null, null, null, null, 0, 20)).thenReturn(page);
     when(accountInviteService.calculateAccessGate(any())).thenReturn(AccountAccessGateStatus.READY);
     when(deliveryRepository.findFirstByAccountInviteIdOrderByCreateDateDesc(10L))
         .thenReturn(Optional.empty());
 
-    var response = controller.listInvites(null, null, null, null, null);
+    var response = controller.listInvites(null, null, null, null, null, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(1, response.getBody().totalElements);
@@ -325,21 +325,38 @@ class AccountInviteControllerTest {
   void listInvites_Should_parseEnumsAndPagination() {
     Page<AccountInvite> page = new PageImpl<>(List.of(), PageRequest.of(1, 5), 0);
     when(accountInviteService.listInvites(
-            AccountInviteTargetRole.COUNSELLOR, AccountInviteStatus.DRAFT, 7L, 1, 5))
+            AccountInviteTargetRole.COUNSELLOR, AccountInviteStatus.DRAFT, 7L, null, 1, 5))
         .thenReturn(page);
 
     var response =
         controller.listInvites(
-            AccountInviteTargetRole.COUNSELLOR.name(), AccountInviteStatus.DRAFT.name(), 7L, 1, 5);
+            AccountInviteTargetRole.COUNSELLOR.name(),
+            AccountInviteStatus.DRAFT.name(),
+            7L,
+            null,
+            1,
+            5);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(0, response.getBody().content.size());
   }
 
   @Test
+  void listInvites_Should_passSearchQueryThrough() {
+    Page<AccountInvite> page = new PageImpl<>(List.of(), PageRequest.of(0, 20), 0);
+    when(accountInviteService.listInvites(null, null, null, "Jane", 0, 20)).thenReturn(page);
+
+    var response = controller.listInvites(null, null, null, "Jane", null, null);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    verify(accountInviteService).listInvites(null, null, null, "Jane", 0, 20);
+  }
+
+  @Test
   void listInvites_Should_throwBadRequest_When_unknownEnum() {
     assertThrows(
-        BadRequestException.class, () -> controller.listInvites("BOGUS", null, null, null, null));
+        BadRequestException.class,
+        () -> controller.listInvites("BOGUS", null, null, null, null, null));
   }
 
   @Test
@@ -496,7 +513,13 @@ class AccountInviteControllerTest {
     assertHasPreAuthorize(
         "createInvite", AccountInviteController.CreateAccountInviteRequestDTO.class);
     assertHasPreAuthorize(
-        "listInvites", String.class, String.class, Long.class, Integer.class, Integer.class);
+        "listInvites",
+        String.class,
+        String.class,
+        Long.class,
+        String.class,
+        Integer.class,
+        Integer.class);
     assertHasPreAuthorize(
         "sendInvite", Long.class, AccountInviteController.SendInviteRequestDTO.class);
     assertHasPreAuthorize(

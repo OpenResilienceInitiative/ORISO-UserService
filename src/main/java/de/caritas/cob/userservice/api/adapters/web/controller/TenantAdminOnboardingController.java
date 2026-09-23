@@ -160,6 +160,7 @@ public class TenantAdminOnboardingController {
     AccountDataDTO account = safe.account == null ? new AccountDataDTO() : safe.account;
     PersonDataDTO person = safe.person == null ? new PersonDataDTO() : safe.person;
     DisplayNamesDataDTO names = safe.names == null ? new DisplayNamesDataDTO() : safe.names;
+    AvatarDataDTO avatar = safe.avatar == null ? new AvatarDataDTO() : safe.avatar;
     return new RegisterCounsellorCommand(
         account.username,
         account.password,
@@ -168,7 +169,10 @@ public class TenantAdminOnboardingController {
         person.title,
         names.publicName,
         names.internalDisplayName,
-        safe.topicIds);
+        safe.topicIds,
+        avatar.kind,
+        avatar.id,
+        safe.agency == null ? null : safe.agency.name);
   }
 
   private static RegisterTenantAdminCommand toCommand(TenantAdminRegistrationRequestDTO request) {
@@ -226,6 +230,20 @@ public class TenantAdminOnboardingController {
     public String internalDisplayName;
   }
 
+  /**
+   * Counsellor wizard "Avatar" step (#1046). Kept as free text on purpose: an unknown or garbage
+   * kind from this PUBLIC endpoint must be ignored (no choice stored), never answered with a 500.
+   */
+  public static class AvatarDataDTO {
+    public String kind;
+    public String id;
+  }
+
+  /** Counsellor wizard: the new Beratungsstelle of an invite on a reserved agency ID. */
+  public static class AgencyDataDTO {
+    public String name;
+  }
+
   public static class TenantAdminRegistrationRequestDTO {
     public OrganisationDataDTO organisation;
     public DpaAcceptanceDataDTO dpa;
@@ -241,8 +259,14 @@ public class TenantAdminOnboardingController {
 
     public DisplayNamesDataDTO names;
 
-    /** Counsellor wizard topic selection — validated against the invite's coverage. */
+    /** Counsellor wizard avatar choice (#1046). */
+    public AvatarDataDTO avatar;
+
+    /** Counsellor wizard topic selection — validated against coverage ∪ active tenant topics. */
     public List<Long> topicIds;
+
+    /** Counsellor wizard: only for invites whose agency does not exist yet. */
+    public AgencyDataDTO agency;
   }
 
   public static class TwoFactorActivationRequestDTO {
@@ -291,8 +315,17 @@ public class TenantAdminOnboardingController {
     public Long agencyId;
     public Long departmentId;
 
-    /** Counsellor invites only (#997): topics the wizard's topic step may offer. */
+    /** Counsellor invites only (#997): the invite's coverage — preselected in the wizard. */
     public List<TopicOptionDTO> topics;
+
+    /** Counsellor invites only: the tenant's active topics the invitee may add. */
+    public List<TopicOptionDTO> availableTopics;
+
+    /**
+     * Counsellor invites only: false when the agency ID is still a reservation — the wizard then
+     * asks for the name of the new Beratungsstelle.
+     */
+    public Boolean agencyExists;
 
     /**
      * The tenant ID the invite reserved (TenantService {@code TenantIdReservationDTO.tenantId}).
@@ -345,6 +378,8 @@ public class TenantAdminOnboardingController {
       dto.agencyId = invite.getAgencyId();
       dto.departmentId = invite.getDepartmentId();
       dto.topics = state.topics().stream().map(TopicOptionDTO::from).toList();
+      dto.availableTopics = state.availableTopics().stream().map(TopicOptionDTO::from).toList();
+      dto.agencyExists = state.agencyExists();
       dto.expiresAt = invite.getExpiresAt();
       applyTwoFactorResume(dto, invite, state.pendingTwoFactorResume());
       return dto;

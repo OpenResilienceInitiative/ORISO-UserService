@@ -82,6 +82,12 @@ public class UserDataResponseDTO {
 
   private String publicSlugStatus;
 
+  /** Counsellor avatar choice (#1046): ICON, INITIALS or PICTURE; null when nothing was chosen. */
+  private String avatarKind;
+
+  /** Id of the chosen counsellor motif; only set together with avatarKind = ICON. */
+  private String avatarId;
+
   @JsonIgnore private Boolean encourage2fa;
 
   private Boolean magicLinkLoginEnabled;

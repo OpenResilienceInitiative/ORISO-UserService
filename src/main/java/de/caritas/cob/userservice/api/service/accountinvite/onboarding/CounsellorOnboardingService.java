@@ -65,6 +65,7 @@ public class CounsellorOnboardingService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull TopicService topicService;
   private final @NonNull UsernameTranscoder usernameTranscoder;
+  private final @NonNull AgencyCreationClient agencyCreationClient;
 
   /**
    * Drives the SHORT database-only transactions of this flow explicitly instead of annotating the
@@ -97,7 +98,9 @@ public class CounsellorOnboardingService {
       repairMissingTotpSecret(invite);
       return new CounsellorOnboardingState(invite, true, List.of());
     }
-    return new CounsellorOnboardingState(invite, false, resolveTopicCoverage(invite).topics());
+    CoverageResolution coverage = resolveTopicCoverage(invite);
+    return new CounsellorOnboardingState(
+        invite, false, coverage.topics(), coverage.availableTopics(), coverage.agencyExists());
   }
 
   /** The database-only part of {@link #resolveOnboardingInvite}: locked load and classification. */
@@ -143,10 +146,22 @@ public class CounsellorOnboardingService {
     if (expired != null) {
       throw expired;
     }
-    validateTopicSelection(command.topicIds(), resolveTopicCoverage(invite));
+    CoverageResolution coverage = resolveTopicCoverage(invite);
+    validateTopicSelection(command.topicIds(), coverage);
+
+    // A reserved (not yet created) Beratungsstellen-ID: the invitee named the agency in the
+    // wizard and it has to exist — under exactly the reserved ID — before the consultant can be
+    // attached to it. Deliberately here, OUTSIDE any transaction of this service: the invite's
+    // PESSIMISTIC_WRITE lock must never be held across a remote call (#1008 review).
+    boolean agencyCreated = false;
+    if (!coverage.agencyExists()) {
+      createReservedAgency(invite, command);
+      agencyCreated = true;
+    }
 
     AccountInvite accepted =
-        counsellorInviteProvisioningService.acceptInvite(rawToken, toProvisionCommand(command));
+        counsellorInviteProvisioningService.acceptInvite(
+            rawToken, toProvisionCommand(command, agencyCreated));
 
     String consultantId = accepted.getProvisionedUserId();
     if (!AccountInviteService.isTwoFactorGateSatisfied(accepted.getTwoFactorStatus())) {
@@ -214,6 +229,30 @@ public class CounsellorOnboardingService {
   }
 
   /**
+   * Issue #1049: the consultant this invite created, while the link is still resumable at the
+   * two-factor step. At that point the raw invite token is the only credential the wizard holds, so
+   * the picture write is guarded by exactly the gate that guards the two-factor activation:
+   * registration must have happened, the link must not be dead, expired or terminally consumed.
+   */
+  public String consultantIdForOnboardingPicture(String rawToken) {
+    return requireOnboardingPictureInvite(rawToken).getProvisionedUserId();
+  }
+
+  /**
+   * Same gate as {@link #consultantIdForOnboardingPicture}, but for a caller that already holds a
+   * write transaction. The invite row is locked here ({@code findByTokenHash}'s pessimistic lock)
+   * so an expiry or terminal consumption racing the ClamAV scan cannot persist after the credential
+   * has died.
+   */
+  public AccountInvite requireOnboardingPictureInvite(String rawToken) {
+    AccountInvite invite = loadInviteForTwoFactorActivation(rawToken);
+    if (isBlank(invite.getProvisionedUserId())) {
+      throw new BadRequestException("Registration has not happened yet for this invite");
+    }
+    return invite;
+  }
+
+  /**
    * The database-only precondition check of {@link #activateTwoFactor}. Every rejection here is
    * thrown before anything is written, so an ordinary rollback loses nothing.
    */
@@ -274,12 +313,17 @@ public class CounsellorOnboardingService {
     TenantData requestTenant = snapshotTenantContext();
     TenantContext.setCurrentTenant(invite.getTenantId());
     boolean agencyLookupFailed = false;
+    // A reserved (not yet created) Beratungsstellen-ID answers "no agency" — the invitee then
+    // names the agency in the wizard. An unreachable AgencyService is NOT "no agency".
+    boolean agencyExists = true;
     try {
       Set<Long> topicIds = new LinkedHashSet<>();
       if (invite.getAgencyId() != null) {
         try {
           var agency = agencyService.getAgencyWithoutCaching(invite.getAgencyId());
-          if (agency != null && agency.getTopicIds() != null) {
+          if (agency == null) {
+            agencyExists = false;
+          } else if (agency.getTopicIds() != null) {
             topicIds.addAll(agency.getTopicIds());
           }
         } catch (RuntimeException exception) {
@@ -294,7 +338,8 @@ public class CounsellorOnboardingService {
       if (invite.getDepartmentId() != null) {
         topicIds.add(invite.getDepartmentId());
       }
-      Map<Long, TopicDTO> namesById = safeActiveTopicsById();
+      TopicLookup topicLookup = safeActiveTopicsById();
+      Map<Long, TopicDTO> namesById = topicLookup.topicsById();
       List<TopicOption> topics =
           topicIds.stream()
               .map(
@@ -303,20 +348,42 @@ public class CounsellorOnboardingService {
                     return new TopicOption(id, topic == null ? null : topic.getName());
                   })
               .toList();
-      return new CoverageResolution(topics, agencyLookupFailed);
+      // Every active tenant topic is selectable on top of the coverage (owner decision
+      // 2026-09-17): the invitee removes preselected topics or adds further ones.
+      List<TopicOption> availableTopics =
+          namesById.values().stream()
+              .filter(topic -> topic.getId() != null)
+              .map(topic -> new TopicOption(topic.getId(), topic.getName()))
+              .toList();
+      return new CoverageResolution(
+          topics, availableTopics, agencyLookupFailed, topicLookup.failed(), agencyExists);
     } finally {
       restoreTenantContext(requestTenant);
     }
   }
 
-  private Map<Long, TopicDTO> safeActiveTopicsById() {
+  /**
+   * An EMPTY active-topics map is an answer, not a failure: a tenant may simply have no active
+   * topics, and a topic outside the coverage then IS invalid input (400). Only an actual exception
+   * from TopicService makes the set degraded — indeterminate rather than authoritative — which is
+   * what {@link #validateTopicSelection} turns into a retryable 5xx. Reporting emptiness as failure
+   * answered 500 for plain client errors (CI failure of {@code
+   * CounsellorOnboardingWizardIT.registerWithTopicOutsideHealthyCoverage_answers400...}).
+   */
+  private TopicLookup safeActiveTopicsById() {
     try {
-      return topicService.getAllActiveTopicsMap();
+      Map<Long, TopicDTO> topicsById = topicService.getAllActiveTopicsMap();
+      return new TopicLookup(topicsById == null ? Map.of() : topicsById, false);
     } catch (RuntimeException exception) {
       log.warn("Counsellor onboarding could not resolve topic names", exception);
-      return Map.of();
+      return new TopicLookup(Map.of(), true);
     }
   }
+
+  /**
+   * The tenant's active topics and whether the lookup itself failed (as opposed to being empty).
+   */
+  private record TopicLookup(Map<Long, TopicDTO> topicsById, boolean failed) {}
 
   private static TenantData snapshotTenantContext() {
     TenantData tenantData = TenantContext.getCurrentTenantData();
@@ -333,7 +400,36 @@ public class CounsellorOnboardingService {
     }
   }
 
-  private ProvisionCounsellorCommand toProvisionCommand(RegisterCounsellorCommand command) {
+  /**
+   * Creates the Beratungsstelle the invite reserved but never created (ORISO-Admin#998).
+   *
+   * <p>Not compensated on purpose, and the one step of this flow that is not: if the consultant
+   * creation afterwards fails, the provisioning service rolls the consultant back and records the
+   * failure, but the agency stays. Deleting it again would be the wrong trade — the reservation is
+   * already consumed, the ID can never be re-issued, and a second attempt on the resumable link
+   * would then have nothing to create the agency under. An agency without its counsellor is a
+   * visible, repairable state in the admin panel; a consumed reservation with no agency is not. The
+   * follow-up attempt sees {@code agencyExists == true} and simply attaches to it.
+   */
+  private void createReservedAgency(AccountInvite invite, RegisterCounsellorCommand command) {
+    if (isBlank(command.agencyName())) {
+      throw new BadRequestException("agency.name is required for an invite without an agency");
+    }
+    TenantData requestTenant = snapshotTenantContext();
+    TenantContext.setCurrentTenant(invite.getTenantId());
+    try {
+      agencyCreationClient.createAgencyWithReservedId(
+          invite.getAgencyId(),
+          command.agencyName().trim(),
+          invite.getTenantId(),
+          command.topicIds());
+    } finally {
+      restoreTenantContext(requestTenant);
+    }
+  }
+
+  private ProvisionCounsellorCommand toProvisionCommand(
+      RegisterCounsellorCommand command, boolean grantAgencyAdmin) {
     return new ProvisionCounsellorCommand(
         command.username(),
         command.password(),
@@ -346,7 +442,10 @@ public class CounsellorOnboardingService {
         trimToNull(command.title()),
         trimToNull(command.displayName()),
         trimToNull(command.internalDisplayName()),
-        command.topicIds());
+        command.topicIds(),
+        trimToNull(command.avatarKind()),
+        trimToNull(command.avatarId()),
+        grantAgencyAdmin);
   }
 
   /**
@@ -472,10 +571,17 @@ public class CounsellorOnboardingService {
    * selection OUTSIDE a degraded set is indeterminate — the topic may well be in the real agency
    * coverage — so that answers 5xx (retry), never 400, to avoid misclassifying valid input as a
    * client error during an AgencyService outage.
+   *
+   * <p>Only the AGENCY lookup can degrade this decision. The active-topics lookup contributes the
+   * NAMES and the tenant-wide widening, not the grant itself: when AgencyService answered, the
+   * invite's coverage is authoritative and a topic outside it is a client error — an empty or
+   * unavailable topic list does not turn that into an outage ({@code
+   * CounsellorOnboardingWizardIT.registerWithTopicOutsideHealthyCoverage_answers400...}).
    */
   private static void validateTopicSelection(List<Long> chosen, CoverageResolution coverage) {
     Set<Long> allowed =
         new LinkedHashSet<>(coverage.topics().stream().map(TopicOption::id).toList());
+    coverage.availableTopics().forEach(topic -> allowed.add(topic.id()));
     for (Long topicId : chosen) {
       if (topicId == null) {
         throw new BadRequestException("Topic null is outside the coverage of this invite");
@@ -495,8 +601,16 @@ public class CounsellorOnboardingService {
     }
   }
 
-  /** Resolved coverage plus whether the agency topic lookup failed (degraded set). */
-  private record CoverageResolution(List<TopicOption> topics, boolean agencyLookupFailed) {}
+  /**
+   * Resolved coverage, the tenant's active topics, whether either lookup failed (degraded set — a
+   * selection outside it is indeterminate, not invalid), and whether the invite's agency exists.
+   */
+  private record CoverageResolution(
+      List<TopicOption> topics,
+      List<TopicOption> availableTopics,
+      boolean agencyLookupFailed,
+      boolean topicLookupFailed,
+      boolean agencyExists) {}
 
   private static boolean isBlank(String value) {
     return value == null || value.trim().isEmpty();
@@ -515,7 +629,20 @@ public class CounsellorOnboardingService {
    * step shows no topics).
    */
   public record CounsellorOnboardingState(
-      AccountInvite invite, boolean pendingTwoFactorResume, List<TopicOption> topics) {}
+      AccountInvite invite,
+      boolean pendingTwoFactorResume,
+      List<TopicOption> topics,
+      /** The tenant's active topics the invitee may add on top of the coverage. */
+      List<TopicOption> availableTopics,
+      /** False when the invite's agency ID is still a reservation (new Beratungsstelle). */
+      boolean agencyExists) {
+
+    /** Resume/legacy shape: no selectable extras, agency assumed to exist. */
+    public CounsellorOnboardingState(
+        AccountInvite invite, boolean pendingTwoFactorResume, List<TopicOption> topics) {
+      this(invite, pendingTwoFactorResume, topics, List.of(), true);
+    }
+  }
 
   /** Input of the wizard registration; mirrors the Admin panel request shape. */
   public record RegisterCounsellorCommand(
@@ -526,7 +653,91 @@ public class CounsellorOnboardingService {
       String title,
       String displayName,
       String internalDisplayName,
-      List<Long> topicIds) {}
+      List<Long> topicIds,
+      String avatarKind,
+      String avatarId,
+      /**
+       * Name of the Beratungsstelle to create for an invite on a reserved agency ID (wizard section
+       * "Ihre Beratungsstelle"). Null for invites into an existing agency; agency creation on
+       * accept is the AgencyService/provisioning follow-up.
+       */
+      String agencyName) {
+
+    /** Shape without avatar or new-agency name (existing agency). */
+    public RegisterCounsellorCommand(
+        String username,
+        String password,
+        String salutation,
+        String position,
+        String title,
+        String displayName,
+        String internalDisplayName,
+        List<Long> topicIds) {
+      this(
+          username,
+          password,
+          salutation,
+          position,
+          title,
+          displayName,
+          internalDisplayName,
+          topicIds,
+          null,
+          null,
+          null);
+    }
+
+    /** Shape with avatar, no new-agency name (#1046). */
+    public RegisterCounsellorCommand(
+        String username,
+        String password,
+        String salutation,
+        String position,
+        String title,
+        String displayName,
+        String internalDisplayName,
+        List<Long> topicIds,
+        String avatarKind,
+        String avatarId) {
+      this(
+          username,
+          password,
+          salutation,
+          position,
+          title,
+          displayName,
+          internalDisplayName,
+          topicIds,
+          avatarKind,
+          avatarId,
+          null);
+    }
+
+    /** Shape with new-agency name, no avatar (#998). */
+    public RegisterCounsellorCommand(
+        String username,
+        String password,
+        String salutation,
+        String position,
+        String title,
+        String displayName,
+        String internalDisplayName,
+        List<Long> topicIds,
+        String agencyName) {
+      this(
+          username,
+          password,
+          salutation,
+          position,
+          title,
+          displayName,
+          internalDisplayName,
+          topicIds,
+          null,
+          null,
+          agencyName);
+    }
+  }
 
   /**
    * The created consultant plus the TOTP setup material for the 2FA step. {@code twoFactorRequired}

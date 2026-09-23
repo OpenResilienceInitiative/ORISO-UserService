@@ -62,6 +62,33 @@ public class DefaultDpaSigningEmailDispatchService implements DpaSigningEmailDis
         Void.class);
   }
 
+  @Override
+  public DpaSigningEmailPreview preview(
+      String recipientEmail, String tenantName, String signLink, LocalDateTime expiresAt) {
+    if (isBlank(consultingTypeServiceApiUrl)) {
+      throw new IllegalStateException("DPA email preview endpoint is not configured");
+    }
+    var headers = resolveAuthorizedHeaders();
+    tenantHeaderSupplier.addTenantHeader(headers);
+    Map<String, Object> payload =
+        Map.of(
+            "recipientEmail", recipientEmail,
+            "tenantName", tenantName,
+            "signLink", signLink,
+            "expiresAt", expiresAt.toString());
+    var response =
+        restTemplate.exchange(
+            normalizeBaseUrl(consultingTypeServiceApiUrl)
+                + "/settingsadmin/dpa-signing-emails/preview",
+            HttpMethod.POST,
+            new HttpEntity<>(payload, headers),
+            DpaSigningEmailPreview.class);
+    if (response.getBody() == null) {
+      throw new IllegalStateException("DPA email preview returned no content");
+    }
+    return response.getBody();
+  }
+
   /**
    * The dispatch endpoint requires an authorised caller. Authenticated flows forward the current
    * user's token as before; the PUBLIC onboarding forward (ORISO-Admin#722) has no session, so it

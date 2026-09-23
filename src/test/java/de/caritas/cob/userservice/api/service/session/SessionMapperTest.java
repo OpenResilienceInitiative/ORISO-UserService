@@ -320,6 +320,35 @@ class SessionMapperTest {
   }
 
   @Test
+  void toGroupSessionResponse_userVariant_Should_carryTheChosenAvatarToTheAdviceSeeker() {
+    // #1047: the seeker's chat has to show the avatar the counsellor picked (#1046).
+    UserSessionResponseDTO input = new UserSessionResponseDTO();
+    SessionConsultantForUserDTO consultant = new SessionConsultantForUserDTO();
+    consultant.setConsultantId("c-1");
+    consultant.setAvatarKind("ICON");
+    consultant.setAvatarId("motif-24");
+    input.setConsultant(consultant);
+
+    var response = new SessionMapper().toGroupSessionResponse(input);
+
+    assertEquals("ICON", response.getConsultant().getAvatarKind());
+    assertEquals("motif-24", response.getConsultant().getAvatarId());
+  }
+
+  @Test
+  void toGroupSessionResponse_userVariant_Should_leaveAvatarNull_When_noChoiceWasMade() {
+    UserSessionResponseDTO input = new UserSessionResponseDTO();
+    SessionConsultantForUserDTO consultant = new SessionConsultantForUserDTO();
+    consultant.setConsultantId("c-1");
+    input.setConsultant(consultant);
+
+    var response = new SessionMapper().toGroupSessionResponse(input);
+
+    assertNull(response.getConsultant().getAvatarKind());
+    assertNull(response.getConsultant().getAvatarId());
+  }
+
+  @Test
   void
       toGroupSessionResponse_consultantVariant_Should_returnResponseWithoutConsultant_When_consultantNull() {
     ConsultantSessionResponseDTO input = new ConsultantSessionResponseDTO();

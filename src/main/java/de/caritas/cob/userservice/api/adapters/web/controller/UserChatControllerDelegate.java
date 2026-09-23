@@ -56,7 +56,7 @@ class UserChatControllerDelegate {
 
   ResponseEntity<CreateChatResponseDTO> createChatV2(ChatDTO chatDTO) {
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
-    groupChatFeatureGate.requireEnabled(callingConsultant);
+    groupChatFeatureGate.requireEnabled(callingConsultant, chatDTO);
     var response = createChatFacade.createChatV2(chatDTO, callingConsultant);
     return new ResponseEntity<>(response, HttpStatus.CREATED);
   }

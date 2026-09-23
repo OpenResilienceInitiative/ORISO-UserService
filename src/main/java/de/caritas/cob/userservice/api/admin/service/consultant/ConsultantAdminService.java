@@ -48,6 +48,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ConsultantAdminService {
 
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull de.caritas.cob.userservice.api.picture.ConsultantPictureStore pictureStore;
   private final @NonNull CreateConsultantSaga createConsultantSaga;
   private final @NonNull ConsultantUpdateService consultantUpdateService;
   private final @NonNull ConsultantPreDeletionService consultantPreDeletionService;
@@ -196,11 +197,7 @@ public class ConsultantAdminService {
    */
   @Transactional
   public void markConsultantForDeletion(String consultantId, Boolean forceDeleteSessions) {
-    var consultant =
-        this.consultantRepository
-            .findByIdAndDeleteDateIsNull(consultantId)
-            .orElseThrow(
-                () -> new NotFoundException("Consultant with id %s does not exist", consultantId));
+    var consultant = pictureStore.lockActiveConsultant(consultantId);
 
     this.consultantPreDeletionService.performPreDeletionSteps(consultant, forceDeleteSessions);
 
@@ -214,6 +211,7 @@ public class ConsultantAdminService {
     }
 
     deletionLifecycleService.beginConsultantDeletion(consultant, authenticatedUser.getUserId());
+    pictureStore.removeForConsultantDeletion(consultantId);
     consultant.setStatus(ConsultantStatus.IN_DELETION);
     this.consultantRepository.save(consultant);
   }
