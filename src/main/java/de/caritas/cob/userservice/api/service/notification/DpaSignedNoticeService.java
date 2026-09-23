@@ -18,6 +18,8 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import jakarta.annotation.PreDestroy;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Comparator;
@@ -61,6 +63,9 @@ public class DpaSignedNoticeService {
   static final String SOURCE_FORWARDED_EXTERNAL = "FORWARDED_EXTERNAL";
   static final String STATUS_SIGNED = "SIGNED";
   static final String FALLBACK_LANGUAGE = "de";
+
+  // TenantService timestamps are zoneless UTC; the notice must show German wall-clock time.
+  private static final ZoneId MAIL_ZONE = ZoneId.of("Europe/Berlin");
 
   static final String DEFAULT_SUBJECT_DE =
       "Auftragsverarbeitungsvertrag unterzeichnet – {{tenantName}}";
@@ -429,7 +434,7 @@ public class DpaSignedNoticeService {
         "dpaVersion",
         formatDateTime(signature.getDpaVersion(), language),
         "signedAt",
-        formatDateTime(signature.getSignedAt(), language),
+        formatSignedAt(signature.getSignedAt(), language),
         "signerName",
         isBlank(signature.getSignerName()) ? "—" : signature.getSignerName(),
         "signerPosition",
@@ -496,6 +501,19 @@ public class DpaSignedNoticeService {
     }
     var pattern = "de".equalsIgnoreCase(language) ? "dd.MM.yyyy HH:mm 'Uhr'" : "yyyy-MM-dd HH:mm";
     return parsed.format(DateTimeFormatter.ofPattern(pattern));
+  }
+
+  /**
+   * The version stays verbatim: it is an identifier and must match the label the Admin shows.
+   * signedAt is a moment in time, so the reader gets German wall-clock time.
+   */
+  private static String formatSignedAt(String value, String language) {
+    var parsed = parseDateTime(value);
+    if (parsed == null) {
+      return formatDateTime(value, language);
+    }
+    var local = parsed.atOffset(ZoneOffset.UTC).atZoneSameInstant(MAIL_ZONE).toLocalDateTime();
+    return formatDateTime(local.toString(), language);
   }
 
   private record Recipient(String email, String language) {}

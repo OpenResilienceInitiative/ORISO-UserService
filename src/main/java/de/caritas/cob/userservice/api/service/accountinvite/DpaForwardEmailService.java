@@ -20,8 +20,11 @@ public class DpaForwardEmailService {
   static final String SAMPLE_SIGN_TOKEN = "SAMPLE-PREVIEW-TOKEN";
   private static final int PREVIEW_EXPIRY_DAYS = 14;
 
-  /** See {@link #resolveTenantName(Long)} for why this fallback is German-only. */
-  private static final String GENERIC_ORGANISATION_NAME = "Ihrer Organisation";
+  /**
+   * See {@link #resolveTenantName(Long)} for why this fallback is German-only. Accusative, because
+   * the signing mail puts it after "für".
+   */
+  private static final String GENERIC_ORGANISATION_NAME = "Ihre Organisation";
 
   private final TenantService tenantService;
   private final DpaSigningEmailDispatchService dpaSigningEmailDispatchService;
