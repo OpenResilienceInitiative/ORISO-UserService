@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.service.notification.DpaSigningEmailPrevie
 import java.net.URI;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Locale;
 import java.util.Objects;
 import lombok.NonNull;
 import org.springframework.beans.factory.annotation.Value;
@@ -126,9 +127,10 @@ public class DpaForwardEmailService {
   private static URI requireAbsoluteOrigin(String configured) {
     try {
       URI origin = URI.create(configured == null ? "" : configured.trim());
-      if (("http".equals(origin.getScheme()) || "https".equals(origin.getScheme()))
-          && !isBlank(origin.getHost())) {
-        return origin;
+      String scheme = origin.getScheme() == null ? "" : origin.getScheme().toLowerCase(Locale.ROOT);
+      if (("http".equals(scheme) || "https".equals(scheme)) && !isBlank(origin.getHost())) {
+        // Schemes are case-insensitive; mail the canonical lower-case form.
+        return URI.create(scheme + origin.toString().substring(scheme.length()));
       }
     } catch (IllegalArgumentException ignored) {
       // reported below with the variable name, which is what an operator needs

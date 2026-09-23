@@ -212,6 +212,17 @@ class DpaForwardEmailServiceTest {
             de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException.class);
   }
 
+  /** URI schemes are case-insensitive (RFC 3986), so an upper-case scheme must not stop startup. */
+  @Test
+  void constructor_acceptsAnUpperCaseScheme_andMailsACanonicalLink() {
+    var upperCase =
+        new DpaForwardEmailService(
+            tenantService, dpaSigningEmailDispatchService, "HTTPS://app.example.org");
+
+    assertThat(upperCase.toAbsoluteSignLink("/dpa-sign/single-use-token"))
+        .isEqualTo("https://app.example.org/dpa-sign/single-use-token");
+  }
+
   /** ORISO-Helm#368: a missing DPA origin stops startup and names the variable, never a guess. */
   @Test
   void constructor_failsNamingTheVariable_whenTheAppOriginIsBlankOrRelative() {
