@@ -463,6 +463,56 @@ class GroupChatJoinRequestControllerIT {
     assertThat(second.get("status").asText()).isEqualTo("PENDING");
   }
 
+  @Test
+  void knockingOnAnInternalGroupChatIsRejectedAndPersistsNothing() throws Exception {
+    givenGroupClassifiedAs(ConversationType.INTERNAL_GROUP, false);
+    actAs(otherTraegerCounsellor);
+
+    knock()
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message", is("Only self-help groups accept join requests")));
+
+    mine().andExpect(status().isNoContent());
+  }
+
+  @Test
+  void legacyChatWithoutConversationTypeIsSelfHelpOnlyWhenItRepeats() throws Exception {
+    actAs(otherTraegerCounsellor);
+
+    givenGroupClassifiedAs(null, false);
+    knock().andExpect(status().isBadRequest());
+
+    givenGroupClassifiedAs(null, true);
+    knock().andExpect(status().isCreated());
+  }
+
+  @Test
+  void requestsOfANonSelfHelpChatAreNeverListedAdmittedOrDeclined() throws Exception {
+    actAs(otherTraegerCounsellor);
+    var requestId = readJson(knock().andExpect(status().isCreated()).andReturn()).get("id");
+    givenGroupClassifiedAs(ConversationType.INTERNAL_GROUP, false);
+
+    actAs(owner);
+    pending().andExpect(status().isOk()).andExpect(jsonPath("$", hasSize(0)));
+    admit(requestId.asLong(), null).andExpect(status().isBadRequest());
+    decline(requestId.asLong()).andExpect(status().isBadRequest());
+
+    assertThat(
+            participantRepository.findBySeriesIdAndConsultantId(
+                group.getId(), otherTraegerCounsellor.getId()))
+        .isEmpty();
+    verify(membershipService, never()).addMemberToRoom(any(Chat.class), any());
+  }
+
+  private void givenGroupClassifiedAs(ConversationType conversationType, boolean repetitive) {
+    var chat = chatRepository.findById(group.getId()).orElseThrow();
+    chat.setConversationType(conversationType);
+    chat.setRepetitive(repetitive);
+    chatRepository.save(chat);
+    entityManager.flush();
+    entityManager.clear();
+  }
+
   private Consultant prepare(Consultant consultant, long tenantId, String matrixUserId) {
     // Seed agencies would make "who shares an agency with the group" depend on seed data.
     consultantAgencyRepository.deleteAll(

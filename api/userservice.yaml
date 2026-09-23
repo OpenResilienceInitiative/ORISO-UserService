@@ -2006,6 +2006,7 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/GroupChatJoinRequestStatusDTO' }
+        '400': { description: The Series is not a self-help group }
         '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
         '403': { description: Caller is not a consultant }
         '404': { description: Unknown Series }
@@ -2086,7 +2087,7 @@ paths:
             schema: { $ref: '#/components/schemas/GroupChatJoinRequestAdmitDTO' }
       responses:
         '204': { description: Requester admitted and added to the Matrix room }
-        '400': { description: Co-Moderator requested for a consultant of another tenant }
+        '400': { description: Not a self-help group, or Co-Moderator requested for a consultant of another tenant }
         '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
         '403': { description: Caller may not admit (or may not grant Co-Moderator) }
         '404': { description: Unknown join request for this Series }
@@ -2110,6 +2111,7 @@ paths:
           schema: { type: integer, format: int64 }
       responses:
         '204': { description: Join request declined }
+        '400': { description: The Series is not a self-help group }
         '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
         '403': { description: Caller may not decline }
         '404': { description: Unknown join request for this Series }

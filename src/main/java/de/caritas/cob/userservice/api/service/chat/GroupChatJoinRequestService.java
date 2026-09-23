@@ -5,10 +5,12 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
@@ -57,7 +59,7 @@ public class GroupChatJoinRequestService {
 
   @Transactional
   public KnockResult knock(Long seriesId, String consultantId) {
-    var series = requireSeries(seriesId);
+    var series = requireSelfHelpSeries(seriesId);
     var consultant = requireConsultant(consultantId);
     if (hasAccess(series, consultant)) {
       throw new ConflictException("Consultant already has access to this Series");
@@ -123,6 +125,7 @@ public class GroupChatJoinRequestService {
             .collect(Collectors.toMap(Chat::getId, chat -> chat));
     return pending.stream()
         .filter(request -> seriesById.containsKey(request.getSeriesId()))
+        .filter(request -> isSelfHelp(seriesById.get(request.getSeriesId())))
         .map(
             request ->
                 new PendingForModerator(
@@ -138,7 +141,7 @@ public class GroupChatJoinRequestService {
     if (admittedRole == ParticipantRole.OWNER) {
       throw new BadRequestException("A join request can only be admitted as Participant");
     }
-    var series = requireSeries(seriesId);
+    var series = requireSelfHelpSeries(seriesId);
     var actor = requireConsultant(actorId);
     var participants = participantRepository.findBySeriesIdForUpdate(seriesId);
     groupChatPermissionService.requireCanModerate(series, actor);
@@ -185,7 +188,7 @@ public class GroupChatJoinRequestService {
 
   @Transactional
   public void decline(Long seriesId, Long requestId, String actorId) {
-    var series = requireSeries(seriesId);
+    var series = requireSelfHelpSeries(seriesId);
     var actor = requireConsultant(actorId);
     groupChatPermissionService.requireCanModerate(series, actor);
     var request = requirePendingRequest(seriesId, requestId);
@@ -239,10 +242,19 @@ public class GroupChatJoinRequestService {
     return request;
   }
 
-  private Chat requireSeries(Long seriesId) {
-    return chatRepository
-        .findById(seriesId)
-        .orElseThrow(() -> new NotFoundException("Chat Series not found"));
+  private Chat requireSelfHelpSeries(Long seriesId) {
+    var series =
+        chatRepository
+            .findById(seriesId)
+            .orElseThrow(() -> new NotFoundException("Chat Series not found"));
+    if (!isSelfHelp(series)) {
+      throw new BadRequestException("Only self-help groups accept join requests");
+    }
+    return series;
+  }
+
+  private static boolean isSelfHelp(Chat series) {
+    return ChatConverter.conversationTypeOf(series) == ConversationType.SELF_HELP;
   }
 
   private Consultant requireConsultant(String consultantId) {
