@@ -67,21 +67,19 @@
 		     for this override. Drop it once the Boot BOM manages >= 11.0.25. -->
 		<tomcat.version>11.0.25</tomcat.version>
 		<!-- Spring Boot 4.0.7 under-pins the RabbitMQ Java client at 5.27.1 (via
-		     spring-boot-starter-amqp -> spring-rabbit 4.0.4). 5.33.1 is the lowest
-		     version that clears all three HIGH findings of the image CVE gate:
-		     CVE-2026-63337 (unvalidated Class.forName in JSON-RPC, fixed 5.33.0),
-		     CVE-2026-69219 (oversized LongString/bytes in ValueReader, fixed 5.33.1)
-		     and CVE-2026-69220 (unbounded recursion in ValueReader, fixed 5.33.1).
-		     5.34.0 additionally fixes CVE-2026-75516 (HIGH, image CVE gate), so the
-		     pin is now 5.34.0, the lowest version that clears all four findings.
-		     Boot 4.1.0 still manages only 5.30.0, so upgrading Boot does not remove
-		     the need for this override. 5.34.0 (now on dev via #1186) clears
-		     CVE-2026-75516 and the image CVE gate, but is itself affected by
-		     GHSA-h6w7-qmcm-q6xr — plaintext broker credentials baked into the exception
-		     message when ConnectionFactoryConfigurator.load fails to parse the AMQP URI
-		     (affected <= 5.34.0, patched 5.35.0). At Medium it does not trip the
-		     CRITICAL,HIGH gate, so it would sit on dev unnoticed. 5.36.0 is the current
-		     patch. Drop it once the Boot BOM manages >= 5.36.0. -->
+		     spring-boot-starter-amqp -> spring-rabbit 4.0.4), and Boot 4.1.0 still manages
+		     only 5.30.0, so upgrading Boot does not remove the need for this override.
+		     History of the floor, each step forced by the image CVE gate:
+		       5.33.0  CVE-2026-63337  unvalidated Class.forName in JSON-RPC
+		       5.33.1  CVE-2026-69219  oversized LongString/bytes in ValueReader
+		       5.33.1  CVE-2026-69220  unbounded recursion in ValueReader
+		       5.34.0  CVE-2026-75516  (the version now on dev via #1186)
+		     5.34.0 clears the gate, but is itself affected by GHSA-h6w7-qmcm-q6xr:
+		     plaintext broker credentials baked into the exception message when
+		     ConnectionFactoryConfigurator.load fails to parse the AMQP URI (affected
+		     <= 5.34.0, patched 5.35.0). At Medium it does not trip the CRITICAL,HIGH
+		     gate, so it would sit on dev unflagged — which is why this pin goes past it.
+		     Drop this override once the Boot BOM manages >= 5.36.0. -->
 		<rabbit-amqp-client.version>5.36.0</rabbit-amqp-client.version>
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
 		<testcontainers.version>1.21.4</testcontainers.version>
