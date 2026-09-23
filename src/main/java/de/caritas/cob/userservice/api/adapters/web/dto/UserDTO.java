@@ -142,6 +142,11 @@ public class UserDTO implements UserRegistrationDTO {
   @JsonProperty("groupChatId")
   private Long groupChatId;
 
+  /** The secret part of that group's invite link; required with {@link #groupChatId}. */
+  @ApiModelProperty(required = false)
+  @JsonProperty("groupChatInviteToken")
+  private String groupChatInviteToken;
+
   public Integer getUserAge() {
     return StringUtils.isNumeric(age) ? Integer.valueOf(age) : null;
   }

@@ -192,6 +192,7 @@ class SessionServiceTest {
           null,
           null,
           null,
+          null,
           null);
 
   @InjectMocks private SessionService sessionService;

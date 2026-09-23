@@ -2088,8 +2088,15 @@ components:
           description: >-
             Self-help group the person joins through its invite link. When set, the
             registration assigns that group and opens no counselling enquiry. It must be a
-            self-help group of `agencyId`, and it cannot be combined with `consultantId`.
+            self-help group of `agencyId`, it needs `groupChatInviteToken`, and it cannot be
+            combined with `consultantId`.
           example: 19
+        groupChatInviteToken:
+          type: string
+          description: >-
+            The secret part of that group's invite link. Required with `groupChatId`; a missing
+            or wrong token answers 403 before any account is created, the same check as joining
+            by invite link.
 
 
     SessionDataDTO:

@@ -1691,6 +1691,7 @@ class UserControllerE2EIT {
     givenAUserDTO();
     givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
     userDTO.setGroupChatId(chat.getId());
+    userDTO.setGroupChatInviteToken(GROUP_INVITE_TOKEN);
 
     mockMvc
         .perform(
@@ -1762,6 +1763,7 @@ class UserControllerE2EIT {
     givenAUserDTO(consultantRepository.findAll().iterator().next().getId());
     givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
     userDTO.setGroupChatId(chat.getId());
+    userDTO.setGroupChatInviteToken(GROUP_INVITE_TOKEN);
 
     mockMvc
         .perform(
@@ -1785,6 +1787,7 @@ class UserControllerE2EIT {
     givenAUserDTO();
     givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
     userDTO.setGroupChatId(chat.getId());
+    userDTO.setGroupChatInviteToken(GROUP_INVITE_TOKEN);
     mockMvc
         .perform(
             post("/users/askers/new")
@@ -1806,6 +1809,53 @@ class UserControllerE2EIT {
         .andExpect(status().isOk())
         .andExpect(jsonPath("userId", is(user.getUserId())))
         .andExpect(jsonPath("sessions").doesNotExist());
+  }
+
+  @Test
+  void registerUserThroughAGroupInviteWithoutTheInviteTokenShouldBeRejectedWithoutAnAccount()
+      throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
+    userDTO.setGroupChatId(chat.getId());
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isForbidden());
+
+    assertThat(userRepository.findAll())
+        .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
+  }
+
+  @Test
+  void registerUserThroughAGroupInviteWithAWrongInviteTokenShouldBeRejectedWithoutAnAccount()
+      throws Exception {
+    givenAValidTopicServiceResponse();
+    givenConsultingTypeServiceResponse();
+    givenARealmResource();
+    givenAUserDTO();
+    givenASelfHelpGroupOfAgency(userDTO.getAgencyId());
+    userDTO.setGroupChatId(chat.getId());
+    userDTO.setGroupChatInviteToken("guessed-" + GROUP_INVITE_TOKEN);
+
+    mockMvc
+        .perform(
+            post("/users/askers/new")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(userDTO)))
+        .andExpect(status().isForbidden());
+
+    assertThat(userRepository.findAll())
+        .noneMatch(dbUser -> userDTO.getEmail().equals(dbUser.getEmail()));
   }
 
   @Test
@@ -1972,7 +2022,10 @@ class UserControllerE2EIT {
     userDTO.setEmail(givenAValidEmail());
     userDTO.setReferer("validRef");
     userDTO.setGroupChatId(null);
+    userDTO.setGroupChatInviteToken(null);
   }
+
+  private static final String GROUP_INVITE_TOKEN = "q2Vx8mK4TzJ1bR7nW0cY5sLh9dFg3aPe";
 
   private User registeredUser() {
     return StreamSupport.stream(userRepository.findAll().spliterator(), false)
@@ -1999,6 +2052,7 @@ class UserControllerE2EIT {
                 .timezone("Europe/Berlin")
                 .chatModality(Chat.ChatModality.TEXT)
                 .conversationType(conversationType)
+                .inviteToken(GROUP_INVITE_TOKEN)
                 .maxParticipants(10)
                 .chatOwner(consultantRepository.findAll().iterator().next())
                 .sourceLanguage("de")

@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.facade;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.ConversationType;
@@ -9,6 +10,7 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -36,7 +38,7 @@ public class GroupInviteRegistration {
     }
     var chatAgencies = chatAgencyRepository.findByChat_Id(userDTO.getGroupChatId());
     // The link names the group and its agency; registration runs in that agency's tenant.
-    return Optional.of(
+    Chat group =
         chatAgencies.stream()
             .filter(chatAgency -> chatAgency.getAgencyId().equals(userDTO.getAgencyId()))
             .map(ChatAgency::getChat)
@@ -46,7 +48,14 @@ public class GroupInviteRegistration {
             .orElseThrow(
                 () ->
                     new BadRequestException(
-                        "The invited group is not a self-help group of the given agency.")));
+                        "The invited group is not a self-help group of the given agency."));
+    // The group number is guessable; only the holder of the link may join (#1237), the same
+    // check the join by invite link makes.
+    if (!GroupChatInviteTokens.matches(group.getInviteToken(), userDTO.getGroupChatInviteToken())) {
+      throw new ForbiddenException(
+          "The invite link for chat %s is not valid", userDTO.getGroupChatId());
+    }
+    return Optional.of(group);
   }
 
   public void join(Chat group, User user) {
