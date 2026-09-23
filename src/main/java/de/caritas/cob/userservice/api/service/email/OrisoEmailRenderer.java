@@ -83,6 +83,22 @@ public class OrisoEmailRenderer {
   /** The plain-text half of {@link #CTA_BLOCK_HTML}. */
   private static final String CTA_BLOCK_TEXT = "{{actionLabel}}:\n{{actionUrl}}";
 
+  /**
+   * The sender organisation's footer values. Each is entered in the Admin panel or not at all, and
+   * one nobody entered takes its whole line with it (see {@link #withoutBlankSenderLines}).
+   */
+  private static final String SENDER_KEYS = "orgName|orgAddress|contactLine";
+
+  /** A footer element holding only text with a sender placeholder in it. */
+  private static final Pattern SENDER_ELEMENT =
+      Pattern.compile("<(div|td)(\\s[^>]*)?>([^<]*\\{\\{(?:" + SENDER_KEYS + ")}}[^<]*)</\\1>");
+
+  private static final Pattern SENDER_LINE =
+      Pattern.compile("(?m)^[^\\n]*\\{\\{(?:" + SENDER_KEYS + ")}}[^\\n]*(?:\\n|$)");
+
+  private static final Pattern SENDER_PLACEHOLDER =
+      Pattern.compile("\\{\\{(" + SENDER_KEYS + ")}}");
+
   private final Map<String, String> templateCache = new ConcurrentHashMap<>();
 
   private final JsonNode catalogue;
@@ -149,10 +165,16 @@ public class OrisoEmailRenderer {
     values = withOccasionOnUnsubscribeLink(templateId, values);
     String html =
         substitute(
-            withConditionalBlocks(read(templateId, tone, "html"), values, true), values, true);
+            withoutBlankSenderLines(
+                withConditionalBlocks(read(templateId, tone, "html"), values, true), values, true),
+            values,
+            true);
     String text =
         substitute(
-            withConditionalBlocks(read(templateId, tone, "txt"), values, false), values, false);
+            withoutBlankSenderLines(
+                withConditionalBlocks(read(templateId, tone, "txt"), values, false), values, false),
+            values,
+            false);
     String subject = substitute(subjectOf(templateId, tone), values, false);
     return new RenderedEmail(
         insertFragments(subject, fragments),
@@ -241,6 +263,46 @@ public class OrisoEmailRenderer {
         .replace(
             "{{ctaBlock}}",
             isNotBlank(values.get("actionUrl")) ? (html ? CTA_BLOCK_HTML : CTA_BLOCK_TEXT) : "");
+  }
+
+  /**
+   * Drops every footer line that names a sender value nobody entered (Frank, 2026-09-23): no
+   * address means no address line, no organisation means neither its name nor "… ist ein Angebot
+   * von …" — never an empty line and never a sample. A {@code div} goes entirely; a {@code td} keeps
+   * its cell, because the table around it needs it, and loses its sentence. A value that is missing
+   * from {@code values} altogether is left alone, so the placeholder stays visible as a bug report.
+   */
+  private static String withoutBlankSenderLines(
+      String template, Map<String, String> values, boolean html) {
+    Matcher matcher = (html ? SENDER_ELEMENT : SENDER_LINE).matcher(template);
+    StringBuilder out = new StringBuilder();
+    boolean dropped = false;
+    while (matcher.find()) {
+      if (!namesABlankSenderValue(matcher.group(), values)) {
+        matcher.appendReplacement(out, Matcher.quoteReplacement(matcher.group()));
+        continue;
+      }
+      dropped = true;
+      String replacement =
+          html && "td".equals(matcher.group(1))
+              ? "<td" + (matcher.group(2) == null ? "" : matcher.group(2)) + "></td>"
+              : "";
+      matcher.appendReplacement(out, Matcher.quoteReplacement(replacement));
+    }
+    matcher.appendTail(out);
+    String result = out.toString();
+    return dropped && !html ? result.replaceAll("\n{3,}", "\n\n") : result;
+  }
+
+  private static boolean namesABlankSenderValue(String line, Map<String, String> values) {
+    Matcher placeholder = SENDER_PLACEHOLDER.matcher(line);
+    while (placeholder.find()) {
+      String value = values.get(placeholder.group(1));
+      if (value != null && value.isBlank()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Inserts already-finished fragments verbatim; see {@link #render(String, Tone, Map, Map)}. */
