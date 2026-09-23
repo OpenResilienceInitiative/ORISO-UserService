@@ -575,8 +575,9 @@ public class UserController implements UsersApi {
   }
 
   @Override
-  public ResponseEntity<GroupChatJoinRequestStatusDTO> createChatSeriesJoinRequest(Long seriesId) {
-    return groupChatJoinRequestDelegate.knock(seriesId);
+  public ResponseEntity<GroupChatJoinRequestStatusDTO> createChatSeriesJoinRequest(
+      Long seriesId, String inviteToken) {
+    return groupChatJoinRequestDelegate.knock(seriesId, inviteToken);
   }
 
   @Override

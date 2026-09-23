@@ -23,8 +23,8 @@ class GroupChatJoinRequestControllerDelegate {
   private final @NonNull GroupChatJoinRequestDtoMapper joinRequestDtoMapper;
   private final @NonNull AuthenticatedUser authenticatedUser;
 
-  ResponseEntity<GroupChatJoinRequestStatusDTO> knock(Long seriesId) {
-    var result = joinRequestService.knock(seriesId, authenticatedUser.getUserId());
+  ResponseEntity<GroupChatJoinRequestStatusDTO> knock(Long seriesId, String inviteToken) {
+    var result = joinRequestService.knock(seriesId, inviteToken, authenticatedUser.getUserId());
     return new ResponseEntity<>(
         joinRequestDtoMapper.toStatusDto(result.request()),
         result.created() ? HttpStatus.CREATED : HttpStatus.OK);

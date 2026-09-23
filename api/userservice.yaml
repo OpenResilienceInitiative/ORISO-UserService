@@ -1986,8 +1986,11 @@ paths:
       operationId: createChatSeriesJoinRequest
       summary: Knock to join a self-help group via its invite link
       description: >-
-        Any consultant may knock. The response carries only the request status, never any
-        group data. A second knock while a request is pending returns the pending request.
+        Any consultant holding the invite link may knock. The response carries only the request
+        status, never any group data. A second knock while a request is pending returns the
+        pending request. Check order: unknown Series or missing/wrong inviteToken → 403 (the two
+        are indistinguishable); then not a self-help group → 400; then caller already has
+        access → 409.
       security:
         - Bearer: [ ]
       parameters:
@@ -1995,6 +1998,11 @@ paths:
           in: path
           required: true
           schema: { type: integer, format: int64 }
+        - name: inviteToken
+          in: query
+          description: Secret part of the invite link (same value as for /users/chat/{id}/assign).
+          required: false
+          schema: { type: string }
       responses:
         '200':
           description: A pending request of the caller already exists
@@ -2006,10 +2014,9 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/GroupChatJoinRequestStatusDTO' }
-        '400': { description: The Series is not a self-help group }
+        '400': { description: The Series is not a self-help group (only after the token matched) }
         '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
-        '403': { description: Caller is not a consultant }
-        '404': { description: Unknown Series }
+        '403': { description: Unknown Series, missing or wrong inviteToken, or caller is not a consultant }
         '409': { description: Caller already has access to this Series }
   /users/chat-series/{seriesId}/join-requests/mine:
     get:

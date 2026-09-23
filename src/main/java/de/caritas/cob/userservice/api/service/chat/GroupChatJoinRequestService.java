@@ -6,7 +6,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.ChatConverter;
-import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -47,7 +46,7 @@ public class GroupChatJoinRequestService {
   private final ChatRepository chatRepository;
   private final ConsultantRepository consultantRepository;
   private final GroupChatPermissionService groupChatPermissionService;
-  private final ChatPermissionVerifier chatPermissionVerifier;
+  private final GroupChatConsultantAccess groupChatConsultantAccess;
   private final GroupChatMembershipService membershipService;
 
   /** Result of a knock: the request, and whether this call created it. */
@@ -57,9 +56,18 @@ public class GroupChatJoinRequestService {
   public record PendingForModerator(
       GroupChatJoinRequest request, Chat series, ParticipantRole viewerRole) {}
 
+  /**
+   * Knock on a Series. Check order: unknown Series or wrong invite token → 403 (indistinguishable,
+   * so the id reveals nothing); not a self-help group → 400; caller already has access → 409.
+   */
   @Transactional
-  public KnockResult knock(Long seriesId, String consultantId) {
-    var series = requireSelfHelpSeries(seriesId);
+  public KnockResult knock(Long seriesId, String inviteToken, String consultantId) {
+    var series =
+        chatRepository
+            .findById(seriesId)
+            .filter(chat -> GroupChatInviteTokens.matches(chat.getInviteToken(), inviteToken))
+            .orElseThrow(() -> new ForbiddenException("The invite link is not valid"));
+    requireSelfHelp(series);
     var consultant = requireConsultant(consultantId);
     if (hasAccess(series, consultant)) {
       throw new ConflictException("Consultant already has access to this Series");
@@ -206,12 +214,10 @@ public class GroupChatJoinRequestService {
     logTransition(request, actorId, from);
   }
 
+  /** Same rule as reading the group (#1244), so a 409 here always means "you can open it". */
   private boolean hasAccess(Chat series, Consultant consultant) {
     return consultant.getId().equals(series.getChatOwner().getId())
-        || participantRepository
-            .findBySeriesIdAndConsultantId(series.getId(), consultant.getId())
-            .isPresent()
-        || chatPermissionVerifier.hasSameAgencyAssigned(series, consultant);
+        || groupChatConsultantAccess.mayAccess(series, consultant);
   }
 
   private boolean isOwner(
@@ -247,10 +253,14 @@ public class GroupChatJoinRequestService {
         chatRepository
             .findById(seriesId)
             .orElseThrow(() -> new NotFoundException("Chat Series not found"));
+    requireSelfHelp(series);
+    return series;
+  }
+
+  private static void requireSelfHelp(Chat series) {
     if (!isSelfHelp(series)) {
       throw new BadRequestException("Only self-help groups accept join requests");
     }
-    return series;
   }
 
   private static boolean isSelfHelp(Chat series) {

@@ -149,6 +149,7 @@ class GroupChatJoinRequestControllerIT {
                 .createDate(now)
                 .updateDate(now)
                 .build());
+    assertThat(group.getInviteToken()).isNotBlank();
     chatAgencyRepository.save(ChatAgency.builder().chat(group).agencyId(CHAT_AGENCY_ID).build());
     saveParticipant(owner, ParticipantRole.OWNER);
     saveParticipant(coModerator, ParticipantRole.CO_MODERATOR);
@@ -200,11 +201,59 @@ class GroupChatJoinRequestControllerIT {
   }
 
   @Test
-  void knockingOnAnUnknownSeriesIsNotFound() throws Exception {
+  void knockingOnAnUnknownSeriesLooksLikeAWrongInviteLink() throws Exception {
     actAs(otherTraegerCounsellor);
 
-    mvc.perform(withCsrf(post("/users/chat-series/{seriesId}/join-requests", 99_999_999L)))
-        .andExpect(status().isNotFound());
+    mvc.perform(
+            withCsrf(
+                post("/users/chat-series/{seriesId}/join-requests", 99_999_999L)
+                    .queryParam("inviteToken", group.getInviteToken())))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void knockingWithoutTheInviteTokenIsForbiddenAndPersistsNothing() throws Exception {
+    actAs(otherTraegerCounsellor);
+
+    mvc.perform(withCsrf(post("/users/chat-series/{seriesId}/join-requests", group.getId())))
+        .andExpect(status().isForbidden());
+
+    mine().andExpect(status().isNoContent());
+  }
+
+  @Test
+  void knockingWithAWrongInviteTokenIsForbiddenAndPersistsNothing() throws Exception {
+    actAs(otherTraegerCounsellor);
+
+    knockWith("not-the-token").andExpect(status().isForbidden());
+    knockWith("").andExpect(status().isForbidden());
+
+    mine().andExpect(status().isNoContent());
+  }
+
+  @Test
+  void aWrongTokenDoesNotRevealWhetherTheChatIsASelfHelpGroup() throws Exception {
+    givenGroupClassifiedAs(ConversationType.INTERNAL_GROUP, false);
+    actAs(otherTraegerCounsellor);
+
+    knockWith("not-the-token").andExpect(status().isForbidden());
+  }
+
+  @Test
+  void counsellorOfAnotherTraegerLinkedToTheGroupsAgencyMayKnock() throws Exception {
+    consultantAgencyRepository.save(
+        ConsultantAgency.builder()
+            .consultant(consultantRepository.findById(otherTraegerCounsellor.getId()).orElseThrow())
+            .agencyId(CHAT_AGENCY_ID)
+            .tenantId(OTHER_TENANT_ID)
+            .createDate(LocalDateTime.now())
+            .updateDate(LocalDateTime.now())
+            .build());
+    entityManager.flush();
+    entityManager.clear();
+    actAs(otherTraegerCounsellor);
+
+    knock().andExpect(status().isCreated());
   }
 
   @Test
@@ -568,8 +617,14 @@ class GroupChatJoinRequestControllerIT {
   }
 
   private ResultActions knock() throws Exception {
+    return knockWith(group.getInviteToken());
+  }
+
+  private ResultActions knockWith(String inviteToken) throws Exception {
     return mvc.perform(
-        withCsrf(post("/users/chat-series/{seriesId}/join-requests", group.getId())));
+        withCsrf(
+            post("/users/chat-series/{seriesId}/join-requests", group.getId())
+                .queryParam("inviteToken", inviteToken)));
   }
 
   private ResultActions mine() throws Exception {
