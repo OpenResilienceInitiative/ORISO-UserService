@@ -46,7 +46,7 @@ public class CounsellorInviteProvisioningService {
     }
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT
         || (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(LocalDateTime.now()))) {
-      // Already-processed or expired links keep the ORISO-Admin#569 resume/consumed contract
+      // Already-processed or expired links keep the resume/consumed contract
       // (idempotent 200 while the 2FA gate is pending, 410 with a reason code otherwise). No
       // caller-supplied user id is recorded on this path — provisioning identity is always the
       // server-created consultant id.
@@ -77,6 +77,7 @@ public class CounsellorInviteProvisioningService {
         throw new IllegalStateException("Consultant provisioning returned no user id");
       }
       consultantId = consultant.getEmbedded().getId();
+      alignRequirementsWithInvite(consultantId, invite);
       invite.setProvisionedUserId(consultantId);
       invite.setUpdateDate(LocalDateTime.now());
       accountInviteRepository.save(invite);
@@ -88,8 +89,8 @@ public class CounsellorInviteProvisioningService {
               .roleSetKey(DEFAULT_ROLE_SET));
 
       if (Boolean.TRUE.equals(command.grantAgencyAdmin())) {
-        // The invitee brought this Beratungsstelle into existence, so they administrate it
-        // (ORISO-Admin#998) — a brand new agency has no other admin who could.
+        // The invitee brought this Beratungsstelle into existence, so they administrate it —
+        // a brand new agency has no other admin who could.
         counsellorAgencyAdminGrantService.grantAgencyAdmin(
             consultantId, invite.getAgencyId(), invite);
       }
@@ -129,6 +130,27 @@ public class CounsellorInviteProvisioningService {
     }
   }
 
+  /**
+   * Undoes the two create-path defaults that only hold when an administrator chose the credentials.
+   * The invite already tracks the second-factor requirement, including {@code WAIVED}, and the
+   * counsellor typed their own password seconds ago.
+   */
+  private void alignRequirementsWithInvite(String consultantId, AccountInvite invite) {
+    var stillOwed = !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());
+    consultantRepository
+        .findByIdAndDeleteDateIsNull(consultantId)
+        .filter(
+            consultant ->
+                !Boolean.valueOf(stillOwed).equals(consultant.getTwoFactorRequired())
+                    || Boolean.TRUE.equals(consultant.getPasswordChangeRequired()))
+        .ifPresent(
+            consultant -> {
+              consultant.setTwoFactorRequired(stillOwed);
+              consultant.setPasswordChangeRequired(false);
+              consultantRepository.save(consultant);
+            });
+  }
+
   private void rollbackPartiallyCreatedConsultant(String consultantId, RuntimeException failure) {
     if (consultantId == null) {
       return;
@@ -156,25 +178,25 @@ public class CounsellorInviteProvisioningService {
         .password(command.password())
         .firstname(invite.getFirstName())
         .lastname(invite.getLastName())
-        .email(invite.getRecipientEmail().trim().toLowerCase())
+        .email(invite.getRecipientEmail().trim().toLowerCase(java.util.Locale.ROOT))
         .formalLanguage(command.formalLanguage())
         .absent(false)
         .tenantId(invite.getTenantId())
         .isGroupchatConsultant(false)
-        // Wizard registrations (#997) may choose topics within the invite's coverage (validated
+        // Wizard registrations may choose topics within the invite's coverage (validated
         // by CounsellorOnboardingService); the plain accept flow keeps the routed department.
         .topicIds(
             command.topicIds() == null || command.topicIds().isEmpty()
                 ? List.of(invite.getDepartmentId())
                 : List.copyOf(command.topicIds()))
-        // Optional #994/#996 profile fields collected by the onboarding wizard; null on the
+        // Optional profile fields collected by the onboarding wizard; null on the
         // plain accept flow and simply left unset on the created consultant.
         .salutation(command.salutation())
         .position(command.position())
         .title(command.title())
         .displayName(command.displayName())
         .internalDisplayName(command.internalDisplayName())
-        // #1046 avatar choice. Parsed through the one shared null-safe helper: an unknown wire
+        // Avatar choice. Parsed through the one shared null-safe helper: an unknown wire
         // value from the public wizard is simply "no choice", never a 500.
         .avatarKind(toWireAvatarKind(command.avatarKind()))
         .avatarId(command.avatarId());
@@ -201,7 +223,7 @@ public class CounsellorInviteProvisioningService {
     if (invite.getTenantId() == null || invite.getAgencyId() == null) {
       throw new BadRequestException("Counsellor invite requires tenant and agency");
     }
-    // A new-Beratungsstelle invite (#998) routes to a reserved agency ID that carries no
+    // A new-Beratungsstelle invite routes to a reserved agency ID that carries no
     // department yet — the invitee picks the topics in the wizard and the first one becomes the
     // agency's department. Only when NO topics were chosen does the routed department have to
     // exist, because it is then the sole source of the consultant's topic assignment.

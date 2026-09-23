@@ -11,10 +11,8 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
-import de.caritas.cob.userservice.api.service.email.layout.BrandedEmailLayoutRenderer;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
-import de.caritas.cob.userservice.api.service.email.layout.EmailContentSanitizer;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.time.Instant;
 import java.util.Map;
@@ -42,16 +40,16 @@ class InviteMailDispatchServiceTest {
   @Mock private InviteMailTransport inviteMailTransport;
   @Mock private EmailBrandingResolver emailBrandingResolver;
 
-  private final BrandedEmailLayoutRenderer renderer =
-      new BrandedEmailLayoutRenderer(new EmailContentSanitizer());
+  private InviteFrameMailRenderer renderer() {
+    return InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver);
+  }
 
   private InviteMailDispatchService service(String smtpUser, String smtpPassword) {
     return new InviteMailDispatchService(
         restTemplate,
         applicationSettingsService,
         inviteMailTransport,
-        emailBrandingResolver,
-        renderer,
+        renderer(),
         "http://consultingtypeservice:8080/service",
         smtpUser,
         smtpPassword);
@@ -119,7 +117,7 @@ class InviteMailDispatchServiceTest {
         .send(any(), eq("to@example.org"), eq("Ihre Einladung"), html.capture(), text.capture());
 
     assertThat(html.getValue())
-        .startsWith("<!doctype html>")
+        .startsWith("<!DOCTYPE html>")
         .contains("Hallo Ada, bitte bestaetigen Sie Ihr Konto.")
         .contains("https://app.oriso.org/account-invite/tok");
     assertThat(text.getValue())
@@ -369,8 +367,7 @@ class InviteMailDispatchServiceTest {
             restTemplate,
             applicationSettingsService,
             inviteMailTransport,
-            emailBrandingResolver,
-            renderer,
+            renderer(),
             "",
             "u",
             "p");

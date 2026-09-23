@@ -1191,6 +1191,19 @@ components:
         description:
           type: string
           example: Short description of the tenant.
+        legalName:
+          type: string
+          maxLength: 255
+          description: Full legal name of the Träger; the mail footer's sender name when set.
+        contactEmail:
+          type: string
+          format: email
+          maxLength: 255
+          description: Contact e-mail address of the Träger for the mail footer.
+        contactPhone:
+          type: string
+          maxLength: 64
+          description: Contact phone number of the Träger for the mail footer.
         createDate:
           type: string
         updateDate:
@@ -1227,6 +1240,19 @@ components:
         description:
           type: string
           example: Short description of the tenant.
+        legalName:
+          type: string
+          maxLength: 255
+          description: Full legal name of the Träger; the mail footer's sender name when set.
+        contactEmail:
+          type: string
+          format: email
+          maxLength: 255
+          description: Contact e-mail address of the Träger for the mail footer.
+        contactPhone:
+          type: string
+          maxLength: 64
+          description: Contact phone number of the Träger for the mail footer.
         adminEmails:
           type: array
           items:

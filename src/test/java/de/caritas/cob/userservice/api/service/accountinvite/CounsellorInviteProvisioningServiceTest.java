@@ -194,7 +194,7 @@ class CounsellorInviteProvisioningServiceTest {
 
   @Test
   void newAgencyRegistrationMakesTheInviteeTheAgencyAdmin() {
-    // ORISO-Admin#998: the invitee just created this Beratungsstelle, so they administrate it.
+    // The invitee just created this Beratungsstelle, so they administrate it.
     AccountInvite invite = activeCounsellorInvite();
     when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
@@ -267,6 +267,74 @@ class CounsellorInviteProvisioningServiceTest {
             true));
 
     verify(counsellorAgencyAdminGrantService).grantAgencyAdmin("created-consultant", 275L, invite);
+  }
+
+  @Test
+  void aWaivedInviteClearsTheSecondFactorRequirementTheCreatePathSet() {
+    // An administrator excused this counsellor on the invite. Without this the
+    // waiver would be granted and then silently ignored at first login.
+    Consultant provisioned = provisionWith(TwoFactorGateStatus.WAIVED, true);
+
+    assertThat(provisioned.getTwoFactorRequired()).isFalse();
+    verify(consultantRepository).save(provisioned);
+  }
+
+  @Test
+  void anInviteeIsNotAskedToReplaceThePasswordTheyJustChose() {
+    // CreateConsultantDTOCreationInputAdapter.isPasswordChangeRequired() is unconditionally true,
+    // which is right when an administrator types the password and hands it over. Here the
+    // counsellor typed it themselves and nobody else has ever seen it, so the non-dismissible
+    // "replace your password" screen is asking them to replace their own secret with another one.
+    Consultant provisioned = provisionWith(TwoFactorGateStatus.PENDING_SETUP, true);
+
+    assertThat(provisioned.getPasswordChangeRequired()).isFalse();
+    verify(consultantRepository).save(provisioned);
+  }
+
+  @Test
+  void aPendingInviteLeavesTheSecondFactorRequirementInPlace() {
+    Consultant provisioned = provisionWith(TwoFactorGateStatus.PENDING_SETUP, true);
+
+    assertThat(provisioned.getTwoFactorRequired()).isTrue();
+  }
+
+  @Test
+  void nothingIsWritten_When_neitherRequirementNeedsCorrecting() {
+    Consultant provisioned = provisionWith(TwoFactorGateStatus.PENDING_SETUP, false);
+
+    assertThat(provisioned.getTwoFactorRequired()).isTrue();
+    assertThat(provisioned.getPasswordChangeRequired()).isFalse();
+    verify(consultantRepository, org.mockito.Mockito.never()).save(any(Consultant.class));
+  }
+
+  private Consultant provisionWith(TwoFactorGateStatus status, boolean passwordChangeRequired) {
+    AccountInvite invite = activeCounsellorInvite();
+    invite.setTwoFactorStatus(status);
+    // The admin create path has already marked it required by the time we look.
+    Consultant provisioned =
+        Consultant.builder()
+            .id("created-consultant")
+            .username("invited-counsellor")
+            .firstName("Lisa")
+            .lastName("Simpson")
+            .email("lisa.simpson@oriso.org")
+            .twoFactorRequired(true)
+            .passwordChangeRequired(passwordChangeRequired)
+            .build();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(
+            new ConsultantAdminResponseDTO()
+                .embedded(new ConsultantDTO().id("created-consultant")));
+    when(consultantRepository.findByIdAndDeleteDateIsNull("created-consultant"))
+        .thenReturn(Optional.of(provisioned));
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant")).thenReturn(invite);
+
+    service.acceptInvite(
+        "raw-token",
+        new ProvisionCounsellorCommand("invited-counsellor", "test-password", true, null));
+
+    return provisioned;
   }
 
   private static AccountInvite activeCounsellorInvite() {

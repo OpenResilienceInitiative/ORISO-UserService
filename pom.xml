@@ -50,13 +50,10 @@
 		<jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
 		<javax.ws.rs-api.version>2.1.1</javax.ws.rs-api.version>
 		<json-smart.version>2.6.0</json-smart.version>
-		<!-- Spring Boot 4.0.7 still manages Netty 4.2.15; 4.2.16 fixed CVE-2026-59901,
-		     CVE-2026-55831, CVE-2026-55833 and CVE-2026-56745. The image CVE gate now
-		     also rejects CVE-2026-75595 (CRITICAL, netty-handler) in 4.2.16.
-		     Pinned to the latest 4.2.x patch instead of the lowest version that clears
-		     the finding, which is this file's usual rule: the Trivy gate runs only in
-		     ci-main.yml, on dev after merge, so a pull request cannot show whether a
-		     given patch clears it and an under-shoot costs another blocked publish.
+		<!-- Spring Boot 4.0.7 still manages Netty 4.2.15. 4.2.16 fixed CVE-2026-59901,
+		     CVE-2026-55831, CVE-2026-55833 and CVE-2026-56745; 4.2.17 (now on dev via #1186)
+		     fixed CVE-2026-75595 and clears the image CVE gate. 4.2.18.Final (9 Sept) is a
+		     further Netty security release on top of that, so the floor moves once more.
 		     Drop this override once the Boot BOM manages >= 4.2.18. -->
 		<netty.version>4.2.18.Final</netty.version>
 		<!-- Spring Boot 4.0.7 still manages HttpCore 5.3.6; 5.4.3 fixes
@@ -75,11 +72,16 @@
 		     CVE-2026-63337 (unvalidated Class.forName in JSON-RPC, fixed 5.33.0),
 		     CVE-2026-69219 (oversized LongString/bytes in ValueReader, fixed 5.33.1)
 		     and CVE-2026-69220 (unbounded recursion in ValueReader, fixed 5.33.1).
+		     5.34.0 additionally fixes CVE-2026-75516 (HIGH, image CVE gate), so the
+		     pin is now 5.34.0, the lowest version that clears all four findings.
 		     Boot 4.1.0 still manages only 5.30.0, so upgrading Boot does not remove
-		     the need for this override. The gate now also rejects CVE-2026-75516
-		     (HIGH) in 5.33.1. Pinned to the latest 5.x patch for the same reason as
-		     netty.version above — the gate is not observable before merge.
-		     Drop it once the Boot BOM manages >= 5.36.0. -->
+		     the need for this override. 5.34.0 (now on dev via #1186) clears
+		     CVE-2026-75516 and the image CVE gate, but is itself affected by
+		     GHSA-h6w7-qmcm-q6xr — plaintext broker credentials baked into the exception
+		     message when ConnectionFactoryConfigurator.load fails to parse the AMQP URI
+		     (affected <= 5.34.0, patched 5.35.0). At Medium it does not trip the
+		     CRITICAL,HIGH gate, so it would sit on dev unnoticed. 5.36.0 is the current
+		     patch. Drop it once the Boot BOM manages >= 5.36.0. -->
 		<rabbit-amqp-client.version>5.36.0</rabbit-amqp-client.version>
 		<springfox-swagger-ui.version>2.10.0</springfox-swagger-ui.version>
 		<testcontainers.version>1.21.4</testcontainers.version>
