@@ -42,8 +42,8 @@ public class TutorialProgressService {
    * e2e-20260720-1507, probe S6). Configured rather than hardcoded so enabling a new tour stays a
    * deployment concern; the frontends remain the source of truth for tour content.
    */
-  @Value("${tutorial.tours.frontend:consultant-walkthrough}")
-  private String[] frontendTours = {"consultant-walkthrough"};
+  @Value("${tutorial.tours.frontend:consultant-walkthrough,consultant-mail-counselling}")
+  private String[] frontendTours = {"consultant-walkthrough", "consultant-mail-counselling"};
 
   @Value("${tutorial.tours.admin:}")
   private String[] adminTours = {};

@@ -957,6 +957,73 @@ class UserControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void getUserDataShouldReturnWalkThroughOffForACounsellorWithTheNewDefault() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    var seeded = consultant.getWalkThroughEnabled();
+    consultant.setWalkThroughEnabled(new Consultant().getWalkThroughEnabled());
+    consultantRepository.save(consultant);
+
+    try {
+      expectWalkThroughEnabled(false);
+    } finally {
+      restoreWalkThroughEnabled(seeded);
+    }
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldSwitchTheCounsellorsToursOnAndOff() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+    var seeded = consultant.getWalkThroughEnabled();
+
+    try {
+      patchWalkThroughEnabled(false);
+      expectWalkThroughEnabled(false);
+
+      patchWalkThroughEnabled(true);
+      expectWalkThroughEnabled(true);
+    } finally {
+      restoreWalkThroughEnabled(seeded);
+    }
+  }
+
+  private void restoreWalkThroughEnabled(Boolean value) {
+    var stored = consultantRepository.findById(consultant.getId()).orElseThrow();
+    stored.setWalkThroughEnabled(value);
+    consultantRepository.save(stored);
+  }
+
+  private void expectWalkThroughEnabled(boolean expected) throws Exception {
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("isWalkThroughEnabled", is(expected)));
+  }
+
+  private void patchWalkThroughEnabled(boolean value) throws Exception {
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"walkThroughEnabled\": " + value + "}")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isNoContent());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
   void getUserDataShouldReturnLiveChatViaSidebarFalseByDefaultForConsultant() throws Exception {
     givenABearerToken();
     givenAValidConsultant();
