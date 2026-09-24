@@ -10,6 +10,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -37,7 +38,9 @@ class UserServiceApplicationTest {
     ReflectionTestUtils.setField(application, "THREAD_QUEUE_CAPACITY", 1);
     ReflectionTestUtils.setField(application, "THREAD_NAME_PREFIX", "test-");
 
-    Executor executor = application.taskExecutor(new TenantContextProvider());
+    Executor executor =
+        application.taskExecutor(
+            new StaticListableBeanFactory().getBeanProvider(TenantContextProvider.class));
 
     assertThat(executor).isInstanceOf(ThreadPoolTaskExecutor.class);
     ThreadPoolTaskExecutor taskExecutor = (ThreadPoolTaskExecutor) executor;

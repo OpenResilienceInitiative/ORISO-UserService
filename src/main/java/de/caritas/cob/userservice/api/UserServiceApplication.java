@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api;
 import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import java.util.concurrent.Executor;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
@@ -36,9 +37,10 @@ public class UserServiceApplication {
   }
 
   @Bean
-  public Executor taskExecutor(TenantContextProvider tenantContextProvider) {
+  public Executor taskExecutor(ObjectProvider<TenantContextProvider> tenantContextProvider) {
     ThreadPoolTaskExecutor executor = new ThreadPoolTaskExecutor();
-    executor.setTaskDecorator(tenantContextProvider::inCallersContext);
+    executor.setTaskDecorator(
+        tenantContextProvider.getIfAvailable(TenantContextProvider::new)::inCallersContext);
     /*
      * This will create 10 threads at the time of initialization. If all 10 threads are busy and new
      * task comes up, then It will keep tasks in queue. If queue is full it will create 11th thread
@@ -56,7 +58,8 @@ public class UserServiceApplication {
 
   @Bean
   public ThreadPoolTaskSchedulerCustomizer scheduledTasksRunInTechnicalTenant(
-      TenantContextProvider tenantContextProvider) {
-    return scheduler -> scheduler.setTaskDecorator(tenantContextProvider::inTechnicalContext);
+      ObjectProvider<TenantContextProvider> tenantContextProvider) {
+    var provider = tenantContextProvider.getIfAvailable(TenantContextProvider::new);
+    return scheduler -> scheduler.setTaskDecorator(provider::inTechnicalContext);
   }
 }
