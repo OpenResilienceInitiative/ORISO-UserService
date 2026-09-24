@@ -15,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -30,6 +31,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantCreationClient;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -51,12 +55,18 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@WithTenant(1L)
 class TenantAdminExistingTenantOnboardingIT {
 
   private static final long EXISTING_TENANT = 42L;
   private static final String NEW_ADMIN_ID = "b7f0f1a0-1026-4c4a-9d1e-000000000042";
   private static final String CSRF = "it-csrf-token";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
+
+  /** The public route resolves to the main tenant, as on the single-domain deployment. */
+  @MockitoBean private TenantResolverService tenantResolverService;
+
+  @MockitoBean private TenantService tenantService;
 
   @Autowired private MockMvc mockMvc;
   @Autowired private AccountInviteRepository accountInviteRepository;
@@ -120,7 +130,9 @@ class TenantAdminExistingTenantOnboardingIT {
 
     verify(tenantCreationClient, never()).createTenant(any());
     verifyNoInteractions(operatorDpaContentClient);
-    Admin admin = adminRepository.findById(NEW_ADMIN_ID).orElseThrow();
+    // Read as the existing Träger: the new admin must have landed in it.
+    Admin admin =
+        Tenants.in(EXISTING_TENANT, () -> adminRepository.findById(NEW_ADMIN_ID).orElseThrow());
     assertThat(admin.getType()).isEqualTo(Admin.AdminType.TENANT);
     assertThat(admin.getTenantId()).isEqualTo(EXISTING_TENANT);
     verify(keycloakService).updatePassword(eq(NEW_ADMIN_ID), eq("Valid-Test-Password-2026!"));
