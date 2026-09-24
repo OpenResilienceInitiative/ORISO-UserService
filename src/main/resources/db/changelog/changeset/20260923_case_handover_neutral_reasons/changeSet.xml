@@ -76,6 +76,9 @@
     </sql>
     <rollback>
       <sql>
+        -- Run only with UserService scaled to 0 (handover writes drained): the guard is a plain
+        -- read, so a request committed concurrently could still slip past it. No FK possible,
+        -- requests may carry tenant-only codes that have no row here.
         -- Guard: refuse (duplicate-key error) while a request references a seeded neutral row.
         -- Deleting it would orphan that request; recover by rolling forward instead.
         INSERT INTO case_handover_reason_policy (code, label, policy_authority)
@@ -88,7 +91,10 @@
         WHERE retired_by_neutral_reasons = 1;
         -- Only rows this changeset inserted; pre-existing neutral rows stay.
         DELETE FROM case_handover_reason_policy
-        WHERE seeded_by_neutral_reasons = 1;
+        WHERE seeded_by_neutral_reasons = 1
+          AND NOT EXISTS (
+            SELECT 1 FROM case_handover_request r
+            WHERE r.reason_code = case_handover_reason_policy.code);
       </sql>
       <dropColumn tableName="case_handover_reason_policy" columnName="seeded_by_neutral_reasons" />
       <dropColumn tableName="case_handover_reason_policy" columnName="retired_by_neutral_reasons" />
