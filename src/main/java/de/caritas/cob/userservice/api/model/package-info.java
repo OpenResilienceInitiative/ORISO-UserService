@@ -1,7 +1,4 @@
-/**
- * Persistence model. Declares the single, auto-enabled tenant filter; see {@link
- * de.caritas.cob.userservice.api.model.TenantFilter}.
- */
+/** Persistence model; declares the auto-enabled {@link TenantFilter}. */
 @FilterDef(
     name = TenantFilter.NAME,
     autoEnabled = true,

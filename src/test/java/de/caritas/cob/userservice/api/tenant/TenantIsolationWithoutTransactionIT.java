@@ -57,20 +57,8 @@ import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.MvcResult;
 
 /**
- * Tenant isolation must not depend on whether an endpoint happens to run in a transaction or loads
- * its rows by primary key.
- *
- * <p>Deliberately <b>not</b> {@code @Transactional}: in production the controllers run without a
- * caller transaction ({@code spring.jpa.open-in-view=false}), which is exactly where the Hibernate
- * tenant filter used to get lost. Seeded rows are committed and removed after each test.
- *
- * <ul>
- *   <li>Query without a transaction: {@code GET /useradmin/agencyadmins} reads through a JPA
- *       specification that has no tenant predicate of its own; only the tenant filter separates the
- *       Träger.
- *   <li>Load by primary key: {@code DELETE /users/sessions/{id}/consultant/{id}} loads the session
- *       with {@code findById}, which Hibernate filters never cover.
- * </ul>
+ * Tenant isolation without a caller transaction, on loads by id and on threads without a tenant.
+ * Not {@code @Transactional} on purpose: controllers run without one in production.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -94,6 +82,15 @@ class TenantIsolationWithoutTransactionIT {
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private UserRepository userRepository;
   @Autowired private SessionRepository sessionRepository;
+  @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager entityManager;
+  @Autowired private org.springframework.scheduling.TaskScheduler taskScheduler;
+
+  @Autowired
+  private org.springframework.transaction.support.TransactionTemplate transactionTemplate;
+
+  @Autowired
+  @org.springframework.beans.factory.annotation.Qualifier("taskExecutor")
+  private java.util.concurrent.Executor taskExecutor;
 
   @MockitoBean TenantService tenantService;
   @MockitoBean TenantResolverService tenantResolverService;
@@ -199,6 +196,67 @@ class TenantIsolationWithoutTransactionIT {
     assertStatus(result, 204);
     verify(groupChatMembershipService)
         .removeMemberFromRoom(MATRIX_ROOM, ownConsultant.getMatrixUserId());
+  }
+
+  @Test
+  void getReference_Should_NotReachRowOfAnotherTenant() {
+    TenantContext.setCurrentTenant(OWN_TENANT);
+    try {
+      String ownPostcode =
+          transactionTemplate.execute(
+              status ->
+                  entityManager.getReference(Session.class, ownSession.getId()).getPostcode());
+      assertThat(ownPostcode).isEqualTo("12345");
+      org.assertj.core.api.Assertions.assertThatThrownBy(
+              () ->
+                  transactionTemplate.execute(
+                      status ->
+                          entityManager
+                              .getReference(Session.class, foreignSession.getId())
+                              .getPostcode()))
+          .isInstanceOfAny(
+              jakarta.persistence.EntityNotFoundException.class,
+              org.springframework.orm.jpa.JpaObjectRetrievalFailureException.class);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  // --- threads without a tenant -----------------------------------------------------------------
+
+  @Test
+  void aThreadWithoutTenantReadsNoTenantRows() {
+    TenantContext.clear();
+
+    assertThat(
+            adminRepository.findAllById(
+                List.of(ownAgencyAdmin.getId(), foreignAgencyAdmin.getId())))
+        .isEmpty();
+    assertThat(sessionRepository.findById(foreignSession.getId())).isEmpty();
+  }
+
+  @Test
+  void scheduledTasksRunInTheTechnicalTenant() throws Exception {
+    var seen = new java.util.concurrent.CompletableFuture<Long>();
+
+    taskScheduler.schedule(
+        () -> seen.complete(TenantContext.getCurrentTenant()), java.time.Instant.now());
+
+    assertThat(seen.get(10, java.util.concurrent.TimeUnit.SECONDS))
+        .isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
+  }
+
+  @Test
+  void asyncTasksRunInTheTenantOfTheirCaller() throws Exception {
+    var seen = new java.util.concurrent.CompletableFuture<Long>();
+    TenantContext.setCurrentTenant(OWN_TENANT);
+    try {
+      taskExecutor.execute(() -> seen.complete(TenantContext.getCurrentTenant()));
+    } finally {
+      TenantContext.clear();
+    }
+
+    assertThat(seen.get(10, java.util.concurrent.TimeUnit.SECONDS)).isEqualTo(OWN_TENANT);
   }
 
   // --- helpers ----------------------------------------------------------------------------------

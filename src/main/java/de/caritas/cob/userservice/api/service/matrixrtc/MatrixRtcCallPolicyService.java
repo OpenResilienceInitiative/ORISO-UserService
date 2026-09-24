@@ -28,9 +28,7 @@ public class MatrixRtcCallPolicyService {
       return CallMediaPolicy.denied();
     }
 
-    // The call-policy endpoint is whitelisted from HttpTenantFilter, so this thread has no
-    // tenant context. The lookup is explicitly cross-tenant, so it runs in technical context,
-    // which lifts the Hibernate tenantFilter (see TenantFilterParameterResolver).
+    // Public callback without a tenant; the room lookup is deliberately cross-tenant.
     var callerTenant = TenantContext.getCurrentTenant();
     try {
       TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);

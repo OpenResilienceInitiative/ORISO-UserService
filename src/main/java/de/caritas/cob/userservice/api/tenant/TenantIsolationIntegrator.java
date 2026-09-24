@@ -6,11 +6,7 @@ import org.hibernate.engine.spi.SessionFactoryImplementor;
 import org.hibernate.event.spi.EventType;
 import org.hibernate.integrator.spi.Integrator;
 
-/**
- * Registers {@link TenantScopedLoadByIdListener} with every Hibernate session factory of this
- * service. Discovered by Hibernate through {@code META-INF/services}, so it does not depend on how
- * the session factory is built.
- */
+/** Registers {@link TenantScopedLoadByIdListener}; found by Hibernate via META-INF/services. */
 public class TenantIsolationIntegrator implements Integrator {
 
   @Override

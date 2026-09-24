@@ -20,12 +20,14 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
@@ -37,6 +39,7 @@ public class CreateAnonymousEnquiryFacadeTest {
   @Mock private AnonymousUsernameRegistry usernameRegistry;
   @Mock private UserHelper userHelper;
   @Mock private ConsultingTypeManager consultingTypeManager;
+  @Spy private TenantContextProvider tenantContextProvider = new TenantContextProvider();
 
   EasyRandom easyRandom = new EasyRandom();
 
