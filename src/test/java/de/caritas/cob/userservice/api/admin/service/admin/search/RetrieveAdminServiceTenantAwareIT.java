@@ -138,7 +138,7 @@ public class RetrieveAdminServiceTenantAwareIT {
     // given: the admin belongs to tenant 2, the caller to tenant 1
     TenantContext.setCurrentTenant(1L);
 
-    // when / then: a load by id no longer crosses the tenant boundary
+    // when / then: a load by id does not cross the tenant boundary
     assertThrows(
         BadRequestException.class,
         () -> retrieveAdminService.findAgencyIdsOfAdmin(VALID_AGENCY_ADMIN_ID));

@@ -69,17 +69,8 @@ import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Cross-tenant ("cross-Träger") isolation of {@code POST
- * /useradmin/admins/{adminId}/grant-consultant-identity}, run through the real security chain,
- * controller, service and database with multitenancy enabled.
- *
- * <p>Rules: the platform admin (tenant 0) may grant to every admin; a Träger admin only to admins
- * of their own tenant and only into agencies of that tenant; a Beratungsstellen admin (restricted
- * agency admin) only to admins of their own agencies and only into their own agencies.
- *
- * <p>The caller is a Mockito mock that calls the real methods, so the role helpers the scoping
- * relies on ({@code isPlatformAdmin}, {@code hasRestrictedAgencyPriviliges}) run unchanged on the
- * roles set here.
+ * The caller is a Mockito mock that calls the real methods, so the role helpers the scoping relies
+ * on ({@code isPlatformAdmin}, {@code hasRestrictedAgencyPriviliges}) run unchanged.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -186,8 +177,8 @@ class GrantConsultantIdentityTenantScopeIT {
   }
 
   /**
-   * Not a leak on unchanged code: the topic/agency validator already refused agencies outside the
-   * target's tenant (400). The caller scope now refuses them first (403).
+   * The caller's scope refuses agencies outside the target's tenant (403) before the topic/agency
+   * validator would (400).
    */
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})

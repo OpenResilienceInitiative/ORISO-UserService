@@ -57,14 +57,8 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
- * {@code DELETE /users/sessions/{sessionId}/consultant/{consultantId}} takes a consultant out of
- * the session's chat room. Only somebody who belongs to the session may do that: the consultant
- * leaving the room themselves (what the frontend does after handing a session over), or a
- * consultant of the session's agency. A consultant of the same Träger but another agency must be
- * refused.
- *
- * <p>Everything here is one Träger, so the tenant filter does not help. Not {@code @Transactional},
- * like production ({@code spring.jpa.open-in-view=false}); seeded rows are removed after each test.
+ * Everything here is one Träger, so the tenant filter does not help. Not {@code @Transactional},
+ * like production ({@code spring.jpa.open-in-view=false}).
  */
 @SpringBootTest
 @AutoConfigureMockMvc

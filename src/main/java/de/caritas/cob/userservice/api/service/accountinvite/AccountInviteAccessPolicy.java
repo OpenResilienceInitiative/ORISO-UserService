@@ -47,12 +47,7 @@ public class AccountInviteAccessPolicy {
     }
   }
 
-  /**
-   * Checks a create request against the caller's scope.
-   *
-   * @return the command to execute, stamped with the caller's tenant if it named none
-   * @throws ForbiddenException if the invite would leave the caller's scope
-   */
+  /** Returns the command, stamped with the caller's tenant if it named none. */
   public CreateAccountInviteCommand authorizeCreate(CreateAccountInviteCommand command) {
     if (command == null || command.targetRole() == null) {
       // Missing fields are answered as 400 by the service's own validation.
@@ -65,13 +60,7 @@ public class AccountInviteAccessPolicy {
     };
   }
 
-  /**
-   * Narrows an invite listing to the caller's scope.
-   *
-   * @param requestedTenantId the {@code tenant_id} filter the caller asked for, may be null
-   * @param requestedTargetRole the {@code target_role} filter the caller asked for, may be null
-   * @throws ForbiddenException if the caller explicitly asks for another tenant
-   */
+  /** Both filters may be null; explicitly asking for another tenant is refused. */
   public InviteListScope scopeForListing(
       Long requestedTenantId, AccountInviteTargetRole requestedTargetRole) {
     var reach = adminScope.current();
@@ -91,11 +80,7 @@ public class AccountInviteAccessPolicy {
     return new InviteListScope(tenantId, AccountInviteTargetRole.COUNSELLOR, agencies.ids(), empty);
   }
 
-  /**
-   * Checks that the caller may act on an existing invite (send, resend, revoke, waive 2FA).
-   *
-   * @throws ForbiddenException if the invite lies outside the caller's scope
-   */
+  /** Covers every action on an existing invite: send, resend, revoke, waive 2FA. */
   public void authorizeAccess(AccountInvite invite) {
     if (invite == null) {
       return;

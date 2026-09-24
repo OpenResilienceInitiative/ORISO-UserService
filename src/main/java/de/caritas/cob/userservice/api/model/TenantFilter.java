@@ -9,7 +9,7 @@ public final class TenantFilter {
   public static final String NAME = "tenantFilter";
   public static final String PARAMETER = "tenantId";
 
-  /** Rows of the current tenant only. */
+  /** Tenant 0 is the technical tenant and sees every row. */
   public static final String CONDITION = "(:tenantId = 0 OR tenant_id = :tenantId)";
 
   /** Tenant 1 also owns the legacy rows written before tenants existed. */

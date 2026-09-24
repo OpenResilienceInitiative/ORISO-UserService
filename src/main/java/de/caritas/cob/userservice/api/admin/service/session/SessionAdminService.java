@@ -22,11 +22,7 @@ public class SessionAdminService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull AdminScope adminScope;
 
-  /**
-   * Finds the sessions matching {@code sessionFilter} within the caller's reach.
-   *
-   * @return a generated {@link SessionAdminResultDTO} containing the results
-   */
+  /** Finds the sessions matching {@code sessionFilter} within the caller's reach. */
   @Transactional(readOnly = true)
   public SessionAdminResultDTO findSessions(
       Integer page, Integer perPage, SessionFilter sessionFilter) {

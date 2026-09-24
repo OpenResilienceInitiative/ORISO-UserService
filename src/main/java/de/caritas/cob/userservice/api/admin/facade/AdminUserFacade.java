@@ -79,10 +79,6 @@ public class AdminUserFacade {
     return this.agencyAdminUserService.findAgenciesOfAdmin(userId);
   }
 
-  /**
-   * Returns the agency IDs of the given admin for {@code GET
-   * /useradmin/agencyadmins/{adminId}/agencies}, after checking the admin is in the caller's scope.
-   */
   public List<Long> findAgencyIdsOfAdminInCallerScope(String adminId) {
     adminScope.assertMay(Target.admin(adminId));
     return this.agencyAdminUserService.findAgenciesOfAdmin(adminId);

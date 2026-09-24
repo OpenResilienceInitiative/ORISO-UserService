@@ -63,7 +63,6 @@ public class AdminScope {
   @Value("${multitenancy.enabled:false}")
   private boolean multitenancyEnabled;
 
-  /** The caller's reach. */
   public sealed interface Reach permits Platform, Tenant, Agencies {
     /** The caller's Träger; {@code null} for the platform and on single-tenant deployments. */
     Long tenantId();

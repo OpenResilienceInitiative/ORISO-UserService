@@ -89,18 +89,8 @@ import org.springframework.test.web.servlet.MvcResult;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 
 /**
- * Agency and tenant isolation of the {@code /useradmin/**} list endpoints ({@code GET
- * /useradmin/consultants}, {@code GET /useradmin/sessions}) and of the chat-identity repair ({@code
- * POST /useradmin/consultants/{id}/chat-identity}).
- *
- * <p>Deliberately <b>not</b> {@code @Transactional}: the chat-identity repair reads the counsellor
- * in a {@code REQUIRES_NEW} transaction, which cannot see rows seeded inside a test transaction,
- * and the list endpoints run their queries outside any caller transaction in production, exactly as
- * here. The seeded rows are committed and removed again after each test.
- *
- * <p>Rules (same as {@code UserAdminAgencyScopeIT}): the platform admin (tenant 0) sees everybody;
- * a Träger admin only their own tenant; a Beratungsstellen admin (restricted agency admin) only
- * counsellors of their own agencies and sessions in their own agencies.
+ * Not {@code @Transactional}: the chat-identity repair reads the counsellor in a {@code
+ * REQUIRES_NEW} transaction, which cannot see rows seeded inside a test transaction.
  */
 @SpringBootTest
 @AutoConfigureMockMvc

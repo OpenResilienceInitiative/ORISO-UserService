@@ -11,9 +11,8 @@ import org.hibernate.event.spi.LoadEvent;
 import org.hibernate.event.spi.LoadEventListener;
 
 /**
- * Applies the tenant boundary of {@link TenantFilter} to loads by primary key, which Hibernate
- * filters skip. A row of another tenant is reported as not found; rows without a tenant stay
- * loadable, and association loads are left alone because their root was already checked.
+ * Hibernate filters skip loads by primary key, so a row of another tenant is hidden here. Rows
+ * without a tenant stay loadable; associations are reached through an already checked root.
  */
 public class TenantScopedLoadByIdListener implements LoadEventListener {
 
@@ -54,7 +53,7 @@ public class TenantScopedLoadByIdListener implements LoadEventListener {
     try {
       rowTenant = ((TenantAware) Hibernate.unproxy(entity)).getTenantId();
     } catch (ObjectNotFoundException | EntityNotFoundException missing) {
-      // A reference to a missing row fails on first use, as it always did.
+      // Left to Hibernate: a reference to a missing row fails on first use.
       return;
     }
     if (rowTenant == null || Objects.equals(rowTenant, currentTenant)) {

@@ -91,9 +91,8 @@ public class GrantConsultantIdentityService {
   public ConsultantAdminResponseDTO grantConsultantIdentityToAdmin(
       String adminId, GrantConsultantIdentityDTO dto) {
 
-    // Looked up across tenants on purpose: the route only requires user-admin, so the caller's
-    // Träger and agencies are checked right below, and an admin of another Träger must be refused
-    // (403) rather than reported as unknown.
+    // Looked up across tenants on purpose: an admin of another Träger must be refused (403) by the
+    // scope check below, not reported as unknown.
     var admin =
         TenantContext.supplyAcrossTenants(() -> adminRepository.findById(adminId))
             .orElseThrow(

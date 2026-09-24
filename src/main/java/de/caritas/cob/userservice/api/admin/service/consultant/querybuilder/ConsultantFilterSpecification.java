@@ -47,12 +47,7 @@ public class ConsultantFilterSpecification {
     };
   }
 
-  /**
-   * Consultants with an active (not deleted) relation to at least one of the given agencies.
-   *
-   * @param agencyIds the agencies; an empty set matches no consultant
-   * @return the consultant {@link Specification}
-   */
+  /** Consultants actively related to one of {@code agencyIds}; an empty set matches none. */
   public static Specification<Consultant> withActiveRelationToAnyOf(Set<Long> agencyIds) {
     return (root, query, cb) -> {
       if (agencyIds == null || agencyIds.isEmpty()) {

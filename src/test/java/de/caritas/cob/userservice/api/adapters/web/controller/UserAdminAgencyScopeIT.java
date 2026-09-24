@@ -96,16 +96,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Agency and tenant isolation of the {@code /useradmin/**} endpoints that take an agency,
- * counsellor or advice-seeker ID from the path. Runs the real security chain, controllers, services
- * and database with multitenancy enabled.
- *
- * <p>Rules (same as {@code UserAdminIdScopeIT}): the platform admin (tenant 0) may act on
- * everybody; a Träger admin only inside their own tenant; a Beratungsstellen admin (restricted
- * agency admin) only on their own agencies and on counsellors and advice seekers of those agencies.
- *
- * <p>Every refusal test first checks the data (nothing leaked, nothing changed) and then the
- * status, so a failure message tells whether the endpoint did harm or only answered too politely.
+ * Refusal tests check the data before the status, so a failure tells whether the endpoint did harm
+ * or only answered too politely.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -241,7 +233,7 @@ class UserAdminAgencyScopeIT {
     TenantContext.clear();
   }
 
-  // --- Suspect 1: POST /useradmin/agency/{agencyId}/changetype ------------------------------
+  // --- POST /useradmin/agency/{agencyId}/changetype ------------------------------
 
   @Test
   @AsTenantAdmin
@@ -277,7 +269,7 @@ class UserAdminAgencyScopeIT {
     assertThat(isTeamConsultant(ownConsultant)).isTrue();
   }
 
-  // --- Suspect 1: GET /useradmin/agencies/{agencyId}/consultants ----------------------------
+  // --- GET /useradmin/agencies/{agencyId}/consultants ----------------------------
 
   @Test
   @AsTenantAdmin
@@ -326,7 +318,7 @@ class UserAdminAgencyScopeIT {
     assertThat(result.getResponse().getContentAsString()).contains(ownConsultant.getId());
   }
 
-  // --- Suspect 2: DELETE /useradmin/consultants/{consultantId}/agencies/{agencyId} -----------
+  // --- DELETE /useradmin/consultants/{consultantId}/agencies/{agencyId} -----------
 
   @Test
   @AsAgencyAdmin
@@ -388,7 +380,7 @@ class UserAdminAgencyScopeIT {
     assertThat(activeAgenciesOf(sharedConsultant)).containsOnly(OTHER_AGENCY_OF_OWN_TENANT);
   }
 
-  // --- Suspect 3: counsellor routes, agency admin vs. a counsellor of another agency ----------
+  // --- counsellor routes, agency admin vs. a counsellor of another agency ----------
 
   @Test
   @AsAgencyAdmin
@@ -599,7 +591,7 @@ class UserAdminAgencyScopeIT {
     assertThat(pausedBy(ownConsultant)).isEqualTo(callingAgencyAdmin.getId());
   }
 
-  // --- Suspect 3: advice-seeker routes, agency admin vs. an asker of another agency -----------
+  // --- advice-seeker routes, agency admin vs. an asker of another agency -----------
 
   @Test
   @AsAgencyAdmin
@@ -674,8 +666,7 @@ class UserAdminAgencyScopeIT {
     assertThat(pausedBy(ownAsker)).isEqualTo(callingAgencyAdmin.getId());
   }
 
-  // --- who counts as platform
-  // ---------------------------------------------------------------------
+  // --- who counts as platform ---------------------------------------------------------------
 
   @Test
   @AsTenantAdmin

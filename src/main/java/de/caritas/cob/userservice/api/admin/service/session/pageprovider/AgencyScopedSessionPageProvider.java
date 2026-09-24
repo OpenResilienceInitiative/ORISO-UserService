@@ -13,9 +13,8 @@ import org.springframework.data.domain.Page;
 import org.springframework.data.domain.Pageable;
 
 /**
- * Page provider for a caller whose reach ends at their own agencies (Beratungsstellen admin). It
- * honours the same filters, in the same order of precedence, as the unrestricted providers (agency,
- * asker, consultant, consulting type, none), but only ever returns sessions of the given agencies.
+ * Page provider for an admin whose reach ends at their own agencies: the same filters and
+ * precedence as the unrestricted providers, but only sessions of those agencies.
  */
 @RequiredArgsConstructor
 public class AgencyScopedSessionPageProvider implements SessionPageProvider {

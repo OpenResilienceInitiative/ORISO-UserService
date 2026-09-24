@@ -68,14 +68,8 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Cross-tenant ("cross-Träger") isolation of the {@code /useradmin/**} endpoints that take an admin
- * or user ID from the path: admin-agency relations, the tenant-admin update, the identities badge
- * and the agency list of an admin. Runs the real security chain, controllers, services and database
- * with multitenancy enabled.
- *
- * <p>Rules: the platform admin (tenant 0) may act on everybody; a Träger admin only on admins of
- * their own tenant and only with agencies of that tenant; a Beratungsstellen admin (restricted
- * agency admin) only on admins sharing one of their own agencies and only with their own agencies.
+ * Cross-Träger isolation of the {@code /useradmin/**} endpoints that take an admin or user ID from
+ * the path, through the real security chain and database with multitenancy enabled.
  */
 @SpringBootTest
 @AutoConfigureMockMvc
