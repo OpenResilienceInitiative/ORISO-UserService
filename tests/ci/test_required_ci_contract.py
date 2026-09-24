@@ -257,13 +257,15 @@ class RequiredCiContractTest(unittest.TestCase):
         self.assertIn("name: required integration tests", integration)
         self.assertNotIn("continue-on-error:", integration)
         self.assertIn(
-            "needs: [validate, redis-contract, mariadb-contract, required-integration-tests]",
+            "needs: [validate, redis-contract, mariadb-contract, required-integration-tests,"
+            " tenant-filter-on-integration-tests]",
             aggregate,
         )
         self.assertIn("if: always()", aggregate)
         self.assertIn("name: required PreDev CI", aggregate)
         self.assertIn("needs.required-integration-tests.result", aggregate)
         self.assertIn("needs.mariadb-contract.result", aggregate)
+        self.assertIn("needs.tenant-filter-on-integration-tests.result", aggregate)
 
     def test_publish_waits_for_required_integration_tests(self):
         workflow = (ROOT / ".github/workflows/ci-main.yml").read_text()
