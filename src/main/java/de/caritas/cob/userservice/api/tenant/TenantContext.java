@@ -48,4 +48,33 @@ public class TenantContext {
   public static boolean isTechnicalOrSuperAdminContext() {
     return TECHNICAL_TENANT_ID.equals(getCurrentTenant());
   }
+
+  /**
+   * Runs {@code lookup} in the technical tenant, so tenant rows of every Träger are visible. Only
+   * for scope checks that must see a foreign row in order to refuse it.
+   */
+  public static <T> T supplyAcrossTenants(java.util.function.Supplier<T> lookup) {
+    var callerTenantData = CURRENT_TENANT_DATA.get();
+    var technical =
+        new TenantData(
+            TECHNICAL_TENANT_ID, callerTenantData == null ? null : callerTenantData.getSubdomain());
+    var result = new java.util.concurrent.atomic.AtomicReference<T>();
+    runWith(technical, () -> result.set(lookup.get()));
+    return result.get();
+  }
+
+  /** Runs {@code task} with {@code tenantData} (none if null) and restores the previous context. */
+  static void runWith(TenantData tenantData, Runnable task) {
+    var previous = CURRENT_TENANT_DATA.get();
+    CURRENT_TENANT_DATA.set(tenantData);
+    try {
+      task.run();
+    } finally {
+      if (previous == null) {
+        CURRENT_TENANT_DATA.remove();
+      } else {
+        CURRENT_TENANT_DATA.set(previous);
+      }
+    }
+  }
 }
