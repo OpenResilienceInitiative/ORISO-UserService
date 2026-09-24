@@ -186,8 +186,7 @@ public class CounsellorOnboardingService {
                 rawToken, command.username(), command.password());
 
     if (agencyAdmin || agencyCreated) {
-      // ORISO-Admin#1026 slice 5: the Beratungsstelle exists and has its admin — the invites
-      // waiting for it go out now (after-commit listener; idempotent for further admins).
+      // The agency now has its admin: release its waiting invites (idempotent for further admins).
       eventPublisher.publishEvent(
           new InviteUnitCreatedEvent(
               InviteUnitType.AGENCY, invite.getAgencyId(), invite.getTenantId()));

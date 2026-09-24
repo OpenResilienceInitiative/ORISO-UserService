@@ -87,10 +87,7 @@ public class AccountInviteService {
           AccountInviteStatus.DRAFT,
           AccountInviteStatus.EMAIL_SENT);
 
-  /**
-   * States in which a unit-admin invite can still lead to the unit's creation (ORISO-Admin#1026,
-   * slice 5): not sent yet, sent, or itself waiting for its Träger. Expired ones do not count.
-   */
+  /** A unit-admin invite waiting for its Träger can still create the unit; expired ones cannot. */
   private static final List<AccountInviteStatus> PENDING_UNIT_ADMIN_STATUSES =
       List.of(
           AccountInviteStatus.WAITING_FOR_UNIT,
@@ -100,7 +97,6 @@ public class AccountInviteService {
   private static final List<IdAllocationMode> RESERVING_MODES =
       List.of(IdAllocationMode.AUTO, IdAllocationMode.MANUAL);
 
-  /** Invites the expiry sweep may expire: never sent (DRAFT) or sent and not yet accepted. */
   private static final List<AccountInviteStatus> EXPIRABLE_STATUSES =
       List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
 
@@ -158,7 +154,7 @@ public class AccountInviteService {
         // 409 — the admin frontend maps CONFLICT to its dedicated "tenant id taken" message.
         throw new ConflictException("tenantId " + command.tenantId() + " is already taken");
       }
-      // Slice 5: several admins for the same new Träger share the first one's reservation.
+      // Several admins for the same new Träger share the first one's reservation.
       sharedTenantReservation = sharedTenantReservation(command.tenantId());
       if (sharedTenantReservation.isEmpty() && isTenantIdTaken(command.tenantId())) {
         throw new ConflictException("tenantId " + command.tenantId() + " is already taken");
@@ -187,7 +183,7 @@ public class AccountInviteService {
                 ? Long.valueOf(tenantReservation.tenantId())
                 : command.tenantId();
         if (sharesAgencyReservation(command, tenantIdForAgency, null)) {
-          // Slice 5: a further admin of the same new Beratungsstelle joins the reservation.
+          // A further admin of the same new Beratungsstelle joins the reservation.
           sharedAgencyId = command.agencyId();
         } else {
           reservedAgencyId =
@@ -262,7 +258,7 @@ public class AccountInviteService {
                     claimedInvite[0] = invite;
                     InviteEmailTemplate template = findTemplate(templateId);
                     if (invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
-                      // Slice 5: stored, not sent. The template goes out with the release.
+                      // Stored, not sent: the template goes out with the release.
                       invite.setQueuedTemplateId(template.getId());
                       invite = accountInviteRepository.saveAndFlush(invite);
                       return new DirectInviteDispatch(invite, null, null, null, null, null, null);
@@ -381,7 +377,7 @@ public class AccountInviteService {
   private void releaseDirectInviteReservations(
       AccountInvite invite, CreateAccountInviteCommand command) {
     if (invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
-      // A waiting invite (slice 5) never reserved anything, so there is nothing to give back.
+      // A waiting invite never reserved anything, so there is nothing to give back.
       return;
     }
     if (invite.getTenantIdReservationToken() != null
@@ -466,10 +462,7 @@ public class AccountInviteService {
     }
   }
 
-  /**
-   * Materializes the elapsed claims on this address; each gives its reserved number back like the
-   * expiry sweep would (ORISO-Admin#1026).
-   */
+  /** Each elapsed claim gives its reserved number back, like the expiry sweep. */
   private void expireElapsedRecipientClaims(String normalizedEmail, LocalDateTime now) {
     for (AccountInvite elapsed :
         accountInviteRepository.findElapsedRecipientClaims(
@@ -724,10 +717,8 @@ public class AccountInviteService {
   }
 
   /**
-   * Sends (or re-sends) a stored invite. A {@code WAITING_FOR_UNIT} invite (slice 5) can be sent by
-   * hand only once its unit exists — then this is its release; before that: 409 {@code
-   * UNIT_NOT_CREATED}. An SMTP failure never rolls the release back: the invite stays a DRAFT the
-   * admin can send again.
+   * A waiting invite can be sent by hand only once its unit exists (409 before). An SMTP failure
+   * never rolls the release back: the invite stays a DRAFT.
    */
   @Transactional(noRollbackFor = SmtpSendException.class)
   public InviteSendResult sendInvite(SendInviteCommand command) {
@@ -921,14 +912,7 @@ public class AccountInviteService {
         dispatch.invite(), delivery, dispatch.rawToken(), dispatch.acceptUrl());
   }
 
-  /**
-   * Expires elapsed invites that still hold a reserved Träger / agency number and gives the number
-   * back unless another pending invite still needs it (ORISO-Admin#1026). Run by {@link
-   * ExpiredInviteReservationSweep}; the release itself is a durable task, retried by the
-   * reservation-release scheduler when the ledger is unreachable.
-   *
-   * @return how many invites were expired
-   */
+  /** The release is a durable task, retried by the scheduler while the ledger is unreachable. */
   @Transactional
   public int expireElapsedInvites() {
     LocalDateTime now = LocalDateTime.now();
@@ -967,10 +951,8 @@ public class AccountInviteService {
   }
 
   /**
-   * Records a durable release task for every number this revoked / expired invite held that no
-   * other pending invite still needs (ORISO-Admin#1026). A number is only given back while it is
-   * still a reservation — never once the unit exists — and only when one of our invites reserved
-   * it, so a queued CSV row can never release somebody else's number.
+   * Only while the number is still a reservation and only if one of our invites reserved it, so a
+   * queued CSV row can never release somebody else's number.
    */
   private List<Long> enqueueUnneededNumberReleases(AccountInvite invite, LocalDateTime now) {
     List<Long> taskIds = new java.util.ArrayList<>();
@@ -998,10 +980,7 @@ public class AccountInviteService {
     return taskIds;
   }
 
-  /**
-   * Whether the ledger still reports the number as a reservation. An unreachable ledger keeps the
-   * number (logged): releasing blindly could free a number whose unit meanwhile exists.
-   */
+  /** An unreachable ledger keeps the number: its unit may exist by now. */
   private boolean stillReserved(
       String allocationType, java.util.function.Supplier<IdAllocationStatus> availability) {
     try {
@@ -1015,10 +994,6 @@ public class AccountInviteService {
     }
   }
 
-  /**
-   * The invite reserved a new Träger itself (its token), or waited for one whose admin invite
-   * reserved it.
-   */
   private boolean holdsOrWaitsForTenantReservation(AccountInvite invite) {
     if (invite.getTenantIdReservationToken() != null) {
       return true;
@@ -1043,10 +1018,7 @@ public class AccountInviteService {
         .getId();
   }
 
-  /**
-   * Runs the release tasks once the revoke / expiry is committed; a failure leaves the task for the
-   * reservation-release scheduler.
-   */
+  /** A failure leaves the task for the reservation-release scheduler. */
   private void releaseNumbersAfterCommit(List<Long> taskIds) {
     if (taskIds.isEmpty()) {
       return;
@@ -1575,13 +1547,9 @@ public class AccountInviteService {
     return value == null ? "" : value;
   }
 
-  // --- ORISO-Admin#1026 slice 5: a new unit with a queue --------------------------------------
+  // --- a new unit with a queue -------------------------------------------------------------
 
-  /**
-   * Which not-yet-created unit an invite has to wait for: a counsellor for a new Beratungsstelle
-   * (AUTO/MANUAL agency), an agency admin for a new Träger (AUTO/MANUAL tenant). The unit's own
-   * admin invites (AGENCY_ADMIN resp. TENANT_ADMIN) never wait — they create the unit.
-   */
+  /** A unit's own admin invites never wait: they create the unit. */
   private static InviteUnitType unitToWaitFor(CreateAccountInviteCommand command) {
     if (command.targetRole() == AccountInviteTargetRole.COUNSELLOR
         && IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
@@ -1677,11 +1645,7 @@ public class AccountInviteService {
             unitId, excludedInviteId, PENDING_UNIT_ADMIN_STATUSES, now);
   }
 
-  /**
-   * Why a waiting invite cannot move on by itself (slice 5), derived on read so it clears on its
-   * own: {@code NO_UNIT_ADMIN} when no pending admin invite exists for its unit (revoked, expired,
-   * or a CSV admin row that has not arrived). Null for every invite that is not waiting.
-   */
+  /** Derived on read, so the problem clears on its own. */
   public InviteQueueProblem queueProblemOf(AccountInvite invite) {
     if (invite == null
         || invite.getStatus() != AccountInviteStatus.WAITING_FOR_UNIT
@@ -1701,12 +1665,7 @@ public class AccountInviteService {
     return null;
   }
 
-  /**
-   * Releases the invites waiting for a unit that now exists: each is sent with its queued template
-   * (the expiry clock starts now) or becomes a DRAFT. One failure does not hold up the others.
-   *
-   * @return the IDs of the invites this call released
-   */
+  /** Releases the invites waiting for a unit that now exists; returns the IDs it released. */
   public List<Long> releaseWaitingInvites(InviteUnitType unitType, Long unitId) {
     if (unitType == null || unitId == null) {
       return List.of();
@@ -1746,11 +1705,8 @@ public class AccountInviteService {
   }
 
   /**
-   * Claims, commits and only then mails, like {@link #createAndSendInvite}: of two concurrent
-   * releases one wins, and the mailed link is the stored one.
-   *
-   * @param manualTemplate the template of a send by hand; null uses the queued one
-   * @return empty when another release claimed the invite first
+   * Claims, commits and only then mails: of two concurrent releases one wins, and the mailed link
+   * is the stored one. Empty when another release claimed the invite first.
    */
   private Optional<InviteSendResult> releaseWaitingInvite(
       Long inviteId, InviteEmailTemplate manualTemplate, boolean rethrowSendFailure) {
@@ -1845,11 +1801,7 @@ public class AccountInviteService {
             == IdAllocationStatus.ASSIGNED;
   }
 
-  /**
-   * Whether this AGENCY_ADMIN invite joins a reservation an earlier admin invite of the same new
-   * Beratungsstelle already holds (several admins for one ID, or a new admin after the first was
-   * revoked): the ID is still RESERVED in AgencyService and an earlier admin invite reserved it.
-   */
+  /** A further or replacement admin of a new Beratungsstelle shares the earlier reservation. */
   private boolean sharesAgencyReservation(
       CreateAccountInviteCommand command, Long tenantId, Long excludedInviteId) {
     return command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN
@@ -1869,11 +1821,7 @@ public class AccountInviteService {
             == IdAllocationStatus.RESERVED;
   }
 
-  /**
-   * The reservation of an earlier TENANT_ADMIN invite for the same new Träger that is still held in
-   * TenantService — a further admin shares it (same token), so whoever registers first creates the
-   * Träger and the others join it.
-   */
+  /** Further admins share the token, so whoever registers first creates the Träger. */
   private Optional<TenantIdReservation> sharedTenantReservation(Long tenantId) {
     return accountInviteRepository
         .findFirstByTargetRoleAndTenantIdAndTenantIdReservationTokenIsNotNullOrderByCreateDateDesc(

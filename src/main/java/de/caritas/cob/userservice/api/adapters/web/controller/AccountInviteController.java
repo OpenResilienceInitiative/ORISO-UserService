@@ -296,7 +296,7 @@ public class AccountInviteController {
                     safe.language))));
   }
 
-  /** Slice 5: the derived queue problem of a waiting invite (null for every other invite). */
+  /** The queue problem is derived on read, never stored. */
   private AccountInviteResponseDTO withQueueState(
       AccountInviteResponseDTO dto, AccountInvite invite) {
     InviteQueueProblem problem = accountInviteService.queueProblemOf(invite);
@@ -472,18 +472,10 @@ public class AccountInviteController {
     /** AGENCY_ADMIN invites: whether the person also counsels; null for every other role. */
     public Boolean alsoCounsellor;
 
-    /**
-     * ORISO-Admin#1026 slice 5: AGENCY or TENANT while {@code inviteStatus} is WAITING_FOR_UNIT —
-     * the unit ({@code agencyId} resp. {@code tenantId}) does not exist yet. The Admin stepper
-     * shows "Beratungsstelle noch nicht angelegt" (resp. Träger) as the first step.
-     */
+    /** AGENCY or TENANT while WAITING_FOR_UNIT: that unit does not exist yet. */
     public String waitingForUnit;
 
-    /**
-     * Slice 5: NO_UNIT_ADMIN when a waiting invite has no pending admin invite for its unit any
-     * more (revoked, expired, or a CSV admin row not arrived yet); null otherwise. Clears itself
-     * once a new admin invite for the same ID exists.
-     */
+    /** NO_UNIT_ADMIN while no pending admin invite exists for the unit; clears itself. */
     public String queueProblem;
 
     public String provisioningStatus;

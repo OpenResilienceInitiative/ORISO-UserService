@@ -231,8 +231,7 @@ class AccountInviteExistingAgencyIT {
     AccountInvite invite =
         service.createInvite(
             new CreateAccountInviteCommand(
-                // Slice 5: a counsellor into a new agency waits for its admin; the unit's admin
-                // invite is the one that reserves.
+                // A counsellor into a new agency waits; only the unit's admin invite reserves.
                 AccountInviteTargetRole.AGENCY_ADMIN,
                 OWN_TENANT,
                 "manual@example.org",

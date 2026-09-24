@@ -104,10 +104,7 @@ public class AccountInvite {
   @Column(name = "also_counsellor")
   private Boolean alsoCounsellor;
 
-  /**
-   * ORISO-Admin#1026 slice 5: which not-yet-created unit a {@code WAITING_FOR_UNIT} invite waits
-   * for — its {@code agencyId} (AGENCY) or its {@code tenantId} (TENANT). Cleared on release.
-   */
+  /** Whether agencyId (AGENCY) or tenantId (TENANT) names the missing unit; cleared on release. */
   @Enumerated(EnumType.STRING)
   @Column(name = "waiting_for_unit", length = 16)
   private InviteUnitType waitingForUnit;

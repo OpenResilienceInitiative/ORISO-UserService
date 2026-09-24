@@ -47,15 +47,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 
-/**
- * A revoked or expired invite gives its reserved Beratungsstellen / Träger number back
- * (ORISO-Admin#1026) — unless another pending invite still needs that number: a second admin of the
- * same new unit, or invites waiting for the unit (slice 5). The number is only released while it is
- * still a reservation (never once the unit exists) and only when one of our invites reserved it.
- *
- * <p>Runs against a real database with the real release processor; only the remote ledgers
- * (AgencyService / TenantService), Keycloak and SMTP are replaced.
- */
+/** Only the remote ledgers, Keycloak and SMTP are replaced; the release processor is real. */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
