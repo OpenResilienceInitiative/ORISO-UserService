@@ -6,6 +6,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
@@ -13,6 +14,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.PublicDpaForwardClient;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO;
 import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
@@ -43,6 +46,7 @@ import org.springframework.test.web.servlet.MockMvc;
 // The forward endpoint only accepts sign links on the configured App origin. Pin it explicitly:
 // the fallback is this environment's own app.base.url, never a production host (#1170).
 @TestPropertySource(properties = "dpa.sign.frontend.base-url=https://app.example.org")
+@WithTenant(1L)
 class TenantAdminDpaForwardWizardIT {
 
   private static final Long RESERVED_TENANT_ID = 83L;
@@ -55,6 +59,11 @@ class TenantAdminDpaForwardWizardIT {
   private static final String CSRF = "it-csrf-token";
 
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
+
+  /** The public route resolves to the main tenant, as on the single-domain deployment. */
+  @MockitoBean private TenantResolverService tenantResolverService;
+
+  @MockitoBean private TenantService tenantService;
 
   @Autowired private MockMvc mockMvc;
 
