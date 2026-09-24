@@ -119,6 +119,21 @@ class AdminSelfAssignmentControllerIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void assign_Should_Answer400_When_TheRoleIsAgencyAdmin() throws Exception {
+    // A Träger admin already administers every agency of their Träger.
+    mvc.perform(
+            post(PATH)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"role\":\"AGENCY_ADMIN\",\"agencyId\":7}"))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(selfAssignmentService);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void current_Should_ListTheCallersAssignments() throws Exception {
     when(selfAssignmentService.current())
         .thenReturn(new SelfAssignments(List.of(2L), List.of(1L, 2L)));

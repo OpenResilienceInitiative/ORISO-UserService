@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,14 +16,17 @@ import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDT
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentRole;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
@@ -32,6 +36,12 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -89,6 +99,7 @@ class AdminSelfAssignmentIT {
   private static final long OTHER_OWN_TENANT_AGENCY = 2L;
   private static final long FOREIGN_AGENCY = 3L;
   private static final long MISSING_AGENCY = 999L;
+  private static final long TOPICLESS_AGENCY = 4L;
 
   @TestConfiguration
   static class CallerConfig {
@@ -102,6 +113,8 @@ class AdminSelfAssignmentIT {
   @Autowired private AdminRepository adminRepository;
   @Autowired private AdminAgencyRepository adminAgencyRepository;
   @Autowired private AuthenticatedUser caller;
+  @Autowired private ConsultantRepository consultantRepository;
+  @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
   @MockitoBean private ExistingAgencyClient existingAgencyClient;
   @MockitoBean private AgencyService agencyService;
@@ -132,39 +145,14 @@ class AdminSelfAssignmentIT {
 
   @AfterEach
   void cleanUp() {
+    consultantAgencyRepository.deleteAll(
+        consultantAgencyRepository
+            .findByConsultantIdAndDeleteDateIsNull(COUNSELLING_CALLER_ID)
+            .stream()
+            .filter(relation -> relation.getAgencyId() == OTHER_OWN_TENANT_AGENCY)
+            .toList());
     adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(TENANT_ADMIN_ID));
     adminRepository.deleteById(TENANT_ADMIN_ID);
-  }
-
-  // --- Träger admin as agency admin -------------------------------------------------------------
-
-  @Test
-  void tenantAdmin_May_AssignThemselvesAsAgencyAdminOfAnOwnAgency() {
-    actAsTenantAdmin(TENANT_ADMIN_ID);
-
-    var result = service.assign(new SelfAssignmentCommand(SelfAssignmentRole.AGENCY_ADMIN, 2L));
-
-    assertThat(result.role()).isEqualTo(SelfAssignmentRole.AGENCY_ADMIN);
-    assertThat(adminAgencyRepository.findByAdminIdAndAgencyId(TENANT_ADMIN_ID, 2L)).hasSize(1);
-    assertThat(service.current().agencyAdminAgencyIds()).containsExactly(2L);
-  }
-
-  @Test
-  void tenantAdmin_Should_Get409_When_AlreadyAgencyAdminOfThatAgency() {
-    actAsTenantAdmin(TENANT_ADMIN_ID);
-    service.assign(new SelfAssignmentCommand(SelfAssignmentRole.AGENCY_ADMIN, OWN_AGENCY));
-
-    assertThatThrownBy(
-            () ->
-                service.assign(
-                    new SelfAssignmentCommand(SelfAssignmentRole.AGENCY_ADMIN, OWN_AGENCY)))
-        .isInstanceOfSatisfying(
-            CustomValidationHttpStatusException.class,
-            conflict -> {
-              assertThat(conflict.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
-              assertThat(conflict.getCustomHttpHeaders().getFirst("X-Reason"))
-                  .isEqualTo(HttpStatusExceptionReason.SELF_ASSIGNMENT_ALREADY_EXISTS.name());
-            });
   }
 
   @Test
@@ -174,20 +162,10 @@ class AdminSelfAssignmentIT {
     assertThatThrownBy(
             () ->
                 service.assign(
-                    new SelfAssignmentCommand(SelfAssignmentRole.AGENCY_ADMIN, FOREIGN_AGENCY)))
+                    new SelfAssignmentCommand(SelfAssignmentRole.COUNSELLOR, FOREIGN_AGENCY)))
         .isInstanceOf(ForbiddenException.class);
-    assertThat(adminAgencyRepository.findByAdminId(TENANT_ADMIN_ID)).isEmpty();
-  }
-
-  @Test
-  void agencyAdmin_MayNot_AssignThemselvesAsAgencyAdmin() {
-    actAsAgencyAdmin();
-
-    assertThatThrownBy(
-            () ->
-                service.assign(
-                    new SelfAssignmentCommand(SelfAssignmentRole.AGENCY_ADMIN, OWN_AGENCY)))
-        .isInstanceOf(ForbiddenException.class);
+    verify(grantConsultantIdentityService, never())
+        .grantConsultantIdentityToAdmin(anyString(), any());
   }
 
   @Test
@@ -197,7 +175,7 @@ class AdminSelfAssignmentIT {
     assertThatThrownBy(
             () ->
                 service.assign(
-                    new SelfAssignmentCommand(SelfAssignmentRole.AGENCY_ADMIN, MISSING_AGENCY)))
+                    new SelfAssignmentCommand(SelfAssignmentRole.COUNSELLOR, MISSING_AGENCY)))
         .isInstanceOf(NotFoundException.class);
   }
 
@@ -270,6 +248,72 @@ class AdminSelfAssignmentIT {
         .isInstanceOfSatisfying(
             CustomValidationHttpStatusException.class,
             conflict -> assertThat(conflict.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT));
+  }
+
+  @Test
+  void selfAssignment_Should_Answer400_When_TheAgencyOffersNoTopic() {
+    givenAgency(TOPICLESS_AGENCY, OWN_TENANT, List.of());
+    actAsTenantAdmin(TENANT_ADMIN_ID);
+
+    assertThatThrownBy(
+            () ->
+                service.assign(
+                    new SelfAssignmentCommand(SelfAssignmentRole.COUNSELLOR, TOPICLESS_AGENCY)))
+        .isInstanceOf(BadRequestException.class);
+    verify(grantConsultantIdentityService, never())
+        .grantConsultantIdentityToAdmin(anyString(), any());
+  }
+
+  @Test
+  void aDoubleClick_Should_AddTheAgencyOnce() throws Exception {
+    actAsTenantAdmin(COUNSELLING_CALLER_ID);
+    doAnswer(
+            invocation -> {
+              // The real relation creator calls AgencyService before it inserts the row.
+              Thread.sleep(300);
+              var now = LocalDateTime.now();
+              consultantAgencyRepository.save(
+                  ConsultantAgency.builder()
+                      .consultant(
+                          consultantRepository.findById(COUNSELLING_CALLER_ID).orElseThrow())
+                      .agencyId(OTHER_OWN_TENANT_AGENCY)
+                      .tenantId(OWN_TENANT)
+                      .createDate(now)
+                      .updateDate(now)
+                      .build());
+              return null;
+            })
+        .when(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(eq(COUNSELLING_CALLER_ID), any());
+    var command = new SelfAssignmentCommand(SelfAssignmentRole.COUNSELLOR, OTHER_OWN_TENANT_AGENCY);
+    var start = new CountDownLatch(1);
+    Callable<Object> click =
+        () -> {
+          start.await();
+          try {
+            service.assign(command);
+            return HttpStatus.CREATED;
+          } catch (CustomValidationHttpStatusException conflict) {
+            return conflict.getHttpStatus();
+          }
+        };
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<Object> first = executor.submit(click);
+      Future<Object> second = executor.submit(click);
+      start.countDown();
+
+      assertThat(List.of(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS)))
+          .containsExactlyInAnyOrder(HttpStatus.CREATED, HttpStatus.CONFLICT);
+    } finally {
+      executor.shutdownNow();
+    }
+    assertThat(
+            consultantAgencyRepository
+                .findByConsultantIdAndDeleteDateIsNull(COUNSELLING_CALLER_ID)
+                .stream()
+                .filter(relation -> relation.getAgencyId() == OTHER_OWN_TENANT_AGENCY))
+        .hasSize(1);
   }
 
   // --- helpers ----------------------------------------------------------------------------------
