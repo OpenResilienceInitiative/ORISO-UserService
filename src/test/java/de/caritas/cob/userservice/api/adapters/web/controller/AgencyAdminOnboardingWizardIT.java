@@ -81,6 +81,12 @@ class AgencyAdminOnboardingWizardIT {
   @Autowired private AdminAgencyRepository adminAgencyRepository;
 
   @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
+          .ConsultantAgencyRelationCreatorService
+      consultantAgencyRelationCreatorService;
+
   @MockitoBean private KeycloakService keycloakService;
   @MockitoBean private AgencyService agencyService;
   @MockitoBean private AgencyCreationClient agencyCreationClient;

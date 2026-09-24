@@ -64,6 +64,7 @@ import org.springframework.transaction.annotation.Transactional;
   UnitQueue.class,
   InviteDelivery.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteTopicPermissionIT.CallerConfig.class
 })
@@ -106,9 +107,11 @@ class AccountInviteTopicPermissionIT {
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private AuthenticatedUser caller;
+  @Autowired private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
   @Autowired private InviteEmailTemplateRepository templateRepository;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
@@ -120,6 +123,8 @@ class AccountInviteTopicPermissionIT {
 
   @BeforeEach
   void givenAgencies() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        adminScope, "multitenancyEnabled", true);
     when(identityEmailOwnerLookup.findByEmail(anyString())).thenReturn(Optional.empty());
     givenAgency(LEGACY_AGENCY, OWN_TENANT, TopicPermission.CREATE, List.of(11L));
     givenAgency(SELECT_AGENCY, OWN_TENANT, TopicPermission.SELECT_EXISTING, List.of(21L, 22L));

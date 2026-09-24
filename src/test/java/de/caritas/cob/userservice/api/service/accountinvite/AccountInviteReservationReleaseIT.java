@@ -57,6 +57,7 @@ import org.springframework.web.client.HttpClientErrorException;
   InviteDelivery.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   IdReservationReleaseProcessor.class,
   AccountInviteReservationReleaseIT.CallerConfig.class
 })
@@ -80,8 +81,10 @@ class AccountInviteReservationReleaseIT {
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private IdReservationReleaseTaskRepository releaseTaskRepository;
   @Autowired private AuthenticatedUser caller;
+  @Autowired private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
@@ -92,6 +95,8 @@ class AccountInviteReservationReleaseIT {
 
   @BeforeEach
   void upstreams() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        adminScope, "multitenancyEnabled", true);
     when(identityEmailOwnerLookup.findByEmail(anyString())).thenReturn(Optional.empty());
     // The new agency 500 is free until an admin invite reserves it; afterwards it is RESERVED.
     when(agencyIdAllocationClient.getAvailability(NEW_AGENCY)).thenReturn(IdAllocationStatus.FREE);

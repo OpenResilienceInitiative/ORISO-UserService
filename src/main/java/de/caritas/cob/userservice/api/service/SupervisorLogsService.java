@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.supervision.SupervisionNotes;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -28,7 +29,7 @@ public class SupervisorLogsService {
 
   private final @NonNull NamedParameterJdbcTemplate namedParameterJdbcTemplate;
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull AdminAuditAgencyScope adminAuditAgencyScope;
+  private final @NonNull AdminScope adminScope;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   public SupervisorLogsResult listSupervisorLogs(int page, int perPage) {
@@ -37,7 +38,7 @@ public class SupervisorLogsService {
     final int offset = (safePage - 1) * safePerPage;
 
     final Long tenantId = resolveEffectiveTenantId();
-    final Optional<Set<Long>> agencyIds = adminAuditAgencyScope.resolveAgencyIds();
+    final Optional<Set<Long>> agencyIds = agencyRestriction();
 
     // Fail closed: a Beratungsstellen-Admin without a single agency assignment reads nothing —
     // never the whole tenant, and never an `IN ()` that the database would reject.
@@ -238,5 +239,11 @@ public class SupervisorLogsService {
     private long total;
     private int page;
     private int perPage;
+  }
+
+  private Optional<Set<Long>> agencyRestriction() {
+    return adminScope.current() instanceof AdminScope.Agencies agencies
+        ? Optional.of(agencies.ids())
+        : Optional.empty();
   }
 }

@@ -59,6 +59,7 @@ import org.springframework.web.client.HttpClientErrorException;
   InviteDelivery.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AccountInviteExistingTenantIT.CallerConfig.class
 })
 class AccountInviteExistingTenantIT {
@@ -85,8 +86,10 @@ class AccountInviteExistingTenantIT {
   @Autowired private AccountInviteService service;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private AuthenticatedUser caller;
+  @Autowired private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
@@ -98,6 +101,8 @@ class AccountInviteExistingTenantIT {
 
   @BeforeEach
   void givenTenantsAndAgencies() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        adminScope, "multitenancyEnabled", true);
     when(identityEmailOwnerLookup.findByEmail(anyString())).thenReturn(Optional.empty());
     givenTenant(OWN_TENANT);
     givenTenant(FOREIGN_TENANT);

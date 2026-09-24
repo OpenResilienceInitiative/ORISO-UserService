@@ -63,6 +63,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({
   AdminSelfAssignmentService.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AdminSelfAssignmentIT.CallerConfig.class
 })
 class AdminSelfAssignmentIT {
@@ -96,10 +97,12 @@ class AdminSelfAssignmentIT {
   @Autowired private AdminRepository adminRepository;
   @Autowired private AdminAgencyRepository adminAgencyRepository;
   @Autowired private AuthenticatedUser caller;
+  @Autowired private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
   @MockitoBean private AgencyFacts agencyFacts;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private GrantConsultantIdentityService grantConsultantIdentityService;
 
   @MockitoBean
@@ -107,6 +110,8 @@ class AdminSelfAssignmentIT {
 
   @BeforeEach
   void givenAgenciesAndATenantAdmin() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        adminScope, "multitenancyEnabled", true);
     givenAgency(OWN_AGENCY, OWN_TENANT, List.of(11L));
     givenAgency(OTHER_OWN_TENANT_AGENCY, OWN_TENANT, List.of(21L));
     givenAgency(FOREIGN_AGENCY, FOREIGN_TENANT, List.of(31L));

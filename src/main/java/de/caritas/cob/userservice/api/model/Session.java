@@ -36,9 +36,7 @@ import lombok.ToString.Exclude;
 import org.hibernate.annotations.Fetch;
 import org.hibernate.annotations.FetchMode;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.ParamDef;
 import org.hibernate.type.SqlTypes;
 import org.springframework.lang.Nullable;
 
@@ -50,12 +48,7 @@ import org.springframework.lang.Nullable;
 @Getter
 @Setter
 @ToString
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(
-    name = "tenantFilter",
-    condition = "(tenant_id = :tenantId OR (:tenantId = 1 AND tenant_id IS NULL))")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION_WITH_LEGACY_ROWS_OF_TENANT_ONE)
 public class Session implements TenantAware {
 
   public enum RegistrationType {

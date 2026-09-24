@@ -52,6 +52,7 @@ import org.springframework.transaction.annotation.Transactional;
   InviteDelivery.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AccountInviteRoleRuleIT.CallerConfig.class
 })
 class AccountInviteRoleRuleIT {
@@ -77,8 +78,10 @@ class AccountInviteRoleRuleIT {
   @Autowired private AccountInviteService service;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private AuthenticatedUser caller;
+  @Autowired private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
@@ -90,6 +93,8 @@ class AccountInviteRoleRuleIT {
 
   @BeforeEach
   void givenTenantsAndAgencies() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        adminScope, "multitenancyEnabled", true);
     when(identityEmailOwnerLookup.findByEmail(anyString())).thenReturn(Optional.empty());
     when(tenantService.getRestrictedTenantData(OWN_TENANT))
         .thenReturn(new RestrictedTenantDTO().id(OWN_TENANT));

@@ -22,4 +22,21 @@ public class TenantContextProvider {
       TenantContext.setCurrentTenant(currentTenantId);
     }
   }
+
+  /** Background work has no caller, so it runs in the technical tenant and leaves none behind. */
+  public Runnable inTechnicalContext(Runnable task) {
+    return () -> TenantContext.runWith(technicalTenant(), task);
+  }
+
+  /** Work handed to another thread keeps the tenant of the thread that handed it over. */
+  public Runnable inCallersContext(Runnable task) {
+    var callers = TenantContext.getCurrentTenantData();
+    var copy =
+        callers == null ? null : new TenantData(callers.getTenantId(), callers.getSubdomain());
+    return () -> TenantContext.runWith(copy, task);
+  }
+
+  private TenantData technicalTenant() {
+    return multiTenancyEnabled ? new TenantData(TECHNICAL_TENANT_ID, null) : null;
+  }
 }

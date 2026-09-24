@@ -68,6 +68,7 @@ import org.springframework.transaction.annotation.Transactional;
   InviteDelivery.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   IdReservationReleaseProcessor.class
 })
 class AccountInviteDirectSendAtomicIT {
@@ -81,6 +82,7 @@ class AccountInviteDirectSendAtomicIT {
   @MockitoSpyBean private InviteEmailDeliveryRepository deliveryRepository;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;

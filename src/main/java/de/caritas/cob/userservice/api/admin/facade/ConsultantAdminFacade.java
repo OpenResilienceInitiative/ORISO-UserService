@@ -18,20 +18,20 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort.FieldEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.OrderEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminFilterService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.CreateConsultantAgencyDTOInputAdapter;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
-import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -56,13 +56,13 @@ public class ConsultantAdminFacade {
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
 
-  private final @NonNull AdminUserFacade adminUserFacade;
-
   private final @NonNull AuthenticatedUser authenticatedUser;
 
   private final @NonNull AgencyService agencyService;
 
   private final @NonNull ConsultantChatIdentityService consultantChatIdentityService;
+
+  private final @NonNull AdminScope adminScope;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
@@ -74,6 +74,7 @@ public class ConsultantAdminFacade {
    * @return the generated {@link ConsultantResponseDTO}
    */
   public ConsultantAdminResponseDTO findConsultant(String consultantId) {
+    adminScope.assertMay(Target.counsellor(consultantId));
     return this.consultantAdminService.findConsultantById(consultantId);
   }
 
@@ -135,14 +136,10 @@ public class ConsultantAdminFacade {
    *     ConsultantAdminResponseDTO}
    */
   public ConsultantAdminResponseDTO createNewConsultant(CreateConsultantDTO createConsultantDTO) {
-    if (createConsultantDTO != null && createConsultantDTO.getAgencyIds() != null) {
-      var requestedAgencies =
-          createConsultantDTO.getAgencyIds().stream()
-              .filter(java.util.Objects::nonNull)
-              .distinct()
-              .map(agencyId -> new CreateConsultantAgencyDTO().agencyId(agencyId))
-              .collect(Collectors.toList());
-      checkPermissionsToAssignedAgencies(requestedAgencies);
+    if (createConsultantDTO != null
+        && createConsultantDTO.getAgencyIds() != null
+        && !createConsultantDTO.getAgencyIds().isEmpty()) {
+      adminScope.assertMay(Target.agencies(createConsultantDTO.getAgencyIds()));
     }
     return this.consultantAdminService.createNewConsultant(createConsultantDTO);
   }
@@ -157,6 +154,7 @@ public class ConsultantAdminFacade {
    */
   public ConsultantAdminResponseDTO updateConsultant(
       String consultantId, UpdateAdminConsultantDTO updateConsultantDTO) {
+    adminScope.assertMay(Target.counsellor(consultantId));
     return this.consultantAdminService.updateConsultant(consultantId, updateConsultantDTO);
   }
 
@@ -168,6 +166,7 @@ public class ConsultantAdminFacade {
    * @return the consultant as it now stands, including its {@code chatIdentityStatus}
    */
   public ConsultantAdminResponseDTO repairConsultantChatIdentity(String consultantId) {
+    adminScope.assertMay(Target.counsellor(consultantId));
     this.consultantChatIdentityService.provisionMissingChatIdentity(consultantId);
     return this.consultantAdminService.findConsultantById(consultantId);
   }
@@ -179,6 +178,7 @@ public class ConsultantAdminFacade {
    * @return the generated {@link ConsultantAgencyResponseDTO}
    */
   public ConsultantAgencyResponseDTO findConsultantAgencies(String consultantId) {
+    adminScope.assertMay(Target.counsellor(consultantId));
     return this.consultantAgencyAdminService.findConsultantAgencies(consultantId);
   }
 
@@ -191,6 +191,8 @@ public class ConsultantAdminFacade {
    */
   public void createNewConsultantAgency(
       String consultantId, CreateConsultantAgencyDTO createConsultantAgencyDTO) {
+    adminScope.assertMay(Target.counsellor(consultantId));
+    adminScope.assertMay(Target.agencies(List.of(createConsultantAgencyDTO.getAgencyId())));
     consultantAgencyRelationCreatorService.createNewConsultantAgency(
         consultantId, createConsultantAgencyDTO);
   }
@@ -213,6 +215,7 @@ public class ConsultantAdminFacade {
   @Transactional
   public void setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
+    adminScope.assertMay(Target.counsellor(consultantId));
     var persistedAgencyIds =
         consultantAgencyAdminService.findConsultantAgencyIds(consultantId).stream()
             .collect(Collectors.toSet());
@@ -223,6 +226,8 @@ public class ConsultantAdminFacade {
         persistedAgencyIds.stream()
             .filter(persistedAgencyId -> !desiredAgencyIds.contains(persistedAgencyId))
             .collect(Collectors.toList());
+    adminScope.assertMay(Target.agencies(desiredAgencyIds));
+    adminScope.assertMay(Target.agencies(agencyIdsToDelete));
     if (!agencyIdsToDelete.isEmpty()) {
       consultantAgencyAdminService.markConsultantAgenciesForDeletion(
           consultantId, agencyIdsToDelete);
@@ -230,7 +235,10 @@ public class ConsultantAdminFacade {
 
     agencyList.stream()
         .filter(agency -> !persistedAgencyIds.contains(agency.getAgencyId()))
-        .forEach(agency -> createNewConsultantAgency(consultantId, agency));
+        .forEach(
+            agency ->
+                consultantAgencyRelationCreatorService.createNewConsultantAgency(
+                    consultantId, agency));
   }
 
   /**
@@ -240,6 +248,7 @@ public class ConsultantAdminFacade {
    * @param agencyTypeDTO the request object containing the target type
    */
   public void changeAgencyType(Long agencyId, AgencyTypeDTO agencyTypeDTO) {
+    adminScope.assertMay(Target.agencies(List.of(agencyId)));
     if (TEAM_AGENCY.equals(agencyTypeDTO.getAgencyType())) {
       this.consultantAgencyAdminService.markAllAssignedConsultantsAsTeamConsultant(agencyId);
     }
@@ -255,6 +264,8 @@ public class ConsultantAdminFacade {
    * @param agencyId the agency id
    */
   public void markConsultantAgencyForDeletion(String consultantId, Long agencyId) {
+    adminScope.assertMay(Target.counsellor(consultantId));
+    adminScope.assertMay(Target.agencies(List.of(agencyId)));
     this.consultantAgencyAdminService.markConsultantAgencyForDeletion(consultantId, agencyId);
   }
 
@@ -274,35 +285,13 @@ public class ConsultantAdminFacade {
    * @param consultantId the consultant id
    */
   public void markConsultantForDeletion(String consultantId, Boolean forceDeleteSessions) {
-    assertCallerMayDeleteConsultant(consultantId);
+    adminScope.assertMay(Target.counsellor(consultantId));
     this.consultantAdminService.markConsultantForDeletion(consultantId, forceDeleteSessions);
-  }
-
-  /**
-   * A restricted agency admin (an agency-level admin without the broader agency-super-admin role)
-   * may only delete consultants sharing at least one of their own agencies. This mirrors {@code
-   * AgencyAdminUserService#assertCallerMayAccessAgencyAdmin} and prevents a single
-   * Beratungsstellen-Admin from deleting consultants of other Träger by targeting their id
-   * directly.
-   */
-  private void assertCallerMayDeleteConsultant(String consultantId) {
-    if (!authenticatedUser.hasRestrictedAgencyPriviliges()) {
-      return;
-    }
-    var callerAgencyIds = adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId());
-    var consultantAgencyIds = consultantAgencyAdminService.findConsultantAgencyIds(consultantId);
-    if (Collections.disjoint(callerAgencyIds, consultantAgencyIds)) {
-      log.warn(
-          "Restricted agency admin {} attempted to delete consultant {} outside their agencies",
-          authenticatedUser.getUserId(),
-          consultantId);
-      throw new ForbiddenException(
-          "Does not have permission to delete a consultant outside the own agencies");
-    }
   }
 
   public void pauseConsultantDeletion(
       String consultantId, String reason, Integer months, String pausedBy) {
+    adminScope.assertMay(Target.counsellor(consultantId));
     this.consultantAdminService.pauseConsultantDeletion(consultantId, reason, months, pausedBy);
   }
 
@@ -314,6 +303,7 @@ public class ConsultantAdminFacade {
    */
   public AgencyConsultantResponseDTO findConsultantsForAgency(String agencyId) {
     var parsedAgencyId = Long.valueOf(agencyId);
+    adminScope.assertMay(Target.agencies(List.of(parsedAgencyId)));
     return this.consultantAgencyAdminService.findConsultantsForAgency(parsedAgencyId);
   }
 
@@ -393,26 +383,6 @@ public class ConsultantAdminFacade {
             .collect(Collectors.toList());
     newList.clear();
     newList.addAll(filteredList);
-  }
-
-  public void checkPermissionsToAssignedAgencies(List<CreateConsultantAgencyDTO> agencyList) {
-    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
-      List<Long> adminUserAgencyIds =
-          adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId());
-      List<Long> agencyIdsFromTheRequest =
-          agencyList.stream()
-              .map(CreateConsultantAgencyDTO::getAgencyId)
-              .collect(Collectors.toList());
-
-      if (!adminUserAgencyIds.containsAll(agencyIdsFromTheRequest)) {
-        log.warn(
-            "User does not have access to some of the agencies. Admin agencies {}, requested agencies to  update: {}",
-            adminUserAgencyIds,
-            agencyIdsFromTheRequest);
-        throw new ForbiddenException(
-            "Does not have permissions to update some of the agencies from the request");
-      }
-    }
   }
 
   public void checkAssignedAgenciesMatchConsultantTenant(

@@ -80,6 +80,7 @@ import org.springframework.web.client.HttpClientErrorException;
   InviteDelivery.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AccountInviteUnitQueueIT.CallerConfig.class
 })
 class AccountInviteUnitQueueIT {
@@ -103,8 +104,10 @@ class AccountInviteUnitQueueIT {
   @Autowired private InviteEmailTemplateRepository templateRepository;
   @Autowired private InviteEmailDeliveryRepository deliveryRepository;
   @Autowired private AuthenticatedUser caller;
+  @Autowired private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
@@ -118,6 +121,8 @@ class AccountInviteUnitQueueIT {
 
   @BeforeEach
   void upstreams() {
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        adminScope, "multitenancyEnabled", true);
     when(identityEmailOwnerLookup.findByEmail(anyString())).thenReturn(Optional.empty());
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
         .thenReturn("https://admin.example.org/admin/counsellor-onboarding/token");

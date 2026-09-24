@@ -66,7 +66,8 @@ import org.springframework.transaction.annotation.Transactional;
   UnitQueue.class,
   InviteDelivery.class,
   AccountInviteAccessPolicy.class,
-  AccountInviteTopicPermissionService.class
+  AccountInviteTopicPermissionService.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class
 })
 class AccountInviteReservationOrchestrationIT {
 
@@ -75,6 +76,7 @@ class AccountInviteReservationOrchestrationIT {
   @Autowired private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;

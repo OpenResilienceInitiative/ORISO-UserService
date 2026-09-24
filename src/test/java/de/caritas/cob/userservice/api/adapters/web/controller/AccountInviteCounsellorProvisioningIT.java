@@ -51,6 +51,11 @@ class AccountInviteCounsellorProvisioningIT {
 
   @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
+          .ConsultantAgencyRelationCreatorService
+      consultantAgencyRelationCreatorService;
+
   @BeforeEach
   void configureConsultantProvisioning() {
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
@@ -109,7 +114,7 @@ class AccountInviteCounsellorProvisioningIT {
 
     ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
         ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
-    verify(consultantAdminFacade)
+    verify(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(eq("provisioned-counsellor-id"), agencyCaptor.capture());
     assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(275L);
     assertThat(agencyCaptor.getValue().getRoleSetKey()).isEqualTo("CONSULTANT_DEFAULT");

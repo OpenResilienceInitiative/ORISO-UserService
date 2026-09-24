@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -36,6 +37,8 @@ public class CounsellorInviteProvisioningService {
   private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService;
+  private final @NonNull ConsultantAgencyRelationCreatorService
+      consultantAgencyRelationCreatorService;
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
@@ -88,7 +91,7 @@ public class CounsellorInviteProvisioningService {
       invite.setUpdateDate(LocalDateTime.now());
       accountInviteRepository.save(invite);
 
-      consultantAdminFacade.createNewConsultantAgency(
+      consultantAgencyRelationCreatorService.createNewConsultantAgency(
           consultantId,
           new CreateConsultantAgencyDTO()
               .agencyId(invite.getAgencyId())
