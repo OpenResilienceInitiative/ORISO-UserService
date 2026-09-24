@@ -15,6 +15,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -43,6 +44,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorD
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantCreationClient;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
@@ -67,6 +71,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@WithTenant(1L)
 class QueuedInviteReleaseOnOnboardingIT {
 
   private static final long TENANT = 79L;
@@ -77,6 +82,11 @@ class QueuedInviteReleaseOnOnboardingIT {
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
 
   private static final long TOPIC = 2L;
+
+  /** The public route resolves to the main tenant, as on the single-domain deployment. */
+  @MockitoBean private TenantResolverService tenantResolverService;
+
+  @MockitoBean private TenantService tenantService;
 
   @Autowired private MockMvc mockMvc;
   @Autowired private AccountInviteRepository accountInviteRepository;
@@ -137,8 +147,12 @@ class QueuedInviteReleaseOnOnboardingIT {
     deliveryRepository.deleteAll();
     accountInviteRepository.deleteAll();
     templateRepository.deleteById(templateId);
-    adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(ADMIN_ID));
-    adminRepository.findById(ADMIN_ID).ifPresent(adminRepository::delete);
+    // The new admin lives in the new Träger, not in the one the requests resolved to.
+    Tenants.acrossAll(
+        () -> {
+          adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(ADMIN_ID));
+          adminRepository.findById(ADMIN_ID).ifPresent(adminRepository::delete);
+        });
   }
 
   @Test

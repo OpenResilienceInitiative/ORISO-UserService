@@ -26,9 +26,10 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdA
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.time.LocalDateTime;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -49,18 +50,20 @@ import org.springframework.web.client.HttpClientErrorException;
 
 /** Only the remote ledgers, Keycloak and SMTP are replaced; the release processor is real. */
 @DataJpaTest
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   IdReservationReleaseProcessor.class,
   AccountInviteReservationReleaseIT.CallerConfig.class
 })
+@WithTenant(AccountInviteReservationReleaseIT.OWN_TENANT)
 class AccountInviteReservationReleaseIT {
 
-  private static final long OWN_TENANT = 1L;
+  static final long OWN_TENANT = 1L;
   private static final long NEW_AGENCY = 500L;
   private static final long FOREIGN_RESERVED_AGENCY = 501L;
   private static final long EXISTING_AGENCY = 1L;
@@ -271,7 +274,8 @@ class AccountInviteReservationReleaseIT {
   }
 
   private void actAsTenantAdmin() {
-    actAs(
+    Tenants.actAs(
+        caller,
         "tenant-admin-1",
         OWN_TENANT,
         UserRole.TENANT_ADMIN,
@@ -280,18 +284,13 @@ class AccountInviteReservationReleaseIT {
   }
 
   private void actAsPlatformAdmin() {
-    actAs("platform-admin", 0L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
-  }
-
-  private void actAs(String userId, Long tenantId, UserRole... roles) {
-    caller.setUserId(userId);
-    caller.setUsername(userId);
-    caller.setTenantId(tenantId);
-    caller.setRoles(
-        java.util.Arrays.stream(roles)
-            .map(UserRole::getValue)
-            .collect(java.util.stream.Collectors.toSet()));
-    caller.setGrantedAuthorities(Set.of());
+    Tenants.actAs(
+        caller,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
   }
 
   private static CreateAccountInviteCommand agencyAdmin(Long agencyId) {
