@@ -227,10 +227,8 @@ public class AccountInviteAccessPolicy {
 
   /**
    * An invite into an existing agency must not name another Träger's agency: the accepted invite
-   * would otherwise attach the new account to that agency — with no mode (legacy) and with {@code
-   * EXISTING} alike. With a reserving mode (AUTO/MANUAL) the agency ID is a fresh reservation made
-   * under the invite's (caller's) tenant, so there is nothing to look up. An agency that cannot be
-   * found is refused — its tenant cannot be proven.
+   * would otherwise attach the new account to that agency. An unknown agency is refused: its tenant
+   * cannot be proven.
    */
   private void assertAgencyBelongsToTenant(Long agencyId, Long tenantId) {
     AgencyDTO agency = agencyService.getAgencyWithoutCaching(agencyId);

@@ -87,9 +87,8 @@ public class AccountInvite {
   private Long departmentId;
 
   /**
-   * How the invite's tenant ID was allocated (ORISO-Admin#1026): AUTO/MANUAL = a new Träger whose
-   * ID this invite reserved, EXISTING = a Träger that already exists (nothing reserved; its
-   * onboarding joins the Träger instead of creating one). Null on rows created before #1026.
+   * AUTO/MANUAL = a new Träger whose ID this invite reserved, EXISTING = joins an existing Träger.
+   * Null on older rows.
    */
   @Enumerated(EnumType.STRING)
   @Column(name = "tenant_id_allocation_mode", length = 16)
