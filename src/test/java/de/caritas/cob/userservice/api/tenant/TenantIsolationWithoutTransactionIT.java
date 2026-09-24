@@ -25,6 +25,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.SessionSupervisor;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -83,6 +84,10 @@ class TenantIsolationWithoutTransactionIT {
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private UserRepository userRepository;
   @Autowired private SessionRepository sessionRepository;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository
+      sessionSupervisorRepository;
 
   @Autowired
   private de.caritas.cob.userservice.api.port.out.AdminAgencyRepository adminAgencyRepository;
@@ -245,6 +250,38 @@ class TenantIsolationWithoutTransactionIT {
     } finally {
       TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
       adminAgencyRepository.delete(foreignRelation);
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void supervisionMarkers_Should_NotReachSessionOfAnotherTenant() {
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    SessionSupervisor foreignSupervision;
+    try {
+      var supervisor = persistConsultant(FOREIGN_TENANT);
+      foreignSupervision =
+          sessionSupervisorRepository.save(
+              SessionSupervisor.builder()
+                  .session(foreignSession)
+                  .supervisorConsultant(supervisor)
+                  .addedByConsultant(supervisor)
+                  .addedDate(java.time.LocalDateTime.now())
+                  .isActive(true)
+                  .matrixRoomId("!foreign-supervision:synthetic.oriso.test")
+                  .build());
+    } finally {
+      TenantContext.clear();
+    }
+    TenantContext.setCurrentTenant(OWN_TENANT);
+    try {
+      assertThat(
+              sessionSupervisorRepository.findActiveMarkerRowsBySessionIdIn(
+                  Set.of(foreignSession.getId())))
+          .isEmpty();
+    } finally {
+      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+      sessionSupervisorRepository.delete(foreignSupervision);
       TenantContext.clear();
     }
   }
