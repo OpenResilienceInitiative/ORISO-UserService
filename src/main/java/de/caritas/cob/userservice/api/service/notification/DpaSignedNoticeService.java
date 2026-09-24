@@ -196,11 +196,7 @@ public class DpaSignedNoticeService {
    * next collaborator added will not know that rule.
    */
   private void processHint(Long tenantId) {
-    // The dispatch runs on a pooled daemon thread, which starts with no TenantContext. Every
-    // repository call below is tenant-filtered with TenantContext.getCurrentTenant(); without the
-    // hinted tenant the lookups would not be scoped to the Träger the notice is for. Establish the
-    // hinted tenant for the duration of the task, and clear it again because the pool reuses the
-    // thread.
+    // Pooled worker thread: scope it to the hinted tenant and clear it for the next task.
     TenantContext.setCurrentTenant(tenantId);
     try {
       dispatchNotice(tenantId);

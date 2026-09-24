@@ -50,23 +50,30 @@ public class TenantContext {
   }
 
   /**
-   * Runs {@code lookup} in the technical tenant context, so neither the tenant filter nor the
-   * tenant check on loads by id hides rows of other tenants, and restores the caller's context
-   * afterwards. Only for scope checks that must <i>see</i> a foreign row in order to refuse it.
+   * Runs {@code lookup} in the technical tenant, so tenant rows of every Träger are visible. Only
+   * for scope checks that must see a foreign row in order to refuse it.
    */
   public static <T> T supplyAcrossTenants(java.util.function.Supplier<T> lookup) {
     var callerTenantData = CURRENT_TENANT_DATA.get();
-    CURRENT_TENANT_DATA.set(
+    var technical =
         new TenantData(
-            TECHNICAL_TENANT_ID,
-            callerTenantData == null ? null : callerTenantData.getSubdomain()));
+            TECHNICAL_TENANT_ID, callerTenantData == null ? null : callerTenantData.getSubdomain());
+    var result = new java.util.concurrent.atomic.AtomicReference<T>();
+    runWith(technical, () -> result.set(lookup.get()));
+    return result.get();
+  }
+
+  /** Runs {@code task} with {@code tenantData} (none if null) and restores the previous context. */
+  static void runWith(TenantData tenantData, Runnable task) {
+    var previous = CURRENT_TENANT_DATA.get();
+    CURRENT_TENANT_DATA.set(tenantData);
     try {
-      return lookup.get();
+      task.run();
     } finally {
-      if (callerTenantData == null) {
+      if (previous == null) {
         CURRENT_TENANT_DATA.remove();
       } else {
-        CURRENT_TENANT_DATA.set(callerTenantData);
+        CURRENT_TENANT_DATA.set(previous);
       }
     }
   }
