@@ -1054,9 +1054,14 @@ public class AccountInviteService {
     if (templateId == null) {
       throw new BadRequestException("templateId is required");
     }
-    return templateRepository
-        .findById(templateId)
-        .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    InviteEmailTemplate template =
+        templateRepository
+            .findById(templateId)
+            .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    // Hiding another Träger's template from the list is not enough: the id travels in
+    // the send request body, so sending with it has to be refused too (ORISO-Admin#1026).
+    accessPolicy.authorizeTemplateUse(template.getTenantId());
+    return template;
   }
 
   /**

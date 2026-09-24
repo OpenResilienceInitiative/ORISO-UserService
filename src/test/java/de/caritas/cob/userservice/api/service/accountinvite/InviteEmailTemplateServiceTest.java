@@ -199,39 +199,58 @@ class InviteEmailTemplateServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
-  void createTemplate_Should_notAskAccessPolicy() {
-    // Everyone who may send invites may also create a template — the rule Frank
-    // confirmed on 2026-09-24. Creating must therefore never reach the policy.
+  void createTemplate_Should_stampTheOwnerFromThePolicy() {
+    // Everyone who may send invites may also create a template (Frank, 2026-09-24).
+    // Creating is therefore never refused — but the row must carry its owner, or the
+    // open door is a cross-Träger write.
+    when(accessPolicy.templateOwnerTenantId()).thenReturn(7L);
     when(templateRepository.save(any(InviteEmailTemplate.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     var command =
         new TemplateCommand(
             InviteEmailTemplateKind.TENANT_INVITE, "Name", "en", "Subj", "Body", true);
 
-    service.createTemplate(command);
-
-    verify(accessPolicy, never()).authorizeTemplateUpdate();
-    verify(templateRepository).save(any(InviteEmailTemplate.class));
+    assertThat(service.createTemplate(command).getTenantId()).isEqualTo(7L);
   }
 
   @Test
-  void updateTemplate_Should_notLoadOrSave_When_accessPolicyDenies() {
-    doThrow(new ForbiddenException("denied")).when(accessPolicy).authorizeTemplateUpdate();
+  void createTemplate_Should_notSave_When_theOwnerCannotBeResolved() {
+    // The owner is read BEFORE validation and before the save, so a policy that
+    // throws leaves no half-owned row behind.
+    when(accessPolicy.templateOwnerTenantId()).thenThrow(new ForbiddenException("denied"));
+    var command =
+        new TemplateCommand(
+            InviteEmailTemplateKind.TENANT_INVITE, "Name", "en", "Subj", "Body", true);
+
+    assertThatThrownBy(() -> service.createTemplate(command))
+        .isInstanceOf(ForbiddenException.class);
+    verify(templateRepository, never()).save(any());
+  }
+
+  @Test
+  void updateTemplate_Should_askThePolicyWithTheStoredOwner_And_notSave_When_itDenies() {
+    var stored = InviteEmailTemplate.builder().id(1L).tenantId(4L).build();
+    when(templateRepository.findById(1L)).thenReturn(Optional.of(stored));
+    doThrow(new ForbiddenException("denied")).when(accessPolicy).authorizeTemplateUpdate(4L);
     var command =
         new TemplateCommand(
             InviteEmailTemplateKind.TENANT_INVITE, "Name", "en", "Subj", "Body", true);
 
     assertThatThrownBy(() -> service.updateTemplate(1L, command))
         .isInstanceOf(ForbiddenException.class);
-    verify(templateRepository, never()).findById(any());
     verify(templateRepository, never()).save(any());
   }
 
   @Test
-  void listTemplates_Should_notAskAccessPolicy() {
-    service.listTemplates(null);
+  void requireUsableTemplate_Should_askThePolicyWithTheStoredOwner() {
+    // The send path: hiding a foreign template from the list is not enough, because
+    // the id travels in the request body.
+    var stored = InviteEmailTemplate.builder().id(1L).tenantId(4L).build();
+    when(templateRepository.findById(1L)).thenReturn(Optional.of(stored));
+    doThrow(new ForbiddenException("denied")).when(accessPolicy).authorizeTemplateUse(4L);
 
-    verify(accessPolicy, never()).authorizeTemplateUpdate();
+    assertThatThrownBy(() -> service.requireUsableTemplate(1L))
+        .isInstanceOf(ForbiddenException.class);
   }
 
   // ---------------------------------------------------------------------------
@@ -241,7 +260,8 @@ class InviteEmailTemplateServiceTest {
   @Test
   void listTemplates_Should_returnFindAll_When_kindNull() {
     List<InviteEmailTemplate> all = List.of(InviteEmailTemplate.builder().id(1L).build());
-    when(templateRepository.findAll()).thenReturn(all);
+    when(accessPolicy.seesEveryTemplate()).thenReturn(true);
+    when(templateRepository.findAllVisible(null)).thenReturn(all);
 
     List<InviteEmailTemplate> result = service.listTemplates(null);
 
@@ -251,11 +271,24 @@ class InviteEmailTemplateServiceTest {
   @Test
   void listTemplates_Should_filterByKind_When_kindProvided() {
     List<InviteEmailTemplate> filtered = List.of(InviteEmailTemplate.builder().id(2L).build());
-    when(templateRepository.findByKindOrderByCreateDateDesc(InviteEmailTemplateKind.TENANT_INVITE))
+    when(accessPolicy.seesEveryTemplate()).thenReturn(true);
+    when(templateRepository.findAllVisible(InviteEmailTemplateKind.TENANT_INVITE))
         .thenReturn(filtered);
 
     List<InviteEmailTemplate> result = service.listTemplates(InviteEmailTemplateKind.TENANT_INVITE);
 
     assertThat(result).isSameAs(filtered);
+  }
+
+  @Test
+  void listTemplates_Should_askOnlyForOwnAndPlatformTemplates_When_callerIsATraeger() {
+    List<InviteEmailTemplate> visible = List.of(InviteEmailTemplate.builder().id(3L).build());
+    when(accessPolicy.seesEveryTemplate()).thenReturn(false);
+    when(accessPolicy.templateOwnerTenantId()).thenReturn(9L);
+    when(templateRepository.findVisibleForTenant(InviteEmailTemplateKind.COUNSELLOR_INVITE, 9L))
+        .thenReturn(visible);
+
+    assertThat(service.listTemplates(InviteEmailTemplateKind.COUNSELLOR_INVITE)).isSameAs(visible);
+    verify(templateRepository, never()).findAllVisible(any());
   }
 }

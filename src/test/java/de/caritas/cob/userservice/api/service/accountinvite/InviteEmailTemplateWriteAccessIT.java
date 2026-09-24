@@ -158,15 +158,16 @@ class InviteEmailTemplateWriteAccessIT {
   // --- Platform admin (tenant 0) -----------------------------------------------------------
 
   @Test
-  void updateTemplate_Should_Refuse_When_AgencyAdminEditsEvenItsOwnCreation() {
-    // The honest consequence of a template model without an owner: a template is
-    // shared the moment it is stored, so not even its author may change it back.
-    // This is what per-Träger templates (#1026 "Later") would lift.
+  void updateTemplate_Should_Succeed_When_AgencyAdminEditsItsOwnCreation() {
+    // Templates now carry an owner, so a template written inside a Träger stays that
+    // Träger's to change. Only the ownerless platform text is out of reach — see the
+    // case above. Cross-Träger isolation itself is pinned in
+    // InviteEmailTemplateTenantScopeIT.
     actAsAgencyAdmin();
     InviteEmailTemplate own = service.createTemplate(command("BST-eigene Vorlage"));
 
-    assertThatThrownBy(() -> service.updateTemplate(own.getId(), command("Edited")))
-        .isInstanceOf(ForbiddenException.class);
+    assertThat(service.updateTemplate(own.getId(), command("Edited")).getName())
+        .isEqualTo("Edited");
   }
 
   @Test

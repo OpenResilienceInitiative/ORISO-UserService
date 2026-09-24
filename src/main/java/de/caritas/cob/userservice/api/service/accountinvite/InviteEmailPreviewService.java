@@ -52,6 +52,7 @@ public class InviteEmailPreviewService {
       E-Mail, sondern wenden Sie sich an Ihre Ansprechperson.""";
 
   private final @NonNull InviteEmailTemplateRepository templateRepository;
+  private final @NonNull AccountInviteAccessPolicy accessPolicy;
   private final @NonNull InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   private final @NonNull InviteMailDispatchService inviteMailDispatchService;
 
@@ -159,9 +160,14 @@ public class InviteEmailPreviewService {
   }
 
   private InviteEmailTemplate findTemplate(Long templateId) {
-    return templateRepository
-        .findById(templateId)
-        .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    InviteEmailTemplate template =
+        templateRepository
+            .findById(templateId)
+            .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    // A preview renders the stored subject and body, so it would read out another
+    // Träger's text just as a send would (ORISO-Admin#1026).
+    accessPolicy.authorizeTemplateUse(template.getTenantId());
+    return template;
   }
 
   /** Mirrors the send path: only tenant invites land on the Admin onboarding route. */

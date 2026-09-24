@@ -52,6 +52,13 @@ class InviteEmailPreviewServiceTest {
   private InviteMailDispatchService dispatchService;
   private InviteEmailPreviewService previewService;
 
+  /**
+   * A preview reads a stored template's subject and body, so it is scoped like a send
+   * (ORISO-Admin#1026). The mock passes everything; the refusal itself is pinned in {@code
+   * InviteEmailTemplateTenantScopeIT}.
+   */
+  @Mock private AccountInviteAccessPolicy accessPolicy;
+
   @BeforeEach
   void setUp() {
     acceptUrlBuilder =
@@ -68,6 +75,7 @@ class InviteEmailPreviewServiceTest {
     previewService =
         new InviteEmailPreviewService(
             templateRepository,
+            accessPolicy,
             acceptUrlBuilder,
             dispatchService,
             new de.caritas.cob.userservice.api.service.notification.AdminPanelUrl(

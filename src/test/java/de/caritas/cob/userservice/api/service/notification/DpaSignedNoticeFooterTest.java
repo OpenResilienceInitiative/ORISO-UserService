@@ -75,7 +75,7 @@ class DpaSignedNoticeFooterTest {
     when(transactionManager.getTransaction(any())).thenReturn(new SimpleTransactionStatus());
     when(noticeRepository.save(any(DpaSignedNotice.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(templateRepository.findByKindAndActiveTrueOrderByCreateDateDesc(
+    when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
     when(identityLocaleLookup.findLocaleById(anyString())).thenReturn(Optional.empty());

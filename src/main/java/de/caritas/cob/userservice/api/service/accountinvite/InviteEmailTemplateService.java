@@ -22,12 +22,16 @@ public class InviteEmailTemplateService {
 
   @Transactional
   public InviteEmailTemplate createTemplate(TemplateCommand command) {
-    // Unguarded on purpose: everyone who may send invites may also write a template
-    // (ORISO-Admin#1026 Q30/Q31). Only changing a stored one is the platform admin's.
+    // Creating is open to every admin who may send invites (ORISO-Admin#1026 Q30/Q31).
+    // What makes that safe is the owner stamped here: a Träger's template belongs to
+    // that Träger and is invisible to the others. The platform admin writes templates
+    // with no owner, which everyone may use but only the platform admin may change.
+    Long ownerTenantId = accessPolicy.templateOwnerTenantId();
     validate(command);
     LocalDateTime now = LocalDateTime.now();
     InviteEmailTemplate template =
         InviteEmailTemplate.builder()
+            .tenantId(ownerTenantId)
             .kind(command.kind())
             .name(command.name().trim())
             .language(trimToNull(command.language()))
@@ -43,12 +47,15 @@ public class InviteEmailTemplateService {
 
   @Transactional
   public InviteEmailTemplate updateTemplate(Long templateId, TemplateCommand command) {
-    accessPolicy.authorizeTemplateUpdate();
     validate(command);
     InviteEmailTemplate template =
         templateRepository
             .findById(templateId)
             .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    // After the load, because the answer depends on who owns the row. A template of
+    // another Träger is refused as 403, not silently reported as missing, so the Admin
+    // can tell "not yours" from "gone".
+    accessPolicy.authorizeTemplateUpdate(template.getTenantId());
     template.setKind(command.kind());
     template.setName(command.name().trim());
     template.setLanguage(trimToNull(command.language()));
@@ -59,12 +66,39 @@ public class InviteEmailTemplateService {
     return templateRepository.save(template);
   }
 
+  /** Own templates plus the platform's; the platform admin sees every Träger's. */
   @Transactional(readOnly = true)
   public List<InviteEmailTemplate> listTemplates(InviteEmailTemplateKind kind) {
-    if (kind == null) {
-      return templateRepository.findAll();
+    if (accessPolicy.seesEveryTemplate()) {
+      return templateRepository.findAllVisible(kind);
     }
-    return templateRepository.findByKindOrderByCreateDateDesc(kind);
+    return templateRepository.findVisibleForTenant(kind, accessPolicy.templateOwnerTenantId());
+  }
+
+  /**
+   * Whether the caller may change this stored template — what the API reports as {@code editable}.
+   */
+  public boolean mayChange(InviteEmailTemplate template) {
+    return template != null && accessPolicy.canChangeTemplate(template.getTenantId());
+  }
+
+  /**
+   * Loads a template for sending or previewing and refuses another Träger's.
+   *
+   * <p>Hiding a foreign template from the list is not enough: the id travels in the send request
+   * body, so an admin who learns one could otherwise send with it.
+   */
+  @Transactional(readOnly = true)
+  public InviteEmailTemplate requireUsableTemplate(Long templateId) {
+    if (templateId == null) {
+      throw new BadRequestException("templateId is required");
+    }
+    InviteEmailTemplate template =
+        templateRepository
+            .findById(templateId)
+            .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    accessPolicy.authorizeTemplateUse(template.getTenantId());
+    return template;
   }
 
   private static void validate(TemplateCommand command) {
