@@ -4,6 +4,7 @@
 AccountInviteAcceptRaceIT
 AccountInviteCounsellorProvisioningIT
 AccountInviteDirectSendAtomicIT
+AccountInviteExistingAgencyIT
 AccountInviteRecipientEmailGuardIT
 AccountInviteRepositoryIT
 AccountInviteReservationOrchestrationIT

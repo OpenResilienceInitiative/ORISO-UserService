@@ -365,7 +365,7 @@ class CounsellorOnboardingWizardIT {
     assertThat(consultantCaptor.getValue().getTopicIds()).containsExactly(DEPARTMENT_TOPIC_ID);
     ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
         ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
-    verify(consultantAdminFacade)
+    verify(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(eq(CONSULTANT_ID), agencyCaptor.capture());
     assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
   }
