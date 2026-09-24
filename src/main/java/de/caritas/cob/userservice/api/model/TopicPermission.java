@@ -3,29 +3,19 @@ package de.caritas.cob.userservice.api.model;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import java.util.Locale;
 
-/**
- * How far a counsellor may extend their own topics (ORISO-Admin#1026, slice 6). Stored per invite
- * and per counsellor; an agency carries the default for new invites.
- */
+/** How far a counsellor may extend their own topics. */
 public enum TopicPermission {
 
-  /** Only the department(s) the invite assigned — nothing further. The default for new invites. */
+  /** Only the department(s) the invite assigned. */
   NONE,
 
-  /** May pick further departments, but only among the agency's existing ones. */
+  /** Only among the agency's existing departments. */
   SELECT_EXISTING,
 
-  /** May add further topics of the Träger (the onboarding wizard's "+"). Today's behaviour. */
+  /** Also further topics of the Träger (the wizard's "+"). */
   CREATE;
 
-  /**
-   * Reads the wire value: one of the three names (case-insensitive), or a plain yes/no as the CSV
-   * import sends it — {@code true} is today's behaviour ({@link #CREATE}), {@code false} is {@link
-   * #NONE}.
-   *
-   * @return the permission, or {@code null} when no value was sent
-   * @throws BadRequestException for anything else
-   */
+  /** The CSV import sends true (= CREATE) or false (= NONE); null when no value was sent. */
   public static TopicPermission fromWire(Object value) {
     if (value == null) {
       return null;

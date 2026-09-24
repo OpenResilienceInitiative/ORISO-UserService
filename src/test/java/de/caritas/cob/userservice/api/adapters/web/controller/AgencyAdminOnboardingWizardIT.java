@@ -200,9 +200,7 @@ class AgencyAdminOnboardingWizardIT {
   @Test
   void onboarding_Should_OfferTheAgencyAdminEveryTopic_When_TheStoredPermissionIsNarrower()
       throws Exception {
-    // An agency admin always counsels with CREATE (founder of a new agency brings its topics,
-    // an existing agency's admin administers them anyway) — also when the invite row carries
-    // NONE, e.g. from before the rule or from the column default of a partial deployment.
+    // Also when the stored row says NONE, e.g. from a partial deployment's column default.
     long otherTopic = 3L;
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(

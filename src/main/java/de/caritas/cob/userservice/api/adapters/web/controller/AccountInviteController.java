@@ -169,12 +169,7 @@ public class AccountInviteController {
             accountInviteService.calculateAccessGate(invite)));
   }
 
-  /**
-   * Sets the invited counsellor's topic permission from the invite table (ORISO-Admin#1026, slice
-   * 6) — before and after the account exists; an existing account follows. Body {@code
-   * {"topicPermission": "NONE" | "SELECT_EXISTING" | "CREATE"}} (also {@code true}/{@code false}).
-   * 400 for a missing/unknown value or a non-counsellor invite, 403 outside the caller's scope.
-   */
+  /** Also after the account exists; the counsellor's own permission follows. */
   @PreAuthorize(ADMIN_AUTH)
   @PutMapping("/useradmin/account-invites/{inviteId}/topic-permission")
   public ResponseEntity<AccountInviteResponseDTO> updateTopicPermission(
@@ -409,15 +404,10 @@ public class AccountInviteController {
     /** AGENCY_ADMIN invites only; omitted = true. Set for any other role → 400. */
     public Boolean alsoCounsellor;
 
-    /**
-     * Counsellor invites (ORISO-Admin#1026, slice 6): {@code NONE}, {@code SELECT_EXISTING} or
-     * {@code CREATE}; the CSV import may also send {@code true} (= CREATE) or {@code false} (=
-     * NONE). Omitted = the agency's default ({@code CREATE} for a new agency's founder).
-     */
+    /** Object, not enum: the CSV import sends true/false. Omitted = the agency's default. */
     public Object topicPermission;
   }
 
-  /** Body of {@code PUT /useradmin/account-invites/{inviteId}/topic-permission}. */
   public static class TopicPermissionRequestDTO {
     public Object topicPermission;
   }
@@ -549,7 +539,6 @@ public class AccountInviteController {
     public Integer dpaForwardCount;
     public LocalDateTime dpaSignedAt;
 
-    /** ORISO-Admin#1026, slice 6: NONE, SELECT_EXISTING or CREATE. */
     public String topicPermission;
 
     /**

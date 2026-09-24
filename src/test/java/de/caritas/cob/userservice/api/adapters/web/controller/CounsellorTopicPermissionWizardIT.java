@@ -52,33 +52,20 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.ResultActions;
 
-/**
- * The per-person topic permission in the public counsellor onboarding wizard (ORISO-Admin#1026,
- * slice 6), through the real HTTP layer.
- *
- * <p>An invite carries a topic permission: {@code CREATE} offers the agency's topics plus every
- * active topic of the Träger (the wizard's "+"), {@code SELECT_EXISTING} only the agency's own
- * topics, {@code NONE} only the department the invite assigned. The server refuses anything outside
- * that set, at least one topic is always required, and the permission travels from the invite to
- * the created counsellor.
- */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 class CounsellorTopicPermissionWizardIT {
 
-  /**
-   * A seeded consultant (UserServiceDatabase.sql). The consultant creation itself is mocked at the
-   * admin facade, so the facade hands back an existing row to receive the invite's permission.
-   */
+  /** Seeded row: the mocked admin facade hands it back to receive the invite's permission. */
   private static final String SEEDED_CONSULTANT_ID = "0b3b1cc6-be98-4787-aa56-212259d811b9";
 
   private static final Long AGENCY_ID = 1026L;
   private static final Long AGENCY_TOPIC_A = 2L;
   private static final Long AGENCY_TOPIC_B = 7L;
 
-  /** An active topic of the Träger that the agency does not offer. */
+  /** Active Träger topic the agency does not offer. */
   private static final Long OTHER_TENANT_TOPIC = 9L;
 
   private static final String CSRF = "it-csrf-token";

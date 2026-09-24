@@ -334,12 +334,7 @@ public class TenantAdminOnboardingController {
     /** Agency-admin invites only: the inviter's proposal; the invitee may override it. */
     public Boolean alsoCounsellor;
 
-    /**
-     * Counsellor invites only (ORISO-Admin#1026, slice 6): {@code CREATE} shows the "+" (further
-     * Träger topics in {@code availableTopics}); {@code SELECT_EXISTING} offers only {@code
-     * topics}; {@code NONE} offers only the assigned department — or, without one, exactly one of
-     * {@code topics}.
-     */
+    /** Counsellor invites only; only CREATE fills {@code availableTopics} (the wizard's "+"). */
     public String topicPermission;
 
     /**

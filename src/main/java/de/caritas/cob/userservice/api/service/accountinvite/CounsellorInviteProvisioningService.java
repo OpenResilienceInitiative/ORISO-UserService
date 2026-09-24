@@ -143,8 +143,7 @@ public class CounsellorInviteProvisioningService {
   /**
    * Undoes the two create-path defaults that only hold when an administrator chose the credentials.
    * The invite already tracks the second-factor requirement, including {@code WAIVED}, and the
-   * counsellor typed their own password seconds ago. The counsellor also takes over the invite's
-   * topic permission (ORISO-Admin#1026, slice 6).
+   * counsellor typed their own password seconds ago. Also copies the invite's topic permission.
    */
   private void alignRequirementsWithInvite(String consultantId, AccountInvite invite) {
     var stillOwed = !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());

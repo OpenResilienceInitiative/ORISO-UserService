@@ -73,8 +73,7 @@ class AccountInviteControllerTest {
             templateService,
             deliveryRepository,
             previewService,
-            // The real permission wrapper around the mocked invite service: it delegates the
-            // creation, so the delegation checks below keep testing the controller.
+            // Real wrapper, so the delegation checks below still reach the mocked service.
             new AccountInviteTopicPermissionService(
                 accountInviteService,
                 mock(AccountInviteRepository.class),

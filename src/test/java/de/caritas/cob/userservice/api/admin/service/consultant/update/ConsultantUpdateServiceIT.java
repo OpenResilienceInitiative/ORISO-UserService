@@ -66,7 +66,7 @@ public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
     super.updateConsultant_Should_throwCustomResponseException_When_newEmailIsInvalid();
   }
 
-  // --- topic permission (ORISO-Admin#1026, slice 6) --------------------------------------------
+  // --- topic permission ---------------------------------------------------------------------
 
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private ConsultantRepository consultantRepository;
