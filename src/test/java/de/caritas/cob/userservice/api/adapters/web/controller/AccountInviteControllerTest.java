@@ -119,8 +119,7 @@ class AccountInviteControllerTest {
 
   @Test
   void createInvite_Should_PassTheRoleFieldsAndTheImportBatch_AndExposeTheQueueState() {
-    // ORISO-Admin#1026 slices 3 + 5: alsoCounsellor and importBatchId reach the command; a waiting
-    // invite answers with waitingForUnit and its derived queueProblem.
+    // A waiting invite answers with waitingForUnit and its derived queueProblem.
     var request = new AccountInviteController.CreateAccountInviteRequestDTO();
     request.targetRole = AccountInviteTargetRole.COUNSELLOR.name();
     request.recipientEmail = "queued@example.org";

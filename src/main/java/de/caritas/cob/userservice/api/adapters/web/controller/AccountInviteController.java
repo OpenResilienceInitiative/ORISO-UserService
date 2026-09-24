@@ -297,7 +297,7 @@ public class AccountInviteController {
                     safe.language))));
   }
 
-  /** Slice 5: the derived queue problem of a waiting invite (null for every other invite). */
+  /** The queue problem is derived on read, never stored. */
   private AccountInviteResponseDTO withQueueState(
       AccountInviteResponseDTO dto, AccountInvite invite) {
     InviteQueueProblem problem = accountInviteService.queueProblemOf(invite);
@@ -391,12 +391,7 @@ public class AccountInviteController {
      */
     public Boolean alsoCounsellor;
 
-    /**
-     * ORISO-Admin#1026 slice 5, CSV import: one client-chosen ID (at most 64 characters, e.g. a
-     * UUID) for all rows of one file. A row into a not-yet-created unit whose admin row comes later
-     * in the same file is then stored WAITING_FOR_UNIT with {@code queueProblem NO_UNIT_ADMIN}
-     * instead of being refused with 409, so the order of the rows does not matter.
-     */
+    /** One ID per CSV file (max 64 chars), so the order of its rows does not matter. */
     public String importBatchId;
   }
 
@@ -491,21 +486,13 @@ public class AccountInviteController {
     /** AGENCY_ADMIN invites: whether the person also counsels; null for every other role. */
     public Boolean alsoCounsellor;
 
-    /**
-     * ORISO-Admin#1026 slice 5: AGENCY or TENANT while {@code inviteStatus} is WAITING_FOR_UNIT —
-     * the unit ({@code agencyId} resp. {@code tenantId}) does not exist yet. The Admin stepper
-     * shows "Beratungsstelle noch nicht angelegt" (resp. Träger) as the first step.
-     */
+    /** AGENCY or TENANT while WAITING_FOR_UNIT: that unit does not exist yet. */
     public String waitingForUnit;
 
-    /**
-     * Slice 5: NO_UNIT_ADMIN when a waiting invite has no pending admin invite for its unit any
-     * more (revoked, expired, or a CSV admin row not arrived yet); null otherwise. Clears itself
-     * once a new admin invite for the same ID exists.
-     */
+    /** NO_UNIT_ADMIN while no pending admin invite exists for the unit; clears itself. */
     public String queueProblem;
 
-    /** Slice 5: the CSV import the invite came from, if any. */
+    /** The CSV import the invite came from, if any. */
     public String importBatchId;
 
     public String provisioningStatus;

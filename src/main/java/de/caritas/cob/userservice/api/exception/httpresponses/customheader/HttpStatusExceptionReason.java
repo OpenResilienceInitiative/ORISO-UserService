@@ -22,11 +22,8 @@ public enum HttpStatusExceptionReason {
   ROLE_NOT_FOUND,
   /** ORISO-Admin#1026: the admin already holds the role they tried to assign themselves. */
   SELF_ASSIGNMENT_ALREADY_EXISTS,
-  /**
-   * ORISO-Admin#1026 slice 5: an invite into a not-yet-created unit needs a pending admin invite
-   * for the same reserved ID (409), unless it is part of a CSV import batch.
-   */
+  /** A waiting invite needs a pending admin invite for its unit, unless it is in a CSV import. */
   NO_PENDING_UNIT_ADMIN,
-  /** ORISO-Admin#1026 slice 5: a waiting invite cannot be sent before its unit exists (409). */
+  /** A waiting invite cannot be sent before its unit exists. */
   UNIT_NOT_CREATED
 }

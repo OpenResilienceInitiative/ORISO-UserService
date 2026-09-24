@@ -31,10 +31,7 @@ record ResolvedOnboardingInvite(
     return new ResolvedOnboardingInvite(invite, false, null, false);
   }
 
-  /**
-   * A deliverable, unexpired tenant-admin invite whose Träger already exists (ORISO-Admin#1026):
-   * registration joins it instead of creating one.
-   */
+  /** A tenant-admin invite whose Träger already exists: registration joins it. */
   static ResolvedOnboardingInvite openJoiningExistingTenant(AccountInvite invite) {
     return new ResolvedOnboardingInvite(invite, false, null, true);
   }

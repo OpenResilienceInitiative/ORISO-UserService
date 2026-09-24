@@ -16,9 +16,8 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 /**
- * Replica-safe worker that expires elapsed invites holding a reserved Träger / agency number and
- * gives the number back (ORISO-Admin#1026). Invites expire by date, not by an event, so without
- * this sweep an expired founding invite would keep its number reserved forever.
+ * Invites expire by date, not by an event: without this sweep an expired founding invite would keep
+ * its reserved number forever.
  */
 @Component
 @Profile("!testing")

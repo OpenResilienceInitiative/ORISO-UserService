@@ -58,14 +58,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 
-/**
- * A new unit with a queue (ORISO-Admin#1026, slice 5). Invites into a Beratungsstelle / Träger that
- * does not exist yet, which are not that unit's admin invite, are stored with {@code
- * WAITING_FOR_UNIT} and not sent. They need a pending admin invite for the same reserved ID (409
- * {@code NO_PENDING_UNIT_ADMIN} otherwise — except inside a CSV import batch, where the order of
- * the rows must not matter). When the unit exists they are released: sent with the template they
- * were created with, the expiry clock starting at that send.
- */
+/** On release a waiting invite is sent with its stored template; its expiry clock starts then. */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
@@ -236,8 +229,7 @@ class AccountInviteUnitQueueIT {
         () -> service.createInvite(counsellor), HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE);
   }
 
-  // --- CSV import: the order of the rows must not matter
-  // ------------------------------------------
+  // --- CSV import: the order of the rows must not matter --------------------------------------
 
   @Test
   void importBatch_Should_QueueTheCounsellorRow_EvenWhenTheAdminRowComesLater() {
