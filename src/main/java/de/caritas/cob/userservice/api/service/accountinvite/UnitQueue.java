@@ -39,10 +39,7 @@ public class UnitQueue {
   private final @NonNull InviteDelivery delivery;
   private final @NonNull PlatformTransactionManager transactionManager;
 
-  /**
-   * Stores {@code invite} as waiting for {@code target}'s unit. Without a pending admin invite for
-   * that unit it would never leave the queue, so that is a 409.
-   */
+  /** Without a pending admin invite for the unit the invite would never leave: 409 instead. */
   public AccountInvite enqueue(AccountInvite invite, InviteTarget target, Long expiresInDays) {
     InviteUnitType unit = target.waitsFor();
     Long unitId = target.waitedForUnitId();
@@ -92,10 +89,8 @@ public class UnitQueue {
   }
 
   /**
-   * Releases every invite waiting for a unit that now exists: sent with its queued template (the
-   * expiry clock starts now) or left as a DRAFT. One failure does not hold up the others.
-   *
-   * @return the IDs this call released
+   * Sends each invite waiting for the now existing unit with its queued template, or leaves a
+   * DRAFT. One failure does not hold up the others. Returns the IDs this call released.
    */
   public List<Long> release(InviteUnitType unitType, Long unitId) {
     if (unitType == null || unitId == null) {

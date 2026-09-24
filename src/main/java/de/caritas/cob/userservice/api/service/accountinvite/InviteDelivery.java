@@ -70,11 +70,8 @@ public class InviteDelivery {
   }
 
   /**
-   * Sends a mail whose link is already committed. A confirmed "not sent" runs {@code
-   * onConfirmedNotSent}; an uncertain outcome keeps the claim so a retry cannot mail twice.
-   *
-   * @param auditInviteId the committed invite a FAILED audit row may reference
-   * @param auditConfirmedNotSent false when the invite row is removed on a confirmed failure
+   * Sends a mail whose link is already committed. Only a confirmed "not sent" is compensated; an
+   * uncertain outcome keeps the claim so a retry cannot mail twice.
    */
   public InviteSendResult deliver(
       Prepared prepared,

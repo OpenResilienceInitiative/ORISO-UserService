@@ -20,11 +20,7 @@ public class InviteTargetResolver {
 
   private final @NonNull ReservationLedger ledger;
 
-  /**
-   * @param agency the one lookup of the named agency, called only when a rule needs it
-   * @throws BadRequestException for contradicting modes and IDs
-   * @throws NotFoundException for an unknown or deleted existing unit
-   */
+  /** {@code agency} is the request's single lookup, called only when a rule needs it. */
   public InviteTarget resolve(
       CreateAccountInviteCommand command, Supplier<Optional<AgencyFacts.Agency>> agency) {
     validateModes(command);

@@ -112,11 +112,8 @@ public class ReservationLedger {
   }
 
   /**
-   * Reserves the new IDs of {@code target}, or shares an earlier admin invite's reservation of the
-   * same new unit. Re-checks every held ID right before returning: a stale UI state never produces
-   * a duplicate. What this call reserved is given back when the surrounding transaction rolls back.
-   *
-   * @throws ConflictException when a new Träger ID is already taken or a reservation was lost
+   * Reserves or shares the new IDs and re-checks them, so a stale UI state never duplicates an ID.
+   * A rollback of the surrounding transaction gives back what this call reserved.
    */
   public Held reserve(InviteTarget target) {
     TenantIdReservation tenant = null;
@@ -179,10 +176,7 @@ public class ReservationLedger {
     }
   }
 
-  /**
-   * An agency admin who waited for a new Träger gets its Beratungsstelle ID now: AgencyService
-   * cannot reserve under a Träger that does not exist yet.
-   */
+  /** AgencyService cannot reserve under a Träger that did not exist while the invite waited. */
   public Long reserveAgencyOnRelease(AccountInvite invite) {
     if (!IdAllocationMode.reservesAnId(invite.getAgencyIdAllocationMode())
         || sharesAgencyReservation(invite.getAgencyId(), invite.getTenantId(), invite.getId())) {
@@ -192,10 +186,8 @@ public class ReservationLedger {
   }
 
   /**
-   * Gives back the numbers of a revoked, expired or unsent invite that no other pending invite
-   * needs. Only while a number is still a reservation and only if one of our invites reserved it,
-   * so a waiting invite never releases somebody else's number. The release is a durable task, run
-   * after the commit and retried by the scheduler.
+   * Gives back numbers no other pending invite needs, only while still reserved and only if one of
+   * our invites reserved them. Durable tasks, run after commit and retried by the scheduler.
    */
   public void releaseUnneeded(AccountInvite invite, LocalDateTime now) {
     List<Long> taskIds = new ArrayList<>();

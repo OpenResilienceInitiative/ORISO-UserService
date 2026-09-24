@@ -42,10 +42,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
 
 /**
- * The account-invite lifecycle: create (into an existing or a new unit), send, resend, revoke,
- * expire and accept. Where an invite points, which IDs it holds and when a waiting one leaves the
- * queue are decided by {@link InviteTargetResolver}, {@link ReservationLedger} and {@link
- * UnitQueue}.
+ * The invite lifecycle: create, send, resend, revoke, expire, accept. Targets, reserved IDs and the
+ * queue live in {@link InviteTargetResolver}, {@link ReservationLedger} and {@link UnitQueue}.
  */
 @Slf4j
 @Service

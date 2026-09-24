@@ -18,12 +18,7 @@ public final class TopicPermissionPolicy {
 
   private TopicPermissionPolicy() {}
 
-  /**
-   * The permission a new invite is stored with.
-   *
-   * @param agency the existing agency, or null for a new or missing one
-   * @throws BadRequestException when a counsellor would be left without any topic to pick
-   */
+  /** The permission a new invite is stored with; {@code agency} is null for a new agency. */
   public static TopicPermission decide(
       AccountInviteTargetRole role,
       AgencyFacts.Agency agency,
