@@ -80,18 +80,22 @@ public class TenantFixtures {
           consultant.setLanguageCode(LanguageCode.de);
           consultant.setMatrixUserId("@synthetic-" + id.substring(0, 8) + ":synthetic.oriso.test");
           var saved = consultantRepository.save(consultant);
-          removeLater(() -> consultantRepository.deleteById(id));
+          // Also the relations the code under test added, else the counsellor cannot go.
+          removeLater(
+              () -> {
+                consultantAgencyRepository.deleteAll(
+                    consultantAgencyRepository.findByConsultantId(id));
+                consultantRepository.deleteById(id);
+              });
           for (Long agencyId : agencyIds) {
-            var relation =
-                consultantAgencyRepository.save(
-                    ConsultantAgency.builder()
-                        .consultant(saved)
-                        .agencyId(agencyId)
-                        .tenantId(tenantId)
-                        .createDate(LocalDateTime.now())
-                        .updateDate(LocalDateTime.now())
-                        .build());
-            removeLater(() -> consultantAgencyRepository.deleteById(relation.getId()));
+            consultantAgencyRepository.save(
+                ConsultantAgency.builder()
+                    .consultant(saved)
+                    .agencyId(agencyId)
+                    .tenantId(tenantId)
+                    .createDate(LocalDateTime.now())
+                    .updateDate(LocalDateTime.now())
+                    .build());
           }
           return saved;
         });
@@ -114,12 +118,14 @@ public class TenantFixtures {
                       .email(id.substring(0, 8) + "@synthetic.oriso.test")
                       .type(type)
                       .build());
-          removeLater(() -> adminRepository.deleteById(id));
+          removeLater(
+              () -> {
+                adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(id));
+                adminRepository.deleteById(id);
+              });
           for (Long agencyId : agencyIds) {
-            var relation =
-                adminAgencyRepository.save(
-                    AdminAgency.builder().admin(admin).agencyId(agencyId).build());
-            removeLater(() -> adminAgencyRepository.deleteById(relation.getId()));
+            adminAgencyRepository.save(
+                AdminAgency.builder().admin(admin).agencyId(agencyId).build());
           }
           return admin;
         });

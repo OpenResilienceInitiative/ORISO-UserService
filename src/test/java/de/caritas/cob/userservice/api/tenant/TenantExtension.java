@@ -1,9 +1,12 @@
 package de.caritas.cob.userservice.api.tenant;
 
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mockingDetails;
 
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.lang.reflect.AnnotatedElement;
 import java.util.Arrays;
 import java.util.Optional;
@@ -44,19 +47,26 @@ class TenantExtension implements BeforeEachCallback, AfterEachCallback {
   }
 
   /**
-   * A mocked {@link TenantResolverService} stands in for the access token's tenant claim. Tests
-   * without the mock keep the real resolution, e.g. to prove it.
+   * A mocked {@link TenantResolverService} stands in for the access token's tenant claim, or on a
+   * public route for the main tenant of a single-domain deployment. Tests without the mock keep the
+   * real resolution, e.g. to prove it.
    */
   private static void resolveRequestsToTheActingTenant(ExtensionContext context) {
     if (!context.getTestClass().map(TenantExtension::runsWithSpring).orElse(false)) {
       return;
     }
-    Object resolver =
-        SpringExtension.getApplicationContext(context)
-            .getBeanProvider(TenantResolverService.class)
-            .getIfAvailable();
-    if (resolver != null && mockingDetails(resolver).isMock()) {
-      doAnswer(call -> Tenants.acting()).when((TenantResolverService) resolver).resolve(any());
+    var spring = SpringExtension.getApplicationContext(context);
+    var resolver = spring.getBeanProvider(TenantResolverService.class).getIfAvailable();
+    if (resolver == null || !mockingDetails(resolver).isMock()) {
+      return;
+    }
+    doAnswer(call -> Tenants.acting()).when(resolver).resolve(any());
+    // HttpTenantFilter looks the resolved tenant's subdomain up; a test may stub its own answer.
+    var tenants = spring.getBeanProvider(TenantService.class).getIfAvailable();
+    if (tenants != null && mockingDetails(tenants).isMock()) {
+      doAnswer(call -> new RestrictedTenantDTO().id(call.getArgument(0)).subdomain("synthetic"))
+          .when(tenants)
+          .getRestrictedTenantData(anyLong());
     }
   }
 

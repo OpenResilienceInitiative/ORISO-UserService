@@ -19,9 +19,6 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
-import de.caritas.cob.userservice.api.model.AdminAgency;
-import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
-import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -42,16 +39,14 @@ import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyServic
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
-import java.util.Arrays;
 import java.util.List;
-import java.util.Set;
-import java.util.UUID;
 import java.util.stream.Collectors;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Answers;
@@ -59,6 +54,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
@@ -87,21 +83,22 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"multitenancy.enabled=true"})
 @Transactional
+@Import(TenantFixtures.class)
+@WithTenant(GrantConsultantIdentityTenantScopeIT.OWN_TENANT)
 class GrantConsultantIdentityTenantScopeIT {
 
   private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
-  private static final long OWN_TENANT = 1L;
+  static final long OWN_TENANT = 1L;
   private static final long FOREIGN_TENANT = 2L;
   private static final long OWN_AGENCY = 9101L;
   private static final long OTHER_AGENCY_OF_OWN_TENANT = 9102L;
   private static final long FOREIGN_TENANT_AGENCY = 9201L;
 
+  @Autowired private TenantFixtures fixtures;
   @Autowired private MockMvc mockMvc;
-  @Autowired private AdminRepository adminRepository;
-  @Autowired private AdminAgencyRepository adminAgencyRepository;
   @Autowired private ConsultantRepository consultantRepository;
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
@@ -161,16 +158,11 @@ class GrantConsultantIdentityTenantScopeIT {
                 ((List<Long>) call.getArgument(0))
                     .stream().map(agencies::get).filter(java.util.Objects::nonNull).toList());
 
-    ownTenantAdmin = persistAdmin(OWN_TENANT, AdminType.TENANT);
-    foreignTenantAdmin = persistAdmin(FOREIGN_TENANT, AdminType.TENANT);
-    callingAgencyAdmin = persistAdmin(OWN_TENANT, AdminType.AGENCY, OWN_AGENCY);
-    ownAgencyAdmin = persistAdmin(OWN_TENANT, AdminType.AGENCY, OWN_AGENCY);
-    otherAgencyAdmin = persistAdmin(OWN_TENANT, AdminType.AGENCY, OTHER_AGENCY_OF_OWN_TENANT);
-  }
-
-  @AfterEach
-  void clearTenantContext() {
-    TenantContext.clear();
+    ownTenantAdmin = fixtures.admin(OWN_TENANT, AdminType.TENANT);
+    foreignTenantAdmin = fixtures.admin(FOREIGN_TENANT, AdminType.TENANT);
+    callingAgencyAdmin = fixtures.admin(OWN_TENANT, AdminType.AGENCY, OWN_AGENCY);
+    ownAgencyAdmin = fixtures.admin(OWN_TENANT, AdminType.AGENCY, OWN_AGENCY);
+    otherAgencyAdmin = fixtures.admin(OWN_TENANT, AdminType.AGENCY, OTHER_AGENCY_OF_OWN_TENANT);
   }
 
   // --- Träger admin (tenant admin of tenant 1) ---------------------------------------------
@@ -271,8 +263,7 @@ class GrantConsultantIdentityTenantScopeIT {
   /** Reads the consultant row in the technical context, so the tenant filter hides nothing. */
   private java.util.Optional<de.caritas.cob.userservice.api.model.Consultant> consultantOf(
       String id) {
-    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-    return consultantRepository.findByIdAndDeleteDateIsNull(id);
+    return Tenants.acrossAll(() -> consultantRepository.findByIdAndDeleteDateIsNull(id));
   }
 
   private ResultActions grant(Admin target, List<Long> agencyIds) throws Exception {
@@ -290,7 +281,8 @@ class GrantConsultantIdentityTenantScopeIT {
   }
 
   private void actAsTenantAdmin() {
-    actAs(
+    Tenants.actAs(
+        caller,
         "tenant-admin-1",
         OWN_TENANT,
         UserRole.TENANT_ADMIN,
@@ -299,7 +291,8 @@ class GrantConsultantIdentityTenantScopeIT {
   }
 
   private void actAsAgencyAdmin() {
-    actAs(
+    Tenants.actAs(
+        caller,
         callingAgencyAdmin.getId(),
         OWN_TENANT,
         UserRole.RESTRICTED_AGENCY_ADMIN,
@@ -307,16 +300,13 @@ class GrantConsultantIdentityTenantScopeIT {
   }
 
   private void actAsPlatformAdmin() {
-    actAs("platform-admin", 0L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
-  }
-
-  private void actAs(String userId, Long tenantId, UserRole... roles) {
-    when(tenantResolverService.resolve(any())).thenReturn(tenantId);
-    caller.setUserId(userId);
-    caller.setUsername(userId);
-    caller.setTenantId(tenantId);
-    caller.setRoles(Arrays.stream(roles).map(UserRole::getValue).collect(Collectors.toSet()));
-    caller.setGrantedAuthorities(Set.of());
+    Tenants.actAs(
+        caller,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
   }
 
   private void givenAgency(long agencyId, long tenantId) {
@@ -324,24 +314,5 @@ class GrantConsultantIdentityTenantScopeIT {
     when(agencyService.getAgency(agencyId)).thenReturn(agency);
     when(agencyService.getAgencyWithoutCaching(agencyId)).thenReturn(agency);
     agencies.put(agencyId, agency);
-  }
-
-  private Admin persistAdmin(long tenantId, AdminType type, Long... agencyIds) {
-    var id = UUID.randomUUID().toString();
-    var admin =
-        adminRepository.save(
-            Admin.builder()
-                .id(id)
-                .tenantId(tenantId)
-                .username("grant-scope-" + id.substring(0, 8))
-                .firstName("Synthetic")
-                .lastName(id.substring(0, 8))
-                .email(id.substring(0, 8) + "@synthetic.oriso.test")
-                .type(type)
-                .build());
-    for (Long agencyId : agencyIds) {
-      adminAgencyRepository.save(AdminAgency.builder().admin(admin).agencyId(agencyId).build());
-    }
-    return admin;
   }
 }
