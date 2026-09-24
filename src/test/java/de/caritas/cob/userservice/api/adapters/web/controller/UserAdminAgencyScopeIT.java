@@ -6,6 +6,8 @@ import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -28,6 +30,7 @@ import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManag
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.AdminAgency;
+import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -36,6 +39,7 @@ import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
@@ -56,6 +60,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
@@ -127,6 +132,8 @@ class UserAdminAgencyScopeIT {
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
   @Autowired private UserRepository userRepository;
   @Autowired private SessionRepository sessionRepository;
+  @Autowired private AgencyInviteLinkRepository agencyInviteLinkRepository;
+  @MockitoBean TopicService topicService;
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
@@ -667,6 +674,141 @@ class UserAdminAgencyScopeIT {
     assertThat(pausedBy(ownAsker)).isEqualTo(callingAgencyAdmin.getId());
   }
 
+  // --- GET /useradmin/agencyadmins ---------------------------------------------------------------
+
+  @Test
+  @AsAgencyAdmin
+  void getAgencyAdmins_Should_ListOnlyAdminsOfOwnAgencies_When_AgencyAdminListsAll()
+      throws Exception {
+    actAsAgencyAdmin();
+    var colleague = persistAdmin(OWN_TENANT, OWN_AGENCY);
+    var otherAgencyAdmin = persistAdmin(OWN_TENANT, OTHER_AGENCY_OF_OWN_TENANT);
+
+    var result =
+        mockMvc
+            .perform(get("/useradmin/agencyadmins").param("page", "1").param("perPage", "5000"))
+            .andReturn();
+
+    var body = result.getResponse().getContentAsString();
+    assertThat(body).doesNotContain(otherAgencyAdmin.getId());
+    assertThat(body).contains(colleague.getId());
+    assertStatus(result, 200);
+  }
+
+  // --- POST /useradmin/agencyadmins --------------------------------------------------------------
+
+  @Test
+  @AsAgencyAdmin
+  void createAgencyAdmin_Should_Refuse_When_AgencyAdminCreatesAnotherAgencyAdmin()
+      throws Exception {
+    actAsAgencyAdmin();
+
+    var result =
+        mockMvc
+            .perform(
+                withCsrf(
+                    post("/useradmin/agencyadmins")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(
+                            "{\"username\":\"peer-admin\",\"firstname\":\"Peer\","
+                                + "\"lastname\":\"Admin\",\"email\":\"peer@synthetic.oriso.test\"}")))
+            .andReturn();
+
+    verify(identityClient, never()).createUser(any(), any(), any());
+    assertStatus(result, 403);
+  }
+
+  // --- /useradmin/invitelinks --------------------------------------------------------------------
+
+  @Test
+  @AsAgencyAdmin
+  void createInviteLink_Should_Refuse_When_AgencyAdminNamesAnotherAgencyOfOwnTenant()
+      throws Exception {
+    actAsAgencyAdmin();
+
+    var result =
+        mockMvc
+            .perform(createInviteLink("{\"agencyId\":" + OTHER_AGENCY_OF_OWN_TENANT + "}"))
+            .andReturn();
+
+    assertThat(inviteLinksOf(OTHER_AGENCY_OF_OWN_TENANT)).isEmpty();
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @AsAgencyAdmin
+  void createInviteLink_Should_Refuse_When_AgencyAdminCreatesLinkForWholeTraeger()
+      throws Exception {
+    actAsAgencyAdmin();
+
+    var result = mockMvc.perform(createInviteLink("{}")).andReturn();
+
+    assertThat(agencyInviteLinkRepository.findAll()).isEmpty();
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @AsAgencyAdmin
+  void createInviteLink_Should_Refuse_When_AgencyAdminRoutesToCounsellorOfAnotherAgency()
+      throws Exception {
+    actAsAgencyAdmin();
+
+    var result =
+        mockMvc
+            .perform(
+                createInviteLink(
+                    "{\"agencyId\":"
+                        + OWN_AGENCY
+                        + ",\"linkKind\":\"COUNSELLOR\",\"consultantId\":\""
+                        + otherAgencyConsultant.getId()
+                        + "\"}"))
+            .andReturn();
+
+    assertThat(agencyInviteLinkRepository.findAll()).isEmpty();
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @AsAgencyAdmin
+  void createInviteLink_Should_Succeed_When_AgencyAdminNamesOwnAgency() throws Exception {
+    actAsAgencyAdmin();
+
+    var result = mockMvc.perform(createInviteLink("{\"agencyId\":" + OWN_AGENCY + "}")).andReturn();
+
+    assertStatus(result, 201);
+    assertThat(inviteLinksOf(OWN_AGENCY)).hasSize(1);
+  }
+
+  @Test
+  @AsAgencyAdmin
+  void listInviteLinks_Should_ListOnlyLinksOfOwnAgencies_When_AgencyAdminListsAll()
+      throws Exception {
+    actAsAgencyAdmin();
+    var ownLink = persistInviteLink(OWN_AGENCY);
+    var otherAgencyLink = persistInviteLink(OTHER_AGENCY_OF_OWN_TENANT);
+
+    var result = mockMvc.perform(get("/useradmin/invitelinks")).andReturn();
+
+    var body = result.getResponse().getContentAsString();
+    assertThat(body).doesNotContain(otherAgencyLink.getToken());
+    assertThat(body).contains(ownLink.getToken());
+    assertStatus(result, 200);
+  }
+
+  @Test
+  @AsTenantAdmin
+  void listInviteLinks_Should_ListLinksOfEveryAgency_When_TenantAdminListsAll() throws Exception {
+    actAsTenantAdmin();
+    var ownLink = persistInviteLink(OWN_AGENCY);
+    var otherAgencyLink = persistInviteLink(OTHER_AGENCY_OF_OWN_TENANT);
+
+    var result = mockMvc.perform(get("/useradmin/invitelinks")).andReturn();
+
+    var body = result.getResponse().getContentAsString();
+    assertThat(body).contains(ownLink.getToken(), otherAgencyLink.getToken());
+    assertStatus(result, 200);
+  }
+
   // --- helpers ---------------------------------------------------------------------------------
 
   private static void assertStatus(MvcResult result, int expected) {
@@ -763,6 +905,32 @@ class UserAdminAgencyScopeIT {
     reloaded.setDeleteDate(LocalDateTime.now());
     userRepository.save(reloaded);
     TenantContext.clear();
+  }
+
+  private static MockHttpServletRequestBuilder createInviteLink(String body) {
+    return withCsrf(
+        post("/useradmin/invitelinks").contentType(MediaType.APPLICATION_JSON).content(body));
+  }
+
+  private List<AgencyInviteLink> inviteLinksOf(long agencyId) {
+    return agencyInviteLinkRepository.findAll().stream()
+        .filter(link -> Long.valueOf(agencyId).equals(link.getAgencyId()))
+        .toList();
+  }
+
+  private AgencyInviteLink persistInviteLink(long agencyId) {
+    return agencyInviteLinkRepository.save(
+        AgencyInviteLink.builder()
+            .token("scope-link-" + UUID.randomUUID())
+            .tenantId(OWN_TENANT)
+            .agencyId(agencyId)
+            .linkKind("TENANT")
+            .chatType("LIVE_CHAT")
+            .anonymity("FULL")
+            .createdByUserId("tenant-admin-1")
+            .createDate(LocalDateTime.now())
+            .status("ACTIVE")
+            .build());
   }
 
   private void actAsTenantAdmin() {
