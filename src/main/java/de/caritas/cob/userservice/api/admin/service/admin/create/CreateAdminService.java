@@ -7,7 +7,8 @@ import static org.apache.commons.lang3.Validate.notNull;
 import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
-import de.caritas.cob.userservice.api.admin.service.admin.AdminTenantOwnershipValidator;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -49,6 +50,7 @@ public class CreateAdminService {
   private final @NonNull UserHelper userHelper;
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminScope adminScope;
 
   public Admin createNewAgencyAdmin(CreateAdminDTO createAdminDTO) {
     setTenantId(createAdminDTO);
@@ -89,12 +91,11 @@ public class CreateAdminService {
   private void setTenantIdForMultiTenancy(CreateAdminDTO createAdminDTO) {
     if (authenticatedUser.isTenantSuperAdmin()) {
       notNull(createAdminDTO.getTenantId());
-      // The tenant-admin role alone does not bound the tenant id: without this check any
-      // tenant-scoped admin could attribute the new agency admin to a foreign tenant.
-      AdminTenantOwnershipValidator.assertCallerMayCreateAdminForTenant(
-          authenticatedUser, createAdminDTO.getTenantId());
+      adminScope.assertMay(Target.tenant(createAdminDTO.getTenantId().longValue()));
     } else {
-      createAdminDTO.setTenantId(TenantContext.getCurrentTenant().intValue());
+      Long ownTenant = adminScope.current().tenantId();
+      createAdminDTO.setTenantId(
+          (ownTenant == null ? TenantContext.TECHNICAL_TENANT_ID : ownTenant).intValue());
     }
   }
 

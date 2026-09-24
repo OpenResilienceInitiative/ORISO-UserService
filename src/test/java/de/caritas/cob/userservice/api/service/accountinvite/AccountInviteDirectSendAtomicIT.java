@@ -64,6 +64,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({
   AccountInviteService.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   IdReservationReleaseProcessor.class
 })
 class AccountInviteDirectSendAtomicIT {

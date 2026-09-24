@@ -39,6 +39,8 @@ class AdminAgencyRelationServiceTest {
 
   @InjectMocks private AdminAgencyRelationService service;
 
+  @Mock private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
+
   // ─── createAdminAgencyRelation ────────────────────────────────────────────
 
   @Test

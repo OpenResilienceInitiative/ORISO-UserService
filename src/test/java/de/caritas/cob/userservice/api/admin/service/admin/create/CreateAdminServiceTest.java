@@ -16,6 +16,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -56,6 +57,7 @@ class CreateAdminServiceTest {
   @Mock private AdminRepository adminRepository;
 
   @Mock private AuthenticatedUser authenticatedUser;
+  @Mock private AdminScope adminScope;
 
   private final EasyRandom easyRandom = new EasyRandom();
 
@@ -127,7 +129,9 @@ class CreateAdminServiceTest {
     // given a tenant admin of tenant 9 trying to create an agency admin for tenant 7
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    doThrow(new ForbiddenException("out of reach"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.tenant(7L));
 
     CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(7);
 
@@ -137,8 +141,6 @@ class CreateAdminServiceTest {
             ForbiddenException.class,
             () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
 
-    assertThat(exception.getMessage())
-        .isEqualTo("Admin accounts can only be created for the tenant of the calling admin");
     verifyNoInteractions(identityClient);
     verifyNoInteractions(adminRepository);
   }
@@ -148,7 +150,6 @@ class CreateAdminServiceTest {
     // given
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(authenticatedUser.getTenantId()).thenReturn(9L);
     givenKeycloakCreatesUser();
 
     CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(9);
@@ -166,7 +167,6 @@ class CreateAdminServiceTest {
     // given
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     givenKeycloakCreatesUser();
 
     CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(7);

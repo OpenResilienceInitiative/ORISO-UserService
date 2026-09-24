@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
@@ -27,7 +28,7 @@ public class CaseHandoverLogsService {
 
   private final @NonNull NamedParameterJdbcTemplate namedParameterJdbcTemplate;
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull AdminAuditAgencyScope adminAuditAgencyScope;
+  private final @NonNull AdminScope adminScope;
   private final ObjectMapper objectMapper = new ObjectMapper();
 
   public CaseHandoverLogsResult listCaseHandoverLogs(int page, int perPage) {
@@ -35,7 +36,7 @@ public class CaseHandoverLogsService {
     int safePage = Math.max(page, 1);
     int offset = (safePage - 1) * safePerPage;
     Long tenantId = resolveEffectiveTenantId();
-    Optional<Set<Long>> agencyIds = adminAuditAgencyScope.resolveAgencyIds();
+    Optional<Set<Long>> agencyIds = agencyRestriction();
 
     // Fail closed: a Beratungsstellen-Admin without a single agency assignment reads nothing —
     // never the whole tenant, and never an `IN ()` that the database would reject.
@@ -198,5 +199,11 @@ public class CaseHandoverLogsService {
     private long total;
     private int page;
     private int perPage;
+  }
+
+  private Optional<Set<Long>> agencyRestriction() {
+    return adminScope.current() instanceof AdminScope.Agencies agencies
+        ? Optional.of(agencies.ids())
+        : Optional.empty();
   }
 }
