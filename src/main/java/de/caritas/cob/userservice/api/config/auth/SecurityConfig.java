@@ -141,7 +141,7 @@ public class SecurityConfig {
                     "/useradmin/consultants/{consultantId}/picture",
                     "/service/useradmin/consultants/{consultantId}/picture")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
-                // Issue #1049 publish switch: reading the flag follows the internal read roles,
+                // Picture publish switch: reading the flag follows the internal read roles,
                 // changing it follows the write roles. Both stay above every useradmin catch-all.
                 .requestMatchers(
                     HttpMethod.GET,
@@ -160,14 +160,14 @@ public class SecurityConfig {
                     "/useradmin/consultants/{consultantId}/picture/visibility",
                     "/service/useradmin/consultants/{consultantId}/picture/visibility")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
-                // Issue #1049 advice-seeker read of a published picture. Authentication is still
-                // required; the store refuses every internal-only picture with 404.
+                // Advice-seeker read of a published picture. Authentication is still required;
+                // the store refuses every internal-only picture with 404.
                 .requestMatchers(
                     HttpMethod.GET,
                     "/users/consultants/{consultantId}/picture",
                     "/service/users/consultants/{consultantId}/picture")
                 .hasAnyAuthority(ANONYMOUS_DEFAULT, USER_DEFAULT, CONSULTANT_DEFAULT)
-                // Issue #1049 onboarding picture step: the invitee has no session yet, so the raw
+                // Onboarding picture step: the invitee has no session yet, so the raw
                 // invite token is the credential — the same arrangement the register and
                 // two-factor steps of this flow already use. The controller resolves the token to
                 // the consultant it created before any bytes are read.
@@ -187,6 +187,10 @@ public class SecurityConfig {
                     "/configuration/security",
                     "/swagger-ui.html",
                     "/webjars/**")
+                .permitAll()
+                .requestMatchers(HttpMethod.GET, "/users/invitelinks/*/context")
+                .permitAll()
+                .requestMatchers(HttpMethod.POST, "/users/identity-suggestions")
                 .permitAll()
                 // This cluster-internal endpoint authenticates with its own dedicated shared
                 // secret because the MatrixRTC gateway is not a Keycloak user. The controller
@@ -234,7 +238,7 @@ public class SecurityConfig {
                     RegexRequestMatcher.regexMatcher(
                         HttpMethod.POST, ".*/users/magic-link/(request|consume)$"))
                 .permitAll()
-                // PUBLIC account-invite endpoints (#569 chain fix): the invitee has no account
+                // PUBLIC account-invite endpoints: the invitee has no account
                 // yet, the raw invite token in the path is the only credential. Both prefix
                 // variants because the API gateway forwards /service unchanged.
                 .requestMatchers(
@@ -255,7 +259,7 @@ public class SecurityConfig {
                     "/users/account-invites/{token}/onboarding/dpa-forward",
                     "/service/users/account-invites/{token}/onboarding/dpa-forward")
                 .permitAll()
-                // PUBLIC signed-notice hint from TenantService (ORISO-UserService#1005): carries
+                // PUBLIC signed-notice hint from TenantService: carries
                 // no data and reveals nothing; all facts are re-read through the authenticated
                 // technical-user client and an exactly-once ledger absorbs spoofed hints.
                 .requestMatchers(
@@ -456,6 +460,16 @@ public class SecurityConfig {
                     HttpMethod.PUT,
                     "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/agencies")
                 .hasAnyAuthority(CONSULTANT_UPDATE, TECHNICAL_DEFAULT)
+                // Repairing a missing chat identity changes the consultant, so it follows the
+                // consultant-update authority rather than the /useradmin/** catch-all, which only
+                // a user admin passes.
+                .requestMatchers(
+                    HttpMethod.POST,
+                    "/useradmin/consultants/{consultantId:" + UUID_PATTERN + "}/chat-identity",
+                    "/service/useradmin/consultants/{consultantId:"
+                        + UUID_PATTERN
+                        + "}/chat-identity")
+                .hasAnyAuthority(CONSULTANT_UPDATE, USER_ADMIN, TECHNICAL_DEFAULT)
                 .requestMatchers(
                     HttpMethod.POST,
                     "/useradmin/askers/{askerId:" + UUID_PATTERN + "}/deletion/pause",

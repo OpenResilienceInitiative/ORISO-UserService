@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -131,7 +132,7 @@ public class CreateChatFacade {
     //
     // An internal team chat has no occurrence to open. It is a persistent room for colleagues,
     // so there is nothing to wait for and nobody to open it for — creating it inactive sent
-    // counsellors into the askers' Waiting Area, countdown and all (#979). It is open on
+    // counsellors into the askers' Waiting Area, countdown and all. It is open on
     // creation.
     chat.setActive(ConversationType.INTERNAL_GROUP.equals(chat.getConversationType()));
     chat = chatService.saveChat(chat);
@@ -145,8 +146,10 @@ public class CreateChatFacade {
       String roomName = chatDTO.getTopic();
       String roomAlias = "group_chat_" + sessionId;
 
-      if (consultant.getMatrixUserId() == null || consultant.getMatrixUserId().isBlank()) {
-        throw new InternalServerErrorException("Consultant does not have Matrix credentials");
+      if (!ConsultantChatIdentityService.hasChatIdentity(consultant)) {
+        throw new InternalServerErrorException(
+            ConsultantChatIdentityService.missingChatIdentityMessage(
+                "Consultant", consultant.getId()));
       }
 
       var matrixResponse =

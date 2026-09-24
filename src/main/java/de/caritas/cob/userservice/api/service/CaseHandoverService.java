@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErro
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.facade.SessionSupervisorFacade;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.CaseHandoverConsentMode;
 import de.caritas.cob.userservice.api.model.CaseHandoverReasonPolicy;
@@ -306,6 +307,7 @@ public class CaseHandoverService {
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull CaseHandoverMatrixRepairService matrixRepairService;
   private final @NonNull MatrixSessionSystemMessageService matrixSessionSystemMessageService;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
   private final @NonNull ScheduledTaskClaimService scheduledTaskClaimService;
   private final @NonNull Clock clock;
   private final @NonNull PlatformTransactionManager transactionManager;
@@ -474,12 +476,23 @@ public class CaseHandoverService {
           .setValue(Map.copyOf(requested.getClientNotificationTemplates()));
     }
     if (ADVICE_NEEDED.equals(normalizeReasonCode(requested.getCode()))
-        && requested.getMaxAccessDurationMinutes() != null
-        && policy.getMaxAccessDurationMinutes() != null) {
-      policy
-          .getMaxAccessDurationMinutes()
-          .setValue(
-              validateMaxAccessDuration(ADVICE_NEEDED, requested.getMaxAccessDurationMinutes()));
+        && requested.getMaxAccessDurationMinutes() != null) {
+      var durationPolicy = policy.getMaxAccessDurationMinutes();
+      if (durationPolicy == null) {
+        // A tenant seeded before the duration policy existed carries no object here, and
+        // TenantService's resolver hands back null rather than a default. Skipping the write in
+        // that case is what made the field read 180 forever; create the tenant-local policy
+        // instead, at the platform default mode for this field.
+        durationPolicy =
+            new de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .IntegerPermissionPolicy(null)
+                .mode(
+                    de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                        .PermissionPolicyMode.SUGGESTED);
+        policy.setMaxAccessDurationMinutes(durationPolicy);
+      }
+      durationPolicy.setValue(
+          validateMaxAccessDuration(ADVICE_NEEDED, requested.getMaxAccessDurationMinutes()));
     }
   }
 
@@ -1929,20 +1942,25 @@ public class CaseHandoverService {
         });
   }
 
+  /**
+   * The counsellor name that may appear in <em>client-facing</em> handover copy: the in-chat system
+   * message (a persisted {@code m.text} event in the advice seeker's own session room, see {@link
+   * #postGrantedChatSystemMessage}) and the client notification.
+   *
+   * <p>ADR-002 §2 / #1200: never the real name. This used to fall back to {@link
+   * Consultant#getFullName()} whenever the public display name was blank — which is exactly the
+   * population the pseudonymity rule exists to protect, so the counsellor's Matrix profile showed a
+   * pseudonym while their real name sat in a chat message in the same room. {@link
+   * ConsultantDisplayNameResolver} is the single place that decides which name may go there.
+   */
   private String resolveConsultantName(Consultant consultant) {
     if (consultant == null) {
       return "A counsellor";
     }
-    if (consultant.getDisplayName() != null && !consultant.getDisplayName().isBlank()) {
-      return consultant.getDisplayName();
-    }
-    if (consultant.getFullName() != null && !consultant.getFullName().isBlank()) {
-      return consultant.getFullName();
-    }
-    if (consultant.getUsername() != null && !consultant.getUsername().isBlank()) {
-      return consultant.getUsername();
-    }
-    return "A counsellor";
+    var resolved =
+        consultantDisplayNameResolver.resolveMatrixDisplayName(
+            consultant.getDisplayName(), consultant.getUsername());
+    return resolved == null || resolved.isBlank() ? "A counsellor" : resolved;
   }
 
   @Data
@@ -1963,9 +1981,25 @@ public class CaseHandoverService {
     private CaseHandoverConsentMode clientConsent;
 
     /**
-     * {@code ENFORCED} or {@code SUGGESTED}; only present when the caller sent the policy object.
+     * {@code ENFORCED} or {@code SUGGESTED}. Emitted on every tenant-backed response, so the Admin
+     * echoes the previous value back on the next PUT.
      */
+    @lombok.Setter(AccessLevel.NONE)
     private String clientConsentMode;
+
+    /**
+     * The Admin re-sends the list it last read, so a stale {@code clientConsentMode} travels next
+     * to the freshly chosen {@code clientConsent} object — and, being the later field, would
+     * otherwise overwrite it. The typed object is the caller's intent; the loose string is only a
+     * fallback for callers that do not send one.
+     */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @lombok.Getter(AccessLevel.NONE)
+    @lombok.Setter(AccessLevel.NONE)
+    @lombok.EqualsAndHashCode.Exclude
+    @lombok.ToString.Exclude
+    @Builder.Default
+    private boolean consentModeFromPolicyObject = false;
 
     private boolean clientConsentRequired;
     private Boolean accessAllowed;
@@ -1978,6 +2012,13 @@ public class CaseHandoverService {
 
     public void setClientConsent(CaseHandoverConsentMode clientConsent) {
       this.clientConsent = clientConsent;
+    }
+
+    public void setClientConsentMode(String clientConsentMode) {
+      if (consentModeFromPolicyObject) {
+        return;
+      }
+      this.clientConsentMode = clientConsentMode;
     }
 
     @com.fasterxml.jackson.annotation.JsonSetter("clientConsent")
@@ -1994,6 +2035,7 @@ public class CaseHandoverService {
         }
         this.clientConsent = parseConsentMode(value.toString());
         this.clientConsentMode = mode.toString();
+        this.consentModeFromPolicyObject = true;
         return;
       }
       this.clientConsent = parseConsentMode(raw.toString());

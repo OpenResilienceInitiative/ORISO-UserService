@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
+import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
 import de.caritas.cob.userservice.api.service.session.AnonymousSessionRegistration;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.api.supervision.SupervisionConsent;
@@ -198,14 +199,16 @@ public class SessionSupervisorFacade {
 
     // Get supervisor's Matrix user ID
     String supervisorMatrixUserId = supervisorConsultant.getMatrixUserId();
-    if (supervisorMatrixUserId == null || supervisorMatrixUserId.isEmpty()) {
-      throw new BadRequestException("Supervisor consultant does not have a Matrix user ID");
+    if (!ConsultantChatIdentityService.hasChatIdentity(supervisorConsultant)) {
+      throw new BadRequestException(
+          ConsultantChatIdentityService.missingChatIdentityMessage(
+              "Supervisor consultant", supervisorConsultant.getId()));
     }
 
-    if (addedByConsultant.getMatrixUserId() == null
-        || addedByConsultant.getMatrixUserId().isEmpty()) {
+    if (!ConsultantChatIdentityService.hasChatIdentity(addedByConsultant)) {
       throw new InternalServerErrorException(
-          "Consultant adding supervisor does not have Matrix credentials");
+          ConsultantChatIdentityService.missingChatIdentityMessage(
+              "Consultant adding the supervisor", addedByConsultant.getId()));
     }
 
     SessionSupervisor.SessionSupervisorBuilder builder =

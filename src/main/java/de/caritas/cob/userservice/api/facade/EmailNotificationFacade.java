@@ -8,6 +8,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.NotificationsAware;
 import de.caritas.cob.userservice.api.model.Session;
@@ -59,9 +60,13 @@ public class EmailNotificationFacade {
   private final @NonNull TenantTemplateSupplier tenantTemplateSupplier;
 
   private final @NonNull ReleaseToggleService releaseToggleService;
+  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
+
+  /** Shown when no publishable counsellor name exists, and when no counsellor is assigned yet. */
+  private static final String NEUTRAL_CONSULTANT_NAME = "Ihre Beraterin/Ihr Berater";
 
   /**
    * Sends email notifications according to the corresponding consultant(s) when a new enquiry was
@@ -244,10 +249,7 @@ public class EmailNotificationFacade {
         return;
       }
 
-      var consultantName =
-          consultant != null && isNotBlank(consultant.getFullName())
-              ? consultant.getFullName()
-              : "Ihre Beraterin/Ihr Berater";
+      var consultantName = publicConsultantNameOf(consultant);
 
       var templateAttributes = new ArrayList<TemplateDataDTO>();
       templateAttributes.add(
@@ -282,6 +284,27 @@ public class EmailNotificationFacade {
           "EmailNotificationFacade error: Failed to send inquiry accepted notification", exception);
     }
     TenantContext.clear();
+  }
+
+  /**
+   * The counsellor name an <em>advice seeker</em> may be shown in an e-mail.
+   *
+   * <p>ADR-002 §2 / #1201: this mail lands in the advice seeker's own mailbox, so it must never
+   * carry the counsellor's real name. {@link ConsultantDisplayNameResolver} is the single place
+   * that decides which name may be published — public display name, else the (decoded) username the
+   * advice seeker already sees in the room. The rule is not restated here.
+   *
+   * <p>The neutral wording stays as the last resort, for a counsellor with no publishable name at
+   * all and for the unassigned case. It is deliberately the <em>last</em> resort rather than the
+   * fallback for a missing display name: "Ihre Beraterin/Ihr Berater" cannot tell two counsellors
+   * apart, and the pseudonym is what the advice seeker recognises from the conversation.
+   */
+  private String publicConsultantNameOf(Consultant consultant) {
+    if (consultant == null) {
+      return NEUTRAL_CONSULTANT_NAME;
+    }
+    var publicName = consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
+    return isNotBlank(publicName) ? publicName : NEUTRAL_CONSULTANT_NAME;
   }
 
   private boolean shouldSendReassignmentNotificationForConsultant(
