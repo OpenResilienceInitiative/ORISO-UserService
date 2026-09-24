@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.TopicPermissionPolicy;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorOnboardingState;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorRegistrationResult;
@@ -417,7 +418,7 @@ public class TenantAdminOnboardingController {
       dto.topics = state.topics().stream().map(TopicOptionDTO::from).toList();
       dto.availableTopics = state.availableTopics().stream().map(TopicOptionDTO::from).toList();
       dto.agencyExists = state.agencyExists();
-      dto.topicPermission = CounsellorOnboardingService.topicPermissionOf(invite).name();
+      dto.topicPermission = TopicPermissionPolicy.effective(invite).name();
       dto.expiresAt = invite.getExpiresAt();
       applyTwoFactorResume(dto, invite, state.pendingTwoFactorResume());
       return dto;

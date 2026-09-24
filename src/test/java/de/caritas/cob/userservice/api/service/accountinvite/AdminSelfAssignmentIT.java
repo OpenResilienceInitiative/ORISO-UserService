@@ -10,7 +10,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
@@ -23,15 +22,13 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentRole;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient.ExistingAgency;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -102,8 +99,7 @@ class AdminSelfAssignmentIT {
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
-  @MockitoBean private ExistingAgencyClient existingAgencyClient;
-  @MockitoBean private AgencyService agencyService;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private GrantConsultantIdentityService grantConsultantIdentityService;
 
   @MockitoBean
@@ -114,7 +110,7 @@ class AdminSelfAssignmentIT {
     givenAgency(OWN_AGENCY, OWN_TENANT, List.of(11L));
     givenAgency(OTHER_OWN_TENANT_AGENCY, OWN_TENANT, List.of(21L));
     givenAgency(FOREIGN_AGENCY, FOREIGN_TENANT, List.of(31L));
-    when(existingAgencyClient.find(MISSING_AGENCY)).thenReturn(Optional.empty());
+    when(agencyFacts.find(MISSING_AGENCY)).thenReturn(Optional.empty());
     adminRepository.save(
         Admin.builder()
             .id(TENANT_ADMIN_ID)
@@ -323,9 +319,10 @@ class AdminSelfAssignmentIT {
   }
 
   private void givenAgency(long agencyId, long tenantId, List<Long> topicIds) {
-    when(agencyService.getAgencyWithoutCaching(agencyId))
-        .thenReturn(new AgencyDTO().id(agencyId).tenantId(tenantId).topicIds(topicIds));
-    when(existingAgencyClient.find(agencyId))
-        .thenReturn(Optional.of(new ExistingAgency(agencyId, tenantId, false, topicIds)));
+    when(agencyFacts.find(agencyId))
+        .thenReturn(
+            Optional.of(
+                new AgencyFacts.Agency(
+                    agencyId, tenantId, false, topicIds, TopicPermission.CREATE)));
   }
 }

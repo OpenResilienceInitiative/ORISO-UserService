@@ -5,7 +5,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
-import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.util.ReflectionTestUtils.setField;
@@ -27,7 +26,6 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
@@ -122,7 +120,6 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
             sessionRepository,
             eventNotificationService,
             topicAgencyCompatibilityValidator,
-            mock(AccountInviteRepository.class),
             new de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver());
 
     when(keycloakClient.getUsersResource()).thenReturn(usersResource);

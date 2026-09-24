@@ -21,7 +21,7 @@ import org.springframework.transaction.event.TransactionalEventListener;
 @RequiredArgsConstructor
 public class QueuedInviteReleaseListener {
 
-  private final @NonNull AccountInviteService accountInviteService;
+  private final @NonNull UnitQueue unitQueue;
   private final @NonNull IdentityAuthentication identityAuthentication;
   private final @NonNull IdentityClientConfig identityClientConfig;
 
@@ -34,7 +34,7 @@ public class QueuedInviteReleaseListener {
       if (event.tenantId() != null) {
         TenantContext.setCurrentTenant(event.tenantId());
       }
-      accountInviteService.releaseWaitingInvites(event.unitType(), event.unitId());
+      unitQueue.release(event.unitType(), event.unitId());
     } catch (RuntimeException exception) {
       log.error(
           "Invites waiting for {} {} could not be released; they stay waiting",

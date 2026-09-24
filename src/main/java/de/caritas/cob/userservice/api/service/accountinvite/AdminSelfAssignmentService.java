@@ -14,8 +14,6 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient.ExistingAgency;
 import java.util.List;
 import java.util.Objects;
 import lombok.NonNull;
@@ -36,7 +34,7 @@ public class AdminSelfAssignmentService {
 
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull AccountInviteAccessPolicy accessPolicy;
-  private final @NonNull ExistingAgencyClient existingAgencyClient;
+  private final @NonNull AgencyFacts agencyFacts;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
@@ -52,8 +50,8 @@ public class AdminSelfAssignmentService {
     if (command.agencyId() == null) {
       throw new BadRequestException("agencyId is required");
     }
-    ExistingAgency agency =
-        existingAgencyClient
+    AgencyFacts.Agency agency =
+        agencyFacts
             .find(command.agencyId())
             .filter(found -> !found.deleted())
             .orElseThrow(
@@ -85,7 +83,8 @@ public class AdminSelfAssignmentService {
   }
 
   /** Returns true when a new consultant identity was created. */
-  private boolean assignAsCounsellor(String userId, ExistingAgency agency, List<Long> topicIds) {
+  private boolean assignAsCounsellor(
+      String userId, AgencyFacts.Agency agency, List<Long> topicIds) {
     // The row lock makes a double click wait for the first request and then answer 409.
     if (consultantRepository.findActiveByIdForUpdate(userId).isPresent()) {
       if (consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
@@ -110,7 +109,7 @@ public class AdminSelfAssignmentService {
   }
 
   /** A counsellor needs at least one topic: the agency's only one, or a pick among several. */
-  private static List<Long> resolveTopics(List<Long> requested, ExistingAgency agency) {
+  private static List<Long> resolveTopics(List<Long> requested, AgencyFacts.Agency agency) {
     if (requested != null && !requested.isEmpty()) {
       return List.copyOf(requested);
     }

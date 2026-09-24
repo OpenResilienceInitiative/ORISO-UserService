@@ -1,11 +1,11 @@
-package de.caritas.cob.userservice.api.service.accountinvite.allocation;
+package de.caritas.cob.userservice.api.service.accountinvite;
 
-import de.caritas.cob.userservice.agencyadminserivce.generated.ApiClient;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.AdminAgencyControllerApi;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyAdminDepartmentDTO;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.TopicDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyAdminServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import java.util.List;
@@ -14,47 +14,42 @@ import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpHeaders;
-import org.springframework.stereotype.Service;
+import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
 
 /**
- * Uses the admin detail endpoint because only it carries {@code deleteDate}; the public {@code
- * /agencies/{ids}} lookup returns soft-deleted agencies without saying so.
+ * Reads AgencyService's admin detail endpoint with the caller's token: only that view carries the
+ * delete date, and its tenant filter hides other tenants' agencies.
  */
-@Service
+@Component
 @RequiredArgsConstructor
-public class ExistingAgencyClient {
+public class AgencyServiceAgencyFacts implements AgencyFacts {
 
   private final @NonNull SecurityHeaderSupplier securityHeaderSupplier;
   private final @NonNull TenantHeaderSupplier tenantHeaderSupplier;
-  private final @NonNull AgencyAdminServiceApiControllerFactory
-      agencyAdminServiceApiControllerFactory;
+  private final @NonNull AgencyAdminServiceApiControllerFactory controllerFactory;
 
-  public record ExistingAgency(Long id, Long tenantId, boolean deleted, List<Long> topicIds) {}
-
-  /** Empty on 404, which for a tenant-bound caller also covers another tenant's agency. */
-  public Optional<ExistingAgency> find(long agencyId) {
+  @Override
+  public Optional<Agency> find(long agencyId) {
     try {
-      var response = createControllerApi().getAgency(agencyId);
+      var response = controllerApi().getAgency(agencyId);
       var agency = response == null ? null : response.getEmbedded();
       if (agency == null) {
         return Optional.empty();
       }
       return Optional.of(
-          new ExistingAgency(
+          new Agency(
               agency.getId(),
               agency.getTenantId(),
               isDeleted(agency.getDeleteDate()),
-              topicIds(agency)));
+              topicIds(agency),
+              defaultPermission(agency)));
     } catch (HttpClientErrorException.NotFound exception) {
       return Optional.empty();
     }
   }
 
-  /**
-   * Departments carry the topic ID even when topic names did not resolve; the topics list is only
-   * the fallback for an older AgencyService.
-   */
+  /** Departments carry the topic ID even when the topic name lookup failed. */
   private static List<Long> topicIds(AgencyAdminResponseDTO agency) {
     if (agency.getDepartments() != null && !agency.getDepartments().isEmpty()) {
       return agency.getDepartments().stream()
@@ -68,23 +63,26 @@ public class ExistingAgencyClient {
         : agency.getTopics().stream().map(TopicDTO::getId).filter(Objects::nonNull).toList();
   }
 
-  /**
-   * AgencyService serialises the delete date with {@code String.valueOf}, so a live agency arrives
-   * as the literal {@code "null"}, not as JSON null.
-   */
+  /** An AgencyService without the setting answers without it: today's behaviour, CREATE. */
+  private static TopicPermission defaultPermission(AgencyAdminResponseDTO agency) {
+    var settings = agency.getSettings();
+    if (settings == null || settings.getCounsellorTopicPermission() == null) {
+      return TopicPermission.CREATE;
+    }
+    return TopicPermission.valueOf(settings.getCounsellorTopicPermission().getValue());
+  }
+
+  /** AgencyService writes the delete date with String.valueOf, so a live agency says "null". */
   static boolean isDeleted(String deleteDate) {
     return deleteDate != null && !deleteDate.isBlank() && !"null".equalsIgnoreCase(deleteDate);
   }
 
-  private AdminAgencyControllerApi createControllerApi() {
-    var controllerApi = agencyAdminServiceApiControllerFactory.createControllerApi();
-    addDefaultHeaders(controllerApi.getApiClient());
-    return controllerApi;
-  }
-
-  private void addDefaultHeaders(ApiClient apiClient) {
-    HttpHeaders headers = this.securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders();
+  private AdminAgencyControllerApi controllerApi() {
+    var api = controllerFactory.createControllerApi();
+    HttpHeaders headers = securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders();
     tenantHeaderSupplier.addTenantHeader(headers);
-    headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
+    headers.forEach(
+        (key, value) -> api.getApiClient().addDefaultHeader(key, value.iterator().next()));
+    return api;
   }
 }

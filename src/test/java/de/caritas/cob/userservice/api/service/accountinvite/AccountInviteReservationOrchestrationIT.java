@@ -17,7 +17,6 @@ import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepositor
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
@@ -62,6 +61,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
   AccountInviteAccessPolicy.class,
   AccountInviteTopicPermissionService.class
 })
@@ -72,13 +75,11 @@ class AccountInviteReservationOrchestrationIT {
   @Autowired private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
-  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
-  @MockitoBean private ExistingAgencyClient existingAgencyClient;
-  @MockitoBean private AgencyTopicPermissionLookup agencyTopicPermissionLookup;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
 
   // TEN-INV-U6 collaborators of the send path — not exercised by these creation-focused tests.

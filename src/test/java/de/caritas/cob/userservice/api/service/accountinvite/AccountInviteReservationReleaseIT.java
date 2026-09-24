@@ -8,7 +8,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -18,14 +17,12 @@ import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepositor
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.Set;
@@ -54,6 +51,10 @@ import org.springframework.web.client.HttpClientErrorException;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
   IdReservationReleaseProcessor.class,
@@ -84,12 +85,10 @@ class AccountInviteReservationReleaseIT {
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
-  @MockitoBean private ExistingAgencyClient existingAgencyClient;
-  @MockitoBean private AgencyTopicPermissionLookup agencyTopicPermissionLookup;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
-  @MockitoBean private AgencyService agencyService;
 
   @BeforeEach
   void upstreams() {
@@ -106,13 +105,15 @@ class AccountInviteReservationReleaseIT {
     when(agencyIdAllocationClient.release(anyLong())).thenReturn(true);
     when(agencyIdAllocationClient.getAvailability(EXISTING_AGENCY))
         .thenReturn(IdAllocationStatus.ASSIGNED);
-    when(agencyService.getAgencyWithoutCaching(EXISTING_AGENCY))
-        .thenReturn(new AgencyDTO().id(EXISTING_AGENCY).tenantId(OWN_TENANT));
-    when(existingAgencyClient.find(EXISTING_AGENCY))
+    when(agencyFacts.find(EXISTING_AGENCY))
         .thenReturn(
             Optional.of(
-                new ExistingAgencyClient.ExistingAgency(
-                    EXISTING_AGENCY, OWN_TENANT, false, java.util.List.of(11L))));
+                new AgencyFacts.Agency(
+                    EXISTING_AGENCY,
+                    OWN_TENANT,
+                    false,
+                    java.util.List.of(11L),
+                    de.caritas.cob.userservice.api.model.TopicPermission.CREATE)));
     when(tenantService.getRestrictedTenantData(NEW_TENANT))
         .thenThrow(HttpClientErrorException.create(HttpStatus.NOT_FOUND, "", null, null, null));
     when(tenantIdAllocationClient.getAvailability(NEW_TENANT))

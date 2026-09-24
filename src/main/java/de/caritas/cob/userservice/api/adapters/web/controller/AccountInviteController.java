@@ -27,9 +27,11 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateS
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService.TemplateCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteQueueProblem;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.UnitQueue;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.Page;
@@ -58,6 +60,7 @@ public class AccountInviteController {
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
   private final @NonNull InviteEmailPreviewService previewService;
   private final @NonNull AccountInviteTopicPermissionService topicPermissionService;
+  private final @NonNull UnitQueue unitQueue;
 
   @PreAuthorize(ADMIN_AUTH)
   @PostMapping("/useradmin/account-invites")
@@ -85,14 +88,14 @@ public class AccountInviteController {
     if (safe.templateId != null) {
       InviteSendResult result = accountInviteService.createAndSendInvite(command, safe.templateId);
       return new ResponseEntity<>(
-          withQueueState(AccountInviteResponseDTO.from(result), result.invite()),
+          withDerivedState(AccountInviteResponseDTO.from(result), result.invite()),
           HttpStatus.CREATED);
     }
 
     AccountInvite invite = accountInviteService.createInvite(command);
 
     return new ResponseEntity<>(
-        withQueueState(
+        withDerivedState(
             AccountInviteResponseDTO.from(
                 invite, null, accountInviteService.calculateAccessGate(invite)),
             invite),
@@ -116,16 +119,19 @@ public class AccountInviteController {
             query,
             page == null ? 0 : page,
             size == null ? 20 : size);
+    Map<Long, TopicPermission> permissions =
+        topicPermissionService.currentPermissions(result.getContent());
     List<AccountInviteResponseDTO> content =
         result.getContent().stream()
             .map(
                 invite ->
-                    withQueueState(
+                    withDerivedState(
                         AccountInviteResponseDTO.from(
                             invite,
                             latestDeliveryStatus(invite),
                             accountInviteService.calculateAccessGate(invite)),
-                        invite))
+                        invite,
+                        permissions))
             .toList();
     PagedAccountInviteResponseDTO response = new PagedAccountInviteResponseDTO();
     response.content = content;
@@ -177,7 +183,7 @@ public class AccountInviteController {
         TopicPermission.fromWire(request == null ? null : request.topicPermission);
     AccountInvite invite = topicPermissionService.updatePermission(inviteId, permission);
     return ResponseEntity.ok(
-        withQueueState(
+        withDerivedState(
             AccountInviteResponseDTO.from(
                 invite,
                 latestDeliveryStatus(invite),
@@ -318,11 +324,21 @@ public class AccountInviteController {
                     safe.language))));
   }
 
-  /** The queue problem is derived on read, never stored. */
-  private AccountInviteResponseDTO withQueueState(
+  private AccountInviteResponseDTO withDerivedState(
       AccountInviteResponseDTO dto, AccountInvite invite) {
-    InviteQueueProblem problem = accountInviteService.queueProblemOf(invite);
+    return withDerivedState(
+        dto, invite, topicPermissionService.currentPermissions(List.of(invite)));
+  }
+
+  /** Derived on read: the queue problem, and the counsellor's own permission once onboarded. */
+  private AccountInviteResponseDTO withDerivedState(
+      AccountInviteResponseDTO dto, AccountInvite invite, Map<Long, TopicPermission> permissions) {
+    InviteQueueProblem problem = unitQueue.problemOf(invite);
     dto.queueProblem = problem == null ? null : problem.name();
+    TopicPermission permission = permissions.get(invite.getId());
+    if (permission != null) {
+      dto.topicPermission = permission.name();
+    }
     return dto;
   }
 

@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProv
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
+import de.caritas.cob.userservice.api.service.accountinvite.TopicPermissionPolicy;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -369,7 +370,7 @@ public class CounsellorOnboardingService {
       if (invite.getDepartmentId() != null) {
         topicIds.add(invite.getDepartmentId());
       }
-      TopicPermission permission = topicPermissionOf(invite);
+      TopicPermission permission = TopicPermissionPolicy.effective(invite);
       if (permission == TopicPermission.NONE && invite.getDepartmentId() != null) {
         // NONE fixes the assigned department; no other agency department is offered.
         topicIds.retainAll(Set.of(invite.getDepartmentId()));
@@ -678,22 +679,12 @@ public class CounsellorOnboardingService {
 
   /** NONE without an assigned department: the invitee picks exactly one agency department. */
   private static void validatePermissionLimit(List<Long> chosen, AccountInvite invite) {
-    if (topicPermissionOf(invite) == TopicPermission.NONE
+    if (TopicPermissionPolicy.effective(invite) == TopicPermission.NONE
         && invite.getDepartmentId() == null
         && chosen.stream().distinct().count() > 1) {
       throw new BadRequestException(
           "This invite allows exactly one topic — pick one of the agency's topics");
     }
-  }
-
-  /** Agency admins always get CREATE: a founder has to bring the new agency's topics. */
-  public static TopicPermission topicPermissionOf(AccountInvite invite) {
-    if (invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN) {
-      return TopicPermission.CREATE;
-    }
-    return invite.getTopicPermission() == null
-        ? TopicPermission.CREATE
-        : invite.getTopicPermission();
   }
 
   /**

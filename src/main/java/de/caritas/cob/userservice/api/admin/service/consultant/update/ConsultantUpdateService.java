@@ -18,7 +18,6 @@ import de.caritas.cob.userservice.api.model.ConsultantAvatars;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.TopicPermission;
-import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
@@ -58,7 +57,6 @@ public class ConsultantUpdateService {
   private final @NonNull EventNotificationService eventNotificationService;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
-  private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   /**
@@ -266,20 +264,11 @@ public class ConsultantUpdateService {
     }
   }
 
-  /** The creating invite follows, so the invite table shows the same value. */
+  /** Null leaves it untouched. The invite table reads this value; it is stored only here. */
   private void applyTopicPermission(UpdateAdminConsultantDTO dto, Consultant consultant) {
-    if (dto.getTopicPermission() == null) {
-      return;
+    if (dto.getTopicPermission() != null) {
+      consultant.setTopicPermission(TopicPermission.valueOf(dto.getTopicPermission().getValue()));
     }
-    var permission = TopicPermission.valueOf(dto.getTopicPermission().getValue());
-    consultant.setTopicPermission(permission);
-    accountInviteRepository
-        .findAllByProvisionedUserId(consultant.getId())
-        .forEach(
-            invite -> {
-              invite.setTopicPermission(permission);
-              accountInviteRepository.save(invite);
-            });
   }
 
   /**

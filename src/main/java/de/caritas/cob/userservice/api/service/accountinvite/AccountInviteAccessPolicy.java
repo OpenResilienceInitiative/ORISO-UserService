@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -8,11 +7,12 @@ import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.EnumSet;
 import java.util.Objects;
+import java.util.Optional;
 import java.util.Set;
+import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -56,7 +56,6 @@ public class AccountInviteAccessPolicy {
 
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
-  private final @NonNull AgencyService agencyService;
 
   /** The filter a listing has to apply for the calling admin. */
   public record InviteListScope(
@@ -75,7 +74,8 @@ public class AccountInviteAccessPolicy {
    *     command stamped with the caller's own tenant
    * @throws ForbiddenException if the invite would leave the caller's scope
    */
-  public CreateAccountInviteCommand authorizeCreate(CreateAccountInviteCommand command) {
+  public CreateAccountInviteCommand authorizeCreate(
+      CreateAccountInviteCommand command, Supplier<Optional<AgencyFacts.Agency>> agency) {
     if (command == null || command.targetRole() == null) {
       // Missing fields are answered as 400 by the service's own validation.
       return command;
@@ -85,7 +85,7 @@ public class AccountInviteAccessPolicy {
       case AGENCY:
         return authorizeAgencyAdminCreate(command, scope);
       case TENANT:
-        return authorizeTenantAdminCreate(command, scope);
+        return authorizeTenantAdminCreate(command, scope, agency);
       default:
         return command;
     }
@@ -204,7 +204,9 @@ public class AccountInviteAccessPolicy {
   }
 
   private CreateAccountInviteCommand authorizeTenantAdminCreate(
-      CreateAccountInviteCommand command, Scope scope) {
+      CreateAccountInviteCommand command,
+      Scope scope,
+      Supplier<Optional<AgencyFacts.Agency>> agency) {
     Set<AccountInviteTargetRole> invitable =
         authenticatedUser.hasTenantLevelAdminRole()
             ? TENANT_ADMIN_INVITABLE_ROLES
@@ -220,7 +222,7 @@ public class AccountInviteAccessPolicy {
     assertTenantMatchesScope(command.tenantId(), scope);
     if (command.agencyId() != null
         && !IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
-      assertAgencyBelongsToTenant(command.agencyId(), scope.tenantId());
+      assertAgencyBelongsToTenant(command.agencyId(), scope.tenantId(), agency);
     }
     return withCallerTenant(command, scope);
   }
@@ -230,9 +232,9 @@ public class AccountInviteAccessPolicy {
    * would otherwise attach the new account to that agency. An unknown agency is refused: its tenant
    * cannot be proven.
    */
-  private void assertAgencyBelongsToTenant(Long agencyId, Long tenantId) {
-    AgencyDTO agency = agencyService.getAgencyWithoutCaching(agencyId);
-    if (agency == null || !tenantId.equals(agency.getTenantId())) {
+  private void assertAgencyBelongsToTenant(
+      Long agencyId, Long tenantId, Supplier<Optional<AgencyFacts.Agency>> agency) {
+    if (!agency.get().map(found -> tenantId.equals(found.tenantId())).orElse(false)) {
       throw deny("invite into agency " + agencyId);
     }
   }

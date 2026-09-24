@@ -6,10 +6,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
@@ -25,16 +25,12 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
-import de.caritas.cob.userservice.api.service.accountinvite.AgencyTopicPermissionLookup.AgencyTopicSettings;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient.ExistingAgency;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
@@ -63,6 +59,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
   AccountInviteAccessPolicy.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteTopicPermissionIT.CallerConfig.class
@@ -108,17 +108,15 @@ class AccountInviteTopicPermissionIT {
   @Autowired private AuthenticatedUser caller;
   @Autowired private InviteEmailTemplateRepository templateRepository;
 
-  @MockitoBean private AgencyTopicPermissionLookup agencyTopicPermissionLookup;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
-  @MockitoBean private ExistingAgencyClient existingAgencyClient;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
-  @MockitoBean private AgencyService agencyService;
 
   @BeforeEach
   void givenAgencies() {
@@ -169,6 +167,15 @@ class AccountInviteTopicPermissionIT {
   }
 
   @Test
+  void createInvite_Should_AskAgencyServiceOnce_ForScopeBindingAndPermission() {
+    actAsTenantAdmin();
+
+    invites.createInvite(withPermission(counsellorInto(SELECT_AGENCY, null), null));
+
+    verify(agencyFacts, times(1)).find(SELECT_AGENCY);
+  }
+
+  @Test
   void createInvite_Should_StoreTheAdminsChoice_When_ItDiffersFromTheAgencyDefault() {
     actAsTenantAdmin();
 
@@ -194,7 +201,7 @@ class AccountInviteTopicPermissionIT {
     AccountInvite invite = invites.createInvite(withPermission(agencyAdminIntoNewAgency(), null));
 
     assertThat(invite.getTopicPermission()).isEqualTo(TopicPermission.CREATE);
-    verify(agencyTopicPermissionLookup, never()).find(anyLong());
+    verify(agencyFacts, never()).find(anyLong());
   }
 
   @Test
@@ -399,7 +406,7 @@ class AccountInviteTopicPermissionIT {
             () -> service.updatePermission(topiclessInvite.getId(), TopicPermission.NONE))
         .isInstanceOf(BadRequestException.class);
     // A counsellor waiting for a new agency: its admin brings the topics first.
-    when(agencyTopicPermissionLookup.find(4711L)).thenReturn(Optional.empty());
+    when(agencyFacts.find(4711L)).thenReturn(Optional.empty());
     assertThat(
             service
                 .updatePermission(waitingInvite.getId(), TopicPermission.SELECT_EXISTING)
@@ -438,12 +445,10 @@ class AccountInviteTopicPermissionIT {
 
   private void givenAgency(
       long agencyId, long tenantId, TopicPermission agencyDefault, List<Long> topicIds) {
-    when(agencyService.getAgencyWithoutCaching(agencyId))
-        .thenReturn(new AgencyDTO().id(agencyId).tenantId(tenantId).topicIds(topicIds));
-    when(existingAgencyClient.find(agencyId))
-        .thenReturn(Optional.of(new ExistingAgency(agencyId, tenantId, false, topicIds)));
-    when(agencyTopicPermissionLookup.find(agencyId))
-        .thenReturn(Optional.of(new AgencyTopicSettings(agencyDefault, topicIds)));
+    when(agencyFacts.find(agencyId))
+        .thenReturn(
+            Optional.of(
+                new AgencyFacts.Agency(agencyId, tenantId, false, topicIds, agencyDefault)));
   }
 
   private static CreateAccountInviteCommand withPermission(

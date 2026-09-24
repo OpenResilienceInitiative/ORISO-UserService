@@ -24,7 +24,6 @@ import de.caritas.cob.userservice.api.helper.MatrixRealNameGuard;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
@@ -48,8 +47,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 public class ConsultantUpdateServiceTest {
 
   @InjectMocks private ConsultantUpdateService consultantUpdateService;
-
-  @Mock private AccountInviteRepository accountInviteRepository;
 
   @Mock private KeycloakService keycloakService;
 

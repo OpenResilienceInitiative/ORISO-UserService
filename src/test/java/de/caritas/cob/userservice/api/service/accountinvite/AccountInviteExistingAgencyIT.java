@@ -9,7 +9,6 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -17,18 +16,16 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient.ExistingAgency;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -53,6 +50,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
   AccountInviteExistingAgencyIT.CallerConfig.class
@@ -98,13 +99,11 @@ class AccountInviteExistingAgencyIT {
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
-  @MockitoBean private ExistingAgencyClient existingAgencyClient;
-  @MockitoBean private AgencyTopicPermissionLookup agencyTopicPermissionLookup;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
-  @MockitoBean private AgencyService agencyService;
 
   @BeforeEach
   void givenAgencies() {
@@ -113,7 +112,7 @@ class AccountInviteExistingAgencyIT {
     givenAgency(TWO_TOPIC_AGENCY, OWN_TENANT, false, List.of(21L, 22L));
     givenAgency(FOREIGN_TENANT_AGENCY, FOREIGN_TENANT, false, List.of(31L));
     givenAgency(DELETED_AGENCY, OWN_TENANT, true, List.of(41L));
-    when(existingAgencyClient.find(MISSING_AGENCY)).thenReturn(Optional.empty());
+    when(agencyFacts.find(MISSING_AGENCY)).thenReturn(Optional.empty());
   }
 
   @AfterEach
@@ -247,7 +246,7 @@ class AccountInviteExistingAgencyIT {
 
     assertThat(invite.getAgencyId()).isEqualTo(500L);
     verify(agencyIdAllocationClient).reserve(500L, OWN_TENANT);
-    verify(existingAgencyClient, never()).find(anyLong());
+    verify(agencyFacts, never()).find(anyLong());
   }
 
   private void actAsTenantAdmin() {
@@ -279,10 +278,11 @@ class AccountInviteExistingAgencyIT {
   }
 
   private void givenAgency(long agencyId, long tenantId, boolean deleted, List<Long> topicIds) {
-    when(agencyService.getAgencyWithoutCaching(agencyId))
-        .thenReturn(new AgencyDTO().id(agencyId).tenantId(tenantId).topicIds(topicIds));
-    when(existingAgencyClient.find(agencyId))
-        .thenReturn(Optional.of(new ExistingAgency(agencyId, tenantId, deleted, topicIds)));
+    when(agencyFacts.find(agencyId))
+        .thenReturn(
+            Optional.of(
+                new AgencyFacts.Agency(
+                    agencyId, tenantId, deleted, topicIds, TopicPermission.CREATE)));
   }
 
   private static CreateAccountInviteCommand existing(

@@ -3,34 +3,36 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
-import de.caritas.cob.userservice.api.service.accountinvite.AgencyTopicPermissionLookup.AgencyTopicSettings;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.time.LocalDateTime;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/** The topic permission of an invited counsellor: decided at create, changed from the table. */
+/**
+ * Changes and reads an invited counsellor's topic permission. Once the account exists, the
+ * counsellor's own value is the only one; the invite just shows it.
+ */
 @Service
 @RequiredArgsConstructor
 public class AccountInviteTopicPermissionService {
 
-  /** Must match what AgencyService writes onto every newly created agency. */
-  static final TopicPermission NEW_AGENCY_DEFAULT = TopicPermission.NONE;
-
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull AccountInviteAccessPolicy accessPolicy;
-  private final @NonNull AgencyTopicPermissionLookup agencyTopicPermissionLookup;
+  private final @NonNull AgencyFacts agencyFacts;
 
-  /** Also after the account exists; the counsellor created from the invite follows. */
+  /** Before and after the account exists; same scope as send and revoke. */
   @Transactional
   public AccountInvite updatePermission(Long inviteId, TopicPermission permission) {
     if (inviteId == null) {
@@ -47,86 +49,57 @@ public class AccountInviteTopicPermissionService {
     if (invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR) {
       throw new BadRequestException("Only counsellor invites carry a topic permission");
     }
-    // A waiting invite's new agency has no topics yet; its admin brings them before release.
     boolean waitsForNewAgency =
         invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT
             && invite.getWaitingForUnit() == InviteUnitType.AGENCY;
     if (permission != TopicPermission.CREATE
         && invite.getDepartmentId() == null
         && !waitsForNewAgency) {
-      boolean agencyHasTopics =
-          invite.getAgencyId() != null
-              && agencyTopicPermissionLookup
-                  .find(invite.getAgencyId())
-                  .map(settings -> !settings.topicIds().isEmpty())
-                  .orElse(false);
-      if (!agencyHasTopics) {
-        throw noTopicToPick(permission);
-      }
+      TopicPermissionPolicy.requireATopicToPick(
+          permission, null, false, agencyTopics(invite.getAgencyId()));
+    }
+    Optional<Consultant> account = account(invite);
+    if (account.isPresent()) {
+      account.get().setTopicPermission(permission);
+      consultantRepository.save(account.get());
+      return invite;
     }
     invite.setTopicPermission(permission);
     invite.setUpdateDate(LocalDateTime.now());
-    AccountInvite saved = accountInviteRepository.save(invite);
-    if (invite.getProvisionedUserId() != null) {
-      consultantRepository
-          .findByIdAndDeleteDateIsNull(invite.getProvisionedUserId())
-          .ifPresent(
-              consultant -> {
-                consultant.setTopicPermission(permission);
-                consultantRepository.save(consultant);
-              });
-    }
-    return saved;
+    return accountInviteRepository.save(invite);
   }
 
-  /** The permission a new invite is stored with; decided inside the create transaction. */
-  TopicPermission decide(CreateAccountInviteCommand command) {
-    TopicPermission requested = command == null ? null : command.topicPermission();
-    if (command != null && command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN) {
-      // A founding agency admin who also counsels has to bring the agency's topics.
-      return TopicPermission.CREATE;
+  /** The permission each invite shows: its counsellor's once the account exists. One query. */
+  public Map<Long, TopicPermission> currentPermissions(Collection<AccountInvite> invites) {
+    List<String> accountIds =
+        invites.stream().map(AccountInvite::getProvisionedUserId).filter(Objects::nonNull).toList();
+    Map<String, TopicPermission> byAccount = new HashMap<>();
+    if (!accountIds.isEmpty()) {
+      consultantRepository.findAllById(accountIds).stream()
+          .filter(consultant -> consultant.getDeleteDate() == null)
+          .forEach(
+              consultant -> byAccount.put(consultant.getId(), consultant.getTopicPermission()));
     }
-    if (command == null || command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
-      return TopicPermission.NONE;
+    Map<Long, TopicPermission> current = new HashMap<>();
+    for (AccountInvite invite : invites) {
+      TopicPermission permission =
+          invite.getProvisionedUserId() == null
+              ? null
+              : byAccount.get(invite.getProvisionedUserId());
+      current.put(invite.getId(), permission != null ? permission : invite.getTopicPermission());
     }
-    Optional<AgencyTopicSettings> agency = existingAgency(command);
-    // A new agency does not exist yet: use the default it will be created with, and skip the
-    // topic check (its admin brings the topics before the invite is released).
-    boolean waitsForNewAgency = IdAllocationMode.reservesAnId(command.agencyIdAllocationMode());
-    TopicPermission permission;
-    if (requested != null) {
-      permission = requested;
-    } else if (waitsForNewAgency) {
-      permission = NEW_AGENCY_DEFAULT;
-    } else {
-      permission =
-          agency.map(AgencyTopicSettings::defaultPermission).orElse(TopicPermission.CREATE);
-    }
-    if (permission != TopicPermission.CREATE
-        && command.departmentId() == null
-        && !waitsForNewAgency) {
-      List<Long> agencyTopics = agency.map(AgencyTopicSettings::topicIds).orElse(List.of());
-      if (agencyTopics.isEmpty()) {
-        throw noTopicToPick(permission);
-      }
-    }
-    return permission;
+    return current;
   }
 
-  /** A reserved (new) agency ID has no settings yet. */
-  private Optional<AgencyTopicSettings> existingAgency(CreateAccountInviteCommand command) {
-    if (command.agencyId() == null
-        || IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
-      return Optional.empty();
-    }
-    return agencyTopicPermissionLookup.find(command.agencyId());
+  private Optional<Consultant> account(AccountInvite invite) {
+    return invite.getProvisionedUserId() == null
+        ? Optional.empty()
+        : consultantRepository.findByIdAndDeleteDateIsNull(invite.getProvisionedUserId());
   }
 
-  private static BadRequestException noTopicToPick(TopicPermission permission) {
-    return new BadRequestException(
-        "topicPermission "
-            + permission
-            + " needs a departmentId or an agency with at least one topic — otherwise the"
-            + " counsellor could not choose any topic");
+  private List<Long> agencyTopics(Long agencyId) {
+    return agencyId == null
+        ? List.of()
+        : agencyFacts.find(agencyId).map(AgencyFacts.Agency::topicIds).orElse(List.of());
   }
 }

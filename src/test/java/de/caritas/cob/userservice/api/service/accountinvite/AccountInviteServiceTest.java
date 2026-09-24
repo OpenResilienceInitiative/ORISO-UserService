@@ -34,7 +34,6 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
@@ -51,7 +50,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
@@ -70,7 +68,7 @@ class AccountInviteServiceTest {
   @Mock private TenantService tenantService;
   @Mock private TenantIdAllocationClient tenantIdAllocationClient;
   @Mock private AgencyIdAllocationClient agencyIdAllocationClient;
-  @Mock private ExistingAgencyClient existingAgencyClient;
+  @Mock private AgencyFacts agencyFacts;
   @Mock private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @Mock private InviteMailDispatchService inviteMailDispatchService;
   @Mock private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
@@ -85,13 +83,42 @@ class AccountInviteServiceTest {
    */
   @Mock private AccountInviteAccessPolicy accessPolicy;
 
-  @Mock private AccountInviteTopicPermissionService topicPermissionPolicy;
-
-  @InjectMocks private AccountInviteService service;
+  private AccountInviteService service;
 
   @BeforeEach
   void letTheAccessPolicyPassEverythingThrough() {
-    lenient().when(accessPolicy.authorizeCreate(any())).thenAnswer(call -> call.getArgument(0));
+    var ledger =
+        new ReservationLedger(
+            tenantService,
+            tenantIdAllocationClient,
+            agencyIdAllocationClient,
+            accountInviteRepository,
+            reservationReleaseTaskRepository,
+            reservationReleaseProcessor);
+    var delivery =
+        new InviteDelivery(
+            inviteAcceptUrlBuilder,
+            inviteMailDispatchService,
+            deliveryFailureRecorder,
+            deliveryRepository,
+            transactionManager);
+    service =
+        new AccountInviteService(
+            accountInviteRepository,
+            templateRepository,
+            authenticatedUser,
+            identityEmailOwnerLookup,
+            transactionManager,
+            accessPolicy,
+            agencyFacts,
+            new InviteTargetResolver(ledger),
+            ledger,
+            new UnitQueue(
+                accountInviteRepository, templateRepository, ledger, delivery, transactionManager),
+            delivery);
+    lenient()
+        .when(accessPolicy.authorizeCreate(any(), any()))
+        .thenAnswer(call -> call.getArgument(0));
     lenient()
         .when(accessPolicy.scopeForListing(any(), any()))
         .thenAnswer(

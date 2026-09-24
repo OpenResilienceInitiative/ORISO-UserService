@@ -11,7 +11,6 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
@@ -20,6 +19,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpS
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
@@ -27,7 +27,6 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
@@ -35,7 +34,6 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdA
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -76,6 +74,10 @@ import org.springframework.web.client.HttpClientErrorException;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
   AccountInviteUnitQueueIT.CallerConfig.class
@@ -96,6 +98,7 @@ class AccountInviteUnitQueueIT {
   }
 
   @Autowired private AccountInviteService service;
+  @Autowired private UnitQueue queue;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private InviteEmailTemplateRepository templateRepository;
   @Autowired private InviteEmailDeliveryRepository deliveryRepository;
@@ -105,13 +108,11 @@ class AccountInviteUnitQueueIT {
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
-  @MockitoBean private ExistingAgencyClient existingAgencyClient;
-  @MockitoBean private AgencyTopicPermissionLookup agencyTopicPermissionLookup;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
-  @MockitoBean private AgencyService agencyService;
 
   private Long templateId;
 
@@ -134,8 +135,15 @@ class AccountInviteUnitQueueIT {
             });
     when(agencyIdAllocationClient.getAvailability(EXISTING_AGENCY))
         .thenReturn(IdAllocationStatus.ASSIGNED);
-    when(agencyService.getAgencyWithoutCaching(EXISTING_AGENCY))
-        .thenReturn(new AgencyDTO().id(EXISTING_AGENCY).tenantId(OWN_TENANT));
+    when(agencyFacts.find(EXISTING_AGENCY))
+        .thenReturn(
+            Optional.of(
+                new AgencyFacts.Agency(
+                    EXISTING_AGENCY,
+                    OWN_TENANT,
+                    false,
+                    java.util.List.of(),
+                    TopicPermission.CREATE)));
     when(tenantService.getRestrictedTenantData(NEW_TENANT))
         .thenThrow(HttpClientErrorException.create(HttpStatus.NOT_FOUND, "", null, null, null));
     templateId =
@@ -175,7 +183,7 @@ class AccountInviteUnitQueueIT {
     assertThat(counsellor.getTenantId()).isEqualTo(OWN_TENANT);
     assertThat(counsellor.getExpiresAt()).isNull();
     assertThat(counsellor.getTokenHash()).isNull();
-    assertThat(service.queueProblemOf(counsellor)).isNull();
+    assertThat(queue.problemOf(counsellor)).isNull();
     verify(agencyIdAllocationClient, times(1)).reserve(NEW_AGENCY, OWN_TENANT);
   }
 
@@ -258,11 +266,10 @@ class AccountInviteUnitQueueIT {
     AccountInvite counsellor = service.createInvite(counsellor(NEW_AGENCY));
 
     service.revokeInvite(admin.getId());
-    assertThat(service.queueProblemOf(reload(counsellor)))
-        .isEqualTo(InviteQueueProblem.NO_UNIT_ADMIN);
+    assertThat(queue.problemOf(reload(counsellor))).isEqualTo(InviteQueueProblem.NO_UNIT_ADMIN);
 
     service.createInvite(agencyAdmin(NEW_AGENCY));
-    assertThat(service.queueProblemOf(reload(counsellor))).isNull();
+    assertThat(queue.problemOf(reload(counsellor))).isNull();
     verify(agencyIdAllocationClient, times(1)).reserve(any(), any());
   }
 
@@ -276,8 +283,7 @@ class AccountInviteUnitQueueIT {
     stored.setExpiresAt(LocalDateTime.now().minusMinutes(1));
     accountInviteRepository.save(stored);
 
-    assertThat(service.queueProblemOf(reload(counsellor)))
-        .isEqualTo(InviteQueueProblem.NO_UNIT_ADMIN);
+    assertThat(queue.problemOf(reload(counsellor))).isEqualTo(InviteQueueProblem.NO_UNIT_ADMIN);
   }
 
   // --- release ----------------------------------------------------------------------------------
@@ -290,7 +296,7 @@ class AccountInviteUnitQueueIT {
     when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
         .thenReturn(IdAllocationStatus.ASSIGNED);
 
-    List<Long> released = service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY);
+    List<Long> released = queue.release(InviteUnitType.AGENCY, NEW_AGENCY);
 
     assertThat(released).containsExactly(queued.invite().getId());
     AccountInvite sent = reload(queued.invite());
@@ -324,7 +330,7 @@ class AccountInviteUnitQueueIT {
     Callable<List<Long>> trigger =
         () -> {
           start.await();
-          return service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY);
+          return queue.release(InviteUnitType.AGENCY, NEW_AGENCY);
         };
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
@@ -355,7 +361,7 @@ class AccountInviteUnitQueueIT {
             new SmtpSendException(
                 SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE, "smtp off"));
 
-    List<Long> released = service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY);
+    List<Long> released = queue.release(InviteUnitType.AGENCY, NEW_AGENCY);
 
     assertThat(released).containsExactly(queued.invite().getId());
     AccountInvite draft = reload(queued.invite());
@@ -369,7 +375,7 @@ class AccountInviteUnitQueueIT {
     service.createInvite(agencyAdmin(NEW_AGENCY));
     AccountInvite queued = service.createInvite(counsellor(NEW_AGENCY));
 
-    service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY);
+    queue.release(InviteUnitType.AGENCY, NEW_AGENCY);
 
     AccountInvite draft = reload(queued);
     assertThat(draft.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
@@ -426,7 +432,7 @@ class AccountInviteUnitQueueIT {
     verify(agencyIdAllocationClient, never()).reserve(any(), any());
 
     when(agencyIdAllocationClient.reserve(null, NEW_TENANT)).thenReturn(701L);
-    service.releaseWaitingInvites(InviteUnitType.TENANT, NEW_TENANT);
+    queue.release(InviteUnitType.TENANT, NEW_TENANT);
 
     AccountInvite released = reload(agencyAdmin);
     assertThat(released.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);

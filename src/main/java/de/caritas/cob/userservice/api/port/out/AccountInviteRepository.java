@@ -270,15 +270,6 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("excludedId") Long excludedId,
       @Param("modes") Collection<IdAllocationMode> modes);
 
-  /** Any other invite that references this agency ID under a reserving mode. */
-  @Query(
-      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.agencyId = :agencyId"
-          + " AND i.id <> :excludedId AND i.agencyIdAllocationMode IN :modes")
-  boolean existsOtherInviteOnReservedAgency(
-      @Param("agencyId") Long agencyId,
-      @Param("excludedId") Long excludedId,
-      @Param("modes") Collection<IdAllocationMode> modes);
-
   /** A queued invite does not count: it only points at another invite's reservation. */
   @Query(
       "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.agencyId = :agencyId"
@@ -347,13 +338,8 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       findFirstByTargetRoleAndTenantIdAndTenantIdReservationTokenIsNotNullOrderByCreateDateDesc(
           AccountInviteTargetRole targetRole, Long tenantId);
 
-  long countByTenantIdReservationTokenAndIdNot(String tenantIdReservationToken, Long id);
-
   boolean existsByTargetRoleAndTenantIdAndStatusAndIdNot(
       AccountInviteTargetRole targetRole, Long tenantId, AccountInviteStatus status, Long id);
-
-  /** The invite(s) whose acceptance created this account. */
-  List<AccountInvite> findAllByProvisionedUserId(String provisionedUserId);
 
   List<AccountInvite> findAllByAcceptedByUserIdAndTwoFactorStatus(
       String acceptedByUserId, TwoFactorGateStatus twoFactorStatus);

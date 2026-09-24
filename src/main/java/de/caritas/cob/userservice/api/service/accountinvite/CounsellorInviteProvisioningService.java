@@ -8,7 +8,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
-import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -147,8 +146,8 @@ public class CounsellorInviteProvisioningService {
    */
   private void alignRequirementsWithInvite(String consultantId, AccountInvite invite) {
     var stillOwed = !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());
-    var topicPermission =
-        invite.getTopicPermission() == null ? TopicPermission.CREATE : invite.getTopicPermission();
+    // The one-time hand-over: from here on the counsellor's value is the only one.
+    var topicPermission = TopicPermissionPolicy.effective(invite);
     consultantRepository
         .findByIdAndDeleteDateIsNull(consultantId)
         .filter(

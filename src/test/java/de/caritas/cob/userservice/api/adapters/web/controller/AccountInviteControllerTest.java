@@ -26,7 +26,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPermissionService;
-import de.caritas.cob.userservice.api.service.accountinvite.AgencyTopicPermissionLookup;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
@@ -36,6 +36,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateS
 import de.caritas.cob.userservice.api.service.accountinvite.InviteQueueProblem;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.UnitQueue;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
@@ -61,6 +62,7 @@ class AccountInviteControllerTest {
   @Mock private InviteEmailTemplateService templateService;
   @Mock private InviteEmailDeliveryRepository deliveryRepository;
   @Mock private InviteEmailPreviewService previewService;
+  @Mock private UnitQueue unitQueue;
 
   private AccountInviteController controller;
 
@@ -77,7 +79,8 @@ class AccountInviteControllerTest {
                 mock(AccountInviteRepository.class),
                 mock(ConsultantRepository.class),
                 mock(AccountInviteAccessPolicy.class),
-                mock(AgencyTopicPermissionLookup.class)));
+                mock(AgencyFacts.class)),
+            unitQueue);
   }
 
   @Test
@@ -142,7 +145,7 @@ class AccountInviteControllerTest {
     when(accountInviteService.createInvite(any())).thenReturn(invite);
     when(accountInviteService.calculateAccessGate(invite))
         .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
-    when(accountInviteService.queueProblemOf(invite)).thenReturn(InviteQueueProblem.NO_UNIT_ADMIN);
+    when(unitQueue.problemOf(invite)).thenReturn(InviteQueueProblem.NO_UNIT_ADMIN);
 
     var body = controller.createInvite(request).getBody();
 

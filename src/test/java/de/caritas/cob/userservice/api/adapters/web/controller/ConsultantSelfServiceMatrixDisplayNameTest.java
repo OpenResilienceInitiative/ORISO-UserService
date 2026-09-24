@@ -29,7 +29,6 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityPolicy;
 import de.caritas.cob.userservice.api.port.in.Messaging;
-import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
@@ -80,7 +79,6 @@ class ConsultantSelfServiceMatrixDisplayNameTest {
             mock(SessionRepository.class),
             mock(EventNotificationService.class),
             mock(ConsultantTopicAgencyCompatibilityValidator.class),
-            mock(AccountInviteRepository.class),
             new ConsultantDisplayNameResolver());
 
     delegate =

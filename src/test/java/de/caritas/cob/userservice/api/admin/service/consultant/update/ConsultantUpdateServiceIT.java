@@ -13,9 +13,11 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPermissionService;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import java.time.LocalDateTime;
+import java.util.List;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -70,6 +72,7 @@ public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
 
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private ConsultantRepository consultantRepository;
+  @Autowired private AccountInviteTopicPermissionService topicPermissionService;
 
   @AfterEach
   void resetTopicPermission() {
@@ -98,7 +101,7 @@ public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
   }
 
   @Test
-  void updateConsultant_Should_alsoUpdateTheInviteThatCreatedTheAccount() {
+  void inviteTable_Should_showTheCounsellorsOwnPermission_AfterAnUpdate() {
     var invite =
         accountInviteRepository.save(
             AccountInvite.builder()
@@ -119,7 +122,7 @@ public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
     consultantUpdateService.updateConsultant(VALID_CONSULTANT_ID, update);
 
     assertThat(
-        accountInviteRepository.findById(invite.getId()).orElseThrow().getTopicPermission(),
+        topicPermissionService.currentPermissions(List.of(invite)).get(invite.getId()),
         is(TopicPermission.NONE));
   }
 
