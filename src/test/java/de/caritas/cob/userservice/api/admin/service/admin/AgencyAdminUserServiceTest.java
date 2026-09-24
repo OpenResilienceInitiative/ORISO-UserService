@@ -38,6 +38,9 @@ class AgencyAdminUserServiceTest {
 
   @InjectMocks private AgencyAdminUserService agencyAdminUserService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope adminCallerScope;
+
   @Mock private RetrieveAdminService retrieveAdminService;
 
   @Mock private CreateAdminService createAdminService;

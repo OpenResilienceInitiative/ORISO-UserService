@@ -40,6 +40,9 @@ class AgencyInviteLinkContextTest {
   @Mock private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
   @InjectMocks private AgencyInviteLinkService service;
 
+  @Mock
+  private de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope adminCallerScope;
+
   @AfterEach
   void noWritesOrProvisioning() {
     verify(repository).findByToken(org.mockito.ArgumentMatchers.anyString());

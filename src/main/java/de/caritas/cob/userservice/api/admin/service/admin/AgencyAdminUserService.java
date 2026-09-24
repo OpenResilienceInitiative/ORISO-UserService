@@ -44,8 +44,10 @@ public class AgencyAdminUserService {
   private final @NonNull TenantService tenantService;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminCallerScope adminCallerScope;
 
   public AdminResponseDTO createNewAgencyAdmin(final CreateAdminDTO createAgencyAdminDTO) {
+    adminCallerScope.assertMayCreateAdmins();
     final Admin newAdmin = createAdminService.createNewAgencyAdmin(createAgencyAdminDTO);
     return AdminResponseDTOBuilder.getInstance(newAdmin).buildAgencyAdminResponseDTO();
   }

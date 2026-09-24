@@ -208,6 +208,17 @@ public class AdminCallerScope {
     return Optional.of(Collections.unmodifiableSet(ownAgencyIds()));
   }
 
+  /**
+   * A higher role creates a lower one: a Beratungsstellen admin may not create admin accounts.
+   *
+   * @throws ForbiddenException if the caller is limited to their agencies
+   */
+  public void assertMayCreateAdmins() {
+    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
+      throw deny("create an admin account");
+    }
+  }
+
   private boolean isInScope(Long tenantId, Set<Long> agencyIds) {
     if (!isOwnTenant(tenantId)) {
       return false;

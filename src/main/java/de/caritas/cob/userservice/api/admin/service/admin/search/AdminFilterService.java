@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.FieldEnum;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminSearchResultBuilder;
 import de.caritas.cob.userservice.api.admin.service.admin.search.querybuilder.AdminFilterSpecification;
 import de.caritas.cob.userservice.api.model.Admin;
@@ -24,12 +25,19 @@ import org.springframework.stereotype.Service;
 public class AdminFilterService {
 
   private final @NonNull AdminRepository adminRepository;
+  private final @NonNull AdminCallerScope adminCallerScope;
 
   public AdminSearchResultDTO findFilteredAdmins(
       final Integer page, final Integer perPage, final AdminFilter adminFilter, Sort sort) {
     sort = getValidSorter(sort);
     var pageRequest = PageRequest.of(Math.max(page - 1, 0), Math.max(perPage, 1), buildSort(sort));
-    var resultPage = adminRepository.findAll(buildSpecification(adminFilter), pageRequest);
+    var specification = buildSpecification(adminFilter);
+    var agencyRestriction = adminCallerScope.agencyRestriction();
+    if (agencyRestriction.isPresent()) {
+      specification =
+          specification.and(AdminFilterSpecification.withinAgencies(agencyRestriction.get()));
+    }
+    var resultPage = adminRepository.findAll(specification, pageRequest);
 
     return AdminSearchResultBuilder.getInstance(
             resultPage.getContent(), resultPage.getTotalElements())

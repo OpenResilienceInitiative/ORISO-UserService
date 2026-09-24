@@ -53,6 +53,9 @@ class AgencyInviteLinkServiceTest {
 
   @InjectMocks private AgencyInviteLinkService service;
 
+  @Mock
+  private de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope adminCallerScope;
+
   @BeforeEach
   void setTenantContext() {
     TenantContext.setCurrentTenant(1L);

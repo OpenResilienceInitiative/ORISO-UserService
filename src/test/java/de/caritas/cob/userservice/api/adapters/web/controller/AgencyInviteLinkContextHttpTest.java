@@ -40,7 +40,8 @@ class AgencyInviteLinkContextHttpTest {
             mock(ConsultantRepository.class),
             mock(ConsultingTypeService.class),
             mock(AgencyService.class),
-            facade);
+            facade,
+            mock(de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope.class));
     mvc =
         MockMvcBuilders.standaloneSetup(new AgencyInviteLinkController(service, topicService))
             .setControllerAdvice(new ApiResponseEntityExceptionHandler())
