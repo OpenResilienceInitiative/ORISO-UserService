@@ -18,10 +18,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 
 /**
- * Looks up an agency that an invite wants to bind to WITHOUT reserving its ID ({@link
- * IdAllocationMode#EXISTING}, ORISO-Admin#1026). Uses AgencyService's admin detail endpoint with
- * the calling admin's token, because only that view carries the {@code deleteDate}: the public
- * {@code /agencies/{ids}} lookup also returns soft-deleted agencies without saying so.
+ * Uses the admin detail endpoint because only it carries {@code deleteDate}; the public {@code
+ * /agencies/{ids}} lookup returns soft-deleted agencies without saying so.
  */
 @Service
 @RequiredArgsConstructor
@@ -32,13 +30,9 @@ public class ExistingAgencyClient {
   private final @NonNull AgencyAdminServiceApiControllerFactory
       agencyAdminServiceApiControllerFactory;
 
-  /** The facts an EXISTING invite is validated against. */
   public record ExistingAgency(Long id, Long tenantId, boolean deleted, List<Long> topicIds) {}
 
-  /**
-   * @return the agency, or empty when AgencyService does not know it (404) — for a tenant-bound
-   *     caller that includes an agency of another tenant, which the tenant-aware lookup hides
-   */
+  /** Empty on 404, which for a tenant-bound caller also covers another tenant's agency. */
   public Optional<ExistingAgency> find(long agencyId) {
     try {
       var response = createControllerApi().getAgency(agencyId);
@@ -58,8 +52,8 @@ public class ExistingAgencyClient {
   }
 
   /**
-   * The agency's topic IDs from its departments, which carry the ID even when AgencyService could
-   * not resolve the topic names; the topics list is only the fallback for an older AgencyService.
+   * Departments carry the topic ID even when topic names did not resolve; the topics list is only
+   * the fallback for an older AgencyService.
    */
   private static List<Long> topicIds(AgencyAdminResponseDTO agency) {
     if (agency.getDepartments() != null && !agency.getDepartments().isEmpty()) {

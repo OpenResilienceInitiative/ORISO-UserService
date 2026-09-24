@@ -56,9 +56,8 @@ public class CreateAdminService {
   }
 
   /**
-   * Creates an agency admin in the tenant the DTO names, without deriving it from the caller. For
-   * server-side flows only — the public invite onboarding (ORISO-Admin#1026), where there is no
-   * authenticated caller and the tenant comes from the invite, never from the request.
+   * Server-side flows only (public invite onboarding): there is no caller, so the tenant comes from
+   * the invite, never from the request.
    */
   public Admin createNewAgencyAdminInTenant(CreateAdminDTO createAdminDTO) {
     notNull(createAdminDTO.getTenantId());

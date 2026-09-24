@@ -88,9 +88,8 @@ public class AccountInvite {
   private Long departmentId;
 
   /**
-   * How the invite's tenant ID was allocated (ORISO-Admin#1026): AUTO/MANUAL = a new Träger whose
-   * ID this invite reserved, EXISTING = a Träger that already exists (nothing reserved; its
-   * onboarding joins the Träger instead of creating one). Null on rows created before #1026.
+   * AUTO/MANUAL = a new Träger whose ID this invite reserved, EXISTING = joins an existing Träger.
+   * Null on older rows.
    */
   @Enumerated(EnumType.STRING)
   @Column(name = "tenant_id_allocation_mode", length = 16)
@@ -101,10 +100,7 @@ public class AccountInvite {
   @Column(name = "agency_id_allocation_mode", length = 16)
   private IdAllocationMode agencyIdAllocationMode;
 
-  /**
-   * AGENCY_ADMIN invites (ORISO-Admin#1026, slice 3): whether the agency admin also counsels — the
-   * inviter's proposal, which the invitee may change during onboarding. Null for every other role.
-   */
+  /** AGENCY_ADMIN only: the inviter's proposal, the invitee may change it; null for other roles. */
   @Column(name = "also_counsellor")
   private Boolean alsoCounsellor;
 

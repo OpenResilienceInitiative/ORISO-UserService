@@ -20,13 +20,10 @@ public enum HttpStatusExceptionReason {
   CONSULTANT_IDENTITY_ALREADY_GRANTED,
   CHAT_RECOVERY_POLICY_UNAVAILABLE,
   ROLE_NOT_FOUND,
-  /** ORISO-Admin#1026: the admin already holds the role they tried to assign themselves. */
+  /** The admin already holds the role they tried to assign themselves. */
   SELF_ASSIGNMENT_ALREADY_EXISTS,
-  /**
-   * ORISO-Admin#1026 slice 5: an invite into a not-yet-created unit needs a pending admin invite
-   * for the same reserved ID (409), unless it is part of a CSV import batch.
-   */
+  /** An invite into a not-yet-created unit needs a pending admin invite for that unit. */
   NO_PENDING_UNIT_ADMIN,
-  /** ORISO-Admin#1026 slice 5: a waiting invite cannot be sent before its unit exists (409). */
+  /** A waiting invite cannot be sent before its unit exists. */
   UNIT_NOT_CREATED
 }

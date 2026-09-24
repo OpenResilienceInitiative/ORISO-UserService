@@ -269,11 +269,7 @@ public class TenantAdminOnboardingController {
     /** Counsellor wizard: only for invites whose agency does not exist yet. */
     public AgencyDataDTO agency;
 
-    /**
-     * Agency-admin invites only (ORISO-Admin#1026, slice 3): the invitee's own choice whether they
-     * also counsel. Omitted = the inviter's proposal ({@code alsoCounsellor} of the resolve
-     * answer). Off: an agency-admin account without a consultant; topics are then optional.
-     */
+    /** Agency-admin invites only; omitted = the inviter's proposal from the resolve answer. */
     public Boolean alsoCounsellor;
   }
 
@@ -335,11 +331,7 @@ public class TenantAdminOnboardingController {
      */
     public Boolean agencyExists;
 
-    /**
-     * Agency-admin invites only (ORISO-Admin#1026, slice 3): the inviter's proposal whether the
-     * agency admin also counsels. The wizard shows it as a switch the invitee may change and sends
-     * the choice back as {@code alsoCounsellor} on register.
-     */
+    /** Agency-admin invites only: the inviter's proposal; the invitee may override it. */
     public Boolean alsoCounsellor;
 
     /**
@@ -362,9 +354,8 @@ public class TenantAdminOnboardingController {
     public String dpaContent;
 
     /**
-     * Tenant-admin invites only (ORISO-Admin#1026, slice 4): true when the invite joins a Träger
-     * that already exists — the wizard then skips the organisation and DPA steps, registers with
-     * {@code account.password} alone and shows {@code tenantId}; no reservation pair is issued.
+     * Tenant-admin invites only: true when joining an existing Träger, so the wizard skips the
+     * organisation and DPA steps and registers with {@code account.password} alone.
      */
     public Boolean joinsExistingTenant;
 
