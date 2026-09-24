@@ -12,8 +12,6 @@ import de.caritas.cob.userservice.api.conversation.service.user.anonymous.Anonym
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
-import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -28,7 +26,6 @@ public class CreateAnonymousEnquiryFacade {
   private final @NonNull AnonymousUsernameRegistry usernameRegistry;
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultingTypeManager consultingTypeManager;
-  private final @NonNull TenantContextProvider tenantContextProvider;
 
   private static final String DEFAULT_ANONYMOUS_POSTCODE = "00000";
 
@@ -41,12 +38,7 @@ public class CreateAnonymousEnquiryFacade {
    */
   public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
       CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO) {
-    if (TenantContext.contextIsSet()) {
-      return createAnonymousEnquiry(createAnonymousEnquiryDTO, false);
-    }
-    // Public route without a tenant: the anonymous chat is routed across Träger by topic.
-    return tenantContextProvider.supplyInTechnicalContext(
-        () -> createAnonymousEnquiry(createAnonymousEnquiryDTO, false));
+    return createAnonymousEnquiry(createAnonymousEnquiryDTO, false);
   }
 
   /**
