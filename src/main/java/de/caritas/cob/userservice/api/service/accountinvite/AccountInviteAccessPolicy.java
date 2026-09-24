@@ -44,7 +44,7 @@ public class AccountInviteAccessPolicy {
 
   static final String OUT_OF_SCOPE_MESSAGE = "Account invite is outside the caller's scope";
 
-  static final String TEMPLATE_WRITE_DENIED_MESSAGE =
+  static final String TEMPLATE_UPDATE_DENIED_MESSAGE =
       "Only the platform admin may change invite e-mail templates";
 
   private static final Set<AccountInviteTargetRole> TENANT_ADMIN_INVITABLE_ROLES =
@@ -154,15 +154,20 @@ public class AccountInviteAccessPolicy {
   }
 
   /**
-   * Invite e-mail templates are global — one row is used by every Träger — so for now only the
-   * platform admin (tenant {@code 0}, or a single-tenant deployment) may create, change or delete
-   * them (ORISO-Admin#1026). Träger admins and Beratungsstellen admins may still read and use them.
+   * Invite e-mail templates are global — one stored row is the mail every Träger sends — so only
+   * the platform admin (tenant {@code 0}, or a single-tenant deployment) may change a stored one
+   * (ORISO-Admin#1026).
+   *
+   * <p><b>Creating</b> one is deliberately not guarded: everyone who may send invites may also
+   * write a template (owner decision 2026-09-23, confirmed and widened to Beratungsstellen admins
+   * by Frank 2026-09-24). Reading and using templates was never restricted. Once a template carries
+   * an owning tenant, its author can be allowed to change it again.
    *
    * @throws ForbiddenException if the caller is not the platform admin
    */
-  public void authorizeTemplateWrite() {
+  public void authorizeTemplateUpdate() {
     if (callerScope().kind() != Kind.UNRESTRICTED) {
-      throw denyTemplateWrite();
+      throw denyTemplateUpdate();
     }
   }
 
@@ -267,12 +272,12 @@ public class AccountInviteAccessPolicy {
     return tenantId;
   }
 
-  private ForbiddenException denyTemplateWrite() {
+  private ForbiddenException denyTemplateUpdate() {
     log.warn(
-        "Admin {} (tenant {}) may not change the global invite e-mail templates",
+        "Admin {} (tenant {}) may not change a stored, globally shared invite e-mail template",
         authenticatedUser.getUserId(),
         authenticatedUser.getTenantId());
-    return new ForbiddenException(TEMPLATE_WRITE_DENIED_MESSAGE);
+    return new ForbiddenException(TEMPLATE_UPDATE_DENIED_MESSAGE);
   }
 
   private ForbiddenException deny(String attempt) {

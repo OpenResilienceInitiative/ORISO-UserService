@@ -22,7 +22,8 @@ public class InviteEmailTemplateService {
 
   @Transactional
   public InviteEmailTemplate createTemplate(TemplateCommand command) {
-    accessPolicy.authorizeTemplateWrite();
+    // Unguarded on purpose: everyone who may send invites may also write a template
+    // (ORISO-Admin#1026 Q30/Q31). Only changing a stored one is the platform admin's.
     validate(command);
     LocalDateTime now = LocalDateTime.now();
     InviteEmailTemplate template =
@@ -42,7 +43,7 @@ public class InviteEmailTemplateService {
 
   @Transactional
   public InviteEmailTemplate updateTemplate(Long templateId, TemplateCommand command) {
-    accessPolicy.authorizeTemplateWrite();
+    accessPolicy.authorizeTemplateUpdate();
     validate(command);
     InviteEmailTemplate template =
         templateRepository

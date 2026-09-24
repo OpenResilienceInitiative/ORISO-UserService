@@ -195,24 +195,28 @@ class InviteEmailTemplateServiceTest {
   }
 
   // ---------------------------------------------------------------------------
-  // platform-admin-only writes (ORISO-Admin#1026)
+  // who may write a template (ORISO-Admin#1026 Q30/Q31)
   // ---------------------------------------------------------------------------
 
   @Test
-  void createTemplate_Should_notSave_When_accessPolicyDenies() {
-    doThrow(new ForbiddenException("denied")).when(accessPolicy).authorizeTemplateWrite();
+  void createTemplate_Should_notAskAccessPolicy() {
+    // Everyone who may send invites may also create a template — the rule Frank
+    // confirmed on 2026-09-24. Creating must therefore never reach the policy.
+    when(templateRepository.save(any(InviteEmailTemplate.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     var command =
         new TemplateCommand(
             InviteEmailTemplateKind.TENANT_INVITE, "Name", "en", "Subj", "Body", true);
 
-    assertThatThrownBy(() -> service.createTemplate(command))
-        .isInstanceOf(ForbiddenException.class);
-    verify(templateRepository, never()).save(any());
+    service.createTemplate(command);
+
+    verify(accessPolicy, never()).authorizeTemplateUpdate();
+    verify(templateRepository).save(any(InviteEmailTemplate.class));
   }
 
   @Test
   void updateTemplate_Should_notLoadOrSave_When_accessPolicyDenies() {
-    doThrow(new ForbiddenException("denied")).when(accessPolicy).authorizeTemplateWrite();
+    doThrow(new ForbiddenException("denied")).when(accessPolicy).authorizeTemplateUpdate();
     var command =
         new TemplateCommand(
             InviteEmailTemplateKind.TENANT_INVITE, "Name", "en", "Subj", "Body", true);
@@ -227,7 +231,7 @@ class InviteEmailTemplateServiceTest {
   void listTemplates_Should_notAskAccessPolicy() {
     service.listTemplates(null);
 
-    verify(accessPolicy, never()).authorizeTemplateWrite();
+    verify(accessPolicy, never()).authorizeTemplateUpdate();
   }
 
   // ---------------------------------------------------------------------------

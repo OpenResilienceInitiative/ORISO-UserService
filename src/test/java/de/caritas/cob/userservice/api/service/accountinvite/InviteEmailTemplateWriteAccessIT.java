@@ -30,9 +30,13 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Invite e-mail templates are global: one row is used by every Träger. Until templates are scoped
- * per Träger, only the platform admin (tenant 0) may create or change them (ORISO-Admin#1026). A
- * Träger admin or a Beratungsstellen admin may still read and use them when sending invites.
+ * Invite e-mail templates are global: one row is used by every Träger.
+ *
+ * <p>Everyone who may send invites may also <b>create</b> a template — Träger admins and
+ * Beratungsstellen admins alike (owner decision 2026-09-23, confirmed and widened by Frank
+ * 2026-09-24, ORISO-Admin#1026 Q30/Q31). <b>Changing a stored one</b> stays with the platform admin
+ * (tenant 0), because that row is the mail every other Träger sends. Reading and using templates
+ * was never restricted.
  *
  * <p>The caller is a real {@link AuthenticatedUser}, so the role helpers the check relies on run
  * unchanged; the restricted agency admin is the seeded admin {@value #AGENCY_ADMIN_ID}.
@@ -44,9 +48,9 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({
   InviteEmailTemplateService.class,
   AccountInviteAccessPolicy.class,
-  InviteEmailTemplatePlatformAdminOnlyIT.CallerConfig.class
+  InviteEmailTemplateWriteAccessIT.CallerConfig.class
 })
-class InviteEmailTemplatePlatformAdminOnlyIT {
+class InviteEmailTemplateWriteAccessIT {
 
   private static final String AGENCY_ADMIN_ID = "d42c2e5e-143c-4db1-a90f-7cccf82fbb15";
 
@@ -91,13 +95,15 @@ class InviteEmailTemplatePlatformAdminOnlyIT {
   // --- Träger admin (tenant 1) -------------------------------------------------------------
 
   @Test
-  void createTemplate_Should_Refuse_When_TenantAdminCreates() {
+  void createTemplate_Should_Succeed_When_TenantAdminCreates() {
     actAsTenantAdmin();
     long before = templateRepository.count();
 
-    assertThatThrownBy(() -> service.createTemplate(command("Hijacked")))
-        .isInstanceOf(ForbiddenException.class);
-    assertThat(templateRepository.count()).isEqualTo(before);
+    InviteEmailTemplate created = service.createTemplate(command("Träger-eigene Vorlage"));
+
+    assertThat(created.getId()).isNotNull();
+    assertThat(created.getCreatedByUserId()).isEqualTo("tenant-admin-1");
+    assertThat(templateRepository.count()).isEqualTo(before + 1);
   }
 
   @Test
@@ -122,11 +128,14 @@ class InviteEmailTemplatePlatformAdminOnlyIT {
   // --- Beratungsstellen admin (restricted agency admin) ---------------------------------
 
   @Test
-  void createTemplate_Should_Refuse_When_AgencyAdminCreates() {
+  void createTemplate_Should_Succeed_When_AgencyAdminCreates() {
     actAsAgencyAdmin();
+    long before = templateRepository.count();
 
-    assertThatThrownBy(() -> service.createTemplate(command("Hijacked")))
-        .isInstanceOf(ForbiddenException.class);
+    InviteEmailTemplate created = service.createTemplate(command("BST-eigene Vorlage"));
+
+    assertThat(created.getId()).isNotNull();
+    assertThat(templateRepository.count()).isEqualTo(before + 1);
   }
 
   @Test
@@ -147,6 +156,18 @@ class InviteEmailTemplatePlatformAdminOnlyIT {
   }
 
   // --- Platform admin (tenant 0) -----------------------------------------------------------
+
+  @Test
+  void updateTemplate_Should_Refuse_When_AgencyAdminEditsEvenItsOwnCreation() {
+    // The honest consequence of a template model without an owner: a template is
+    // shared the moment it is stored, so not even its author may change it back.
+    // This is what per-Träger templates (#1026 "Later") would lift.
+    actAsAgencyAdmin();
+    InviteEmailTemplate own = service.createTemplate(command("BST-eigene Vorlage"));
+
+    assertThatThrownBy(() -> service.updateTemplate(own.getId(), command("Edited")))
+        .isInstanceOf(ForbiddenException.class);
+  }
 
   @Test
   void createAndUpdateTemplate_Should_Succeed_When_PlatformAdmin() {
