@@ -19,33 +19,14 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * The topic permission of an invited counsellor (ORISO-Admin#1026, slice 6).
- *
- * <p>Wraps invite creation instead of living inside {@link AccountInviteService}, so the invite
- * lifecycle stays untouched: the permission is decided (and validated) BEFORE the invite is
- * created, then written onto the created row.
- *
- * <ul>
- *   <li>The admin's explicit choice wins. Without one, an existing agency's default applies;
- *       agencies that existed before the setting report {@link TopicPermission#CREATE}, so nothing
- *       changes for them.
- *   <li>The founder of a NEW agency (reserved agency ID) gets {@link TopicPermission#CREATE}: the
- *       agency has no departments yet, so the founder has to bring its topics.
- *   <li>Non-counsellor invites store {@link TopicPermission#NONE}; the value means nothing for
- *       them.
- *   <li>A counsellor must always be able to end up with at least one topic: {@code NONE} and {@code
- *       SELECT_EXISTING} are refused (400) when there is neither an assigned department nor an
- *       agency topic to pick.
- * </ul>
- *
- * <p>{@code NONE} without an assigned department means the counsellor picks exactly one of the
- * agency's departments during onboarding; with one, that department is fixed.
+ * Wraps invite creation so the invite lifecycle stays untouched: the permission is validated before
+ * the invite exists, then written onto the created row.
  */
 @Service
 @RequiredArgsConstructor
 public class AccountInviteTopicPermissionService {
 
-  /** What AgencyService stores as counsellor topic permission on a newly created agency. */
+  /** Must match what AgencyService writes onto every newly created agency. */
   static final TopicPermission NEW_AGENCY_DEFAULT = TopicPermission.NONE;
 
   private final @NonNull AccountInviteService accountInviteService;
@@ -54,13 +35,11 @@ public class AccountInviteTopicPermissionService {
   private final @NonNull AccountInviteAccessPolicy accessPolicy;
   private final @NonNull AgencyTopicPermissionLookup agencyTopicPermissionLookup;
 
-  /** Creates the invite (not sent) with its topic permission. */
   public AccountInvite createInvite(CreateAccountInviteCommand command, TopicPermission requested) {
     TopicPermission permission = decide(command, requested);
     return store(accountInviteService.createInvite(command), permission);
   }
 
-  /** Creates and sends the invite with its topic permission. */
   public InviteSendResult createAndSendInvite(
       CreateAccountInviteCommand command, Long templateId, TopicPermission requested) {
     TopicPermission permission = decide(command, requested);
@@ -71,11 +50,7 @@ public class AccountInviteTopicPermissionService {
     return result;
   }
 
-  /**
-   * Changes the permission from the invite table — before and after the account exists. Allowed for
-   * every admin who may act on the invite (same scope as send/revoke); the counsellor created from
-   * the invite follows.
-   */
+  /** Also after the account exists; the counsellor created from the invite follows. */
   @Transactional
   public AccountInvite updatePermission(Long inviteId, TopicPermission permission) {
     if (inviteId == null) {
@@ -92,8 +67,7 @@ public class AccountInviteTopicPermissionService {
     if (invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR) {
       throw new BadRequestException("Only counsellor invites carry a topic permission");
     }
-    // Slice 5: an invite waiting for its new Beratungsstelle cannot be checked yet — the agency's
-    // admin brings the topics before the invite is released.
+    // A waiting invite's new agency has no topics yet; its admin brings them before release.
     boolean waitsForNewAgency =
         invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT
             && invite.getWaitingForUnit() == InviteUnitType.AGENCY;
@@ -127,20 +101,15 @@ public class AccountInviteTopicPermissionService {
 
   private TopicPermission decide(CreateAccountInviteCommand command, TopicPermission requested) {
     if (command != null && command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN) {
-      // Slice 3: the agency admin founds (new agency) or administers the Beratungsstelle and may
-      // also counsel — a founder has to bring the agency's topics (Frank, 2026-09-21).
+      // A founding agency admin who also counsels has to bring the agency's topics.
       return TopicPermission.CREATE;
     }
     if (command == null || command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
       return TopicPermission.NONE;
     }
     Optional<AgencyTopicSettings> agency = existingAgency(command);
-    // Slice 5: a counsellor for a NEW Beratungsstelle waits (WAITING_FOR_UNIT) until its admin
-    // created it. Without an explicit choice it gets the default the agency will have once it
-    // exists — AgencyService writes NEW_AGENCY_DEFAULT onto every newly created agency
-    // (AgencyService PR #308). The release follows the agency's creation immediately, so nobody
-    // can change that default in between. The "no topic to pick" check cannot run yet: the
-    // agency's admin brings the topics.
+    // A new agency does not exist yet: use the default it will be created with, and skip the
+    // topic check (its admin brings the topics before the invite is released).
     boolean waitsForNewAgency = IdAllocationMode.reservesAnId(command.agencyIdAllocationMode());
     TopicPermission permission;
     if (requested != null) {
@@ -162,7 +131,7 @@ public class AccountInviteTopicPermissionService {
     return permission;
   }
 
-  /** The invite's agency when it already exists; a reserved (new) agency ID has no settings yet. */
+  /** A reserved (new) agency ID has no settings yet. */
   private Optional<AgencyTopicSettings> existingAgency(CreateAccountInviteCommand command) {
     if (command.agencyId() == null
         || IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {

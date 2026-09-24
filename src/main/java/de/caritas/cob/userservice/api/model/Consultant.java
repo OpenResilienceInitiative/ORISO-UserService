@@ -288,11 +288,7 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Builder.Default
   private Boolean twoFactorRequired = false;
 
-  /**
-   * How far this counsellor may extend their own topics (ORISO-Admin#1026, slice 6). Taken over
-   * from the invite that created the account; changeable by admins with rights on the agency. The
-   * column default {@code CREATE} keeps today's behaviour for every existing counsellor.
-   */
+  /** Column default CREATE keeps the old behaviour for every existing counsellor. */
   @Enumerated(EnumType.STRING)
   @Column(
       name = "topic_permission",

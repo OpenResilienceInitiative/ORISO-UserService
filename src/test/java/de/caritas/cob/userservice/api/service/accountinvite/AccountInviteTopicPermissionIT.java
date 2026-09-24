@@ -52,18 +52,7 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * The topic permission per invited counsellor (ORISO-Admin#1026, slice 6).
- *
- * <p>Three levels: {@code NONE} (only the assigned department), {@code SELECT_EXISTING} (pick from
- * the agency's departments) and {@code CREATE} (the wizard's "+", today's behaviour). The agency
- * default prefills the permission when the invite is created; the inviting admin may override it.
- * Admins with rights on the agency may change it later in the invite table — also after the account
- * exists, in which case the counsellor's own permission follows.
- *
- * <p>Runs against a real database; only the remote services (AgencyService, TenantService,
- * Keycloak, SMTP) are replaced.
- */
+/** Real database; only AgencyService, TenantService, Keycloak and SMTP are replaced. */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
@@ -185,7 +174,7 @@ class AccountInviteTopicPermissionIT {
   void createInvite_Should_LetTheFounderCreateTopics_When_TheAgencyDoesNotExistYet() {
     actAsTenantAdmin();
 
-    // Since slice 5 the founder of a new Beratungsstelle is its agency admin (slice 3).
+    // The founder of a new agency is its agency admin.
     AccountInvite invite = service.createInvite(agencyAdminIntoNewAgency(), null);
 
     assertThat(invite.getTopicPermission()).isEqualTo(TopicPermission.CREATE);
@@ -196,10 +185,7 @@ class AccountInviteTopicPermissionIT {
   void createInvite_Should_KeepThePermission_When_TheCounsellorWaitsForANewAgency() {
     actAsTenantAdmin();
 
-    // Slice 5: a counsellor for a not-yet-created agency waits (WAITING_FOR_UNIT). Without a
-    // choice it gets the default a new agency starts with (NONE, AgencyService #308); an
-    // explicit choice is kept although the agency has no topic yet — its admin brings them
-    // before the invite is released.
+    // No topic check yet: the new agency's admin brings the topics before the release.
     AccountInvite open = service.createInvite(counsellorWaitingForNewAgency(), null);
     AccountInvite fixed =
         service.createInvite(counsellorWaitingForNewAgency(), TopicPermission.SELECT_EXISTING);
@@ -244,8 +230,7 @@ class AccountInviteTopicPermissionIT {
   void createInvite_Should_StoreCreate_When_TheInviteIsForAnAgencyAdmin() {
     actAsTenantAdmin();
 
-    // Slice 3: the agency admin may also counsel and administers the agency's topics anyway —
-    // whatever the agency default or the inviter's choice says.
+    // Whatever the agency default or the inviter's choice says.
     AccountInvite intoLegacy = service.createInvite(agencyAdminInto(LEGACY_AGENCY, "a"), null);
     AccountInvite intoNoneDefault =
         service.createInvite(agencyAdminInto(NEW_STYLE_AGENCY, "c"), TopicPermission.NONE);
@@ -336,7 +321,7 @@ class AccountInviteTopicPermissionIT {
     assertThatThrownBy(
             () -> service.updatePermission(topiclessInvite.getId(), TopicPermission.NONE))
         .isInstanceOf(BadRequestException.class);
-    // A counsellor waiting for a new agency (slice 5): its admin brings the topics first.
+    // A counsellor waiting for a new agency: its admin brings the topics first.
     when(agencyTopicPermissionLookup.find(4711L)).thenReturn(Optional.empty());
     assertThat(
             service

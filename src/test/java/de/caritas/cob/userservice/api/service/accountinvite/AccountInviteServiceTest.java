@@ -2047,8 +2047,7 @@ class AccountInviteServiceTest {
 
   @Test
   void resendInvite_Should_KeepTheTopicPermissionOnTheReplacementInvite() {
-    // ORISO-Admin#1026 slice 6: an admin's NONE / SELECT_EXISTING must survive a resend — the
-    // replacement invite is the one the counsellor accepts.
+    // The replacement invite is the one the counsellor accepts.
     AccountInvite oldInvite =
         AccountInvite.builder()
             .id(11L)

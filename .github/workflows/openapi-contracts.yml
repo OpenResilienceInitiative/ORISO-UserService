@@ -37,11 +37,8 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-AgencyService
-        # Companion-PR pin: head of ORISO-AgencyService#308 (feat/1026-topic-permission), which
-        # adds AgencySettings.counsellorTopicPermission that this branch's consumer spec reads
-        # (ORISO-Admin#1026 slice 6). It sits on top of 5aace67c (the #295 merge with
-        # AgencyDTO.reservedAgencyId), so nothing the earlier pin covered is lost. Repin to
-        # AgencyService dev once #308 is merged.
+        # Companion-PR pin to ORISO-AgencyService#308 (adds counsellorTopicPermission).
+        # Move back to AgencyService dev once #308 is merged.
         ref: ${{ github.event_name == 'pull_request' && '8c070b1d51c25197a30244f0c6ec1a2af2b544cd' || 'pre-dev' }}
         path: .providers/agency
         persist-credentials: false

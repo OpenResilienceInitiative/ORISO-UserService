@@ -376,8 +376,7 @@ public class CounsellorOnboardingService {
       }
       TopicPermission permission = topicPermissionOf(invite);
       if (permission == TopicPermission.NONE && invite.getDepartmentId() != null) {
-        // NONE: the assigned department is fixed — the agency's other departments are not
-        // on offer (ORISO-Admin#1026, slice 6).
+        // NONE fixes the assigned department; no other agency department is offered.
         topicIds.retainAll(Set.of(invite.getDepartmentId()));
       }
       TopicLookup topicLookup = safeActiveTopicsById();
@@ -391,9 +390,7 @@ public class CounsellorOnboardingService {
                   })
               .toList();
       // Every active tenant topic is selectable on top of the coverage (owner decision
-      // 2026-09-17): the invitee removes preselected topics or adds further ones — but only
-      // with the CREATE permission (the wizard's "+"). NONE and SELECT_EXISTING stay within
-      // the agency's own departments (ORISO-Admin#1026, slice 6).
+      // 2026-09-17): the invitee removes preselected topics or adds further ones. CREATE only.
       List<TopicOption> availableTopics =
           permission != TopicPermission.CREATE
               ? List.of()
@@ -686,10 +683,7 @@ public class CounsellorOnboardingService {
     }
   }
 
-  /**
-   * {@code NONE} without an assigned department: the invitee picks exactly ONE of the agency's
-   * departments, which then is their assigned one — nothing further (ORISO-Admin#1026, slice 6).
-   */
+  /** NONE without an assigned department: the invitee picks exactly one agency department. */
   private static void validatePermissionLimit(List<Long> chosen, AccountInvite invite) {
     if (topicPermissionOf(invite) == TopicPermission.NONE
         && invite.getDepartmentId() == null
@@ -699,12 +693,7 @@ public class CounsellorOnboardingService {
     }
   }
 
-  /**
-   * The permission the wizard applies. Invites created before the setting existed carry today's
-   * behaviour. An AGENCY_ADMIN invite (slice 3) always has CREATE: its invitee founds or
-   * administers the Beratungsstelle and, when also counselling a NEW one, has to bring its topics —
-   * the agency has none yet.
-   */
+  /** Agency admins always get CREATE: a founder has to bring the new agency's topics. */
   public static TopicPermission topicPermissionOf(AccountInvite invite) {
     if (invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN) {
       return TopicPermission.CREATE;

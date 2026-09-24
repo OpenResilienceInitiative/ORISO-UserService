@@ -358,7 +358,7 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   boolean existsByTargetRoleAndTenantIdAndStatusAndIdNot(
       AccountInviteTargetRole targetRole, Long tenantId, AccountInviteStatus status, Long id);
 
-  /** The invite(s) whose acceptance created this account (ORISO-Admin#1026 permission sync). */
+  /** The invite(s) whose acceptance created this account. */
   List<AccountInvite> findAllByProvisionedUserId(String provisionedUserId);
 
   List<AccountInvite> findAllByAcceptedByUserIdAndTwoFactorStatus(

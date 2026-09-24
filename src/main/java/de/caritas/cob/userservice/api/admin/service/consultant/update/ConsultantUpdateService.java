@@ -256,11 +256,7 @@ public class ConsultantUpdateService {
     return this.consultantService.saveConsultant(consultant);
   }
 
-  /**
-   * At least one topic, always (ORISO-Admin#1026): an update may replace a counsellor's topics but
-   * never empty them. A counsellor who has no topic today (older accounts) stays editable — an
-   * empty list is then no change.
-   */
+  /** Older accounts without any topic stay editable: an empty list is then no change. */
   private static void rejectRemovingTheLastTopic(Consultant consultant, List<Long> topicIds) {
     if (topicIds == null || topicIds.stream().anyMatch(Objects::nonNull)) {
       return;
@@ -270,10 +266,7 @@ public class ConsultantUpdateService {
     }
   }
 
-  /**
-   * The counsellor's topic permission (ORISO-Admin#1026, slice 6). Null leaves it untouched; the
-   * invite that created the account follows, so the invite table shows the same value.
-   */
+  /** The creating invite follows, so the invite table shows the same value. */
   private void applyTopicPermission(UpdateAdminConsultantDTO dto, Consultant consultant) {
     if (dto.getTopicPermission() == null) {
       return;

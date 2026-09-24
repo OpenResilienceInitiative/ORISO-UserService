@@ -18,10 +18,7 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.HttpClientErrorException;
 
-/**
- * Reads an agency's default topic permission and its departments (ORISO-Admin#1026, slice 6) from
- * AgencyService's admin detail endpoint, with the calling admin's token.
- */
+/** Reads AgencyService's admin detail endpoint with the calling admin's token. */
 @Service
 @RequiredArgsConstructor
 public class AgencyTopicPermissionLookup {
@@ -31,12 +28,9 @@ public class AgencyTopicPermissionLookup {
   private final @NonNull AgencyAdminServiceApiControllerFactory
       agencyAdminServiceApiControllerFactory;
 
-  /** The agency default and the topics a counsellor of this agency could pick. */
   public record AgencyTopicSettings(TopicPermission defaultPermission, List<Long> topicIds) {}
 
-  /**
-   * @return the agency's settings, or empty when AgencyService does not know the agency (404)
-   */
+  /** Empty when AgencyService does not know the agency (404). */
   public Optional<AgencyTopicSettings> find(long agencyId) {
     try {
       var response = createControllerApi().getAgency(agencyId);
@@ -50,10 +44,7 @@ public class AgencyTopicPermissionLookup {
     }
   }
 
-  /**
-   * An AgencyService that does not know the setting yet answers without it — that is the behaviour
-   * every agency had before the setting existed: {@link TopicPermission#CREATE}.
-   */
+  /** An older AgencyService omits the setting; CREATE is the behaviour before it existed. */
   private static TopicPermission defaultPermission(AgencyAdminResponseDTO agency) {
     var settings = agency.getSettings();
     if (settings == null || settings.getCounsellorTopicPermission() == null) {

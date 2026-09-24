@@ -6,11 +6,6 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import org.junit.jupiter.api.Test;
 
-/**
- * The wire form of the topic permission (ORISO-Admin#1026). Besides the three names the CSV import
- * sends plain yes/no values: {@code true} means today's behaviour ({@code CREATE}), {@code false}
- * the new strict default ({@code NONE}).
- */
 class TopicPermissionTest {
 
   @Test
