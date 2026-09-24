@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
+import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.RegistrationType;
@@ -82,6 +83,10 @@ class TenantIsolationWithoutTransactionIT {
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private UserRepository userRepository;
   @Autowired private SessionRepository sessionRepository;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.AdminAgencyRepository adminAgencyRepository;
+
   @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager entityManager;
   @Autowired private org.springframework.scheduling.TaskScheduler taskScheduler;
 
@@ -218,6 +223,28 @@ class TenantIsolationWithoutTransactionIT {
               jakarta.persistence.EntityNotFoundException.class,
               org.springframework.orm.jpa.JpaObjectRetrievalFailureException.class);
     } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
+  void jpqlJoin_Should_NotReachFilteredRowOfAnotherTenant() {
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    AdminAgency foreignRelation;
+    try {
+      foreignRelation =
+          adminAgencyRepository.save(
+              AdminAgency.builder().admin(foreignAgencyAdmin).agencyId(FOREIGN_AGENCY).build());
+    } finally {
+      TenantContext.clear();
+    }
+    TenantContext.setCurrentTenant(OWN_TENANT);
+    try {
+      assertThat(adminAgencyRepository.findByAdminIdIn(Set.of(foreignAgencyAdmin.getId())))
+          .isEmpty();
+    } finally {
+      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+      adminAgencyRepository.delete(foreignRelation);
       TenantContext.clear();
     }
   }

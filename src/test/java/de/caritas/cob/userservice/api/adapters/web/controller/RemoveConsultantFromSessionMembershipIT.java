@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
 import com.google.common.collect.Lists;
 import com.neovisionaries.i18n.LanguageCode;
@@ -101,6 +102,7 @@ class RemoveConsultantFromSessionMembershipIT {
   private final List<ConsultantAgency> seededAgencyMemberships = new ArrayList<>();
   private final List<Consultant> seededConsultants = new ArrayList<>();
 
+  private Consultant advisor;
   private Consultant roomMember;
   private Consultant colleagueOfSessionAgency;
   private Consultant consultantOfOtherAgency;
@@ -113,7 +115,7 @@ class RemoveConsultantFromSessionMembershipIT {
     when(tenantResolverService.resolve(any())).thenReturn(TENANT);
     TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
     try {
-      var advisor = persistConsultantIn(SESSION_AGENCY);
+      advisor = persistConsultantIn(SESSION_AGENCY);
       roomMember = persistConsultantIn(null);
       colleagueOfSessionAgency = persistConsultantIn(SESSION_AGENCY);
       consultantOfOtherAgency = persistConsultantIn(OTHER_AGENCY);
@@ -150,15 +152,46 @@ class RemoveConsultantFromSessionMembershipIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION})
-  void removeFromSession_Should_Remove_When_CallerIsConsultantOfTheSessionAgency()
+  void removeFromSession_Should_Refuse_When_CallerIsColleagueWithoutAccessToTheSession()
       throws Exception {
     actAs(colleagueOfSessionAgency);
+
+    var result = mockMvc.perform(removeFromSession(roomMember)).andReturn();
+
+    verify(groupChatMembershipService, never()).removeMemberFromRoom(anyString(), anyString());
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION})
+  void removeFromSession_Should_Remove_When_CallerAdvisesTheSession() throws Exception {
+    actAs(advisor);
 
     var result = mockMvc.perform(removeFromSession(roomMember)).andReturn();
 
     assertStatus(result, 204);
     verify(groupChatMembershipService)
         .removeMemberFromRoom(MATRIX_ROOM, roomMember.getMatrixUserId());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION})
+  void assignSession_Should_Refuse_When_CallerHasNoAccessToTheSession() throws Exception {
+    actAs(consultantOfOtherAgency);
+
+    var result =
+        mockMvc
+            .perform(
+                put("/users/sessions/"
+                        + session.getId()
+                        + "/consultant/"
+                        + colleagueOfSessionAgency.getId())
+                    .cookie(CSRF_COOKIE)
+                    .header(CSRF_HEADER, CSRF_VALUE))
+            .andReturn();
+
+    assertThat(advisorOfSession()).isEqualTo(advisor.getId());
+    assertStatus(result, 403);
   }
 
   @Test
@@ -201,6 +234,15 @@ class RemoveConsultantFromSessionMembershipIT {
     caller.setTenantId(TENANT);
     caller.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
     caller.setGrantedAuthorities(Set.of(AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION));
+  }
+
+  private String advisorOfSession() {
+    TenantContext.setCurrentTenant(TENANT);
+    try {
+      return sessionRepository.findById(session.getId()).orElseThrow().getConsultant().getId();
+    } finally {
+      TenantContext.clear();
+    }
   }
 
   private static void assertStatus(MvcResult result, int expected) {

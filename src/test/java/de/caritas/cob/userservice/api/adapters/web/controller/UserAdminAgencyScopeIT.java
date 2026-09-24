@@ -674,6 +674,51 @@ class UserAdminAgencyScopeIT {
     assertThat(pausedBy(ownAsker)).isEqualTo(callingAgencyAdmin.getId());
   }
 
+  // --- who counts as platform
+  // ---------------------------------------------------------------------
+
+  @Test
+  @AsTenantAdmin
+  void getConsultant_Should_Refuse_When_Tenant0AdminIsNoPlatformAdmin() throws Exception {
+    actAs("tenant-zero-admin", 0L, UserRole.TENANT_ADMIN, UserRole.USER_ADMIN);
+
+    var result =
+        mockMvc
+            .perform(get("/useradmin/consultants/" + foreignTenantConsultant.getId()))
+            .andReturn();
+
+    assertThat(result.getResponse().getContentAsString())
+        .doesNotContain(foreignTenantConsultant.getEmail());
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @AsTenantAdmin
+  void getConsultant_Should_Refuse_When_CallerHasNoTenantClaim() throws Exception {
+    actAs("tenant-admin-1", OWN_TENANT, UserRole.TENANT_ADMIN, UserRole.USER_ADMIN);
+    caller.setTenantId(null);
+
+    var result =
+        mockMvc.perform(get("/useradmin/consultants/" + ownConsultant.getId())).andReturn();
+
+    assertThat(result.getResponse().getContentAsString()).doesNotContain(ownConsultant.getEmail());
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @AsTenantAdmin
+  void getConsultant_Should_Succeed_When_PlatformAdminReadsCounsellorOfAnyTenant()
+      throws Exception {
+    actAs("platform-admin", 0L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
+
+    var result =
+        mockMvc
+            .perform(get("/useradmin/consultants/" + foreignTenantConsultant.getId()))
+            .andReturn();
+
+    assertStatus(result, 200);
+  }
+
   // --- GET /useradmin/agencyadmins ---------------------------------------------------------------
 
   @Test
