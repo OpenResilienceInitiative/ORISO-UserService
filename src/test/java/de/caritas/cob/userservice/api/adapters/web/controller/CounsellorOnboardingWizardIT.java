@@ -86,6 +86,11 @@ class CounsellorOnboardingWizardIT {
 
   @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
+          .ConsultantAgencyRelationCreatorService
+      consultantAgencyRelationCreatorService;
+
   /**
    * The single {@code keycloakService} bean implements ALL identity ports (authentication, second
    * factor, profile lookup, …), so the concrete bean is mocked — mocking a single port interface
@@ -214,7 +219,7 @@ class CounsellorOnboardingWizardIT {
 
     ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
         ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
-    verify(consultantAdminFacade)
+    verify(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(eq(CONSULTANT_ID), agencyCaptor.capture());
     assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
     assertThat(agencyCaptor.getValue().getRoleSetKey()).isEqualTo("CONSULTANT_DEFAULT");

@@ -39,15 +39,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Cross-tenant ("cross-Träger") isolation of the admin invite API, run against a real database.
- *
- * <p>Rules: the platform admin (tenant 0) sees and does everything; a tenant admin only acts in
- * their own tenant and never invites a platform admin; an agency admin (restricted agency admin)
- * only acts on counsellor invites of the agencies they administer.
- *
- * <p>The caller is a real {@link AuthenticatedUser}, not a mock, so the role helpers the scoping
- * relies on ({@code isPlatformAdmin}, {@code hasRestrictedAgencyPriviliges}) run unchanged. The
- * restricted agency admin is the seeded admin {@value #AGENCY_ADMIN_ID}, who administers agency
+ * The restricted agency admin is the seeded admin {@value #AGENCY_ADMIN_ID}, who administers agency
  * {@value #OWN_AGENCY_ID} only (see {@code database/UserServiceDatabase.sql}).
  */
 @DataJpaTest
@@ -57,6 +49,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({
   AccountInviteService.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AccountInviteTenantScopeIT.CallerConfig.class
 })
 class AccountInviteTenantScopeIT {
@@ -83,6 +76,7 @@ class AccountInviteTenantScopeIT {
   @Autowired private AccountInviteService service;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private AuthenticatedUser caller;
+  @Autowired private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
@@ -101,6 +95,9 @@ class AccountInviteTenantScopeIT {
 
   @BeforeEach
   void seedInvitesOfTwoTenants() {
+    // The Träger rules only apply on a multi-tenant deployment.
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        adminScope, "multitenancyEnabled", true);
     when(identityEmailOwnerLookup.findByEmail(anyString())).thenReturn(Optional.empty());
     givenAgency(OWN_AGENCY_ID, OWN_TENANT);
     givenAgency(FOREIGN_AGENCY_ID, OWN_TENANT);
@@ -152,10 +149,10 @@ class AccountInviteTenantScopeIT {
   void listInvites_Should_NotLeakForeignTenant_When_TenantAdminSearchesForItsNumber() {
     actAsTenantAdmin();
 
-    // The query box also matches a numeric term against the tenant ID (#479).
+    // The query box also matches a numeric term against the tenant ID.
     var page = service.listInvites(null, null, null, String.valueOf(FOREIGN_TENANT), 0, 50);
 
-    // Nothing of tenant 1 matches "2"; before the fix the tenant-2 invite came back.
+    // Nothing of tenant 1 matches "2", so the tenant-2 invite must not come back.
     assertThat(page.getContent())
         .extracting(AccountInvite::getTenantId)
         .doesNotContain(FOREIGN_TENANT);
