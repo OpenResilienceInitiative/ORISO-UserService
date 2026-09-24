@@ -164,6 +164,14 @@ class ConsultantAgencyLateJoinerMembershipIT {
   @Test
   @DisplayName("a rolled-back agency edit must not leave the counsellor inside the Matrix room")
   void replacingAgencies_joinsNoRoom_When_aLaterAssignmentInTheSameTransactionFails() {
+    // Only the platform reaches an agency AgencyService does not know; a Träger admin is refused.
+    Tenants.actAs(
+        caller,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
     var consultant = givenConsultantWithoutAgency();
     givenOpenEnquiry(AGENCY_ID, ENQUIRY_ROOM_ID);
     when(agencyService.getAgency(UNKNOWN_AGENCY_ID)).thenReturn(null);
@@ -192,6 +200,7 @@ class ConsultantAgencyLateJoinerMembershipIT {
     agency.setTeamAgency(false);
     agency.setConsultingType(0);
     when(agencyService.getAgency(agencyId)).thenReturn(agency);
+    when(agencyService.getAgencyWithoutCaching(agencyId)).thenReturn(agency);
     when(agencyService.getAgenciesWithoutCaching(List.of(agencyId))).thenReturn(List.of(agency));
   }
 
