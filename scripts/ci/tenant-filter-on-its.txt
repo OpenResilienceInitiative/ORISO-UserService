@@ -2,6 +2,7 @@
 # production. run-tenant-filter-on-integration-tests.sh runs each one and fails if any is missing.
 # One simple class name per line; keep it sorted.
 AccountInviteAcceptRaceIT
+AccountInviteConflictReasonsIT
 AccountInviteCounsellorProvisioningIT
 AccountInviteDirectSendAtomicIT
 AccountInviteExistingAgencyIT
@@ -12,6 +13,7 @@ AccountInviteReservationOrchestrationIT
 AccountInviteReservationReleaseIT
 AccountInviteRoleRuleIT
 AccountInviteTenantScopeIT
+AccountInviteTopicPermissionIT
 AccountInviteUnitQueueIT
 AdminSelfAssignmentControllerIT
 AdminSelfAssignmentIT
@@ -22,6 +24,7 @@ ConsultantAgencyLateJoinerMembershipIT
 ConsultantAgencyRelationCreatorServiceTenantAwareIT
 ConsultantUpdateServiceTenantAwareIT
 CounsellorOnboardingWizardIT
+CounsellorTopicPermissionWizardIT
 CreateConsultantSagaTenantAwareIT
 GrantConsultantIdentityTenantScopeIT
 HttpTenantFilterRegistrationIT

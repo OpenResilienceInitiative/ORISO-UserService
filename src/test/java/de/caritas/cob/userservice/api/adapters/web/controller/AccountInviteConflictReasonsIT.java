@@ -13,6 +13,7 @@ import com.jayway.jsonpath.JsonPath;
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.model.TopicPermission;
@@ -24,6 +25,10 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateK
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.tenant.AsTechnicalUser;
+import de.caritas.cob.userservice.api.tenant.TenantFixtures;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.Tenants;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -31,11 +36,13 @@ import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Answers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.JwtRequestPostProcessor;
@@ -48,16 +55,19 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@Import(TenantFixtures.class)
+@AsTechnicalUser
 class AccountInviteConflictReasonsIT {
 
   private static final String CSRF_HEADER = "X-CSRF-TOKEN";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
-  /** Seeded consultant who already counsels in agency 1 (tenant 1). */
-  private static final String COUNSELLING_ADMIN_ID = "473f7c4b-f011-4fc2-847c-ceb636a5b399";
+  /** Requests resolve to the Träger the caller acts in. */
+  @MockitoBean private TenantResolverService tenantResolverService;
 
   @Autowired private MockMvc mvc;
+  @Autowired private TenantFixtures fixtures;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private InviteEmailTemplateRepository templateRepository;
 
@@ -66,12 +76,21 @@ class AccountInviteConflictReasonsIT {
   @MockitoBean private TenantService tenantService;
   @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
-  @MockitoBean private AuthenticatedUser authenticatedUser;
+
+  @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
+  private AuthenticatedUser authenticatedUser;
 
   private Long templateId;
 
   @BeforeEach
   void setUp() {
+    Tenants.actAs(
+        authenticatedUser,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
     when(keycloakService.findByEmail(anyString())).thenReturn(Optional.empty());
     templateId =
         templateRepository
@@ -92,6 +111,7 @@ class AccountInviteConflictReasonsIT {
   void cleanUp() {
     accountInviteRepository.deleteAll();
     templateRepository.deleteById(templateId);
+    fixtures.removeAll();
   }
 
   @Test
@@ -151,9 +171,14 @@ class AccountInviteConflictReasonsIT {
             Optional.of(
                 new AgencyFacts.Agency(1L, 1L, false, List.of(1L), TopicPermission.CREATE)));
 
-    when(authenticatedUser.getUserId()).thenReturn(COUNSELLING_ADMIN_ID);
-    when(authenticatedUser.getTenantId()).thenReturn(1L);
-    when(authenticatedUser.hasTenantLevelAdminRole()).thenReturn(true);
+    // A Träger admin who already counsels in agency 1.
+    var counsellingAdmin = fixtures.consultant(1L, 1L);
+    Tenants.actAs(
+        authenticatedUser,
+        counsellingAdmin.getId(),
+        1L,
+        UserRole.TENANT_ADMIN,
+        UserRole.USER_ADMIN);
 
     mvc.perform(
             post("/useradmin/self-assignments")

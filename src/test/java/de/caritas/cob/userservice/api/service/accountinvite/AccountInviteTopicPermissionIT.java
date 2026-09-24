@@ -31,12 +31,12 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocat
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.tenant.TenantFixtures;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.time.LocalDateTime;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
-import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -54,7 +54,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 /** Real database; only AgencyService, TenantService, Keycloak and SMTP are replaced. */
 @DataJpaTest
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
@@ -66,18 +66,17 @@ import org.springframework.transaction.annotation.Transactional;
   AccountInviteAccessPolicy.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AccountInviteTopicPermissionService.class,
-  AccountInviteTopicPermissionIT.CallerConfig.class
+  AccountInviteTopicPermissionIT.CallerConfig.class,
+  TenantFixtures.class
 })
+@WithTenant(AccountInviteTopicPermissionIT.OWN_TENANT)
 class AccountInviteTopicPermissionIT {
 
-  private static final long OWN_TENANT = 1L;
+  static final long OWN_TENANT = 1L;
   private static final long FOREIGN_TENANT = 2L;
 
   /** Seeded restricted agency admin who administers agency 1 only. */
   private static final String AGENCY_ADMIN_ID = "d42c2e5e-143c-4db1-a90f-7cccf82fbb15";
-
-  /** A seeded consultant that stands in for the account an accepted invite created. */
-  private static final String SEEDED_CONSULTANT_ID = "0b3b1cc6-be98-4787-aa56-212259d811b9";
 
   /** Agency of tenant 1 that existed before the setting: its default is CREATE. */
   private static final long LEGACY_AGENCY = 1L;
@@ -102,12 +101,12 @@ class AccountInviteTopicPermissionIT {
     }
   }
 
+  @Autowired private TenantFixtures fixtures;
   @Autowired private AccountInviteTopicPermissionService service;
   @Autowired private AccountInviteService invites;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private AuthenticatedUser caller;
-  @Autowired private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
   @Autowired private InviteEmailTemplateRepository templateRepository;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
@@ -123,8 +122,6 @@ class AccountInviteTopicPermissionIT {
 
   @BeforeEach
   void givenAgencies() {
-    org.springframework.test.util.ReflectionTestUtils.setField(
-        adminScope, "multitenancyEnabled", true);
     when(identityEmailOwnerLookup.findByEmail(anyString())).thenReturn(Optional.empty());
     givenAgency(LEGACY_AGENCY, OWN_TENANT, TopicPermission.CREATE, List.of(11L));
     givenAgency(SELECT_AGENCY, OWN_TENANT, TopicPermission.SELECT_EXISTING, List.of(21L, 22L));
@@ -139,13 +136,7 @@ class AccountInviteTopicPermissionIT {
   @AfterEach
   void cleanUp() {
     accountInviteRepository.deleteAll();
-    consultantRepository
-        .findById(SEEDED_CONSULTANT_ID)
-        .ifPresent(
-            consultant -> {
-              consultant.setTopicPermission(TopicPermission.CREATE);
-              consultantRepository.save(consultant);
-            });
+    fixtures.removeAll();
   }
 
   // --- prefill at invite time -------------------------------------------------------------------
@@ -344,13 +335,13 @@ class AccountInviteTopicPermissionIT {
     actAsTenantAdmin();
     AccountInvite invite =
         invites.createInvite(withPermission(counsellorInto(LEGACY_AGENCY, 11L), null));
-    invite.setProvisionedUserId(SEEDED_CONSULTANT_ID);
+    var counsellor = fixtures.consultant(OWN_TENANT, LEGACY_AGENCY);
+    invite.setProvisionedUserId(counsellor.getId());
     accountInviteRepository.save(invite);
 
     service.updatePermission(invite.getId(), TopicPermission.SELECT_EXISTING);
 
-    assertThat(
-            consultantRepository.findById(SEEDED_CONSULTANT_ID).orElseThrow().getTopicPermission())
+    assertThat(consultantRepository.findById(counsellor.getId()).orElseThrow().getTopicPermission())
         .isEqualTo(TopicPermission.SELECT_EXISTING);
   }
 
@@ -424,7 +415,8 @@ class AccountInviteTopicPermissionIT {
   // --- helpers ----------------------------------------------------------------------------------
 
   private void actAsTenantAdmin() {
-    actAs(
+    Tenants.actAs(
+        caller,
         "tenant-admin-1",
         OWN_TENANT,
         UserRole.TENANT_ADMIN,
@@ -433,19 +425,18 @@ class AccountInviteTopicPermissionIT {
   }
 
   private void actAsAgencyAdmin() {
-    actAs(AGENCY_ADMIN_ID, OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    Tenants.actAs(
+        caller, AGENCY_ADMIN_ID, OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
   }
 
   private void actAsPlatformAdmin() {
-    actAs("platform-admin", 0L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
-  }
-
-  private void actAs(String userId, Long tenantId, UserRole... roles) {
-    caller.setUserId(userId);
-    caller.setUsername(userId);
-    caller.setTenantId(tenantId);
-    caller.setRoles(Arrays.stream(roles).map(UserRole::getValue).collect(Collectors.toSet()));
-    caller.setGrantedAuthorities(Set.of());
+    Tenants.actAs(
+        caller,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
   }
 
   private void givenAgency(

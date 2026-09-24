@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDT
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -29,6 +30,10 @@ import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationSta
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.tenant.TenantFixtures;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
@@ -46,6 +51,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase.Replace;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
@@ -56,10 +62,15 @@ import org.springframework.test.web.servlet.ResultActions;
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@WithTenant(1L)
+@Import(TenantFixtures.class)
 class CounsellorTopicPermissionWizardIT {
 
-  /** Seeded row: the mocked admin facade hands it back to receive the invite's permission. */
-  private static final String SEEDED_CONSULTANT_ID = "0b3b1cc6-be98-4787-aa56-212259d811b9";
+  /** The Träger of every invite here; the new counsellor is created in it. */
+  private static final long INVITE_TENANT = 79L;
+
+  /** Created by the mocked admin facade, in the invite's Träger, to receive its permission. */
+  private String counsellorId;
 
   private static final Long AGENCY_ID = 1026L;
   private static final Long AGENCY_TOPIC_A = 2L;
@@ -71,6 +82,12 @@ class CounsellorTopicPermissionWizardIT {
   private static final String CSRF = "it-csrf-token";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
 
+  /** The public route resolves to the main tenant, as on the single-domain deployment. */
+  @MockitoBean private TenantResolverService tenantResolverService;
+
+  @MockitoBean private TenantService tenantService;
+
+  @Autowired private TenantFixtures fixtures;
   @Autowired private MockMvc mockMvc;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private ConsultantRepository consultantRepository;
@@ -95,10 +112,10 @@ class CounsellorTopicPermissionWizardIT {
                 AGENCY_TOPIC_A, topic(AGENCY_TOPIC_A, "Schulden"),
                 AGENCY_TOPIC_B, topic(AGENCY_TOPIC_B, "Sucht"),
                 OTHER_TENANT_TOPIC, topic(OTHER_TENANT_TOPIC, "Migration")));
+    counsellorId = fixtures.consultant(INVITE_TENANT).getId();
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
         .thenReturn(
-            new ConsultantAdminResponseDTO()
-                .embedded(new ConsultantDTO().id(SEEDED_CONSULTANT_ID)));
+            new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id(counsellorId)));
     when(keycloakService.login(anyString(), anyString()))
         .thenReturn(new IdentityLogin("technical-access-token", 60, 60, "refresh"));
     when(keycloakService.getOtpCredential(anyString()))
@@ -106,14 +123,8 @@ class CounsellorTopicPermissionWizardIT {
   }
 
   @AfterEach
-  void resetSeededConsultant() {
-    consultantRepository
-        .findById(SEEDED_CONSULTANT_ID)
-        .ifPresent(
-            consultant -> {
-              consultant.setTopicPermission(TopicPermission.CREATE);
-              consultantRepository.save(consultant);
-            });
+  void removeTheCounsellor() {
+    fixtures.removeAll();
   }
 
   // --- resolve -----------------------------------------------------------------------------------
@@ -281,7 +292,8 @@ class CounsellorTopicPermissionWizardIT {
   }
 
   private Consultant counsellor() {
-    return consultantRepository.findById(SEEDED_CONSULTANT_ID).orElseThrow();
+    return Tenants.in(
+        INVITE_TENANT, () -> consultantRepository.findById(counsellorId).orElseThrow());
   }
 
   private String seedInvite(TopicPermission topicPermission, Long departmentId) throws Exception {
@@ -289,7 +301,7 @@ class CounsellorTopicPermissionWizardIT {
     accountInviteRepository.save(
         AccountInvite.builder()
             .targetRole(AccountInviteTargetRole.COUNSELLOR)
-            .tenantId(79L)
+            .tenantId(INVITE_TENANT)
             .recipientEmail("topic.permission." + UUID.randomUUID() + "@oriso.org")
             .firstName("Lisa")
             .lastName("Simpson")
