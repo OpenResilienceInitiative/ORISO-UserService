@@ -59,20 +59,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Self-assignment (ORISO-Admin#1026, slice 3): an admin assigns THEIR OWN existing account to a
- * lower role — no e-mail, no invite.
- *
- * <ul>
- *   <li>a Träger admin: as agency admin and/or counsellor of an agency of their own Träger;
- *   <li>an agency admin: as counsellor of an agency they administer;
- *   <li>the platform admin: anywhere.
- * </ul>
- *
- * <p>The counsellor part reuses the Users-area "Auch als Beraterin anlegen" path ({@link
- * GrantConsultantIdentityService}) for an admin without a consultant identity, and the ordinary
- * consultant-agency relation for one that already counsels elsewhere.
- */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
@@ -179,8 +165,7 @@ class AdminSelfAssignmentIT {
         .isInstanceOf(NotFoundException.class);
   }
 
-  // --- as counsellor
-  // ------------------------------------------------------------------------------
+  // --- as counsellor ---
 
   @Test
   void tenantAdmin_May_AssignThemselvesAsCounsellor_ThroughTheUsersAreaGrant() {

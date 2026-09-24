@@ -65,7 +65,6 @@ public class AdminSelfAssignmentService {
     return new SelfAssignmentResult(command.role(), agency.id(), userId, identityCreated);
   }
 
-  /** What the caller is assigned to today — the state the Admin shows next to the switches. */
   public SelfAssignments current() {
     String userId = authenticatedUser.getUserId();
     List<Long> adminAgencies =
@@ -85,9 +84,7 @@ public class AdminSelfAssignmentService {
     return new SelfAssignments(adminAgencies, counsellorAgencies);
   }
 
-  /**
-   * @return whether a new consultant identity was created (false: an existing one got the agency)
-   */
+  /** Returns true when a new consultant identity was created. */
   private boolean assignAsCounsellor(String userId, ExistingAgency agency, List<Long> topicIds) {
     // The row lock makes a double click wait for the first request and then answer 409.
     if (consultantRepository.findActiveByIdForUpdate(userId).isPresent()) {

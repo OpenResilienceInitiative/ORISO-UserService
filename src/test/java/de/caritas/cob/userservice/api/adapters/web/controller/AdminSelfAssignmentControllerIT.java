@@ -31,11 +31,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-/**
- * HTTP contract of the self-assignment endpoint (ORISO-Admin#1026, slice 3): admin authorities
- * only, the request shape, the 201 answer and the input errors. The rules themselves are covered by
- * {@code AdminSelfAssignmentIT}.
- */
+/** HTTP contract only; the self-assignment rules are covered by {@code AdminSelfAssignmentIT}. */
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @SpringBootTest
 @AutoConfigureMockMvc

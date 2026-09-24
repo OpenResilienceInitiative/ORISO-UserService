@@ -362,11 +362,7 @@ public class AccountInviteController {
      */
     public String agencyIdAllocationMode;
 
-    /**
-     * AGENCY_ADMIN invites only (ORISO-Admin#1026, slice 3): whether the agency admin also
-     * counsels. Omitted = true. The invitee may change it in the onboarding wizard. Set for any
-     * other role → 400.
-     */
+    /** AGENCY_ADMIN invites only; omitted = true. Set for any other role → 400. */
     public Boolean alsoCounsellor;
   }
 

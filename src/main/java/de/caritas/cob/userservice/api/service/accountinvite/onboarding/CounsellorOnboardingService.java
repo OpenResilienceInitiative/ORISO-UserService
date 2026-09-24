@@ -149,9 +149,7 @@ public class CounsellorOnboardingService {
     if (expired != null) {
       throw expired;
     }
-    // ORISO-Admin#1026 slice 3: an AGENCY_ADMIN invite runs this wizard too. "Also counsellor"
-    // (the inviter's proposal, which the invitee may override here) decides whether a consultant
-    // is created; only a counselling invitee needs a topic.
+    // Agency admins run this wizard too; only a counselling invitee gets a consultant and a topic.
     boolean agencyAdmin = invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN;
     boolean counsels = !agencyAdmin || alsoCounsellor(invite, command);
     CoverageResolution coverage = resolveTopicCoverage(invite);
@@ -161,8 +159,7 @@ public class CounsellorOnboardingService {
     } else if (command.topicIds() != null && !command.topicIds().isEmpty()) {
       validateTopicSelection(command.topicIds(), coverage);
     } else if (!coverage.agencyExists()) {
-      // ORISO-Admin#1026 (Q28): a founding admin who does not counsel still gives the new agency
-      // at least one topic — the counsellors queued for it pick from those.
+      // Counsellors queued for the new agency need at least one topic to pick from.
       throw new BadRequestException("A new agency needs at least one topic");
     }
 
@@ -176,8 +173,7 @@ public class CounsellorOnboardingService {
       agencyCreated = true;
     }
 
-    // The agency admin administers the invite's agency; a counsellor gets admin rights only when
-    // they just brought the agency into existence (#998).
+    // A counsellor gets admin rights only on the agency they just created.
     AccountInvite accepted =
         counsels
             ? counsellorInviteProvisioningService.acceptInvite(
@@ -529,7 +525,6 @@ public class CounsellorOnboardingService {
     return invite;
   }
 
-  /** The roles onboarded by this wizard: counsellors and (ORISO-Admin#1026) agency admins. */
   public static boolean runsTheCounsellorWizard(AccountInviteTargetRole targetRole) {
     return targetRole == AccountInviteTargetRole.COUNSELLOR
         || targetRole == AccountInviteTargetRole.AGENCY_ADMIN;
@@ -722,13 +717,9 @@ public class CounsellorOnboardingService {
        * accept is the AgencyService/provisioning follow-up.
        */
       String agencyName,
-      /**
-       * AGENCY_ADMIN invites only (ORISO-Admin#1026, slice 3): the invitee's own choice whether
-       * they also counsel; {@code null} keeps the inviter's proposal.
-       */
+      /** AGENCY_ADMIN invites only; null keeps the inviter's proposal. */
       Boolean alsoCounsellor) {
 
-    /** Shape without the agency-admin choice. */
     public RegisterCounsellorCommand(
         String username,
         String password,

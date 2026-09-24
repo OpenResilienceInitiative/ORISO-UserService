@@ -20,6 +20,6 @@ public enum HttpStatusExceptionReason {
   CONSULTANT_IDENTITY_ALREADY_GRANTED,
   CHAT_RECOVERY_POLICY_UNAVAILABLE,
   ROLE_NOT_FOUND,
-  /** ORISO-Admin#1026: the admin already holds the role they tried to assign themselves. */
+  /** The admin already holds the role they tried to assign themselves. */
   SELF_ASSIGNMENT_ALREADY_EXISTS
 }

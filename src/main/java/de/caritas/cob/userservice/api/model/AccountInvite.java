@@ -99,10 +99,7 @@ public class AccountInvite {
   @Column(name = "agency_id_allocation_mode", length = 16)
   private IdAllocationMode agencyIdAllocationMode;
 
-  /**
-   * AGENCY_ADMIN invites (ORISO-Admin#1026, slice 3): whether the agency admin also counsels — the
-   * inviter's proposal, which the invitee may change during onboarding. Null for every other role.
-   */
+  /** AGENCY_ADMIN only: the inviter's proposal, the invitee may change it; null for other roles. */
   @Column(name = "also_counsellor")
   private Boolean alsoCounsellor;
 

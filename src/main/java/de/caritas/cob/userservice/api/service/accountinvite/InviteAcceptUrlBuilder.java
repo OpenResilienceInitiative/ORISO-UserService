@@ -13,10 +13,10 @@ import org.springframework.stereotype.Component;
  *   <li>{@code TENANT_ADMIN} → the PUBLIC ADMIN onboarding route. The tenant is an organisation,
  *       not an app user — the login belongs to the tenant admin and the flow completes on the Admin
  *       panel's public page ({@code /admin/tenant-onboarding/{token}}, Admin U8, #571).
- *   <li>{@code COUNSELLOR} and {@code AGENCY_ADMIN} (ORISO-Admin#1026) → the PUBLIC ADMIN
- *       counsellor onboarding wizard ({@code /admin/counsellor-onboarding/{token}}, #997) — product
- *       decision 2026-08-12: counsellor onboarding runs step-by-step in the Admin SPA instead of
- *       the generic App acceptance page.
+ *   <li>{@code COUNSELLOR} and {@code AGENCY_ADMIN} → the PUBLIC ADMIN counsellor onboarding wizard
+ *       ({@code /admin/counsellor-onboarding/{token}}, #997) — product decision 2026-08-12:
+ *       counsellor onboarding runs step-by-step in the Admin SPA instead of the generic App
+ *       acceptance page.
  *   <li>all other roles (advice seekers, …) → the public App accept route ({@code
  *       /account-invite/{token}}).
  * </ul>
@@ -59,7 +59,7 @@ public class InviteAcceptUrlBuilder {
     }
     if (targetRole == AccountInviteTargetRole.COUNSELLOR
         || targetRole == AccountInviteTargetRole.AGENCY_ADMIN) {
-      // ORISO-Admin#1026: agency admins run the same wizard; its resolve answer carries the role.
+      // Agency admins run the same wizard; its resolve answer carries the role.
       return adminFrontendBaseUrl + ADMIN_COUNSELLOR_ONBOARDING_PATH + "/" + rawToken;
     }
     return appFrontendBaseUrl + APP_ACCEPT_PATH + "/" + rawToken;
