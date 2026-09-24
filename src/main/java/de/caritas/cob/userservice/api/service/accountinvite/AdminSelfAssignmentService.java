@@ -28,21 +28,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 
 /**
- * Self-assignment (ORISO-Admin#1026, slice 3): an admin assigns THEIR OWN existing account to a
- * lower role of an agency — no e-mail, no invite, no new login.
- *
- * <ul>
- *   <li>{@code COUNSELLOR}: an admin without a consultant identity gets one through the same path
- *       as the Users area's "Auch als Beraterin anlegen" ({@link GrantConsultantIdentityService});
- *       an admin who already counsels elsewhere only gets the agency added. A missing topic
- *       selection defaults to the agency's topic when it offers exactly one.
- *   <li>{@code AGENCY_ADMIN} (Träger and platform admins only): the caller's admin account is bound
- *       to the agency ({@code admin_agency}). Roles are not touched — a Träger admin already holds
- *       every agency-admin right in their Träger; the binding records that they administer this
- *       agency.
- * </ul>
- *
- * <p>Who may assign themselves where is {@link AccountInviteAccessPolicy#authorizeSelfAssignment}.
+ * An admin assigns their own existing account to a lower agency role. AGENCY_ADMIN only writes the
+ * admin_agency binding: a Träger admin already holds every agency-admin right in their Träger.
  */
 @Slf4j
 @Service
@@ -85,7 +72,6 @@ public class AdminSelfAssignmentService {
     return new SelfAssignmentResult(command.role(), agency.id(), userId, identityCreated);
   }
 
-  /** What the caller is assigned to today — the state the Admin shows next to the switches. */
   public SelfAssignments current() {
     String userId = authenticatedUser.getUserId();
     List<Long> adminAgencies =
@@ -123,9 +109,7 @@ public class AdminSelfAssignmentService {
     log.info("Admin {} assigned themselves as agency admin of agency {}", userId, agencyId);
   }
 
-  /**
-   * @return whether a new consultant identity was created (false: an existing one got the agency)
-   */
+  /** Returns true when a new consultant identity was created. */
   private boolean assignAsCounsellor(String userId, ExistingAgency agency, List<Long> topicIds) {
     if (consultantRepository.findByIdAndDeleteDateIsNull(userId).isPresent()) {
       if (consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(

@@ -152,13 +152,8 @@ public class AccountInviteAccessPolicy {
   }
 
   /**
-   * Self-assignment (ORISO-Admin#1026, slice 3): may the caller assign THEIR OWN account to the
-   * given role in the given agency? The same "higher assigns lower" rule as invites: the platform
-   * admin anywhere; a Träger admin as agency admin or counsellor of an agency of their own Träger;
-   * an agency admin only as counsellor of an agency they administer (becoming agency admin of
-   * another agency would be a promotion, which is out of scope).
-   *
-   * @throws ForbiddenException if the assignment lies outside the caller's scope
+   * Same "higher assigns lower" rule as invites; an agency admin may not become agency admin of
+   * another agency, since that would be a promotion.
    */
   public void authorizeSelfAssignment(boolean asAgencyAdmin, long agencyId, Long agencyTenantId) {
     Scope scope = callerScope();

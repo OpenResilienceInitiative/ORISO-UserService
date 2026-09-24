@@ -31,7 +31,6 @@ class InviteAcceptUrlBuilderTest {
 
   @Test
   void buildAcceptUrl_Should_targetTheCounsellorWizardRoute_ForAgencyAdmins() {
-    // ORISO-Admin#1026 slice 3: agency admins onboard through the same wizard.
     assertThat(builder.buildAcceptUrl(AccountInviteTargetRole.AGENCY_ADMIN, "t"))
         .isEqualTo("https://admin.example.org/admin/counsellor-onboarding/t");
   }

@@ -476,11 +476,7 @@ public class AccountInviteService {
     }
   }
 
-  /**
-   * The agency-admin part of the role field (ORISO-Admin#1026, slice 3): "also counsellor" exists
-   * only for AGENCY_ADMIN invites, and an agency admin always administers an agency — an existing
-   * one ({@code agencyId}, EXISTING or legacy) or a new one (AUTO/MANUAL).
-   */
+  /** An agency admin always administers an agency: an existing one or a new AUTO/MANUAL one. */
   private static void validateAgencyAdminFields(CreateAccountInviteCommand command) {
     boolean agencyAdmin = command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN;
     if (!agencyAdmin && command.alsoCounsellor() != null) {
@@ -493,7 +489,6 @@ public class AccountInviteService {
     }
   }
 
-  /** "Also counsellor" of an AGENCY_ADMIN invite, on unless the inviter switched it off. */
   private static Boolean alsoCounsellorOf(CreateAccountInviteCommand command) {
     if (command.targetRole() != AccountInviteTargetRole.AGENCY_ADMIN) {
       return null;
@@ -1191,10 +1186,10 @@ public class AccountInviteService {
   }
 
   /**
-   * Counsellors, agency admins (ORISO-Admin#1026: they onboard through the same wizard) and tenant
-   * admins carry a mandatory TOTP setup (ORISO-Admin#569: "account, password, 2FA" is one coherent
-   * onboarding flow). Their gate starts at {@code PENDING_SETUP}, which also keeps the consumed
-   * invite link resumable until the OTP credential exists — see {@link
+   * Counsellors, agency admins (they onboard through the same wizard) and tenant admins carry a
+   * mandatory TOTP setup (ORISO-Admin#569: "account, password, 2FA" is one coherent onboarding
+   * flow). Their gate starts at {@code PENDING_SETUP}, which also keeps the consumed invite link
+   * resumable until the OTP credential exists — see {@link
    * #resumeConsumedInviteOrThrow(AccountInvite, LocalDateTime)}.
    */
   private static TwoFactorGateStatus defaultTwoFactorStatus(AccountInviteTargetRole targetRole) {
@@ -1364,14 +1359,9 @@ public class AccountInviteService {
       Long expiresInDays,
       IdAllocationMode tenantIdAllocationMode,
       IdAllocationMode agencyIdAllocationMode,
-      /**
-       * AGENCY_ADMIN invites only (ORISO-Admin#1026, slice 3): whether the invited agency admin
-       * also counsels. {@code null} means the default ({@code true}); the invitee may change it
-       * during onboarding. Any other role must leave it {@code null}.
-       */
+      /** AGENCY_ADMIN only; null = true. Any other role must leave it null. */
       Boolean alsoCounsellor) {
 
-    /** Shape without the agency-admin flag (every role but AGENCY_ADMIN). */
     public CreateAccountInviteCommand(
         AccountInviteTargetRole targetRole,
         Long tenantId,
@@ -1397,7 +1387,6 @@ public class AccountInviteService {
           null);
     }
 
-    /** The same command bound to another tenant (every other component kept). */
     public CreateAccountInviteCommand withTenantId(Long newTenantId) {
       return new CreateAccountInviteCommand(
           targetRole,
@@ -1413,7 +1402,6 @@ public class AccountInviteService {
           alsoCounsellor);
     }
 
-    /** The same command with another department (every other component kept). */
     public CreateAccountInviteCommand withDepartmentId(Long newDepartmentId) {
       return new CreateAccountInviteCommand(
           targetRole,
