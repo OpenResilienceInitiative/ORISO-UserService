@@ -60,7 +60,11 @@ import org.springframework.transaction.annotation.Transactional;
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({AccountInviteService.class, AccountInviteAccessPolicy.class})
+@Import({
+  AccountInviteService.class,
+  AccountInviteAccessPolicy.class,
+  AccountInviteTopicPermissionService.class
+})
 class AccountInviteReservationOrchestrationIT {
 
   @Autowired private AccountInviteService service;
@@ -74,6 +78,7 @@ class AccountInviteReservationOrchestrationIT {
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
   @MockitoBean private ExistingAgencyClient existingAgencyClient;
+  @MockitoBean private AgencyTopicPermissionLookup agencyTopicPermissionLookup;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
 
   // TEN-INV-U6 collaborators of the send path — not exercised by these creation-focused tests.

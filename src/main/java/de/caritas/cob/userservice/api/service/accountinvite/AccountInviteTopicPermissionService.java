@@ -7,7 +7,6 @@ import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
-import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.AgencyTopicPermissionLookup.AgencyTopicSettings;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.time.LocalDateTime;
@@ -18,10 +17,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Wraps invite creation so the invite lifecycle stays untouched: the permission is validated before
- * the invite exists, then written onto the created row.
- */
+/** The topic permission of an invited counsellor: decided at create, changed from the table. */
 @Service
 @RequiredArgsConstructor
 public class AccountInviteTopicPermissionService {
@@ -29,26 +25,10 @@ public class AccountInviteTopicPermissionService {
   /** Must match what AgencyService writes onto every newly created agency. */
   static final TopicPermission NEW_AGENCY_DEFAULT = TopicPermission.NONE;
 
-  private final @NonNull AccountInviteService accountInviteService;
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull AccountInviteAccessPolicy accessPolicy;
   private final @NonNull AgencyTopicPermissionLookup agencyTopicPermissionLookup;
-
-  public AccountInvite createInvite(CreateAccountInviteCommand command, TopicPermission requested) {
-    TopicPermission permission = decide(command, requested);
-    return store(accountInviteService.createInvite(command), permission);
-  }
-
-  public InviteSendResult createAndSendInvite(
-      CreateAccountInviteCommand command, Long templateId, TopicPermission requested) {
-    TopicPermission permission = decide(command, requested);
-    InviteSendResult result = accountInviteService.createAndSendInvite(command, templateId);
-    if (result.invite() != null) {
-      store(result.invite(), permission);
-    }
-    return result;
-  }
 
   /** Also after the account exists; the counsellor created from the invite follows. */
   @Transactional
@@ -99,7 +79,9 @@ public class AccountInviteTopicPermissionService {
     return saved;
   }
 
-  private TopicPermission decide(CreateAccountInviteCommand command, TopicPermission requested) {
+  /** The permission a new invite is stored with; decided inside the create transaction. */
+  TopicPermission decide(CreateAccountInviteCommand command) {
+    TopicPermission requested = command == null ? null : command.topicPermission();
     if (command != null && command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN) {
       // A founding agency admin who also counsels has to bring the agency's topics.
       return TopicPermission.CREATE;
@@ -138,12 +120,6 @@ public class AccountInviteTopicPermissionService {
       return Optional.empty();
     }
     return agencyTopicPermissionLookup.find(command.agencyId());
-  }
-
-  private AccountInvite store(AccountInvite invite, TopicPermission permission) {
-    invite.setTopicPermission(permission);
-    accountInviteRepository.save(invite);
-    return invite;
   }
 
   private static BadRequestException noTopicToPick(TopicPermission permission) {

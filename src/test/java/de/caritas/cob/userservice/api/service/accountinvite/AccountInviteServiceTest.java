@@ -85,6 +85,8 @@ class AccountInviteServiceTest {
    */
   @Mock private AccountInviteAccessPolicy accessPolicy;
 
+  @Mock private AccountInviteTopicPermissionService topicPermissionPolicy;
+
   @InjectMocks private AccountInviteService service;
 
   @BeforeEach

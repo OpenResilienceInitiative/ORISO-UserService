@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.IdReservationReleaseTask;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
@@ -118,6 +119,7 @@ public class AccountInviteService {
   private final @NonNull PlatformTransactionManager transactionManager;
   private final @NonNull AccountInviteAccessPolicy accessPolicy;
   private final @NonNull ExistingAgencyClient existingAgencyClient;
+  private final @NonNull AccountInviteTopicPermissionService topicPermissionPolicy;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand requestedCommand) {
@@ -142,9 +144,10 @@ public class AccountInviteService {
       command = bindToExistingAgency(command);
     }
     verifyRecipientEmailAvailable(command.recipientEmail());
+    TopicPermission topicPermission = topicPermissionPolicy.decide(command);
     InviteUnitType unitToWaitFor = unitToWaitFor(command);
     if (unitToWaitFor != null) {
-      return createWaitingInvite(command, unitToWaitFor);
+      return createWaitingInvite(command, unitToWaitFor, topicPermission);
     }
     Optional<TenantIdReservation> sharedTenantReservation = Optional.empty();
     if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
@@ -214,6 +217,7 @@ public class AccountInviteService {
               .tenantIdAllocationMode(command.tenantIdAllocationMode())
               .agencyIdAllocationMode(command.agencyIdAllocationMode())
               .alsoCounsellor(alsoCounsellorOf(command))
+              .topicPermission(topicPermission)
               .expiresAt(resolveExpiry(now, command.expiresInDays()))
               .status(AccountInviteStatus.DRAFT)
               .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
@@ -1574,7 +1578,7 @@ public class AccountInviteService {
    * expiry clock does not run. Without a pending admin invite for that unit it would never leave.
    */
   private AccountInvite createWaitingInvite(
-      CreateAccountInviteCommand command, InviteUnitType unit) {
+      CreateAccountInviteCommand command, InviteUnitType unit, TopicPermission topicPermission) {
     Long unitId = unit == InviteUnitType.AGENCY ? command.agencyId() : command.tenantId();
     if (unitId == null) {
       // AUTO: no admin invite can hold an ID nobody knows yet.
@@ -1613,6 +1617,7 @@ public class AccountInviteService {
             .tenantIdAllocationMode(command.tenantIdAllocationMode())
             .agencyIdAllocationMode(command.agencyIdAllocationMode())
             .alsoCounsellor(alsoCounsellorOf(command))
+            .topicPermission(topicPermission)
             .waitingForUnit(unit)
             .queuedExpiryDays(expiryDays)
             .status(AccountInviteStatus.WAITING_FOR_UNIT)
@@ -1863,7 +1868,36 @@ public class AccountInviteService {
       IdAllocationMode tenantIdAllocationMode,
       IdAllocationMode agencyIdAllocationMode,
       /** AGENCY_ADMIN only; null = true. Any other role must leave it null. */
-      Boolean alsoCounsellor) {
+      Boolean alsoCounsellor,
+      /** The admin's choice; null = the agency default. */
+      TopicPermission topicPermission) {
+
+    public CreateAccountInviteCommand(
+        AccountInviteTargetRole targetRole,
+        Long tenantId,
+        String recipientEmail,
+        String firstName,
+        String lastName,
+        Long agencyId,
+        Long departmentId,
+        Long expiresInDays,
+        IdAllocationMode tenantIdAllocationMode,
+        IdAllocationMode agencyIdAllocationMode,
+        Boolean alsoCounsellor) {
+      this(
+          targetRole,
+          tenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          departmentId,
+          expiresInDays,
+          tenantIdAllocationMode,
+          agencyIdAllocationMode,
+          alsoCounsellor,
+          null);
+    }
 
     public CreateAccountInviteCommand(
         AccountInviteTargetRole targetRole,
@@ -1902,7 +1936,8 @@ public class AccountInviteService {
           expiresInDays,
           tenantIdAllocationMode,
           agencyIdAllocationMode,
-          alsoCounsellor);
+          alsoCounsellor,
+          topicPermission);
     }
 
     public CreateAccountInviteCommand withDepartmentId(Long newDepartmentId) {
@@ -1917,7 +1952,8 @@ public class AccountInviteService {
           expiresInDays,
           tenantIdAllocationMode,
           agencyIdAllocationMode,
-          alsoCounsellor);
+          alsoCounsellor,
+          topicPermission);
     }
 
     /** Convenience for callers without ID-allocation semantics (no reservation modes). */

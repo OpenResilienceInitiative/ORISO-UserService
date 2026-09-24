@@ -76,6 +76,7 @@ import org.springframework.web.client.HttpClientErrorException;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
   AccountInviteUnitQueueIT.CallerConfig.class
 })
@@ -105,6 +106,7 @@ class AccountInviteUnitQueueIT {
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
   @MockitoBean private ExistingAgencyClient existingAgencyClient;
+  @MockitoBean private AgencyTopicPermissionLookup agencyTopicPermissionLookup;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;

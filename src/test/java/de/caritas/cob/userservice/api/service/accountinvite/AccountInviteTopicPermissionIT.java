@@ -12,15 +12,18 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AgencyTopicPermissionLookup.AgencyTopicSettings;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
@@ -32,6 +35,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReserva
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -98,9 +102,11 @@ class AccountInviteTopicPermissionIT {
   }
 
   @Autowired private AccountInviteTopicPermissionService service;
+  @Autowired private AccountInviteService invites;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private AuthenticatedUser caller;
+  @Autowired private InviteEmailTemplateRepository templateRepository;
 
   @MockitoBean private AgencyTopicPermissionLookup agencyTopicPermissionLookup;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
@@ -145,12 +151,20 @@ class AccountInviteTopicPermissionIT {
   void createInvite_Should_TakeTheAgencyDefault_When_TheAdminLeavesThePermissionOpen() {
     actAsTenantAdmin();
 
-    assertThat(service.createInvite(counsellorInto(LEGACY_AGENCY, 11L), null).getTopicPermission())
+    assertThat(
+            invites
+                .createInvite(withPermission(counsellorInto(LEGACY_AGENCY, 11L), null))
+                .getTopicPermission())
         .isEqualTo(TopicPermission.CREATE);
-    assertThat(service.createInvite(counsellorInto(SELECT_AGENCY, 21L), null).getTopicPermission())
+    assertThat(
+            invites
+                .createInvite(withPermission(counsellorInto(SELECT_AGENCY, 21L), null))
+                .getTopicPermission())
         .isEqualTo(TopicPermission.SELECT_EXISTING);
     assertThat(
-            service.createInvite(counsellorInto(NEW_STYLE_AGENCY, 51L), null).getTopicPermission())
+            invites
+                .createInvite(withPermission(counsellorInto(NEW_STYLE_AGENCY, 51L), null))
+                .getTopicPermission())
         .isEqualTo(TopicPermission.NONE);
   }
 
@@ -159,13 +173,15 @@ class AccountInviteTopicPermissionIT {
     actAsTenantAdmin();
 
     assertThat(
-            service
-                .createInvite(counsellorInto(LEGACY_AGENCY, 11L), TopicPermission.NONE)
+            invites
+                .createInvite(
+                    withPermission(counsellorInto(LEGACY_AGENCY, 11L), TopicPermission.NONE))
                 .getTopicPermission())
         .isEqualTo(TopicPermission.NONE);
     assertThat(
-            service
-                .createInvite(counsellorInto(NEW_STYLE_AGENCY, 51L), TopicPermission.CREATE)
+            invites
+                .createInvite(
+                    withPermission(counsellorInto(NEW_STYLE_AGENCY, 51L), TopicPermission.CREATE))
                 .getTopicPermission())
         .isEqualTo(TopicPermission.CREATE);
   }
@@ -175,7 +191,7 @@ class AccountInviteTopicPermissionIT {
     actAsTenantAdmin();
 
     // The founder of a new agency is its agency admin.
-    AccountInvite invite = service.createInvite(agencyAdminIntoNewAgency(), null);
+    AccountInvite invite = invites.createInvite(withPermission(agencyAdminIntoNewAgency(), null));
 
     assertThat(invite.getTopicPermission()).isEqualTo(TopicPermission.CREATE);
     verify(agencyTopicPermissionLookup, never()).find(anyLong());
@@ -186,11 +202,15 @@ class AccountInviteTopicPermissionIT {
     actAsTenantAdmin();
 
     // No topic check yet: the new agency's admin brings the topics before the release.
-    AccountInvite open = service.createInvite(counsellorWaitingForNewAgency(), null);
+    givenAPendingAdminForTheNewAgency();
+    AccountInvite open =
+        invites.createInvite(withPermission(counsellorWaitingForNewAgency(), null));
     AccountInvite fixed =
-        service.createInvite(counsellorWaitingForNewAgency(), TopicPermission.SELECT_EXISTING);
+        invites.createInvite(
+            withPermission(counsellorWaitingForNewAgency(), TopicPermission.SELECT_EXISTING));
     AccountInvite free =
-        service.createInvite(counsellorWaitingForNewAgency(), TopicPermission.CREATE);
+        invites.createInvite(
+            withPermission(counsellorWaitingForNewAgency(), TopicPermission.CREATE));
 
     assertThat(open.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
     assertThat(open.getTopicPermission()).isEqualTo(TopicPermission.NONE);
@@ -207,12 +227,14 @@ class AccountInviteTopicPermissionIT {
     // An agency without topics has nothing to fix or to select.
     assertThatThrownBy(
             () ->
-                service.createInvite(counsellorInto(TOPICLESS_AGENCY, null), TopicPermission.NONE))
+                invites.createInvite(
+                    withPermission(counsellorInto(TOPICLESS_AGENCY, null), TopicPermission.NONE)))
         .isInstanceOf(BadRequestException.class);
     assertThatThrownBy(
             () ->
-                service.createInvite(
-                    counsellorInto(TOPICLESS_AGENCY, null), TopicPermission.SELECT_EXISTING))
+                invites.createInvite(
+                    withPermission(
+                        counsellorInto(TOPICLESS_AGENCY, null), TopicPermission.SELECT_EXISTING)))
         .isInstanceOf(BadRequestException.class);
     assertThat(accountInviteRepository.findAll()).isEmpty();
   }
@@ -221,7 +243,8 @@ class AccountInviteTopicPermissionIT {
   void createInvite_Should_AllowNoneWithoutDepartment_When_TheAgencyHasTopicsToPickOneFrom() {
     actAsTenantAdmin();
 
-    AccountInvite invite = service.createInvite(counsellorInto(NEW_STYLE_AGENCY, null), null);
+    AccountInvite invite =
+        invites.createInvite(withPermission(counsellorInto(NEW_STYLE_AGENCY, null), null));
 
     assertThat(invite.getTopicPermission()).isEqualTo(TopicPermission.NONE);
   }
@@ -231,9 +254,11 @@ class AccountInviteTopicPermissionIT {
     actAsTenantAdmin();
 
     // Whatever the agency default or the inviter's choice says.
-    AccountInvite intoLegacy = service.createInvite(agencyAdminInto(LEGACY_AGENCY, "a"), null);
+    AccountInvite intoLegacy =
+        invites.createInvite(withPermission(agencyAdminInto(LEGACY_AGENCY, "a"), null));
     AccountInvite intoNoneDefault =
-        service.createInvite(agencyAdminInto(NEW_STYLE_AGENCY, "c"), TopicPermission.NONE);
+        invites.createInvite(
+            withPermission(agencyAdminInto(NEW_STYLE_AGENCY, "c"), TopicPermission.NONE));
 
     assertThat(intoLegacy.getTopicPermission()).isEqualTo(TopicPermission.CREATE);
     assertThat(
@@ -244,12 +269,56 @@ class AccountInviteTopicPermissionIT {
         .isEqualTo(TopicPermission.CREATE);
   }
 
+  @Test
+  void createAndSend_Should_KeepTheChosenPermission_When_SmtpLeavesTheDeliveryUncertain() {
+    actAsTenantAdmin();
+    Long templateId =
+        templateRepository
+            .save(
+                InviteEmailTemplate.builder()
+                    .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+                    .name("uncertain-smtp")
+                    .language("de")
+                    .subject("Einladung")
+                    .body("Hallo")
+                    .active(true)
+                    .createDate(LocalDateTime.now())
+                    .build())
+            .getId();
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
+        .thenReturn("https://admin.example.org/onboarding/token");
+    when(inviteMailDispatchService.send(
+            anyString(), anyString(), anyString(), anyString(), any(), any()))
+        .thenThrow(
+            new SmtpSendException(
+                SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+                SmtpSendException.DeliveryDisposition.DELIVERY_UNCERTAIN,
+                "timeout after DATA"));
+    try {
+      assertThatThrownBy(
+              () ->
+                  invites.createAndSendInvite(
+                      withPermission(counsellorInto(LEGACY_AGENCY, 11L), TopicPermission.NONE),
+                      templateId))
+          .isInstanceOf(SmtpSendException.class);
+
+      // The claim stays so a retry cannot mail twice; it must carry the chosen permission.
+      AccountInvite kept = accountInviteRepository.findAll().get(0);
+      assertThat(kept.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+      assertThat(kept.getTopicPermission()).isEqualTo(TopicPermission.NONE);
+    } finally {
+      accountInviteRepository.deleteAll();
+      templateRepository.deleteById(templateId);
+    }
+  }
+
   // --- later changes from the invite table ------------------------------------------------------
 
   @Test
   void updatePermission_Should_ChangeTheInvite_When_TheAccountDoesNotExistYet() {
     actAsTenantAdmin();
-    AccountInvite invite = service.createInvite(counsellorInto(LEGACY_AGENCY, 11L), null);
+    AccountInvite invite =
+        invites.createInvite(withPermission(counsellorInto(LEGACY_AGENCY, 11L), null));
 
     AccountInvite updated = service.updatePermission(invite.getId(), TopicPermission.NONE);
 
@@ -261,7 +330,8 @@ class AccountInviteTopicPermissionIT {
   @Test
   void updatePermission_Should_AlsoChangeTheCounsellor_When_TheAccountExists() {
     actAsTenantAdmin();
-    AccountInvite invite = service.createInvite(counsellorInto(LEGACY_AGENCY, 11L), null);
+    AccountInvite invite =
+        invites.createInvite(withPermission(counsellorInto(LEGACY_AGENCY, 11L), null));
     invite.setProvisionedUserId(SEEDED_CONSULTANT_ID);
     accountInviteRepository.save(invite);
 
@@ -275,7 +345,8 @@ class AccountInviteTopicPermissionIT {
   @Test
   void updatePermission_Should_BeAllowedForTheAgencyAdminOfThatAgency() {
     actAsTenantAdmin();
-    AccountInvite invite = service.createInvite(counsellorInto(LEGACY_AGENCY, 11L), null);
+    AccountInvite invite =
+        invites.createInvite(withPermission(counsellorInto(LEGACY_AGENCY, 11L), null));
 
     actAsAgencyAdmin();
     assertThat(service.updatePermission(invite.getId(), TopicPermission.NONE).getTopicPermission())
@@ -285,7 +356,8 @@ class AccountInviteTopicPermissionIT {
   @Test
   void updatePermission_Should_BeForbidden_When_TheInviteBelongsToAnotherAgency() {
     actAsTenantAdmin();
-    AccountInvite invite = service.createInvite(counsellorInto(SELECT_AGENCY, 21L), null);
+    AccountInvite invite =
+        invites.createInvite(withPermission(counsellorInto(SELECT_AGENCY, 21L), null));
 
     actAsAgencyAdmin();
     assertThatThrownBy(() -> service.updatePermission(invite.getId(), TopicPermission.CREATE))
@@ -295,7 +367,8 @@ class AccountInviteTopicPermissionIT {
   @Test
   void updatePermission_Should_BeForbidden_When_TheInviteBelongsToAnotherTraeger() {
     actAsPlatformAdmin();
-    AccountInvite invite = service.createInvite(counsellorIntoForeignTenant(), null);
+    AccountInvite invite =
+        invites.createInvite(withPermission(counsellorIntoForeignTenant(), null));
 
     actAsTenantAdmin();
     assertThatThrownBy(() -> service.updatePermission(invite.getId(), TopicPermission.NONE))
@@ -307,11 +380,15 @@ class AccountInviteTopicPermissionIT {
   @Test
   void updatePermission_Should_Refuse_Invalid_Requests() {
     actAsTenantAdmin();
-    AccountInvite counsellorInvite = service.createInvite(counsellorInto(LEGACY_AGENCY, 11L), null);
+    AccountInvite counsellorInvite =
+        invites.createInvite(withPermission(counsellorInto(LEGACY_AGENCY, 11L), null));
     AccountInvite topiclessInvite =
-        service.createInvite(counsellorInto(TOPICLESS_AGENCY, null), null);
-    AccountInvite waitingInvite = service.createInvite(counsellorWaitingForNewAgency(), null);
-    AccountInvite adminInvite = service.createInvite(agencyAdminInto(LEGACY_AGENCY, "b"), null);
+        invites.createInvite(withPermission(counsellorInto(TOPICLESS_AGENCY, null), null));
+    givenAPendingAdminForTheNewAgency();
+    AccountInvite waitingInvite =
+        invites.createInvite(withPermission(counsellorWaitingForNewAgency(), null));
+    AccountInvite adminInvite =
+        invites.createInvite(withPermission(agencyAdminInto(LEGACY_AGENCY, "b"), null));
 
     assertThatThrownBy(() -> service.updatePermission(adminInvite.getId(), TopicPermission.NONE))
         .isInstanceOf(BadRequestException.class);
@@ -367,6 +444,23 @@ class AccountInviteTopicPermissionIT {
         .thenReturn(Optional.of(new ExistingAgency(agencyId, tenantId, false, topicIds)));
     when(agencyTopicPermissionLookup.find(agencyId))
         .thenReturn(Optional.of(new AgencyTopicSettings(agencyDefault, topicIds)));
+  }
+
+  private static CreateAccountInviteCommand withPermission(
+      CreateAccountInviteCommand command, TopicPermission permission) {
+    return new CreateAccountInviteCommand(
+        command.targetRole(),
+        command.tenantId(),
+        command.recipientEmail(),
+        command.firstName(),
+        command.lastName(),
+        command.agencyId(),
+        command.departmentId(),
+        command.expiresInDays(),
+        command.tenantIdAllocationMode(),
+        command.agencyIdAllocationMode(),
+        command.alsoCounsellor(),
+        permission);
   }
 
   private static CreateAccountInviteCommand counsellorInto(long agencyId, Long departmentId) {
@@ -425,7 +519,22 @@ class AccountInviteTopicPermissionIT {
         IdAllocationMode.AUTO);
   }
 
-  /** A CSV row (import batch) for a counsellor of the not-yet-created agency 4711. */
+  private void givenAPendingAdminForTheNewAgency() {
+    invites.createInvite(
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.AGENCY_ADMIN,
+            OWN_TENANT,
+            "founder-" + System.nanoTime() + "@example.org",
+            "Grace",
+            "Hopper",
+            4711L,
+            null,
+            null,
+            null,
+            IdAllocationMode.MANUAL));
+  }
+
+  /** A counsellor of the not-yet-created agency 4711. */
   private static CreateAccountInviteCommand counsellorWaitingForNewAgency() {
     return new CreateAccountInviteCommand(
         AccountInviteTargetRole.COUNSELLOR,
@@ -437,8 +546,6 @@ class AccountInviteTopicPermissionIT {
         null,
         null,
         null,
-        IdAllocationMode.MANUAL,
-        null,
-        "batch-1026-s6");
+        IdAllocationMode.MANUAL);
   }
 }

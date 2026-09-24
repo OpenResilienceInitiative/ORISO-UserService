@@ -49,6 +49,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
   AccountInviteRoleRuleIT.CallerConfig.class
 })
@@ -81,6 +82,7 @@ class AccountInviteRoleRuleIT {
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
   @MockitoBean private ExistingAgencyClient existingAgencyClient;
+  @MockitoBean private AgencyTopicPermissionLookup agencyTopicPermissionLookup;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;

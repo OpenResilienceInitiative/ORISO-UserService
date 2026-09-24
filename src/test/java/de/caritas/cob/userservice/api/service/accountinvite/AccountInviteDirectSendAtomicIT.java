@@ -63,6 +63,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
   IdReservationReleaseProcessor.class
 })
@@ -83,6 +84,7 @@ class AccountInviteDirectSendAtomicIT {
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
   @MockitoBean private ExistingAgencyClient existingAgencyClient;
+  @MockitoBean private AgencyTopicPermissionLookup agencyTopicPermissionLookup;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;

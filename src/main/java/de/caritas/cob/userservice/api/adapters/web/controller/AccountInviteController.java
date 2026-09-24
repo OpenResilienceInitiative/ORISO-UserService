@@ -79,19 +79,17 @@ public class AccountInviteController {
                 IdAllocationMode.class, safe.tenantIdAllocationMode, "tenantIdAllocationMode"),
             parseOptionalEnum(
                 IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"),
-            safe.alsoCounsellor);
-
-    TopicPermission topicPermission = TopicPermission.fromWire(safe.topicPermission);
+            safe.alsoCounsellor,
+            TopicPermission.fromWire(safe.topicPermission));
 
     if (safe.templateId != null) {
-      InviteSendResult result =
-          topicPermissionService.createAndSendInvite(command, safe.templateId, topicPermission);
+      InviteSendResult result = accountInviteService.createAndSendInvite(command, safe.templateId);
       return new ResponseEntity<>(
           withQueueState(AccountInviteResponseDTO.from(result), result.invite()),
           HttpStatus.CREATED);
     }
 
-    AccountInvite invite = topicPermissionService.createInvite(command, topicPermission);
+    AccountInvite invite = accountInviteService.createInvite(command);
 
     return new ResponseEntity<>(
         withQueueState(
