@@ -76,6 +76,13 @@
     </sql>
     <rollback>
       <sql>
+        -- Guard: refuse (duplicate-key error) while a request references a seeded neutral row.
+        -- Deleting it would orphan that request; recover by rolling forward instead.
+        INSERT INTO case_handover_reason_policy (code, label, policy_authority)
+        SELECT p.code, 'rollback blocked: referenced by case_handover_request', 'rollback-guard'
+        FROM case_handover_reason_policy p
+        WHERE p.seeded_by_neutral_reasons = 1
+          AND EXISTS (SELECT 1 FROM case_handover_request r WHERE r.reason_code = p.code);
         UPDATE case_handover_reason_policy
         SET enabled = 1
         WHERE retired_by_neutral_reasons = 1;

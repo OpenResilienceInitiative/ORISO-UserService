@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -46,10 +47,46 @@ class CaseHandoverNeutralReasonsMigrationTest {
             .containsEntry("PLANNED_ABSENCE", "enabled=true label=Custom planned");
         assertThat(templatesOf(c, "UNPLANNED_ABSENCE")).isNull();
 
+        // A request on a retired code does not block: its policy row is kept.
+        insertRequest(c, "COUNSELLOR_IS_ILL");
         liquibase.rollback(1, new Contexts(), new LabelExpression());
         // Closing Liquibase closes the connection, so assert inside.
         assertThat(rows(c)).isEqualTo(before);
       }
+    }
+  }
+
+  @Test
+  void rollbackRefusesWhileARequestReferencesASeededNeutralCode() throws Exception {
+    try (Connection c =
+        DriverManager.getConnection(
+            "jdbc:h2:mem:neutral-reasons-" + UUID.randomUUID() + ";MODE=MariaDB", "sa", "")) {
+      seed(c);
+      var database =
+          DatabaseFactory.getInstance().findCorrectDatabaseImplementation(new JdbcConnection(c));
+      try (var liquibase = new Liquibase(CHANGELOG, new ClassLoaderResourceAccessor(), database)) {
+        liquibase.update(new Contexts(), new LabelExpression());
+        Map<String, String> migrated = rows(c);
+        insertRequest(c, "UNPLANNED_ABSENCE");
+
+        assertThatThrownBy(() -> liquibase.rollback(1, new Contexts(), new LabelExpression()))
+            .hasStackTraceContaining("UNPLANNED_ABSENCE");
+        // Nothing deleted or re-enabled: the request's policy is still there.
+        assertThat(rows(c)).isEqualTo(migrated);
+      }
+    }
+  }
+
+  private void insertRequest(Connection c, String reasonCode) throws Exception {
+    try (var sql = c.createStatement()) {
+      sql.execute(
+          "INSERT INTO case_handover_request (session_id, reason_code) VALUES (1, '"
+              + reasonCode
+              + "')");
+    }
+    // Liquibase turned autocommit off; commit so its transaction handling cannot drop the row.
+    if (!c.getAutoCommit()) {
+      c.commit();
     }
   }
 
@@ -69,6 +106,12 @@ class CaseHandoverNeutralReasonsMigrationTest {
               + " max_access_duration_minutes INT NULL,"
               + " client_consent_mode VARCHAR(20) NOT NULL DEFAULT 'NONE',"
               + " retired_by_0096 BOOLEAN NOT NULL DEFAULT FALSE)");
+      // Reduced to the columns the rollback guard reads.
+      sql.execute(
+          "CREATE TABLE case_handover_request ("
+              + " id BIGINT AUTO_INCREMENT PRIMARY KEY,"
+              + " session_id BIGINT NOT NULL,"
+              + " reason_code VARCHAR(100) NOT NULL)");
       insert(sql, "COUNSELLOR_ASKED_FOR_ADVICE", "Counsellor asked for advice", 1, "{}");
       insert(sql, "COUNSELLOR_IS_ILL", "Counsellor is ill", 1, "{\"de\":\"ist leider erkrankt\"}");
       insert(sql, "COUNSELLOR_LEFT", "Counsellor does not work here anymore", 1, null);
