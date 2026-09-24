@@ -221,7 +221,6 @@ class AccountInviteExistingAgencyIT {
         .isInstanceOf(BadRequestException.class);
   }
 
-
   @Test
   void createInvite_Should_StillReserve_When_TheAdminSendsManual() {
     actAsPlatformAdmin();
