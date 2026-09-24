@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.statistics.ConsultantMessageStatService;
+import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import io.micrometer.observation.Observation;
 import io.micrometer.observation.ObservationRegistry;
 import jakarta.annotation.PostConstruct;
@@ -49,6 +50,7 @@ public class MatrixEventListenerService {
   private OutboundHttpMetrics outboundHttpMetrics;
   private LiveChatDiagnosticMetrics diagnosticMetrics;
   private ObservationRegistry observationRegistry = ObservationRegistry.NOOP;
+  private TenantContextProvider tenantContextProvider;
 
   // Maps Matrix room ID to session ID for quick lookup
   private final Map<String, Long> roomToSessionMap = new ConcurrentHashMap<>();
@@ -82,6 +84,11 @@ public class MatrixEventListenerService {
   }
 
   @Autowired(required = false)
+  void setTenantContextProvider(TenantContextProvider tenantContextProvider) {
+    this.tenantContextProvider = tenantContextProvider;
+  }
+
+  @Autowired(required = false)
   void setDiagnosticMetrics(LiveChatDiagnosticMetrics diagnosticMetrics) {
     this.diagnosticMetrics = diagnosticMetrics;
   }
@@ -104,7 +111,15 @@ public class MatrixEventListenerService {
       return;
     }
     log.info("🔷 Initializing Matrix Event Listener Service...");
-    executorService = Executors.newFixedThreadPool(2);
+    // Sync loop and notification jobs serve every Träger, so they read in the technical tenant.
+    executorService =
+        Executors.newFixedThreadPool(
+            2,
+            task ->
+                new Thread(
+                    tenantContextProvider == null
+                        ? task
+                        : tenantContextProvider.inTechnicalContext(task)));
 
     // Start Matrix sync loop in background
     executorService.submit(this::startMatrixSyncLoop);

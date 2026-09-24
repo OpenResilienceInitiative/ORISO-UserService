@@ -8,9 +8,9 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.List;
+import java.util.regex.Pattern;
+import java.util.stream.Stream;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
@@ -27,39 +27,28 @@ import org.springframework.web.filter.OncePerRequestFilter;
 @Slf4j
 public class HttpTenantFilter extends OncePerRequestFilter {
 
-  private static final String MATRIX_RTC_CALL_POLICY_PATH = "/internal/matrixrtc/call-policy";
-
-  /**
-   * The DPA signed-notice hint from TenantService. Like the MatrixRTC policy endpoint this is a
-   * machine callback, not a browser request: it arrives on the service host without a session,
-   * without a tenant header and without a resolvable subdomain, so {@code
-   * TenantResolverService.resolveForNonAuthenticatedUser} would throw AccessDeniedException before
-   * the permitAll route reaches its controller. The tenant is not lost by skipping this filter — it
-   * travels in the path and {@code DpaSignedNoticeService.processHint} establishes it on the worker
-   * thread that does the database work. Matched by pattern rather than by substring so sibling
-   * tenant routes keep the normal resolution.
-   */
-  private static final java.util.regex.Pattern DPA_SIGNED_NOTICE_PATH =
-      java.util.regex.Pattern.compile(".*/users/tenants/[^/]+/dpa-signed-notices$");
-
   private final @Nullable TenantResolverService tenantResolverService;
 
   private final @Nullable TenantService tenantService;
 
-  private static final String[] TENANCY_FILTER_WHITELIST =
-      new String[] {
-        "/actuator/health",
-        "/actuator/health/**",
-        "/actuator/loggers/**",
-        "/actuator/loggers",
-        "/swagger-ui.html",
-        "/favicon.ico",
-        MATRIX_RTC_CALL_POLICY_PATH,
-        "/users/askers/new",
-        "/users/magic-link/",
-        "/users/invitelinks/",
-        "/conversations/askers/anonymous/new"
-      };
+  // Public routes that carry no tenant, matched exactly: a substring match would let any URI
+  // containing one of them skip tenant resolution.
+  private static final List<Pattern> TENANCY_FILTER_WHITELIST =
+      Stream.of(
+              "/actuator/health(/.*)?",
+              "/actuator/loggers(/.*)?",
+              "/swagger-ui\\.html",
+              "/favicon\\.ico",
+              "/internal/matrixrtc/call-policy",
+              "(/service)?/users/askers/new",
+              "(/service)?/users/magic-link/(request|consume)",
+              "(/service)?/users/invitelinks/[^/]+/(context|redeem)",
+              "(/service)?/conversations/askers/anonymous/new",
+              "(/service)?/users/identity-suggestions",
+              // TenantService's callback; DpaSignedNoticeService takes the tenant from the path.
+              "(/service)?/users/tenants/[^/]+/dpa-signed-notices")
+          .map(Pattern::compile)
+          .toList();
 
   private final DefaultRequiresTenantFilterMatcher requiresTenantFilterMatcher =
       new DefaultRequiresTenantFilterMatcher();
@@ -74,8 +63,11 @@ public class HttpTenantFilter extends OncePerRequestFilter {
       resolveSubdomain(tenantId);
       log.debug("Setting current tenant context to: " + tenantId);
       TenantContext.setCurrentTenant(tenantId);
-      filterChain.doFilter(request, response);
-      TenantContext.clear();
+      try {
+        filterChain.doFilter(request, response);
+      } finally {
+        TenantContext.clear();
+      }
     } else {
       log.debug(
           "Skipping tenant filter for request: {} as it belongs to a tenancy whitelist.",
@@ -101,24 +93,9 @@ public class HttpTenantFilter extends OncePerRequestFilter {
       if (HttpMethod.OPTIONS.matches(request.getMethod())) {
         return false;
       }
-
-      List<String> tenantWhitelist = new ArrayList<>(Arrays.asList(TENANCY_FILTER_WHITELIST));
-      return !belongsToWhitelist(request, tenantWhitelist);
-    }
-
-    private boolean belongsToWhitelist(HttpServletRequest request, List<String> tenantWhitelist) {
       String requestUri = request.getRequestURI().toLowerCase();
-      if (requestUri.equals("/users/identity-suggestions")
-          || requestUri.equals("/service/users/identity-suggestions")
-          || DPA_SIGNED_NOTICE_PATH.matcher(requestUri).matches()) {
-        return true;
-      }
-      return tenantWhitelist.parallelStream()
-          .anyMatch(
-              whitelistUri ->
-                  MATRIX_RTC_CALL_POLICY_PATH.equals(whitelistUri)
-                      ? MATRIX_RTC_CALL_POLICY_PATH.equals(requestUri)
-                      : requestUri.contains(whitelistUri));
+      return TENANCY_FILTER_WHITELIST.stream()
+          .noneMatch(route -> route.matcher(requestUri).matches());
     }
   }
 }

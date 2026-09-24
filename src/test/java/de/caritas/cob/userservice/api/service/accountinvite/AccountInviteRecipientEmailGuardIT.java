@@ -44,7 +44,11 @@ import org.springframework.transaction.annotation.Transactional;
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
-@Import({AccountInviteService.class, AccountInviteAccessPolicy.class})
+@Import({
+  AccountInviteService.class,
+  AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class
+})
 class AccountInviteRecipientEmailGuardIT {
 
   private static final String ADDRESS = "held@example.org";

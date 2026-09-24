@@ -276,7 +276,6 @@ class UserAdminControllerTest {
     var response = controller.createConsultantAgency("c-1", dto);
 
     assertEquals(HttpStatus.CREATED, response.getStatusCode());
-    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(any());
     verify(consultantAdminFacade).createNewConsultantAgency("c-1", dto);
   }
 
@@ -287,7 +286,6 @@ class UserAdminControllerTest {
     var response = controller.setConsultantAgencies("c-1", list);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(list);
     verify(consultantAdminFacade).setConsultantAgencies("c-1", list);
   }
 
@@ -483,7 +481,7 @@ class UserAdminControllerTest {
 
   @Test
   void getAdminAgencies_Should_delegate() {
-    when(adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L, 2L));
+    when(adminUserFacade.findAgencyIdsOfAdminInCallerScope("admin-1")).thenReturn(List.of(1L, 2L));
 
     var response = controller.getAdminAgencies("admin-1");
 
