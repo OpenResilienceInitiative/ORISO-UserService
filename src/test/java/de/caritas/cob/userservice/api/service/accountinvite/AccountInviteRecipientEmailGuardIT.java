@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -14,11 +15,14 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
+import de.caritas.cob.userservice.api.tenant.AsTechnicalUser;
+import de.caritas.cob.userservice.api.tenant.Tenants;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Answers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -53,6 +57,7 @@ import org.springframework.transaction.annotation.Transactional;
   AccountInviteTopicPermissionService.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class
 })
+@AsTechnicalUser
 class AccountInviteRecipientEmailGuardIT {
 
   private static final String ADDRESS = "held@example.org";
@@ -60,7 +65,9 @@ class AccountInviteRecipientEmailGuardIT {
   @Autowired private AccountInviteService service;
   @Autowired private AccountInviteRepository accountInviteRepository;
 
-  @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
+  private AuthenticatedUser authenticatedUser;
+
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
@@ -79,8 +86,14 @@ class AccountInviteRecipientEmailGuardIT {
   @BeforeEach
   void noIdentityOwnsTheAddress() {
     when(identityEmailOwnerLookup.findByEmail(ADDRESS)).thenReturn(Optional.empty());
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    Tenants.actAs(
+        authenticatedUser,
+        "admin-1",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
+    authenticatedUser.setUsername("admin@example.org");
   }
 
   @AfterEach

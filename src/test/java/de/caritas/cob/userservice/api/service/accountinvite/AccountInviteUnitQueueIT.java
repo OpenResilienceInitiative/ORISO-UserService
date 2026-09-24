@@ -34,11 +34,12 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdA
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -69,7 +70,7 @@ import org.springframework.web.client.HttpClientErrorException;
  * the same ID; once the unit exists they are released with their template.
  */
 @DataJpaTest
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
@@ -83,9 +84,10 @@ import org.springframework.web.client.HttpClientErrorException;
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AccountInviteUnitQueueIT.CallerConfig.class
 })
+@WithTenant(AccountInviteUnitQueueIT.OWN_TENANT)
 class AccountInviteUnitQueueIT {
 
-  private static final long OWN_TENANT = 1L;
+  static final long OWN_TENANT = 1L;
   private static final long NEW_AGENCY = 500L;
   private static final long EXISTING_AGENCY = 1L;
   private static final long NEW_TENANT = 900L;
@@ -104,7 +106,6 @@ class AccountInviteUnitQueueIT {
   @Autowired private InviteEmailTemplateRepository templateRepository;
   @Autowired private InviteEmailDeliveryRepository deliveryRepository;
   @Autowired private AuthenticatedUser caller;
-  @Autowired private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
@@ -121,8 +122,6 @@ class AccountInviteUnitQueueIT {
 
   @BeforeEach
   void upstreams() {
-    org.springframework.test.util.ReflectionTestUtils.setField(
-        adminScope, "multitenancyEnabled", true);
     when(identityEmailOwnerLookup.findByEmail(anyString())).thenReturn(Optional.empty());
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
         .thenReturn("https://admin.example.org/admin/counsellor-onboarding/token");
@@ -501,7 +500,8 @@ class AccountInviteUnitQueueIT {
   }
 
   private void actAsTenantAdmin() {
-    actAs(
+    Tenants.actAs(
+        caller,
         "tenant-admin-1",
         OWN_TENANT,
         UserRole.TENANT_ADMIN,
@@ -510,18 +510,13 @@ class AccountInviteUnitQueueIT {
   }
 
   private void actAsPlatformAdmin() {
-    actAs("platform-admin", 0L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
-  }
-
-  private void actAs(String userId, Long tenantId, UserRole... roles) {
-    caller.setUserId(userId);
-    caller.setUsername(userId);
-    caller.setTenantId(tenantId);
-    caller.setRoles(
-        java.util.Arrays.stream(roles)
-            .map(UserRole::getValue)
-            .collect(java.util.stream.Collectors.toSet()));
-    caller.setGrantedAuthorities(Set.of());
+    Tenants.actAs(
+        caller,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
   }
 
   private static CreateAccountInviteCommand agencyAdmin(Long agencyId) {

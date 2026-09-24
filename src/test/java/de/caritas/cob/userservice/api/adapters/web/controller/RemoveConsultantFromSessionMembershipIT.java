@@ -10,36 +10,25 @@ import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 
-import com.google.common.collect.Lists;
-import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.model.Session.RegistrationType;
-import de.caritas.cob.userservice.api.model.Session.SessionStatus;
-import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
-import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
-import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService.ResolvedRoomMember;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
-import java.time.LocalDateTime;
-import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +37,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -65,21 +55,21 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"multitenancy.enabled=true"})
+@Import(TenantFixtures.class)
+@WithTenant(RemoveConsultantFromSessionMembershipIT.TENANT)
 class RemoveConsultantFromSessionMembershipIT {
 
   private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
-  private static final long TENANT = 1L;
+  static final long TENANT = 1L;
   private static final long SESSION_AGENCY = 9711L;
   private static final long OTHER_AGENCY = 9712L;
   private static final String MATRIX_ROOM = "!remove-membership:synthetic.oriso.test";
 
+  @Autowired private TenantFixtures fixtures;
   @Autowired private MockMvc mockMvc;
-  @Autowired private ConsultantRepository consultantRepository;
-  @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
-  @Autowired private UserRepository userRepository;
   @Autowired private SessionRepository sessionRepository;
 
   @MockitoBean TenantService tenantService;
@@ -91,11 +81,6 @@ class RemoveConsultantFromSessionMembershipIT {
   @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
   AuthenticatedUser caller;
 
-  private final List<Session> seededSessions = new ArrayList<>();
-  private final List<User> seededAskers = new ArrayList<>();
-  private final List<ConsultantAgency> seededAgencyMemberships = new ArrayList<>();
-  private final List<Consultant> seededConsultants = new ArrayList<>();
-
   private Consultant advisor;
   private Consultant roomMember;
   private Consultant colleagueOfSessionAgency;
@@ -106,31 +91,17 @@ class RemoveConsultantFromSessionMembershipIT {
   void seedSessionWithARoomMemberAndTwoOtherConsultants() {
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().subdomain("synthetic"));
-    when(tenantResolverService.resolve(any())).thenReturn(TENANT);
-    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-    try {
-      advisor = persistConsultantIn(SESSION_AGENCY);
-      roomMember = persistConsultantIn(null);
-      colleagueOfSessionAgency = persistConsultantIn(SESSION_AGENCY);
-      consultantOfOtherAgency = persistConsultantIn(OTHER_AGENCY);
-      session = persistSession(advisor);
-    } finally {
-      TenantContext.clear();
-    }
+    advisor = fixtures.consultant(TENANT, SESSION_AGENCY);
+    roomMember = fixtures.consultant(TENANT);
+    colleagueOfSessionAgency = fixtures.consultant(TENANT, SESSION_AGENCY);
+    consultantOfOtherAgency = fixtures.consultant(TENANT, OTHER_AGENCY);
+    session = fixtures.session(fixtures.adviceSeeker(TENANT), SESSION_AGENCY, advisor);
     givenRoomMember(roomMember);
   }
 
   @AfterEach
   void removeSeededRows() {
-    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-    try {
-      seededSessions.forEach(s -> sessionRepository.deleteById(s.getId()));
-      seededAskers.forEach(asker -> userRepository.deleteById(asker.getUserId()));
-      seededAgencyMemberships.forEach(m -> consultantAgencyRepository.deleteById(m.getId()));
-      seededConsultants.forEach(c -> consultantRepository.deleteById(c.getId()));
-    } finally {
-      TenantContext.clear();
-    }
+    fixtures.removeAll();
   }
 
   @Test
@@ -223,93 +194,18 @@ class RemoveConsultantFromSessionMembershipIT {
   }
 
   private void actAs(Consultant consultant) {
-    caller.setUserId(consultant.getId());
+    Tenants.actAs(caller, consultant.getId(), TENANT, UserRole.CONSULTANT);
     caller.setUsername(consultant.getUsername());
-    caller.setTenantId(TENANT);
-    caller.setRoles(Set.of(UserRole.CONSULTANT.getValue()));
     caller.setGrantedAuthorities(Set.of(AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION));
   }
 
   private String advisorOfSession() {
-    TenantContext.setCurrentTenant(TENANT);
-    try {
-      return sessionRepository.findById(session.getId()).orElseThrow().getConsultant().getId();
-    } finally {
-      TenantContext.clear();
-    }
+    return Tenants.in(
+        TENANT,
+        () -> sessionRepository.findById(session.getId()).orElseThrow().getConsultant().getId());
   }
 
   private static void assertStatus(MvcResult result, int expected) {
     assertThat(result.getResponse().getStatus()).as("HTTP status").isEqualTo(expected);
-  }
-
-  private Consultant persistConsultantIn(Long agencyId) {
-    var id = UUID.randomUUID().toString();
-    var consultant = new Consultant();
-    consultant.setId(id);
-    consultant.setTenantId(TENANT);
-    consultant.setUsername("membership-" + id.substring(0, 8));
-    consultant.setFirstName("Synthetic");
-    consultant.setLastName("M" + id.substring(0, 8));
-    consultant.setEmail(id.substring(0, 8) + "@synthetic.oriso.test");
-    consultant.setAppointments(null);
-    consultant.setConsultantAgencies(new HashSet<>());
-    consultant.setConsultantMobileTokens(new HashSet<>());
-    consultant.setEncourage2fa(true);
-    consultant.setNotifyEnquiriesRepeating(true);
-    consultant.setNotifyNewChatMessageFromAdviceSeeker(true);
-    consultant.setWalkThroughEnabled(true);
-    consultant.setTeamConsultant(false);
-    consultant.setMagicLinkLoginEnabled(false);
-    consultant.setLanguageCode(LanguageCode.de);
-    consultant.setMatrixUserId("@membership-" + id.substring(0, 8) + ":synthetic.oriso.test");
-    var saved = consultantRepository.save(consultant);
-    seededConsultants.add(saved);
-    if (agencyId != null) {
-      var membership =
-          consultantAgencyRepository.save(
-              ConsultantAgency.builder()
-                  .consultant(saved)
-                  .agencyId(agencyId)
-                  .tenantId(TENANT)
-                  .createDate(LocalDateTime.now())
-                  .updateDate(LocalDateTime.now())
-                  .build());
-      seededAgencyMemberships.add(membership);
-    }
-    return saved;
-  }
-
-  private Session persistSession(Consultant advisor) {
-    var id = UUID.randomUUID().toString();
-    var user =
-        new User(
-            id,
-            null,
-            "membership-asker-" + id.substring(0, 8),
-            id.substring(0, 8) + "@synthetic.oriso.test",
-            false);
-    user.setTenantId(TENANT);
-    user.setLanguageCode(LanguageCode.de);
-    user.setEncourage2fa(true);
-    var savedUser = userRepository.save(user);
-    seededAskers.add(savedUser);
-
-    var newSession = new Session();
-    newSession.setUser(savedUser);
-    newSession.setConsultant(advisor);
-    newSession.setTenantId(TENANT);
-    newSession.setAgencyId(SESSION_AGENCY);
-    newSession.setConsultingTypeId(1);
-    newSession.setStatus(SessionStatus.IN_PROGRESS);
-    newSession.setRegistrationType(RegistrationType.REGISTERED);
-    newSession.setPostcode("12345");
-    newSession.setLanguageCode(LanguageCode.de);
-    newSession.setTeamSession(false);
-    newSession.setSessionTopics(Lists.newArrayList());
-    newSession.setIsConsultantDirectlySet(false);
-    var saved = sessionRepository.save(newSession);
-    seededSessions.add(saved);
-    return saved;
   }
 }

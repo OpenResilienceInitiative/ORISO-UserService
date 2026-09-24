@@ -15,8 +15,6 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
-import com.google.common.collect.Lists;
-import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -33,12 +31,8 @@ import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.Session;
-import de.caritas.cob.userservice.api.model.Session.RegistrationType;
-import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
-import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.AgencyInviteLinkRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
@@ -57,13 +51,14 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
-import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
@@ -71,13 +66,10 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
-import java.util.Arrays;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
-import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.mockito.Answers;
@@ -85,6 +77,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.context.annotation.Import;
 import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
@@ -105,25 +98,26 @@ import org.springframework.transaction.annotation.Transactional;
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"multitenancy.enabled=true"})
 @Transactional
+@Import(TenantFixtures.class)
+@WithTenant(UserAdminAgencyScopeIT.OWN_TENANT)
 class UserAdminAgencyScopeIT {
 
   private static final String CSRF_HEADER = "X-CSRF-Token";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
 
-  private static final long OWN_TENANT = 1L;
+  static final long OWN_TENANT = 1L;
   private static final long FOREIGN_TENANT = 2L;
   private static final long OWN_AGENCY = 9301L;
   private static final long OTHER_AGENCY_OF_OWN_TENANT = 9302L;
   private static final long FOREIGN_TENANT_AGENCY = 9401L;
 
+  @Autowired private TenantFixtures fixtures;
   @Autowired private MockMvc mockMvc;
-  @Autowired private AdminRepository adminRepository;
   @Autowired private AdminAgencyRepository adminAgencyRepository;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
   @Autowired private UserRepository userRepository;
-  @Autowired private SessionRepository sessionRepository;
   @Autowired private AgencyInviteLinkRepository agencyInviteLinkRepository;
   @MockitoBean TopicService topicService;
 
@@ -219,18 +213,16 @@ class UserAdminAgencyScopeIT {
                             .name("Synthetic agency " + agency.getId()))
                 .toList());
 
-    callingAgencyAdmin = persistAdmin(OWN_TENANT, OWN_AGENCY);
-    ownConsultant = persistConsultant(OWN_TENANT, OWN_AGENCY);
-    sharedConsultant = persistConsultant(OWN_TENANT, OWN_AGENCY, OTHER_AGENCY_OF_OWN_TENANT);
-    otherAgencyConsultant = persistConsultant(OWN_TENANT, OTHER_AGENCY_OF_OWN_TENANT);
-    foreignTenantConsultant = persistConsultant(FOREIGN_TENANT, FOREIGN_TENANT_AGENCY);
-    ownAsker = persistAsker(OWN_TENANT, OWN_AGENCY);
-    otherAgencyAsker = persistAsker(OWN_TENANT, OTHER_AGENCY_OF_OWN_TENANT);
-  }
-
-  @AfterEach
-  void clearTenantContext() {
-    TenantContext.clear();
+    callingAgencyAdmin = fixtures.admin(OWN_TENANT, AdminType.AGENCY, OWN_AGENCY);
+    ownConsultant = fixtures.consultant(OWN_TENANT, OWN_AGENCY);
+    sharedConsultant = fixtures.consultant(OWN_TENANT, OWN_AGENCY, OTHER_AGENCY_OF_OWN_TENANT);
+    otherAgencyConsultant = fixtures.consultant(OWN_TENANT, OTHER_AGENCY_OF_OWN_TENANT);
+    foreignTenantConsultant = fixtures.consultant(FOREIGN_TENANT, FOREIGN_TENANT_AGENCY);
+    ownAsker = fixtures.session(fixtures.adviceSeeker(OWN_TENANT), OWN_AGENCY, null).getUser();
+    otherAgencyAsker =
+        fixtures
+            .session(fixtures.adviceSeeker(OWN_TENANT), OTHER_AGENCY_OF_OWN_TENANT, null)
+            .getUser();
   }
 
   // --- POST /useradmin/agency/{agencyId}/changetype ------------------------------
@@ -645,7 +637,10 @@ class UserAdminAgencyScopeIT {
   @AsTenantAdmin
   void pauseAskerDeletion_Should_Refuse_When_TenantAdminPausesAskerOfAnotherTenant()
       throws Exception {
-    var foreignAsker = persistAsker(FOREIGN_TENANT, FOREIGN_TENANT_AGENCY);
+    var foreignAsker =
+        fixtures
+            .session(fixtures.adviceSeeker(FOREIGN_TENANT), FOREIGN_TENANT_AGENCY, null)
+            .getUser();
     markDeleted(foreignAsker);
     actAsTenantAdmin();
 
@@ -671,7 +666,7 @@ class UserAdminAgencyScopeIT {
   @Test
   @AsTenantAdmin
   void getConsultant_Should_Refuse_When_Tenant0AdminIsNoPlatformAdmin() throws Exception {
-    actAs("tenant-zero-admin", 0L, UserRole.TENANT_ADMIN, UserRole.USER_ADMIN);
+    Tenants.actAs(caller, "tenant-zero-admin", 0L, UserRole.TENANT_ADMIN, UserRole.USER_ADMIN);
 
     var result =
         mockMvc
@@ -686,7 +681,7 @@ class UserAdminAgencyScopeIT {
   @Test
   @AsTenantAdmin
   void getConsultant_Should_Refuse_When_CallerHasNoTenantClaim() throws Exception {
-    actAs("tenant-admin-1", OWN_TENANT, UserRole.TENANT_ADMIN, UserRole.USER_ADMIN);
+    Tenants.actAs(caller, "tenant-admin-1", OWN_TENANT, UserRole.TENANT_ADMIN, UserRole.USER_ADMIN);
     caller.setTenantId(null);
 
     var result =
@@ -700,7 +695,13 @@ class UserAdminAgencyScopeIT {
   @AsTenantAdmin
   void getConsultant_Should_Succeed_When_PlatformAdminReadsCounsellorOfAnyTenant()
       throws Exception {
-    actAs("platform-admin", 0L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
+    Tenants.actAs(
+        caller,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
 
     var result =
         mockMvc
@@ -717,8 +718,8 @@ class UserAdminAgencyScopeIT {
   void getAgencyAdmins_Should_ListOnlyAdminsOfOwnAgencies_When_AgencyAdminListsAll()
       throws Exception {
     actAsAgencyAdmin();
-    var colleague = persistAdmin(OWN_TENANT, OWN_AGENCY);
-    var otherAgencyAdmin = persistAdmin(OWN_TENANT, OTHER_AGENCY_OF_OWN_TENANT);
+    var colleague = fixtures.admin(OWN_TENANT, AdminType.AGENCY, OWN_AGENCY);
+    var otherAgencyAdmin = fixtures.admin(OWN_TENANT, AdminType.AGENCY, OTHER_AGENCY_OF_OWN_TENANT);
 
     var result =
         mockMvc
@@ -881,13 +882,11 @@ class UserAdminAgencyScopeIT {
 
   /** Reads in the technical context, so the tenant filter hides nothing. */
   private Consultant reload(Consultant consultant) {
-    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-    return consultantRepository.findById(consultant.getId()).orElseThrow();
+    return Tenants.acrossAll(() -> consultantRepository.findById(consultant.getId()).orElseThrow());
   }
 
   private User reload(User user) {
-    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-    return userRepository.findById(user.getUserId()).orElseThrow();
+    return Tenants.acrossAll(() -> userRepository.findById(user.getUserId()).orElseThrow());
   }
 
   private boolean isTeamConsultant(Consultant consultant) {
@@ -911,36 +910,39 @@ class UserAdminAgencyScopeIT {
   }
 
   private Set<Long> activeAgenciesOf(Consultant consultant) {
-    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-    return consultantAgencyRepository
-        .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
-        .stream()
-        .map(ConsultantAgency::getAgencyId)
-        .collect(Collectors.toSet());
+    return Tenants.acrossAll(
+        () ->
+            consultantAgencyRepository
+                .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
+                .stream()
+                .map(ConsultantAgency::getAgencyId)
+                .collect(Collectors.toSet()));
   }
 
   /** A deleted counsellor keeps its agency relations only as soft-deleted rows. */
   private void markDeleted(Consultant consultant) {
-    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-    var reloaded = consultantRepository.findById(consultant.getId()).orElseThrow();
-    reloaded.setDeleteDate(LocalDateTime.now());
-    consultantRepository.save(reloaded);
-    consultantAgencyRepository
-        .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
-        .forEach(
-            relation -> {
-              relation.setDeleteDate(LocalDateTime.now());
-              consultantAgencyRepository.save(relation);
-            });
-    TenantContext.clear();
+    Tenants.acrossAll(
+        () -> {
+          var reloaded = consultantRepository.findById(consultant.getId()).orElseThrow();
+          reloaded.setDeleteDate(LocalDateTime.now());
+          consultantRepository.save(reloaded);
+          consultantAgencyRepository
+              .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
+              .forEach(
+                  relation -> {
+                    relation.setDeleteDate(LocalDateTime.now());
+                    consultantAgencyRepository.save(relation);
+                  });
+        });
   }
 
   private void markDeleted(User user) {
-    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-    var reloaded = userRepository.findById(user.getUserId()).orElseThrow();
-    reloaded.setDeleteDate(LocalDateTime.now());
-    userRepository.save(reloaded);
-    TenantContext.clear();
+    Tenants.acrossAll(
+        () -> {
+          var reloaded = userRepository.findById(user.getUserId()).orElseThrow();
+          reloaded.setDeleteDate(LocalDateTime.now());
+          userRepository.save(reloaded);
+        });
   }
 
   private static MockHttpServletRequestBuilder createInviteLink(String body) {
@@ -970,7 +972,8 @@ class UserAdminAgencyScopeIT {
   }
 
   private void actAsTenantAdmin() {
-    actAs(
+    Tenants.actAs(
+        caller,
         "tenant-admin-1",
         OWN_TENANT,
         UserRole.TENANT_ADMIN,
@@ -979,20 +982,12 @@ class UserAdminAgencyScopeIT {
   }
 
   private void actAsAgencyAdmin() {
-    actAs(
+    Tenants.actAs(
+        caller,
         callingAgencyAdmin.getId(),
         OWN_TENANT,
         UserRole.RESTRICTED_AGENCY_ADMIN,
         UserRole.USER_ADMIN);
-  }
-
-  private void actAs(String userId, Long tenantId, UserRole... roles) {
-    when(tenantResolverService.resolve(any())).thenReturn(tenantId);
-    caller.setUserId(userId);
-    caller.setUsername(userId);
-    caller.setTenantId(tenantId);
-    caller.setRoles(Arrays.stream(roles).map(UserRole::getValue).collect(Collectors.toSet()));
-    caller.setGrantedAuthorities(Set.of());
   }
 
   private void givenAgency(long agencyId, long tenantId) {
@@ -1006,85 +1001,5 @@ class UserAdminAgencyScopeIT {
     when(agencyService.getAgency(agencyId)).thenReturn(agency);
     when(agencyService.getAgencyWithoutCaching(agencyId)).thenReturn(agency);
     knownAgencies.add(agency);
-  }
-
-  private Admin persistAdmin(long tenantId, Long... agencyIds) {
-    var id = UUID.randomUUID().toString();
-    var admin =
-        adminRepository.save(
-            Admin.builder()
-                .id(id)
-                .tenantId(tenantId)
-                .username("agency-scope-" + id.substring(0, 8))
-                .firstName("Synthetic")
-                .lastName(id.substring(0, 8))
-                .email(id.substring(0, 8) + "@synthetic.oriso.test")
-                .type(AdminType.AGENCY)
-                .build());
-    for (Long agencyId : agencyIds) {
-      adminAgencyRepository.save(AdminAgency.builder().admin(admin).agencyId(agencyId).build());
-    }
-    return admin;
-  }
-
-  private Consultant persistConsultant(long tenantId, Long... agencyIds) {
-    var id = UUID.randomUUID().toString();
-    var consultant = new Consultant();
-    consultant.setId(id);
-    consultant.setTenantId(tenantId);
-    consultant.setUsername("scope-" + id.substring(0, 8));
-    consultant.setFirstName("Synthetic");
-    consultant.setLastName(id.substring(0, 8));
-    consultant.setEmail(id.substring(0, 8) + "@synthetic.oriso.test");
-    consultant.setAppointments(null);
-    consultant.setConsultantAgencies(new HashSet<>());
-    consultant.setConsultantMobileTokens(new HashSet<>());
-    consultant.setEncourage2fa(true);
-    consultant.setNotifyEnquiriesRepeating(true);
-    consultant.setNotifyNewChatMessageFromAdviceSeeker(true);
-    consultant.setWalkThroughEnabled(true);
-    consultant.setTeamConsultant(false);
-    consultant.setMagicLinkLoginEnabled(false);
-    consultant.setLanguageCode(LanguageCode.de);
-    consultant.setMatrixUserId("@scope-" + id.substring(0, 8) + ":synthetic.oriso.test");
-    var saved = consultantRepository.save(consultant);
-    for (Long agencyId : agencyIds) {
-      var relation = new ConsultantAgency();
-      relation.setConsultant(saved);
-      relation.setAgencyId(agencyId);
-      relation.setTenantId(tenantId);
-      consultantAgencyRepository.save(relation);
-    }
-    return saved;
-  }
-
-  private User persistAsker(long tenantId, long agencyId) {
-    var id = UUID.randomUUID().toString();
-    var user =
-        new User(
-            id,
-            null,
-            "asker-" + id.substring(0, 8),
-            id.substring(0, 8) + "@synthetic.oriso.test",
-            false);
-    user.setTenantId(tenantId);
-    user.setLanguageCode(LanguageCode.de);
-    user.setEncourage2fa(true);
-    var saved = userRepository.save(user);
-
-    var session = new Session();
-    session.setUser(saved);
-    session.setTenantId(tenantId);
-    session.setAgencyId(agencyId);
-    session.setConsultingTypeId(1);
-    session.setStatus(SessionStatus.IN_PROGRESS);
-    session.setRegistrationType(RegistrationType.REGISTERED);
-    session.setPostcode("12345");
-    session.setLanguageCode(LanguageCode.de);
-    session.setTeamSession(false);
-    session.setSessionTopics(Lists.newArrayList());
-    session.setIsConsultantDirectlySet(false);
-    sessionRepository.save(session);
-    return saved;
   }
 }

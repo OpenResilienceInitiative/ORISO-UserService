@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
@@ -29,10 +30,12 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentRole;
+import de.caritas.cob.userservice.api.tenant.TenantFixtures;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
-import java.util.Set;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutorService;
@@ -57,27 +60,26 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 @DataJpaTest
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AdminSelfAssignmentService.class,
   AccountInviteAccessPolicy.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
-  AdminSelfAssignmentIT.CallerConfig.class
+  AdminSelfAssignmentIT.CallerConfig.class,
+  TenantFixtures.class
 })
+@WithTenant(AdminSelfAssignmentIT.OWN_TENANT)
 class AdminSelfAssignmentIT {
 
-  private static final long OWN_TENANT = 1L;
+  static final long OWN_TENANT = 1L;
   private static final long FOREIGN_TENANT = 2L;
 
   private static final String TENANT_ADMIN_ID = "5e1f0000-1026-4a4a-9d1e-00000000000a";
 
   /** Seeded restricted agency admin who administers agency 1 (tenant 1) only. */
   private static final String AGENCY_ADMIN_ID = "d42c2e5e-143c-4db1-a90f-7cccf82fbb15";
-
-  /** Seeded consultant who already counsels in agency 1. */
-  private static final String COUNSELLING_CALLER_ID = "473f7c4b-f011-4fc2-847c-ceb636a5b399";
 
   private static final long OWN_AGENCY = 1L;
   private static final long OTHER_OWN_TENANT_AGENCY = 2L;
@@ -94,10 +96,10 @@ class AdminSelfAssignmentIT {
   }
 
   @Autowired private AdminSelfAssignmentService service;
+  @Autowired private TenantFixtures fixtures;
   @Autowired private AdminRepository adminRepository;
   @Autowired private AdminAgencyRepository adminAgencyRepository;
   @Autowired private AuthenticatedUser caller;
-  @Autowired private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
@@ -108,10 +110,12 @@ class AdminSelfAssignmentIT {
   @MockitoBean
   private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
 
+  /** An admin of the own Träger who already counsels in agency 1. */
+  private Consultant counsellingCaller;
+
   @BeforeEach
   void givenAgenciesAndATenantAdmin() {
-    org.springframework.test.util.ReflectionTestUtils.setField(
-        adminScope, "multitenancyEnabled", true);
+    counsellingCaller = fixtures.consultant(OWN_TENANT, OWN_AGENCY);
     givenAgency(OWN_AGENCY, OWN_TENANT, List.of(11L));
     givenAgency(OTHER_OWN_TENANT_AGENCY, OWN_TENANT, List.of(21L));
     givenAgency(FOREIGN_AGENCY, FOREIGN_TENANT, List.of(31L));
@@ -134,12 +138,13 @@ class AdminSelfAssignmentIT {
   void cleanUp() {
     consultantAgencyRepository.deleteAll(
         consultantAgencyRepository
-            .findByConsultantIdAndDeleteDateIsNull(COUNSELLING_CALLER_ID)
+            .findByConsultantIdAndDeleteDateIsNull(counsellingCaller.getId())
             .stream()
             .filter(relation -> relation.getAgencyId() == OTHER_OWN_TENANT_AGENCY)
             .toList());
     adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(TENANT_ADMIN_ID));
     adminRepository.deleteById(TENANT_ADMIN_ID);
+    fixtures.removeAll();
   }
 
   @Test
@@ -209,7 +214,7 @@ class AdminSelfAssignmentIT {
 
   @Test
   void anAdminWhoAlreadyCounsels_Should_OnlyGetTheAgencyAdded() {
-    actAsTenantAdmin(COUNSELLING_CALLER_ID);
+    actAsTenantAdmin(counsellingCaller.getId());
 
     service.assign(
         new SelfAssignmentCommand(SelfAssignmentRole.COUNSELLOR, OTHER_OWN_TENANT_AGENCY));
@@ -217,7 +222,7 @@ class AdminSelfAssignmentIT {
     ArgumentCaptor<CreateConsultantAgencyDTO> relation =
         ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
     verify(consultantAgencyRelationCreatorService)
-        .createNewConsultantAgency(eq(COUNSELLING_CALLER_ID), relation.capture());
+        .createNewConsultantAgency(eq(counsellingCaller.getId()), relation.capture());
     assertThat(relation.getValue().getAgencyId()).isEqualTo(OTHER_OWN_TENANT_AGENCY);
     verify(grantConsultantIdentityService, never())
         .grantConsultantIdentityToAdmin(anyString(), any());
@@ -225,7 +230,7 @@ class AdminSelfAssignmentIT {
 
   @Test
   void anAdminWhoAlreadyCounselsInThatAgency_Should_Get409() {
-    actAsTenantAdmin(COUNSELLING_CALLER_ID);
+    actAsTenantAdmin(counsellingCaller.getId());
 
     assertThatThrownBy(
             () ->
@@ -252,7 +257,7 @@ class AdminSelfAssignmentIT {
 
   @Test
   void aDoubleClick_Should_AddTheAgencyOnce() throws Exception {
-    actAsTenantAdmin(COUNSELLING_CALLER_ID);
+    actAsTenantAdmin(counsellingCaller.getId());
     doAnswer(
             invocation -> {
               // The real relation creator calls AgencyService before it inserts the row.
@@ -261,7 +266,7 @@ class AdminSelfAssignmentIT {
               consultantAgencyRepository.save(
                   ConsultantAgency.builder()
                       .consultant(
-                          consultantRepository.findById(COUNSELLING_CALLER_ID).orElseThrow())
+                          consultantRepository.findById(counsellingCaller.getId()).orElseThrow())
                       .agencyId(OTHER_OWN_TENANT_AGENCY)
                       .tenantId(OWN_TENANT)
                       .createDate(now)
@@ -270,14 +275,15 @@ class AdminSelfAssignmentIT {
               return null;
             })
         .when(consultantAgencyRelationCreatorService)
-        .createNewConsultantAgency(eq(COUNSELLING_CALLER_ID), any());
+        .createNewConsultantAgency(eq(counsellingCaller.getId()), any());
     var command = new SelfAssignmentCommand(SelfAssignmentRole.COUNSELLOR, OTHER_OWN_TENANT_AGENCY);
     var start = new CountDownLatch(1);
     Callable<Object> click =
         () -> {
           start.await();
           try {
-            service.assign(command);
+            // Each click is a request of the caller's Träger.
+            Tenants.in(OWN_TENANT, () -> service.assign(command));
             return HttpStatus.CREATED;
           } catch (CustomValidationHttpStatusException conflict) {
             return conflict.getHttpStatus();
@@ -296,7 +302,7 @@ class AdminSelfAssignmentIT {
     }
     assertThat(
             consultantAgencyRepository
-                .findByConsultantIdAndDeleteDateIsNull(COUNSELLING_CALLER_ID)
+                .findByConsultantIdAndDeleteDateIsNull(counsellingCaller.getId())
                 .stream()
                 .filter(relation -> relation.getAgencyId() == OTHER_OWN_TENANT_AGENCY))
         .hasSize(1);
@@ -305,22 +311,18 @@ class AdminSelfAssignmentIT {
   // --- helpers ----------------------------------------------------------------------------------
 
   private void actAsTenantAdmin(String userId) {
-    actAs(userId, OWN_TENANT, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
+    Tenants.actAs(
+        caller,
+        userId,
+        OWN_TENANT,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
   }
 
   private void actAsAgencyAdmin() {
-    actAs(AGENCY_ADMIN_ID, OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
-  }
-
-  private void actAs(String userId, Long tenantId, UserRole... roles) {
-    caller.setUserId(userId);
-    caller.setUsername(userId);
-    caller.setTenantId(tenantId);
-    caller.setRoles(
-        java.util.Arrays.stream(roles)
-            .map(UserRole::getValue)
-            .collect(java.util.stream.Collectors.toSet()));
-    caller.setGrantedAuthorities(Set.of());
+    Tenants.actAs(
+        caller, AGENCY_ADMIN_ID, OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
   }
 
   private void givenAgency(long agencyId, long tenantId, List<Long> topicIds) {
