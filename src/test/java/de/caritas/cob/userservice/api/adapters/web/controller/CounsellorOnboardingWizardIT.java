@@ -335,11 +335,6 @@ class CounsellorOnboardingWizardIT {
             persisted -> assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED));
   }
 
-  /**
-   * ORISO-Admin#1026 slice 2: an invite into an EXISTING agency that offers exactly one topic. The
-   * create call stamps that topic as the department; the invitee may then register without picking
-   * a topic and is attached to the existing agency with that one topic.
-   */
   @Test
   void registerWithoutTopics_intoAnExistingSingleTopicAgency_attachesToItWithItsOnlyTopic()
       throws Exception {
@@ -361,7 +356,6 @@ class CounsellorOnboardingWizardIT {
     assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
   }
 
-  /** With more than one topic on offer the invitee has to choose — at least one topic, always. */
   @Test
   void registerWithoutTopics_whenTheAgencyOffersSeveralTopics_answers400() throws Exception {
     String token = "existing-multi-topic-token-" + java.util.UUID.randomUUID();

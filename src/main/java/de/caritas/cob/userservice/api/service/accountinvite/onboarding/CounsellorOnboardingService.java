@@ -562,9 +562,8 @@ public class CounsellorOnboardingService {
   }
 
   /**
-   * At least one topic, always (ORISO-Admin#1026). An invitee who picked none gets the coverage's
-   * only topic when there is exactly one — an invite into an existing single-topic agency needs no
-   * choice; with several topics on offer (or none) the invitee has to choose.
+   * Every counsellor needs a topic: an invitee who picked none gets the coverage's only topic; with
+   * several (or none) on offer they must choose.
    */
   private static RegisterCounsellorCommand withAtLeastOneTopic(
       RegisterCounsellorCommand command, CoverageResolution coverage) {

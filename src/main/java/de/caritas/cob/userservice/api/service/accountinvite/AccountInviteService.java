@@ -448,8 +448,7 @@ public class AccountInviteService {
       throw new BadRequestException("agencyId must be omitted in AUTO agency allocation mode");
     }
     if (command.tenantIdAllocationMode() == IdAllocationMode.EXISTING) {
-      // Inviting into an existing Träger is ORISO-Admin#1026 slice 4; refuse it explicitly until
-      // then instead of silently reserving the ID.
+      // Not built yet; refuse explicitly instead of silently reserving the ID.
       throw new BadRequestException("EXISTING tenant allocation mode is not supported yet");
     }
     if (command.agencyIdAllocationMode() == IdAllocationMode.EXISTING) {
@@ -466,18 +465,9 @@ public class AccountInviteService {
   }
 
   /**
-   * {@link IdAllocationMode#EXISTING} (ORISO-Admin#1026): the invite binds to an agency that
-   * already exists, so nothing is reserved. The access policy has already checked that the caller
-   * may act in that agency; this checks the agency itself and completes the command from it:
-   *
-   * <ul>
-   *   <li>unknown or soft-deleted agency: 404;
-   *   <li>a named tenant that is not the agency's tenant: 400 (only the platform admin can get here
-   *       — the policy stamps every other caller's own tenant);
-   *   <li>no tenant named: the agency's tenant;
-   *   <li>a department (topic) that the agency does not offer: 400; none named and the agency
-   *       offers exactly one topic: that topic, so the counsellor always ends up with at least one.
-   * </ul>
+   * Validates the existing agency and fills a missing tenant, or a missing topic when the agency
+   * offers exactly one. Only the platform admin can name a foreign tenant; the policy stamps every
+   * other caller's own.
    */
   private CreateAccountInviteCommand bindToExistingAgency(CreateAccountInviteCommand command) {
     ExistingAgency agency =

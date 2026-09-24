@@ -353,11 +353,8 @@ public class AccountInviteController {
     public String tenantIdAllocationMode;
 
     /**
-     * AUTO / MANUAL as above, or EXISTING (ORISO-Admin#1026): {@code agencyId} names an agency that
-     * already exists — nothing is reserved; the agency must exist, must not be deleted and must lie
-     * in the caller's scope (403 otherwise, 404 if unknown/deleted). A missing {@code tenantId} is
-     * taken from the agency; a missing {@code departmentId} becomes the agency's topic when it has
-     * exactly one.
+     * AUTO / MANUAL as above, or EXISTING: {@code agencyId} names an existing agency that is
+     * validated, not reserved; a missing tenant or single topic is taken from the agency.
      */
     public String agencyIdAllocationMode;
   }
