@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.FieldEnum;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminFilterService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminService;
@@ -72,9 +73,9 @@ class ConsultantAdminFacadeTest {
 
   @Mock private AuthenticatedUser authenticatedUser;
 
-  @Mock private AdminUserFacade adminUserFacade;
-
   @Mock private AgencyService agencyService;
+
+  @Mock private AdminScope adminScope;
 
   @Test
   void findConsultant_Should_useConsultantAdminService() {
@@ -109,10 +110,10 @@ class ConsultantAdminFacadeTest {
 
   @Test
   void createNewConsultant_Should_RejectUnauthorizedAgenciesBeforeCreatingIdentity() {
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L));
     CreateConsultantDTO dto = new CreateConsultantDTO().agencyIds(List.of(2L));
+    Mockito.doThrow(new ForbiddenException("out of reach"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.agencies(List.of(2L)));
 
     assertThrows(ForbiddenException.class, () -> consultantAdminFacade.createNewConsultant(dto));
 
@@ -128,9 +129,11 @@ class ConsultantAdminFacadeTest {
 
   @Test
   void createNewConsultantAgency_Should_useConsultantAgencyAdminServiceCorrectly() {
-    this.consultantAdminFacade.createNewConsultantAgency(null, null);
+    var agency = new CreateConsultantAgencyDTO().agencyId(1L);
 
-    verify(this.relationCreatorService).createNewConsultantAgency(null, null);
+    this.consultantAdminFacade.createNewConsultantAgency("c-1", agency);
+
+    verify(this.relationCreatorService).createNewConsultantAgency("c-1", agency);
   }
 
   @Test
@@ -171,13 +174,10 @@ class ConsultantAdminFacadeTest {
   }
 
   @Test
-  void markConsultantForDeletion_Should_throwForbidden_When_restrictedAdminSharesNoAgency() {
-    // DEL-GUARD-01: a Beratungsstellen-Admin must not delete consultants of foreign agencies.
-    when(this.authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-    when(this.authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(this.adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L, 2L));
-    when(this.consultantAgencyAdminService.findConsultantAgencyIds("consultant-1"))
-        .thenReturn(List.of(3L));
+  void markConsultantForDeletion_Should_throwForbidden_When_counsellorIsOutOfReach() {
+    Mockito.doThrow(new ForbiddenException("out of reach"))
+        .when(this.adminScope)
+        .assertMay(AdminScope.Target.counsellor("consultant-1"));
 
     assertThrows(
         ForbiddenException.class,
@@ -187,66 +187,10 @@ class ConsultantAdminFacadeTest {
   }
 
   @Test
-  void markConsultantForDeletion_Should_delegate_When_restrictedAdminSharesAnAgency() {
-    when(this.authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-    when(this.authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(this.adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L, 2L));
-    when(this.consultantAgencyAdminService.findConsultantAgencyIds("consultant-1"))
-        .thenReturn(List.of(2L, 3L));
-
-    this.consultantAdminFacade.markConsultantForDeletion("consultant-1", true);
-
-    verify(this.consultantAdminService).markConsultantForDeletion("consultant-1", true);
-  }
-
-  @Test
-  void markConsultantForDeletion_Should_skipScopeCheck_When_callerIsNotRestricted() {
-    when(this.authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
-
-    this.consultantAdminFacade.markConsultantForDeletion("consultant-1", false);
-
-    verify(this.consultantAdminService).markConsultantForDeletion("consultant-1", false);
-    Mockito.verifyNoInteractions(this.adminUserFacade);
-  }
-
-  @Test
   void findConsultantsForAgency_Should_callConsultantAgencyAdminService() {
     this.consultantAdminFacade.findConsultantsForAgency("1");
 
     verify(this.consultantAgencyAdminService).findConsultantsForAgency(1L);
-  }
-
-  @Test
-  void checkPermissionsToUpdateAgencies_Should_PassIfUserDoesntHaveRestrictedPermissions() {
-    consultantAdminFacade.checkPermissionsToAssignedAgencies(
-        Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(1L)));
-
-    verify(authenticatedUser).hasRestrictedAgencyPriviliges();
-  }
-
-  @Test
-  void
-      checkPermissionsToUpdateAgencies_Should_PassIfUserHasRestrictedPermissionsAndHasPermissionsForTheGivenAgency() {
-    when(adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId()))
-        .thenReturn(Lists.newArrayList(1L, 2L, 3L));
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-    consultantAdminFacade.checkPermissionsToAssignedAgencies(
-        Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(1L)));
-    verify(authenticatedUser).hasRestrictedAgencyPriviliges();
-  }
-
-  @Test
-  void
-      checkPermissionsToUpdateAgencies_Should_ThrowForbiddenExceptionIfUserHasRestrictedPermissionsAndDoesntHavePermissionsForTheGivenAgency() {
-    when(adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId()))
-        .thenReturn(Lists.newArrayList(1L, 2L, 3L));
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-
-    ArrayList<CreateConsultantAgencyDTO> agencyList =
-        Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(4L));
-    assertThrows(
-        ForbiddenException.class,
-        () -> consultantAdminFacade.checkPermissionsToAssignedAgencies(agencyList));
   }
 
   @Test

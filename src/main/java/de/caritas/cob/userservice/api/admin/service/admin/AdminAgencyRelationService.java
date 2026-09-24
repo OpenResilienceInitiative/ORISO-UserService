@@ -6,6 +6,7 @@ import static org.apache.commons.collections4.CollectionUtils.isEmpty;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.admin.create.agencyrelation.CreateAdminAgencyRelationService;
 import de.caritas.cob.userservice.api.admin.service.admin.update.agencyrelation.SynchronizeAdminAgencyRelation;
 import de.caritas.cob.userservice.api.admin.service.agency.AgencyAdminService;
@@ -13,6 +14,8 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
+import java.util.Collections;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -30,13 +33,19 @@ public class AdminAgencyRelationService {
   private final @NonNull AgencyAdminService agencyAdminService;
   private final @NonNull CreateAdminAgencyRelationService createAdminAgencyRelationService;
   private final @NonNull SynchronizeAdminAgencyRelation synchronizeAdminAgencyRelation;
+  private final @NonNull AdminScope adminScope;
 
   public void createAdminAgencyRelation(
       final String adminId, final CreateAdminAgencyRelationDTO createAdminAgencyRelationDTO) {
+    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(
+        Target.agencies(Collections.singletonList(createAdminAgencyRelationDTO.getAgencyId())));
     createAdminAgencyRelationService.create(adminId, createAdminAgencyRelationDTO);
   }
 
   public void deleteAdminAgencyRelation(final String adminId, final Long agencyId) {
+    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.agencies(Collections.singletonList(agencyId)));
     List<AdminAgency> adminAgencyRelations =
         adminAgencyRepository.findByAdminIdAndAgencyId(adminId, agencyId);
     if (isEmpty(adminAgencyRelations)) {
@@ -48,8 +57,31 @@ public class AdminAgencyRelationService {
 
   public void synchronizeAdminAgenciesRelation(
       final String adminId, final List<CreateAdminAgencyRelationDTO> newAdminAgencyRelationDTOs) {
+    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.agencies(changedAgencyIds(adminId, newAdminAgencyRelationDTOs)));
     this.synchronizeAdminAgencyRelation.synchronizeAdminAgenciesRelation(
         adminId, newAdminAgencyRelationDTOs);
+  }
+
+  /** The agencies a synchronisation adds or removes; untouched agencies need no scope check. */
+  private Set<Long> changedAgencyIds(
+      final String adminId, final List<CreateAdminAgencyRelationDTO> newAdminAgencyRelationDTOs) {
+    Set<Long> requested =
+        newAdminAgencyRelationDTOs == null
+            ? Set.of()
+            : newAdminAgencyRelationDTOs.stream()
+                .map(CreateAdminAgencyRelationDTO::getAgencyId)
+                .collect(Collectors.toSet());
+    Set<Long> existing =
+        adminAgencyRepository.findByAdminId(adminId).stream()
+            .map(AdminAgency::getAgencyId)
+            .collect(Collectors.toSet());
+    Set<Long> changed = new HashSet<>(requested);
+    changed.addAll(existing);
+    Set<Long> unchanged = new HashSet<>(requested);
+    unchanged.retainAll(existing);
+    changed.removeAll(unchanged);
+    return changed;
   }
 
   public void appendAgenciesForAdmins(final Set<AdminDTO> admins) {

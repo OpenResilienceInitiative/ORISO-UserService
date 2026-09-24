@@ -1,42 +1,24 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
-import de.caritas.cob.userservice.api.model.AdminAgency;
-import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.EnumSet;
-import java.util.Objects;
 import java.util.Set;
-import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 /**
- * Who may see and act on which account invite ("cross-Träger" isolation of the invite API).
- *
- * <p>The invite rows carry the target tenant and agency, but the HTTP layer only checks roles: any
- * caller holding {@code user-admin} — every Träger admin and every Beratungsstellen admin — reaches
- * {@code /useradmin/account-invites}. Without this policy a Träger admin could list, create,
- * resend, revoke and waive invites of every other Träger, and invite a platform admin.
- *
- * <ul>
- *   <li><b>Platform admin</b> (tenant {@code 0}) and callers without a tenant (single-tenant
- *       deployment): unrestricted — the same boundary as {@code AdminTenantOwnershipValidator}.
- *   <li><b>Träger admin</b> (bound to a tenant): only invites of their own tenant; may invite
- *       Träger admins, agency admins and counsellors, never a platform admin or an advice seeker,
- *       and never let the server allocate a new tenant (onboarding a new Träger is the platform's
- *       job). An invite into an existing agency must name an agency of their own tenant.
- *   <li><b>Beratungsstellen admin</b> (restricted agency admin): only counsellor invites into the
- *       agencies they administer.
- * </ul>
+ * The invite rules: which roles a caller may invite and which allocation modes they may use. How
+ * far the caller reaches is {@link AdminScope}'s answer.
  */
 @Slf4j
 @Component
@@ -55,7 +37,7 @@ public class AccountInviteAccessPolicy {
       EnumSet.of(AccountInviteTargetRole.AGENCY_ADMIN, AccountInviteTargetRole.COUNSELLOR);
 
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull AdminAgencyRepository adminAgencyRepository;
+  private final @NonNull AdminScope adminScope;
   private final @NonNull AgencyService agencyService;
 
   /** The filter a listing has to apply for the calling admin. */
@@ -68,143 +50,88 @@ public class AccountInviteAccessPolicy {
     }
   }
 
-  /**
-   * Checks a create request against the caller's scope.
-   *
-   * @return the command to execute — for a tenant-bound caller that named no tenant, the same
-   *     command stamped with the caller's own tenant
-   * @throws ForbiddenException if the invite would leave the caller's scope
-   */
+  /** Returns the command, stamped with the caller's tenant if it named none. */
   public CreateAccountInviteCommand authorizeCreate(CreateAccountInviteCommand command) {
     if (command == null || command.targetRole() == null) {
       // Missing fields are answered as 400 by the service's own validation.
       return command;
     }
-    Scope scope = callerScope();
-    switch (scope.kind()) {
-      case AGENCY:
-        return authorizeAgencyAdminCreate(command, scope);
-      case TENANT:
-        return authorizeTenantAdminCreate(command, scope);
-      default:
-        return command;
-    }
+    return switch (adminScope.current()) {
+      case AdminScope.Platform platform -> command;
+      case AdminScope.Tenant tenant -> authorizeTenantAdminCreate(command, tenant.tenantId());
+      case AdminScope.Agencies agencies -> authorizeAgencyAdminCreate(command, agencies);
+    };
   }
 
-  /**
-   * Narrows an invite listing to the caller's scope.
-   *
-   * @param requestedTenantId the {@code tenant_id} filter the caller asked for, may be null
-   * @param requestedTargetRole the {@code target_role} filter the caller asked for, may be null
-   * @throws ForbiddenException if the caller explicitly asks for another tenant
-   */
+  /** Both filters may be null; explicitly asking for another tenant is refused. */
   public InviteListScope scopeForListing(
       Long requestedTenantId, AccountInviteTargetRole requestedTargetRole) {
-    Scope scope = callerScope();
-    if (scope.kind() == Kind.UNRESTRICTED) {
+    var reach = adminScope.current();
+    if (reach instanceof AdminScope.Platform) {
       return new InviteListScope(requestedTenantId, requestedTargetRole, null, false);
     }
-    if (requestedTenantId != null
-        && scope.tenantId() != null
-        && !scope.tenantId().equals(requestedTenantId)) {
-      throw deny("list the invites of tenant " + requestedTenantId);
-    }
-    Long tenantId = scope.tenantId() != null ? scope.tenantId() : requestedTenantId;
-    if (scope.kind() == Kind.TENANT) {
+    assertTenantIsOwn(requestedTenantId, reach.tenantId());
+    Long tenantId = reach.tenantId() != null ? reach.tenantId() : requestedTenantId;
+    if (!(reach instanceof AdminScope.Agencies agencies)) {
       return new InviteListScope(tenantId, requestedTargetRole, null, false);
     }
-    // Beratungsstellen admin: counsellor invites of their own agencies only.
+    // Agency admins see counsellor invites of their own agencies only.
     boolean empty =
-        scope.agencyIds().isEmpty()
+        agencies.ids().isEmpty()
             || (requestedTargetRole != null
                 && requestedTargetRole != AccountInviteTargetRole.COUNSELLOR);
-    return new InviteListScope(
-        tenantId, AccountInviteTargetRole.COUNSELLOR, scope.agencyIds(), empty);
+    return new InviteListScope(tenantId, AccountInviteTargetRole.COUNSELLOR, agencies.ids(), empty);
   }
 
-  /**
-   * Checks that the caller may act on an existing invite (send, resend, revoke, waive 2FA).
-   *
-   * @throws ForbiddenException if the invite lies outside the caller's scope
-   */
+  /** Covers every action on an existing invite: send, resend, revoke, waive 2FA. */
   public void authorizeAccess(AccountInvite invite) {
     if (invite == null) {
       return;
     }
-    Scope scope = callerScope();
-    switch (scope.kind()) {
-      case TENANT:
-        if (!scope.tenantId().equals(invite.getTenantId())) {
-          throw deny("act on invite " + invite.getId() + " of tenant " + invite.getTenantId());
-        }
-        return;
-      case AGENCY:
-        if (invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR
-            || invite.getAgencyId() == null
-            || !scope.agencyIds().contains(invite.getAgencyId())
-            || (scope.tenantId() != null && !scope.tenantId().equals(invite.getTenantId()))) {
-          throw deny("act on invite " + invite.getId());
-        }
-        return;
-      default:
-        return;
+    if (adminScope.current() instanceof AdminScope.Agencies
+        && invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR) {
+      throw deny("act on invite " + invite.getId());
     }
+    adminScope.assertMay(Target.placedIn(invite.getTenantId(), invite.getAgencyId()));
   }
 
   /** May the caller add their own account as counsellor of this agency ("higher assigns lower")? */
   public void authorizeSelfAssignment(long agencyId, Long agencyTenantId) {
-    Scope scope = callerScope();
-    switch (scope.kind()) {
-      case TENANT:
+    switch (adminScope.current()) {
+      case AdminScope.Platform platform -> {}
+      case AdminScope.Tenant tenant -> {
         if (!authenticatedUser.hasTenantLevelAdminRole()
-            || !scope.tenantId().equals(agencyTenantId)) {
+            || !tenant.tenantId().equals(agencyTenantId)) {
           throw deny("assign themselves in agency " + agencyId);
         }
-        return;
-      case AGENCY:
-        if (!scope.agencyIds().contains(agencyId)) {
+      }
+      case AdminScope.Agencies agencies -> {
+        if (!agencies.ids().contains(agencyId)) {
           throw deny("assign themselves in agency " + agencyId);
         }
-        return;
-      default:
-        return;
+      }
     }
   }
 
   private CreateAccountInviteCommand authorizeAgencyAdminCreate(
-      CreateAccountInviteCommand command, Scope scope) {
+      CreateAccountInviteCommand command, AdminScope.Agencies agencies) {
     if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
       throw deny("invite a " + command.targetRole());
     }
-    if (IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())
-        || (command.tenantId() != null
-            && scope.tenantId() != null
-            && !scope.tenantId().equals(command.tenantId()))) {
+    if (IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())) {
       throw deny("invite into tenant " + command.tenantId());
     }
     if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
         || command.agencyId() == null
-        || !scope.agencyIds().contains(command.agencyId())) {
+        || !agencies.ids().contains(command.agencyId())) {
       throw deny("invite a counsellor into agency " + command.agencyId());
     }
-    assertTenantMatchesScope(command.tenantId(), scope);
-    return withCallerTenant(command, scope);
-  }
-
-  /**
-   * A caller-supplied tenant must be the caller's own: {@link #withCallerTenant} keeps a non-null
-   * tenant, so a foreign one would otherwise be stored on the invite.
-   */
-  private void assertTenantMatchesScope(Long requestedTenantId, Scope scope) {
-    if (requestedTenantId != null
-        && scope.tenantId() != null
-        && !scope.tenantId().equals(requestedTenantId)) {
-      throw deny("invite into tenant " + requestedTenantId);
-    }
+    assertTenantIsOwn(command.tenantId(), agencies.tenantId());
+    return withCallerTenant(command, agencies.tenantId());
   }
 
   private CreateAccountInviteCommand authorizeTenantAdminCreate(
-      CreateAccountInviteCommand command, Scope scope) {
+      CreateAccountInviteCommand command, Long callerTenantId) {
     Set<AccountInviteTargetRole> invitable =
         authenticatedUser.hasTenantLevelAdminRole()
             ? TENANT_ADMIN_INVITABLE_ROLES
@@ -217,18 +144,17 @@ public class AccountInviteAccessPolicy {
       // Onboarding a NEW Träger is the platform's job; EXISTING (their own Träger) is fine.
       throw deny("allocate a new tenant");
     }
-    assertTenantMatchesScope(command.tenantId(), scope);
+    assertTenantIsOwn(command.tenantId(), callerTenantId);
     if (command.agencyId() != null
         && !IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
-      assertAgencyBelongsToTenant(command.agencyId(), scope.tenantId());
+      assertAgencyBelongsToTenant(command.agencyId(), callerTenantId);
     }
-    return withCallerTenant(command, scope);
+    return withCallerTenant(command, callerTenantId);
   }
 
   /**
-   * An invite into an existing agency must not name another Träger's agency: the accepted invite
-   * would otherwise attach the new account to that agency. An unknown agency is refused: its tenant
-   * cannot be proven.
+   * The accepted invite would attach the new account to that agency. An unknown agency is refused:
+   * its tenant cannot be proven.
    */
   private void assertAgencyBelongsToTenant(Long agencyId, Long tenantId) {
     AgencyDTO agency = agencyService.getAgencyWithoutCaching(agencyId);
@@ -237,37 +163,21 @@ public class AccountInviteAccessPolicy {
     }
   }
 
+  /** A named tenant is stored on the invite, so it must be the caller's own. */
+  private void assertTenantIsOwn(Long requestedTenantId, Long callerTenantId) {
+    if (requestedTenantId != null
+        && callerTenantId != null
+        && !callerTenantId.equals(requestedTenantId)) {
+      throw deny("use tenant " + requestedTenantId);
+    }
+  }
+
   private static CreateAccountInviteCommand withCallerTenant(
-      CreateAccountInviteCommand command, Scope scope) {
-    if (command.tenantId() != null || scope.tenantId() == null) {
+      CreateAccountInviteCommand command, Long callerTenantId) {
+    if (command.tenantId() != null || callerTenantId == null) {
       return command;
     }
-    return command.withTenantId(scope.tenantId());
-  }
-
-  private Scope callerScope() {
-    Long callerTenantId = boundTenantId();
-    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
-      Set<Long> agencyIds =
-          adminAgencyRepository.findByAdminId(authenticatedUser.getUserId()).stream()
-              .map(AdminAgency::getAgencyId)
-              .filter(Objects::nonNull)
-              .collect(Collectors.toUnmodifiableSet());
-      return new Scope(Kind.AGENCY, callerTenantId, agencyIds);
-    }
-    if (authenticatedUser.isPlatformAdmin() || callerTenantId == null) {
-      return new Scope(Kind.UNRESTRICTED, null, null);
-    }
-    return new Scope(Kind.TENANT, callerTenantId, null);
-  }
-
-  /** The caller's own tenant, or {@code null} for the platform (0) and single-tenant contexts. */
-  private Long boundTenantId() {
-    Long tenantId = authenticatedUser.getTenantId();
-    if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
-      return null;
-    }
-    return tenantId;
+    return command.withTenantId(callerTenantId);
   }
 
   private ForbiddenException deny(String attempt) {
@@ -278,12 +188,4 @@ public class AccountInviteAccessPolicy {
         attempt);
     return new ForbiddenException(OUT_OF_SCOPE_MESSAGE);
   }
-
-  private enum Kind {
-    UNRESTRICTED,
-    TENANT,
-    AGENCY
-  }
-
-  private record Scope(Kind kind, Long tenantId, Set<Long> agencyIds) {}
 }

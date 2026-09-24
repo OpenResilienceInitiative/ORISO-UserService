@@ -127,6 +127,8 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
     createAdminDTO.setTenantId(95);
     givenTenant();
     givenTenantSuperAdmin();
+    // Without a tenant of their own only the platform admin may act.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
 
     // when
 
@@ -158,6 +160,8 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
     createAdminDTO.setTenantId(null);
     givenTenant();
     givenTenantSuperAdmin();
+    // Without a tenant of their own only the platform admin may act.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
 
     // when
 

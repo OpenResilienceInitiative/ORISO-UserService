@@ -107,11 +107,7 @@ public class AnonymousUsernameRegistry {
         || matrixSynapseService.userExists(username);
   }
 
-  /**
-   * Runs a lookup in technical tenant context so {@code TenantAspect} disables the Hibernate {@code
-   * tenantFilter}; the caller's tenant is restored afterwards so no other query in the same request
-   * leaks across tenants.
-   */
+  /** Usernames are unique across tenants; the caller's tenant is restored afterwards. */
   private boolean runCrossTenant(java.util.function.BooleanSupplier lookup) {
     var callerTenant = TenantContext.getCurrentTenant();
     try {
