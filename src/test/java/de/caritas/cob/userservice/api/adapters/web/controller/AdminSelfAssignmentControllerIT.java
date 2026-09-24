@@ -10,12 +10,15 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentResult;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentRole;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignments;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import jakarta.servlet.http.Cookie;
 import java.util.List;
 import org.junit.jupiter.api.Test;
@@ -36,12 +39,18 @@ import org.springframework.test.web.servlet.MockMvc;
 @SpringBootTest
 @AutoConfigureMockMvc
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@WithTenant(1L)
 class AdminSelfAssignmentControllerIT {
 
   private static final String PATH = "/useradmin/self-assignments";
   private static final String CSRF_HEADER = "X-CSRF-TOKEN";
   private static final String CSRF_VALUE = "test";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF_VALUE);
+
+  /** Every request is sent by a caller of Träger 1. */
+  @MockitoBean private TenantResolverService tenantResolverService;
+
+  @MockitoBean private TenantService tenantService;
 
   @Autowired private MockMvc mvc;
 
