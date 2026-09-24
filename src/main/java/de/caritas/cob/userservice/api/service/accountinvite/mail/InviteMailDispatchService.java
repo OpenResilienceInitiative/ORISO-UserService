@@ -182,8 +182,23 @@ public class InviteMailDispatchService {
    * both remedies. The detailed message goes to the server log only; the API response carries just
    * the coarse {@link SmtpSendException.Category}. Messages must never contain secret values.
    */
-  @SuppressWarnings("unchecked")
   private InviteSmtpSettings resolveGlobalSmtpSettings() {
+    return resolveGlobalSmtpSettings(true);
+  }
+
+  /**
+   * The stored platform SMTP server and credentials, ignoring the on/off switches so operators can
+   * test the connection before enabling mails.
+   *
+   * @throws SmtpSendException if the stored settings are unavailable, incomplete or lack
+   *     credentials
+   */
+  public InviteSmtpSettings storedPlatformSmtpSettings() {
+    return resolveGlobalSmtpSettings(false);
+  }
+
+  @SuppressWarnings("unchecked")
+  private InviteSmtpSettings resolveGlobalSmtpSettings(boolean requireSwitchedOn) {
     if (isBlank(consultingTypeServiceApiUrl)) {
       throw new SmtpSendException(
           SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
@@ -236,15 +251,17 @@ public class InviteMailDispatchService {
 
     var problems = new java.util.ArrayList<String>();
     // Review 3893223709: an absent or malformed toggle must not masquerade as "disabled".
-    if (systemEmailsEnabled == null) {
-      problems.add("globalFeatureSystemNotificationEmailsEnabled is missing or not a boolean");
-    } else if (!systemEmailsEnabled) {
-      problems.add("globalFeatureSystemNotificationEmailsEnabled is disabled");
-    }
-    if (smtpEnabled == null) {
-      problems.add("globalSmtpEnabled is missing or not a boolean");
-    } else if (!smtpEnabled) {
-      problems.add("globalSmtpEnabled is disabled");
+    if (requireSwitchedOn) {
+      if (systemEmailsEnabled == null) {
+        problems.add("globalFeatureSystemNotificationEmailsEnabled is missing or not a boolean");
+      } else if (!systemEmailsEnabled) {
+        problems.add("globalFeatureSystemNotificationEmailsEnabled is disabled");
+      }
+      if (smtpEnabled == null) {
+        problems.add("globalSmtpEnabled is missing or not a boolean");
+      } else if (!smtpEnabled) {
+        problems.add("globalSmtpEnabled is disabled");
+      }
     }
     // Review 3893323639: an absent/malformed secure toggle must not silently select STARTTLS.
     if (secure == null) {

@@ -104,8 +104,8 @@ class GlobalSmtpTestEmailControllerTest {
   }
 
   @Test
-  void sendGlobalSmtpTestEmail_noPreAuthorize_endpointIsPublic() throws Exception {
-    // Endpoint is intentionally public — no role restriction
+  void sendGlobalSmtpTestEmail_noPreAuthorize_gateLivesInSecurityConfig() throws Exception {
+    // Platform-admin gate is in SecurityConfig; see GlobalSmtpTestEmailControllerAuthorizationIT.
     Method method =
         GlobalSmtpTestEmailController.class.getMethod(
             "sendGlobalSmtpTestEmail", GlobalSmtpTestEmailDTO.class);
@@ -116,10 +116,6 @@ class GlobalSmtpTestEmailControllerTest {
 
   private GlobalSmtpTestEmailDTO validDto() {
     var dto = new GlobalSmtpTestEmailDTO();
-    dto.setHost("smtp.example.org");
-    dto.setPort(587);
-    dto.setSecure(true);
-    dto.setFrom("from@example.org");
     dto.setRecipientEmail("to@example.org");
     dto.setEmailThemeColor("#123456");
     return dto;
