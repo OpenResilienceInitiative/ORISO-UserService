@@ -88,10 +88,36 @@ jobs:
       with:
         java_version: '21'
 
+  tenant-filter-on-integration-tests:
+    name: integration tests with the tenant filter on
+    runs-on: ubuntu-latest
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v6
+
+    - name: Set up JDK and Maven
+      uses: actions/setup-java@v5
+      with:
+        java-version: '21'
+        distribution: temurin
+        cache: maven
+
+    # Production runs with multitenancy.enabled=true; the testing profile does not.
+    - name: Run the listed integration tests with the tenant filter on
+      run: scripts/ci/run-tenant-filter-on-integration-tests.sh
+
+    - name: Upload tenant filter reports
+      if: ${{ always() && hashFiles('target/surefire-reports/*.xml') != '' }}
+      uses: actions/upload-artifact@v4
+      with:
+        name: tenant-filter-on-reports
+        path: target/surefire-reports/*.xml
+        retention-days: 7
+
   required-ci:
     name: required PreDev CI
     if: always()
-    needs: [validate, redis-contract, mariadb-contract, required-integration-tests]
+    needs: [validate, redis-contract, mariadb-contract, required-integration-tests, tenant-filter-on-integration-tests]
     runs-on: ubuntu-latest
 
     steps:
@@ -101,13 +127,14 @@ jobs:
         REDIS_RESULT: ${{ needs.redis-contract.result }}
         MARIADB_RESULT: ${{ needs.mariadb-contract.result }}
         INTEGRATION_RESULT: ${{ needs.required-integration-tests.result }}
+        TENANT_FILTER_RESULT: ${{ needs.tenant-filter-on-integration-tests.result }}
       run: |
         conclusion=success
-        if [[ "${VALIDATE_RESULT}" != success || "${REDIS_RESULT}" != success || "${MARIADB_RESULT}" != success || "${INTEGRATION_RESULT}" != success ]]; then
+        if [[ "${VALIDATE_RESULT}" != success || "${REDIS_RESULT}" != success || "${MARIADB_RESULT}" != success || "${INTEGRATION_RESULT}" != success || "${TENANT_FILTER_RESULT}" != success ]]; then
           conclusion=failure
         fi
         if [[ "${conclusion}" != success ]]; then
-          echo "::error::Required CI failed: validate=${VALIDATE_RESULT}, redis=${REDIS_RESULT}, mariadb=${MARIADB_RESULT}, integration=${INTEGRATION_RESULT}"
+          echo "::error::Required CI failed: validate=${VALIDATE_RESULT}, redis=${REDIS_RESULT}, mariadb=${MARIADB_RESULT}, integration=${INTEGRATION_RESULT}, tenant-filter=${TENANT_FILTER_RESULT}"
           exit 1
         fi
 

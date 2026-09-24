@@ -1,0 +1,33 @@
+# Integration tests that must pass with the tenant filter on (multitenancy.enabled=true), as in
+# production. run-tenant-filter-on-integration-tests.sh runs each one and fails if any is missing.
+# One simple class name per line; keep it sorted.
+AccountInviteAcceptRaceIT
+AccountInviteCounsellorProvisioningIT
+AccountInviteDirectSendAtomicIT
+AccountInviteRecipientEmailGuardIT
+AccountInviteRepositoryIT
+AccountInviteReservationOrchestrationIT
+AccountInviteTenantScopeIT
+ConsultantAdminFilterServiceTenantAwareIT
+ConsultantAgencyAdminUserServiceTenantAwareIT
+ConsultantAgencyLateJoinerMembershipIT
+ConsultantAgencyRelationCreatorServiceTenantAwareIT
+ConsultantUpdateServiceTenantAwareIT
+CounsellorOnboardingWizardIT
+CreateConsultantSagaTenantAwareIT
+GrantConsultantIdentityTenantScopeIT
+HttpTenantFilterRegistrationIT
+MultiTenantRegistrationIT
+OnboardingInviteExpiryCommitIT
+RemoveConsultantFromSessionMembershipIT
+RetrieveAdminServiceTenantAwareIT
+SessionAdminServiceTenantAwareIT
+TenantAdminDpaForwardWizardIT
+TenantAspectTenantFilterIT
+TenantIsolationWithoutTransactionIT
+TenantsIT
+UserAdminAgencyScopeIT
+UserAdminControllerAuthorizationIT
+UserAdminControllerMultiTenancyTrueE2EIT
+UserAdminIdScopeIT
+UserAdminListAndChatIdentityScopeIT
