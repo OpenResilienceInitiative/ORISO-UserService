@@ -952,7 +952,7 @@ public class AccountInviteService {
 
   /**
    * Only while the number is still a reservation and only if one of our invites reserved it, so a
-   * queued CSV row can never release somebody else's number.
+   * waiting invite can never release somebody else's number.
    */
   private List<Long> enqueueUnneededNumberReleases(AccountInvite invite, LocalDateTime now) {
     List<Long> taskIds = new java.util.ArrayList<>();
