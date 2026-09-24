@@ -348,9 +348,8 @@ public class TenantAdminOnboardingController {
     public String dpaContent;
 
     /**
-     * Tenant-admin invites only (ORISO-Admin#1026, slice 4): true when the invite joins a Träger
-     * that already exists — the wizard then skips the organisation and DPA steps, registers with
-     * {@code account.password} alone and shows {@code tenantId}; no reservation pair is issued.
+     * Tenant-admin invites only: true when joining an existing Träger, so the wizard skips the
+     * organisation and DPA steps and registers with {@code account.password} alone.
      */
     public Boolean joinsExistingTenant;
 

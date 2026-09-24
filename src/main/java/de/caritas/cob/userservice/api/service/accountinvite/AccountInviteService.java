@@ -474,12 +474,7 @@ public class AccountInviteService {
     }
   }
 
-  /**
-   * {@link IdAllocationMode#EXISTING} for the tenant ID (ORISO-Admin#1026, slice 4): the invite
-   * binds to a Träger that already exists. Supported for the roles that live inside a Träger;
-   * {@code tenantId} is required (a Träger-bound caller that named none already got its own tenant
-   * stamped by the access policy), and the technical platform tenant {@code 0} is never a target.
-   */
+  /** A Träger-bound caller that named no tenant already got its own stamped by the policy. */
   private static void validateExistingTenantMode(CreateAccountInviteCommand command) {
     if (command.targetRole() != AccountInviteTargetRole.TENANT_ADMIN
         && command.targetRole() != AccountInviteTargetRole.AGENCY_ADMIN

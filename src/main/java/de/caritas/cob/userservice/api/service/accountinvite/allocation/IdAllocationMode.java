@@ -7,8 +7,7 @@ package de.caritas.cob.userservice.api.service.accountinvite.allocation;
  * request must not pin an ID. {@code MANUAL} — the admin pinned a specific ID which is reserved or
  * rejected with a conflict. {@code EXISTING} (ORISO-Admin#1026) — the ID names a unit that already
  * exists; nothing is reserved, the unit is validated instead (exists, not deleted, inside the
- * caller's scope). Supported for {@code agencyIdAllocationMode} (slice 2) and for {@code
- * tenantIdAllocationMode} (slice 4, invite into an existing Träger).
+ * caller's scope).
  */
 public enum IdAllocationMode {
   AUTO,

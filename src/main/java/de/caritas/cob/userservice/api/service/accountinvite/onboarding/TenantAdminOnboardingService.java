@@ -122,8 +122,7 @@ public class TenantAdminOnboardingService {
       return new OnboardingInviteState(resolved.invite(), true, null, null);
     }
     if (joinsExistingTenant(resolved.invite())) {
-      // ORISO-Admin#1026 slice 4: the Träger exists and has its own DPA; the invitee confirms
-      // nothing on its behalf, so no contract text is shown and there is no absence to explain.
+      // The Träger already has its own DPA; the invitee signs nothing on its behalf.
       return new OnboardingInviteState(resolved.invite(), false, null, null);
     }
     var lookup = operatorDpaContentClient.lookupPublishedDpa();
@@ -302,11 +301,8 @@ public class TenantAdminOnboardingService {
   }
 
   /**
-   * Registration on an invite into an EXISTING Träger (ORISO-Admin#1026, slice 4): the invitee
-   * joins the Träger as one more Träger admin. Nothing of the new-Träger path applies — no Träger
-   * is created, no tenant-ID reservation is consumed, no organisation data is needed and no DPA is
-   * signed (the Träger's agreement already exists). Same single-use claim, same Keycloak
-   * compensation and same TOTP resume contract as the new-Träger path.
+   * No Träger, reservation or DPA here, but the same single-use claim, Keycloak compensation and
+   * TOTP resume contract as the new-Träger path.
    */
   private TenantAdminRegistrationResult joinExistingTenant(
       AccountInvite invite, RegisterTenantAdminCommand command, LocalDateTime now) {
@@ -351,7 +347,6 @@ public class TenantAdminOnboardingService {
     }
   }
 
-  /** Whether the invite targets a Träger that already exists (slice 4) instead of a new one. */
   static boolean joinsExistingTenant(AccountInvite invite) {
     return invite.getTenantIdAllocationMode() == IdAllocationMode.EXISTING;
   }
@@ -733,8 +728,7 @@ public class TenantAdminOnboardingService {
     if (command == null) {
       throw new BadRequestException("Request body is required");
     }
-    // organisation.name is only required for a NEW Träger; registerTenantAdmin checks it once the
-    // invite is known (an invite into an existing Träger names no organisation).
+    // organisation.name is checked in registerTenantAdmin: an EXISTING-Träger invite has none.
     if (isBlank(command.password()) || command.password().length() < MIN_PASSWORD_LENGTH) {
       throw new BadRequestException(
           "account.password must be at least " + MIN_PASSWORD_LENGTH + " characters long");

@@ -349,12 +349,9 @@ public class AccountInviteController {
     /**
      * TEN-INV-U3: AUTO = the owning service assigns the smallest free ID (the matching ID field
      * must be omitted); MANUAL = the pinned ID is reserved or rejected with 409 (both only for
-     * TENANT_ADMIN invites, i.e. a new Träger). EXISTING (ORISO-Admin#1026, slice 4): {@code
-     * tenantId} names a Träger that already exists — nothing is reserved; supported for
-     * TENANT_ADMIN, AGENCY_ADMIN and COUNSELLOR invites. Unknown Träger → 404, outside the caller's
-     * scope → 403, missing {@code tenantId} (platform admin) or tenant 0 → 400. A Träger admin who
-     * names no {@code tenantId} gets their own. A TENANT_ADMIN accepted on such an invite joins the
-     * Träger; no Träger is created and no DPA is signed.
+     * TENANT_ADMIN invites, i.e. a new Träger). EXISTING: {@code tenantId} names an existing
+     * Träger, nothing is reserved (404 unknown, 403 out of scope, 400 for 0 or missing; a Träger
+     * admin who names none gets their own).
      */
     public String tenantIdAllocationMode;
 
@@ -450,10 +447,10 @@ public class AccountInviteController {
     public Long agencyId;
     public Long departmentId;
 
-    /** AUTO / MANUAL (new Träger) or EXISTING; null on invites created before #1026. */
+    /** AUTO / MANUAL (new Träger) or EXISTING; null on older invites. */
     public String tenantIdAllocationMode;
 
-    /** AUTO / MANUAL (new Beratungsstelle) or EXISTING; null on invites created before #1026. */
+    /** AUTO / MANUAL (new Beratungsstelle) or EXISTING; null on older invites. */
     public String agencyIdAllocationMode;
 
     public String provisioningStatus;
