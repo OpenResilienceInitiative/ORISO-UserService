@@ -1,7 +1,5 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
-import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
-
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
@@ -14,7 +12,6 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
-import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
@@ -26,23 +23,11 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Self-assignment (ORISO-Admin#1026, slice 3): an admin assigns THEIR OWN existing account to a
- * lower role of an agency — no e-mail, no invite, no new login.
- *
- * <ul>
- *   <li>{@code COUNSELLOR}: an admin without a consultant identity gets one through the same path
- *       as the Users area's "Auch als Beraterin anlegen" ({@link GrantConsultantIdentityService});
- *       an admin who already counsels elsewhere only gets the agency added. A missing topic
- *       selection defaults to the agency's topic when it offers exactly one.
- *   <li>{@code AGENCY_ADMIN} (Träger and platform admins only): the caller's admin account is bound
- *       to the agency ({@code admin_agency}). Roles are not touched — a Träger admin already holds
- *       every agency-admin right in their Träger; the binding records that they administer this
- *       agency.
- * </ul>
- *
- * <p>Who may assign themselves where is {@link AccountInviteAccessPolicy#authorizeSelfAssignment}.
+ * An admin adds THEIR OWN account as counsellor of an agency, without an invite. Agency admin is
+ * not offered: a Träger admin already holds every agency-admin right in their Träger.
  */
 @Slf4j
 @Service
@@ -52,7 +37,6 @@ public class AdminSelfAssignmentService {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull AccountInviteAccessPolicy accessPolicy;
   private final @NonNull ExistingAgencyClient existingAgencyClient;
-  private final @NonNull AdminRepository adminRepository;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
@@ -60,6 +44,7 @@ public class AdminSelfAssignmentService {
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
 
+  @Transactional
   public SelfAssignmentResult assign(SelfAssignmentCommand command) {
     if (command == null || command.role() == null) {
       throw new BadRequestException("role is required");
@@ -73,19 +58,13 @@ public class AdminSelfAssignmentService {
             .filter(found -> !found.deleted())
             .orElseThrow(
                 () -> new NotFoundException("agencyId " + command.agencyId() + " does not exist"));
-    boolean asAgencyAdmin = command.role() == SelfAssignmentRole.AGENCY_ADMIN;
-    accessPolicy.authorizeSelfAssignment(asAgencyAdmin, agency.id(), agency.tenantId());
+    accessPolicy.authorizeSelfAssignment(agency.id(), agency.tenantId());
 
     String userId = authenticatedUser.getUserId();
-    if (asAgencyAdmin) {
-      assignAsAgencyAdmin(userId, agency.id());
-      return new SelfAssignmentResult(command.role(), agency.id(), userId, false);
-    }
     boolean identityCreated = assignAsCounsellor(userId, agency, command.topicIds());
     return new SelfAssignmentResult(command.role(), agency.id(), userId, identityCreated);
   }
 
-  /** What the caller is assigned to today — the state the Admin shows next to the switches. */
   public SelfAssignments current() {
     String userId = authenticatedUser.getUserId();
     List<Long> adminAgencies =
@@ -105,29 +84,10 @@ public class AdminSelfAssignmentService {
     return new SelfAssignments(adminAgencies, counsellorAgencies);
   }
 
-  private void assignAsAgencyAdmin(String userId, Long agencyId) {
-    var admin =
-        adminRepository
-            .findById(userId)
-            .orElseThrow(() -> new BadRequestException("The caller has no admin account"));
-    if (!adminAgencyRepository.findByAdminIdAndAgencyId(userId, agencyId).isEmpty()) {
-      throw alreadyAssigned();
-    }
-    adminAgencyRepository.save(
-        AdminAgency.builder()
-            .admin(admin)
-            .agencyId(agencyId)
-            .createDate(nowInUtc())
-            .updateDate(nowInUtc())
-            .build());
-    log.info("Admin {} assigned themselves as agency admin of agency {}", userId, agencyId);
-  }
-
-  /**
-   * @return whether a new consultant identity was created (false: an existing one got the agency)
-   */
+  /** Returns true when a new consultant identity was created. */
   private boolean assignAsCounsellor(String userId, ExistingAgency agency, List<Long> topicIds) {
-    if (consultantRepository.findByIdAndDeleteDateIsNull(userId).isPresent()) {
+    // The row lock makes a double click wait for the first request and then answer 409.
+    if (consultantRepository.findActiveByIdForUpdate(userId).isPresent()) {
       if (consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
           userId, agency.id())) {
         throw alreadyAssigned();
@@ -149,15 +109,17 @@ public class AdminSelfAssignmentService {
     return true;
   }
 
-  /** At least one topic when the agency offers any: the only one is taken, several need a pick. */
+  /** A counsellor needs at least one topic: the agency's only one, or a pick among several. */
   private static List<Long> resolveTopics(List<Long> requested, ExistingAgency agency) {
     if (requested != null && !requested.isEmpty()) {
       return List.copyOf(requested);
     }
     List<Long> offered = agency.topicIds() == null ? List.of() : agency.topicIds();
-    if (offered.size() > 1) {
+    if (offered.size() != 1) {
       throw new BadRequestException(
-          "topicIds is required: agency " + agency.id() + " offers several topics");
+          offered.isEmpty()
+              ? "agency " + agency.id() + " offers no topic to counsel in"
+              : "topicIds is required: agency " + agency.id() + " offers several topics");
     }
     return List.copyOf(offered);
   }
@@ -168,8 +130,7 @@ public class AdminSelfAssignmentService {
   }
 
   public enum SelfAssignmentRole {
-    COUNSELLOR,
-    AGENCY_ADMIN
+    COUNSELLOR
   }
 
   public record SelfAssignmentCommand(SelfAssignmentRole role, Long agencyId, List<Long> topicIds) {

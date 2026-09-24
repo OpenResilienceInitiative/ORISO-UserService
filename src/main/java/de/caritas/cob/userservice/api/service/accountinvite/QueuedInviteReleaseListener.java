@@ -13,16 +13,8 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 /**
- * The trigger of the invite queue (ORISO-Admin#1026, slice 5): once a unit's first admin finished
- * onboarding — i.e. after the transaction that created the unit committed — the invites waiting for
- * it are released. Same after-commit mechanism as {@code AgencyMembershipSyncListener}; {@code
- * fallbackExecution} covers the counsellor/agency-admin wizard, which runs without an outer
- * transaction.
- *
- * <p>The onboarding request is anonymous, so the release runs with the technical user's token
- * (needed when an agency admin who waited for a new Träger gets its Beratungsstelle ID reserved)
- * and in the unit's tenant. A failure is logged and never fails the onboarding that triggered it:
- * the invites stay waiting and can be sent by hand.
+ * {@code fallbackExecution}: the agency-admin/counsellor wizard has no outer transaction.
+ * Onboarding is anonymous, so this runs as the technical user; a failure never fails it.
  */
 @Slf4j
 @Component

@@ -14,6 +14,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -41,6 +42,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -59,12 +67,8 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 
 /**
- * A new unit with a queue (ORISO-Admin#1026, slice 5). Invites into a Beratungsstelle / Träger that
- * does not exist yet, which are not that unit's admin invite, are stored with {@code
- * WAITING_FOR_UNIT} and not sent. They need a pending admin invite for the same reserved ID (409
- * {@code NO_PENDING_UNIT_ADMIN} otherwise — except inside a CSV import batch, where the order of
- * the rows must not matter). When the unit exists they are released: sent with the template they
- * were created with, the expiry clock starting at that send.
+ * Invites into a unit that does not exist yet wait (not sent) and need a pending admin invite for
+ * the same ID; once the unit exists they are released with their template.
  */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
@@ -159,9 +163,9 @@ class AccountInviteUnitQueueIT {
   @Test
   void counsellorIntoANewAgency_Should_Wait_When_AnAgencyAdminInviteIsPending() {
     actAsTenantAdmin();
-    service.createInvite(agencyAdmin(NEW_AGENCY, null));
+    service.createInvite(agencyAdmin(NEW_AGENCY));
 
-    AccountInvite counsellor = service.createInvite(counsellor(NEW_AGENCY, null));
+    AccountInvite counsellor = service.createInvite(counsellor(NEW_AGENCY));
 
     assertThat(counsellor.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
     assertThat(counsellor.getWaitingForUnit()).isEqualTo(InviteUnitType.AGENCY);
@@ -178,7 +182,7 @@ class AccountInviteUnitQueueIT {
     actAsTenantAdmin();
 
     assertReason(
-        () -> service.createInvite(counsellor(NEW_AGENCY, null)),
+        () -> service.createInvite(counsellor(NEW_AGENCY)),
         HttpStatusExceptionReason.NO_PENDING_UNIT_ADMIN);
     assertThat(accountInviteRepository.count()).isZero();
     verify(agencyIdAllocationClient, never()).reserve(any(), any());
@@ -192,12 +196,7 @@ class AccountInviteUnitQueueIT {
         () ->
             service.createInvite(
                 command(
-                    AccountInviteTargetRole.COUNSELLOR,
-                    null,
-                    null,
-                    null,
-                    IdAllocationMode.AUTO,
-                    null)),
+                    AccountInviteTargetRole.COUNSELLOR, null, null, null, IdAllocationMode.AUTO)),
         HttpStatusExceptionReason.NO_PENDING_UNIT_ADMIN);
   }
 
@@ -205,7 +204,7 @@ class AccountInviteUnitQueueIT {
   void counsellorWithManualOnAnExistingAgency_Should_StillAnswer409() {
     actAsTenantAdmin();
 
-    assertThatThrownBy(() -> service.createInvite(counsellor(EXISTING_AGENCY, null)))
+    assertThatThrownBy(() -> service.createInvite(counsellor(EXISTING_AGENCY)))
         .isInstanceOf(
             de.caritas.cob.userservice.api.exception.httpresponses.ConflictException.class);
   }
@@ -213,9 +212,9 @@ class AccountInviteUnitQueueIT {
   @Test
   void queuedInvite_Should_NotBeSent_ButKeepItsTemplate_When_CreatedWithDirectSend() {
     actAsTenantAdmin();
-    service.createInvite(agencyAdmin(NEW_AGENCY, null));
+    service.createInvite(agencyAdmin(NEW_AGENCY));
 
-    var result = service.createAndSendInvite(counsellor(NEW_AGENCY, null), templateId);
+    var result = service.createAndSendInvite(counsellor(NEW_AGENCY), templateId);
 
     assertThat(result.invite().getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
     assertThat(result.rawToken()).isNull();
@@ -228,31 +227,12 @@ class AccountInviteUnitQueueIT {
   @Test
   void waitingInvite_Should_HoldTheRecipientAddress() {
     actAsTenantAdmin();
-    service.createInvite(agencyAdmin(NEW_AGENCY, null));
-    CreateAccountInviteCommand counsellor = counsellor(NEW_AGENCY, null);
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    CreateAccountInviteCommand counsellor = counsellor(NEW_AGENCY);
     service.createInvite(counsellor);
 
     assertReason(
         () -> service.createInvite(counsellor), HttpStatusExceptionReason.EMAIL_NOT_AVAILABLE);
-  }
-
-  // --- CSV import: the order of the rows must not matter
-  // ------------------------------------------
-
-  @Test
-  void importBatch_Should_QueueTheCounsellorRow_EvenWhenTheAdminRowComesLater() {
-    actAsTenantAdmin();
-    String batch = UUID.randomUUID().toString();
-
-    AccountInvite counsellor = service.createInvite(counsellor(NEW_AGENCY, batch));
-    assertThat(counsellor.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
-    assertThat(counsellor.getImportBatchId()).isEqualTo(batch);
-    assertThat(service.queueProblemOf(counsellor)).isEqualTo(InviteQueueProblem.NO_UNIT_ADMIN);
-
-    service.createInvite(agencyAdmin(NEW_AGENCY, batch));
-
-    assertThat(service.queueProblemOf(reload(counsellor))).isNull();
-    verify(agencyIdAllocationClient, times(1)).reserve(NEW_AGENCY, OWN_TENANT);
   }
 
   // --- several admins, revoked / expired admin -------------------------------------------------
@@ -260,9 +240,9 @@ class AccountInviteUnitQueueIT {
   @Test
   void secondAgencyAdminForTheSameNewAgency_Should_ShareTheReservation() {
     actAsTenantAdmin();
-    AccountInvite first = service.createInvite(agencyAdmin(NEW_AGENCY, null));
+    AccountInvite first = service.createInvite(agencyAdmin(NEW_AGENCY));
 
-    AccountInvite second = service.createInvite(agencyAdmin(NEW_AGENCY, null));
+    AccountInvite second = service.createInvite(agencyAdmin(NEW_AGENCY));
 
     assertThat(second.getAgencyId()).isEqualTo(first.getAgencyId());
     assertThat(second.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
@@ -272,14 +252,14 @@ class AccountInviteUnitQueueIT {
   @Test
   void revokedAdmin_Should_LeaveTheQueueWithNoUnitAdmin_UntilANewAdminIsInvited() {
     actAsTenantAdmin();
-    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY, null));
-    AccountInvite counsellor = service.createInvite(counsellor(NEW_AGENCY, null));
+    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite counsellor = service.createInvite(counsellor(NEW_AGENCY));
 
     service.revokeInvite(admin.getId());
     assertThat(service.queueProblemOf(reload(counsellor)))
         .isEqualTo(InviteQueueProblem.NO_UNIT_ADMIN);
 
-    service.createInvite(agencyAdmin(NEW_AGENCY, null));
+    service.createInvite(agencyAdmin(NEW_AGENCY));
     assertThat(service.queueProblemOf(reload(counsellor))).isNull();
     verify(agencyIdAllocationClient, times(1)).reserve(any(), any());
   }
@@ -287,8 +267,8 @@ class AccountInviteUnitQueueIT {
   @Test
   void expiredAdmin_Should_LeaveTheQueueWithNoUnitAdmin() {
     actAsTenantAdmin();
-    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY, null));
-    AccountInvite counsellor = service.createInvite(counsellor(NEW_AGENCY, null));
+    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite counsellor = service.createInvite(counsellor(NEW_AGENCY));
 
     AccountInvite stored = reload(admin);
     stored.setExpiresAt(LocalDateTime.now().minusMinutes(1));
@@ -303,8 +283,8 @@ class AccountInviteUnitQueueIT {
   @Test
   void release_Should_SendWaitingInvitesWithTheirTemplate_AndStartTheExpiryClockThere() {
     actAsTenantAdmin();
-    service.createInvite(agencyAdmin(NEW_AGENCY, null));
-    var queued = service.createAndSendInvite(counsellor(NEW_AGENCY, null, 10L), templateId);
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    var queued = service.createAndSendInvite(counsellor(NEW_AGENCY, 10L), templateId);
     when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
         .thenReturn(IdAllocationStatus.ASSIGNED);
 
@@ -323,10 +303,69 @@ class AccountInviteUnitQueueIT {
   }
 
   @Test
+  void twoReleasesAtOnce_Should_MailOnce_AndKeepTheMailedLinkValid() throws Exception {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    var queued = service.createAndSendInvite(counsellor(NEW_AGENCY), templateId);
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
+        .thenAnswer(call -> "https://admin.example.org/onboarding/" + call.getArgument(1));
+    List<String> mailedLinks = new CopyOnWriteArrayList<>();
+    when(inviteMailDispatchService.send(
+            anyString(), anyString(), anyString(), anyString(), any(), any()))
+        .thenAnswer(
+            call -> {
+              mailedLinks.add(call.getArgument(3));
+              Thread.sleep(300);
+              return new InviteMailSendReceipt(call.getArgument(0), Instant.now());
+            });
+    var start = new CountDownLatch(1);
+    Callable<List<Long>> trigger =
+        () -> {
+          start.await();
+          return service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY);
+        };
+    ExecutorService executor = Executors.newFixedThreadPool(2);
+    try {
+      Future<List<Long>> first = executor.submit(trigger);
+      Future<List<Long>> second = executor.submit(trigger);
+      start.countDown();
+      first.get(10, TimeUnit.SECONDS);
+      second.get(10, TimeUnit.SECONDS);
+    } finally {
+      executor.shutdownNow();
+    }
+
+    assertThat(mailedLinks).hasSize(1);
+    String mailedToken = mailedLinks.get(0).substring(mailedLinks.get(0).lastIndexOf('/') + 1);
+    AccountInvite sent = reload(queued.invite());
+    assertThat(sent.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(sent.getTokenHash()).isEqualTo(AccountInviteService.hash(mailedToken));
+  }
+
+  @Test
+  void release_Should_LeaveADraftWithoutLink_When_SmtpConfirmsTheMailWasNotSent() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    var queued = service.createAndSendInvite(counsellor(NEW_AGENCY), templateId);
+    when(inviteMailDispatchService.send(
+            anyString(), anyString(), anyString(), anyString(), any(), any()))
+        .thenThrow(
+            new SmtpSendException(
+                SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE, "smtp off"));
+
+    List<Long> released = service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY);
+
+    assertThat(released).containsExactly(queued.invite().getId());
+    AccountInvite draft = reload(queued.invite());
+    assertThat(draft.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    assertThat(draft.getTokenHash()).isNull();
+  }
+
+  @Test
   void release_Should_TurnAWaitingInviteWithoutTemplateIntoADraft() {
     actAsTenantAdmin();
-    service.createInvite(agencyAdmin(NEW_AGENCY, null));
-    AccountInvite queued = service.createInvite(counsellor(NEW_AGENCY, null));
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite queued = service.createInvite(counsellor(NEW_AGENCY));
 
     service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY);
 
@@ -340,8 +379,8 @@ class AccountInviteUnitQueueIT {
   @Test
   void manualSend_Should_Answer409_WhileTheUnitDoesNotExist() {
     actAsTenantAdmin();
-    service.createInvite(agencyAdmin(NEW_AGENCY, null));
-    AccountInvite queued = service.createInvite(counsellor(NEW_AGENCY, null));
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite queued = service.createInvite(counsellor(NEW_AGENCY));
 
     assertReason(
         () -> service.sendInvite(new SendInviteCommand(queued.getId(), templateId)),
@@ -351,8 +390,8 @@ class AccountInviteUnitQueueIT {
   @Test
   void manualSend_Should_ReleaseTheInvite_OnceTheUnitExists() {
     actAsTenantAdmin();
-    service.createInvite(agencyAdmin(NEW_AGENCY, null));
-    AccountInvite queued = service.createInvite(counsellor(NEW_AGENCY, null));
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite queued = service.createInvite(counsellor(NEW_AGENCY));
     when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
         .thenReturn(IdAllocationStatus.ASSIGNED);
 
@@ -377,8 +416,7 @@ class AccountInviteUnitQueueIT {
                 NEW_TENANT,
                 IdAllocationMode.MANUAL,
                 null,
-                IdAllocationMode.AUTO,
-                null));
+                IdAllocationMode.AUTO));
 
     assertThat(agencyAdmin.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
     assertThat(agencyAdmin.getWaitingForUnit()).isEqualTo(InviteUnitType.TENANT);
@@ -405,8 +443,7 @@ class AccountInviteUnitQueueIT {
                     NEW_TENANT,
                     IdAllocationMode.MANUAL,
                     null,
-                    IdAllocationMode.AUTO,
-                    null)),
+                    IdAllocationMode.AUTO)),
         HttpStatusExceptionReason.NO_PENDING_UNIT_ADMIN);
   }
 
@@ -474,17 +511,16 @@ class AccountInviteUnitQueueIT {
     caller.setGrantedAuthorities(Set.of());
   }
 
-  private static CreateAccountInviteCommand agencyAdmin(Long agencyId, String batch) {
+  private static CreateAccountInviteCommand agencyAdmin(Long agencyId) {
     return command(
-        AccountInviteTargetRole.AGENCY_ADMIN, null, null, agencyId, IdAllocationMode.MANUAL, batch);
+        AccountInviteTargetRole.AGENCY_ADMIN, null, null, agencyId, IdAllocationMode.MANUAL);
   }
 
-  private static CreateAccountInviteCommand counsellor(Long agencyId, String batch) {
-    return counsellor(agencyId, batch, null);
+  private static CreateAccountInviteCommand counsellor(Long agencyId) {
+    return counsellor(agencyId, null);
   }
 
-  private static CreateAccountInviteCommand counsellor(
-      Long agencyId, String batch, Long expiresInDays) {
+  private static CreateAccountInviteCommand counsellor(Long agencyId, Long expiresInDays) {
     return new CreateAccountInviteCommand(
         AccountInviteTargetRole.COUNSELLOR,
         null,
@@ -496,8 +532,7 @@ class AccountInviteUnitQueueIT {
         expiresInDays,
         null,
         IdAllocationMode.MANUAL,
-        null,
-        batch);
+        null);
   }
 
   private static CreateAccountInviteCommand newTenantAdmin() {
@@ -512,7 +547,6 @@ class AccountInviteUnitQueueIT {
         null,
         IdAllocationMode.MANUAL,
         null,
-        null,
         null);
   }
 
@@ -521,8 +555,7 @@ class AccountInviteUnitQueueIT {
       Long tenantId,
       IdAllocationMode tenantMode,
       Long agencyId,
-      IdAllocationMode agencyMode,
-      String batch) {
+      IdAllocationMode agencyMode) {
     return new CreateAccountInviteCommand(
         role,
         tenantId,
@@ -534,7 +567,6 @@ class AccountInviteUnitQueueIT {
         null,
         tenantMode,
         agencyMode,
-        null,
-        batch);
+        null);
   }
 }

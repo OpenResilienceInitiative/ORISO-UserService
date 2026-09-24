@@ -41,8 +41,7 @@ public class CounsellorInviteProvisioningService {
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
     AccountInvite invite = accountInviteService.findInviteByToken(rawToken);
-    // An AGENCY_ADMIN invite whose invitee also counsels takes this consultant path, but only from
-    // the onboarding wizard, which asks for the agency-admin grant (ORISO-Admin#1026, slice 3).
+    // A counselling agency admin comes here only via the wizard, which asks for the admin grant.
     boolean agencyAdminAlsoCounselling =
         invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN
             && command != null

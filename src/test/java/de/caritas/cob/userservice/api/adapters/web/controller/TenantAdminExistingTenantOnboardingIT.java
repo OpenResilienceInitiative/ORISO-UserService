@@ -46,12 +46,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-/**
- * The accept flow of a Träger-admin invite into an EXISTING Träger (ORISO-Admin#1026, slice 4),
- * through the real public onboarding endpoints: the invitee joins the Träger — the account is
- * attached to it, no Träger is created, no tenant-ID reservation is consumed and no DPA is signed
- * (the Träger has its own agreement already).
- */
+/** Accepting a Träger-admin invite into an EXISTING Träger through the public endpoints. */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")

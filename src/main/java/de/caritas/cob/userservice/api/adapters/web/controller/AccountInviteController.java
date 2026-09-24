@@ -79,8 +79,7 @@ public class AccountInviteController {
                 IdAllocationMode.class, safe.tenantIdAllocationMode, "tenantIdAllocationMode"),
             parseOptionalEnum(
                 IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"),
-            safe.alsoCounsellor,
-            safe.importBatchId);
+            safe.alsoCounsellor);
 
     TopicPermission topicPermission = TopicPermission.fromWire(safe.topicPermission);
 
@@ -326,7 +325,7 @@ public class AccountInviteController {
                     safe.language))));
   }
 
-  /** Slice 5: the derived queue problem of a waiting invite (null for every other invite). */
+  /** The queue problem is derived on read, never stored. */
   private AccountInviteResponseDTO withQueueState(
       AccountInviteResponseDTO dto, AccountInvite invite) {
     InviteQueueProblem problem = accountInviteService.queueProblemOf(invite);
@@ -395,38 +394,20 @@ public class AccountInviteController {
     /**
      * TEN-INV-U3: AUTO = the owning service assigns the smallest free ID (the matching ID field
      * must be omitted); MANUAL = the pinned ID is reserved or rejected with 409 (both only for
-     * TENANT_ADMIN invites, i.e. a new Träger). EXISTING (ORISO-Admin#1026, slice 4): {@code
-     * tenantId} names a Träger that already exists — nothing is reserved; supported for
-     * TENANT_ADMIN, AGENCY_ADMIN and COUNSELLOR invites. Unknown Träger → 404, outside the caller's
-     * scope → 403, missing {@code tenantId} (platform admin) or tenant 0 → 400. A Träger admin who
-     * names no {@code tenantId} gets their own. A TENANT_ADMIN accepted on such an invite joins the
-     * Träger; no Träger is created and no DPA is signed.
+     * TENANT_ADMIN invites, i.e. a new Träger). EXISTING: {@code tenantId} names an existing
+     * Träger, nothing is reserved (404 unknown, 403 out of scope, 400 for 0 or missing; a Träger
+     * admin who names none gets their own).
      */
     public String tenantIdAllocationMode;
 
     /**
-     * AUTO / MANUAL as above, or EXISTING (ORISO-Admin#1026): {@code agencyId} names an agency that
-     * already exists — nothing is reserved; the agency must exist, must not be deleted and must lie
-     * in the caller's scope (403 otherwise, 404 if unknown/deleted). A missing {@code tenantId} is
-     * taken from the agency; a missing {@code departmentId} becomes the agency's topic when it has
-     * exactly one.
+     * AUTO / MANUAL as above, or EXISTING: {@code agencyId} names an existing agency that is
+     * validated, not reserved; a missing tenant or single topic is taken from the agency.
      */
     public String agencyIdAllocationMode;
 
-    /**
-     * AGENCY_ADMIN invites only (ORISO-Admin#1026, slice 3): whether the agency admin also
-     * counsels. Omitted = true. The invitee may change it in the onboarding wizard. Set for any
-     * other role → 400.
-     */
+    /** AGENCY_ADMIN invites only; omitted = true. Set for any other role → 400. */
     public Boolean alsoCounsellor;
-
-    /**
-     * ORISO-Admin#1026 slice 5, CSV import: one client-chosen ID (at most 64 characters, e.g. a
-     * UUID) for all rows of one file. A row into a not-yet-created unit whose admin row comes later
-     * in the same file is then stored WAITING_FOR_UNIT with {@code queueProblem NO_UNIT_ADMIN}
-     * instead of being refused with 409, so the order of the rows does not matter.
-     */
-    public String importBatchId;
 
     /**
      * Counsellor invites (ORISO-Admin#1026, slice 6): {@code NONE}, {@code SELECT_EXISTING} or
@@ -523,31 +504,20 @@ public class AccountInviteController {
     public Long agencyId;
     public Long departmentId;
 
-    /** AUTO / MANUAL (new Träger) or EXISTING; null on invites created before #1026. */
+    /** AUTO / MANUAL (new Träger) or EXISTING; null on older invites. */
     public String tenantIdAllocationMode;
 
-    /** AUTO / MANUAL (new Beratungsstelle) or EXISTING; null on invites created before #1026. */
+    /** AUTO / MANUAL (new Beratungsstelle) or EXISTING; null on older invites. */
     public String agencyIdAllocationMode;
 
     /** AGENCY_ADMIN invites: whether the person also counsels; null for every other role. */
     public Boolean alsoCounsellor;
 
-    /**
-     * ORISO-Admin#1026 slice 5: AGENCY or TENANT while {@code inviteStatus} is WAITING_FOR_UNIT —
-     * the unit ({@code agencyId} resp. {@code tenantId}) does not exist yet. The Admin stepper
-     * shows "Beratungsstelle noch nicht angelegt" (resp. Träger) as the first step.
-     */
+    /** AGENCY or TENANT while WAITING_FOR_UNIT: that unit does not exist yet. */
     public String waitingForUnit;
 
-    /**
-     * Slice 5: NO_UNIT_ADMIN when a waiting invite has no pending admin invite for its unit any
-     * more (revoked, expired, or a CSV admin row not arrived yet); null otherwise. Clears itself
-     * once a new admin invite for the same ID exists.
-     */
+    /** NO_UNIT_ADMIN while no pending admin invite exists for the unit; clears itself. */
     public String queueProblem;
-
-    /** Slice 5: the CSV import the invite came from, if any. */
-    public String importBatchId;
 
     public String provisioningStatus;
     public String provisionedUserId;
@@ -652,7 +622,6 @@ public class AccountInviteController {
       dto.alsoCounsellor = invite.getAlsoCounsellor();
       dto.waitingForUnit =
           invite.getWaitingForUnit() == null ? null : invite.getWaitingForUnit().name();
-      dto.importBatchId = invite.getImportBatchId();
       dto.provisioningStatus =
           invite.getProvisioningStatus() == null ? null : invite.getProvisioningStatus().name();
       dto.provisionedUserId = invite.getProvisionedUserId();
@@ -688,13 +657,7 @@ public class AccountInviteController {
    * does not even advertise that vocabulary (ORISO-Admin#896). Admin endpoints keep the full shape
    * with {@code dpaSignedAt} present-as-null until signed.
    */
-  @JsonIgnoreProperties({
-    "dpaForwardedAt",
-    "dpaForwardCount",
-    "dpaSignedAt",
-    "queueProblem",
-    "importBatchId"
-  })
+  @JsonIgnoreProperties({"dpaForwardedAt", "dpaForwardCount", "dpaSignedAt", "queueProblem"})
   public static class PublicAccountInviteResponseDTO extends AccountInviteResponseDTO {}
 
   public static class PagedAccountInviteResponseDTO {

@@ -60,16 +60,6 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-/**
- * Onboarding of an AGENCY_ADMIN invite (ORISO-Admin#1026, slice 3) through the real public wizard
- * endpoints. The agency admin runs the same wizard as a counsellor; "also counsellor" (proposed by
- * the inviter, changeable by the invitee) decides whether a consultant is created as well:
- *
- * <ul>
- *   <li>on: consultant + agency-admin rights on the invite's agency (the #998 path);
- *   <li>off: an agency-admin account only, bound to the invite's agency — no consultant.
- * </ul>
- */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
@@ -248,10 +238,7 @@ class AgencyAdminOnboardingWizardIT {
         .andExpect(status().isOk());
   }
 
-  /**
-   * ORISO-Admin#1026 (Frank, Q28): a founding agency admin gives the new agency at least one topic,
-   * even without counselling — otherwise the counsellors queued for it have nothing to pick.
-   */
+  /** Counsellors queued for the new agency need at least one topic to pick from. */
   @Test
   void register_Should_Answer400AndCreateNothing_When_AFoundingAdminWhoDoesNotCounselSendsNoTopic()
       throws Exception {

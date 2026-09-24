@@ -17,20 +17,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RestController;
 
-/**
- * Self-assignment of the calling admin (ORISO-Admin#1026, slice 3): "assign me as agency admin /
- * counsellor of this agency". Not an e-mail invite — the caller's existing account is assigned.
- *
- * <ul>
- *   <li>{@code POST /useradmin/self-assignments} {@code {role: COUNSELLOR|AGENCY_ADMIN, agencyId,
- *       topicIds?}} → 201 {@code {role, agencyId, userId, consultantIdentityCreated}}; 400 invalid
- *       input, 403 outside the caller's scope, 404 unknown or deleted agency, 409 with {@code
- *       X-Reason: SELF_ASSIGNMENT_ALREADY_EXISTS} (or {@code CONSULTANT_IDENTITY_ALREADY_GRANTED})
- *       when the caller already holds the role there.
- *   <li>{@code GET /useradmin/self-assignments} → 200 {@code {agencyAdminAgencyIds,
- *       counsellorAgencyIds}} of the caller.
- * </ul>
- */
+/** The calling admin adds their own account as counsellor of an agency; no e-mail invite. */
 @RestController
 @RequiredArgsConstructor
 public class AdminSelfAssignmentController {
@@ -74,7 +61,7 @@ public class AdminSelfAssignmentController {
   }
 
   public static class SelfAssignmentRequestDTO {
-    /** COUNSELLOR or AGENCY_ADMIN. */
+    /** COUNSELLOR; agency admin is not offered (a Träger admin already holds that right). */
     public String role;
 
     public Long agencyId;

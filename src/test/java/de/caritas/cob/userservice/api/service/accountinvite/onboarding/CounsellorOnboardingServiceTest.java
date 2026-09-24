@@ -565,8 +565,7 @@ class CounsellorOnboardingServiceTest {
 
   @Test
   void registerCounsellor_missingTopics_isRejected_whenTheCoverageOffersSeveralTopics() {
-    // At least one topic, always (ORISO-Admin#1026): only a single-topic coverage is picked
-    // for the invitee; with the department topic plus a further agency topic they must choose.
+    // Only a single-topic coverage is picked for the invitee; with two topics they must choose.
     inviteResolves(invite());
     when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
         .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(EXTRA_AGENCY_TOPIC_ID)));

@@ -31,11 +31,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-/**
- * HTTP contract of the self-assignment endpoint (ORISO-Admin#1026, slice 3): admin authorities
- * only, the request shape, the 201 answer and the input errors. The rules themselves are covered by
- * {@code AdminSelfAssignmentIT}.
- */
+/** HTTP contract only; the self-assignment rules are covered by {@code AdminSelfAssignmentIT}. */
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -112,6 +108,21 @@ class AdminSelfAssignmentControllerIT {
                 .header(CSRF_HEADER, CSRF_VALUE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{\"role\":\"TENANT_ADMIN\",\"agencyId\":7}"))
+        .andExpect(status().isBadRequest());
+
+    verifyNoInteractions(selfAssignmentService);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void assign_Should_Answer400_When_TheRoleIsAgencyAdmin() throws Exception {
+    // A Träger admin already administers every agency of their Träger.
+    mvc.perform(
+            post(PATH)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"role\":\"AGENCY_ADMIN\",\"agencyId\":7}"))
         .andExpect(status().isBadRequest());
 
     verifyNoInteractions(selfAssignmentService);

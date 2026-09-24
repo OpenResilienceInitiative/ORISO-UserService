@@ -186,11 +186,7 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("agencyIds") Collection<Long> agencyIds,
       Pageable pageable);
 
-  /**
-   * Pending admin invites of a not-yet-created Beratungsstelle (ORISO-Admin#1026, slice 5): the
-   * AGENCY_ADMIN invites for {@code agencyId} that can still lead to the agency's creation. {@code
-   * tenantId} null matches any tenant; {@code excludedId} null excludes nothing.
-   */
+  /** Null {@code tenantId} matches any tenant; null {@code excludedId} excludes nothing. */
   @Query(
       "SELECT i FROM AccountInvite i"
           + " WHERE i.targetRole ="
@@ -226,7 +222,7 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
-  /** The invites waiting for an agency that is about to exist (slice 5 release). */
+  /** The invites waiting for an agency that is about to exist. */
   @Query(
       "SELECT i.id FROM AccountInvite i WHERE i.status = :status"
           + " AND i.waitingForUnit ="
@@ -235,7 +231,21 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   List<Long> findIdsWaitingForAgency(
       @Param("status") AccountInviteStatus status, @Param("agencyId") Long agencyId);
 
-  /** The invites waiting for a tenant that is about to exist (slice 5 release). */
+  /** Moves a waiting invite to DRAFT; 0 when another release got there first. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.DRAFT,"
+          + " i.waitingForUnit = NULL, i.expiresAt = :expiresAt, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus"
+          + ".WAITING_FOR_UNIT")
+  int claimWaitingInvite(
+      @Param("id") Long id,
+      @Param("expiresAt") LocalDateTime expiresAt,
+      @Param("now") LocalDateTime now);
+
+  /** The invites waiting for a tenant that is about to exist. */
   @Query(
       "SELECT i.id FROM AccountInvite i WHERE i.status = :status"
           + " AND i.waitingForUnit ="
@@ -244,10 +254,7 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   List<Long> findIdsWaitingForTenant(
       @Param("status") AccountInviteStatus status, @Param("tenantId") Long tenantId);
 
-  /**
-   * Whether an earlier AGENCY_ADMIN invite reserved (AUTO/MANUAL) this agency ID, so a further
-   * admin of the same new agency shares that reservation instead of taking a second one.
-   */
+  /** A further admin of the same new agency shares this reservation instead of taking another. */
   @Query(
       "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.targetRole ="
           + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
@@ -272,11 +279,7 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("excludedId") Long excludedId,
       @Param("modes") Collection<IdAllocationMode> modes);
 
-  /**
-   * Whether one of our invites reserved this agency number (ORISO-Admin#1026): an invite that took
-   * it under AUTO/MANUAL itself — not a queued invite, which only points at another invite's
-   * reservation.
-   */
+  /** A queued invite does not count: it only points at another invite's reservation. */
   @Query(
       "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.agencyId = :agencyId"
           + " AND i.agencyIdAllocationMode IN :modes"
@@ -287,10 +290,7 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   boolean existsReservationHolderForAgency(
       @Param("agencyId") Long agencyId, @Param("modes") Collection<IdAllocationMode> modes);
 
-  /**
-   * Whether another still-pending invite needs this agency number: a further admin of the same new
-   * Beratungsstelle or an invite waiting for it (ORISO-Admin#1026). Elapsed invites do not count.
-   */
+  /** Further admins or waiting invites of the same new agency; elapsed invites do not count. */
   @Query(
       "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.agencyId = :agencyId"
           + " AND i.id <> :excludedId"
@@ -304,10 +304,7 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
-  /**
-   * Whether another still-pending invite needs this Träger number: a further admin sharing the
-   * reservation or an invite waiting for the new Träger (ORISO-Admin#1026).
-   */
+  /** Further admins sharing the reservation or invites waiting for the new Träger. */
   @Query(
       "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.tenantId = :tenantId"
           + " AND i.id <> :excludedId"
@@ -322,10 +319,7 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
-  /**
-   * Elapsed invites that may still hold a reserved number (ORISO-Admin#1026 expiry sweep): not yet
-   * accepted, past their expiry, and reserving a Träger or agency number.
-   */
+  /** Elapsed, unaccepted invites that may still hold a reserved Träger or agency number. */
   @Query(
       "SELECT i FROM AccountInvite i WHERE i.status IN :statuses"
           + " AND i.expiresAt IS NOT NULL AND i.expiresAt <= :now"

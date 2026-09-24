@@ -47,15 +47,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 
-/**
- * A revoked or expired invite gives its reserved Beratungsstellen / Träger number back
- * (ORISO-Admin#1026) — unless another pending invite still needs that number: a second admin of the
- * same new unit, or invites waiting for the unit (slice 5). The number is only released while it is
- * still a reservation (never once the unit exists) and only when one of our invites reserved it.
- *
- * <p>Runs against a real database with the real release processor; only the remote ledgers
- * (AgencyService / TenantService), Keycloak and SMTP are replaced.
- */
+/** Only the remote ledgers, Keycloak and SMTP are replaced; the release processor is real. */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
@@ -139,7 +131,7 @@ class AccountInviteReservationReleaseIT {
 
   @Test
   void revokingTheOnlyAdminInviteOfANewAgency_Should_ReleaseItsNumber() {
-    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY, null));
+    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY));
 
     service.revokeInvite(admin.getId());
 
@@ -149,8 +141,8 @@ class AccountInviteReservationReleaseIT {
 
   @Test
   void revokingOneOfTwoAdminsOfTheSameNewAgency_Should_KeepTheNumber_UntilTheLastIsRevoked() {
-    AccountInvite first = service.createInvite(agencyAdmin(NEW_AGENCY, null));
-    AccountInvite second = service.createInvite(agencyAdmin(NEW_AGENCY, null));
+    AccountInvite first = service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite second = service.createInvite(agencyAdmin(NEW_AGENCY));
 
     service.revokeInvite(first.getId());
     verify(agencyIdAllocationClient, never()).release(anyLong());
@@ -161,8 +153,8 @@ class AccountInviteReservationReleaseIT {
 
   @Test
   void revokingTheAdmin_Should_KeepTheNumber_WhileCounsellorsWaitForTheAgency() {
-    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY, null));
-    AccountInvite waiting = service.createInvite(counsellor(NEW_AGENCY, null));
+    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite waiting = service.createInvite(counsellor(NEW_AGENCY));
 
     service.revokeInvite(admin.getId());
     verify(agencyIdAllocationClient, never()).release(anyLong());
@@ -181,8 +173,7 @@ class AccountInviteReservationReleaseIT {
                 null,
                 null,
                 EXISTING_AGENCY,
-                IdAllocationMode.EXISTING,
-                null));
+                IdAllocationMode.EXISTING));
 
     service.revokeInvite(invite.getId());
 
@@ -191,11 +182,26 @@ class AccountInviteReservationReleaseIT {
   }
 
   @Test
-  void revokingAQueuedCsvRow_Should_NotReleaseANumberNoneOfOurInvitesReserved() {
-    // A CSV counsellor row for 501 whose admin row never came: someone else holds 501.
+  void revokingAWaitingInvite_Should_NotReleaseANumberNoneOfOurInvitesReserved() {
+    // A waiting row on 501 without any admin invite of ours: someone else holds 501.
     when(agencyIdAllocationClient.getAvailability(FOREIGN_RESERVED_AGENCY))
         .thenReturn(IdAllocationStatus.RESERVED);
-    AccountInvite row = service.createInvite(counsellor(FOREIGN_RESERVED_AGENCY, "batch-1"));
+    AccountInvite row =
+        accountInviteRepository.save(
+            AccountInvite.builder()
+                .targetRole(AccountInviteTargetRole.COUNSELLOR)
+                .tenantId(OWN_TENANT)
+                .recipientEmail("waiting@example.org")
+                .agencyId(FOREIGN_RESERVED_AGENCY)
+                .agencyIdAllocationMode(IdAllocationMode.MANUAL)
+                .waitingForUnit(InviteUnitType.AGENCY)
+                .status(AccountInviteStatus.WAITING_FOR_UNIT)
+                .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+                .emailVerificationStatus(EmailVerificationStatus.PENDING)
+                .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
+                .createDate(LocalDateTime.now())
+                .updateDate(LocalDateTime.now())
+                .build());
 
     service.revokeInvite(row.getId());
 
@@ -219,7 +225,7 @@ class AccountInviteReservationReleaseIT {
 
   @Test
   void anExpiredAdminInvite_Should_ReleaseItsNumber_Once() {
-    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY, null));
+    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY));
     elapse(admin);
 
     service.expireElapsedInvites();
@@ -231,8 +237,8 @@ class AccountInviteReservationReleaseIT {
 
   @Test
   void anExpiredAdminInvite_Should_KeepTheNumber_WhileAnotherAdminInviteIsPending() {
-    AccountInvite first = service.createInvite(agencyAdmin(NEW_AGENCY, null));
-    AccountInvite second = service.createInvite(agencyAdmin(NEW_AGENCY, null));
+    AccountInvite first = service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite second = service.createInvite(agencyAdmin(NEW_AGENCY));
     elapse(first);
 
     service.expireElapsedInvites();
@@ -244,7 +250,7 @@ class AccountInviteReservationReleaseIT {
 
   @Test
   void aStillValidInvite_Should_NotBeTouchedByTheExpirySweep() {
-    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY, null));
+    AccountInvite admin = service.createInvite(agencyAdmin(NEW_AGENCY));
 
     service.expireElapsedInvites();
 
@@ -288,24 +294,19 @@ class AccountInviteReservationReleaseIT {
     caller.setGrantedAuthorities(Set.of());
   }
 
-  private static CreateAccountInviteCommand agencyAdmin(Long agencyId, String batch) {
+  private static CreateAccountInviteCommand agencyAdmin(Long agencyId) {
     return command(
-        AccountInviteTargetRole.AGENCY_ADMIN, null, null, agencyId, IdAllocationMode.MANUAL, batch);
+        AccountInviteTargetRole.AGENCY_ADMIN, null, null, agencyId, IdAllocationMode.MANUAL);
   }
 
-  private static CreateAccountInviteCommand counsellor(Long agencyId, String batch) {
+  private static CreateAccountInviteCommand counsellor(Long agencyId) {
     return command(
-        AccountInviteTargetRole.COUNSELLOR, null, null, agencyId, IdAllocationMode.MANUAL, batch);
+        AccountInviteTargetRole.COUNSELLOR, null, null, agencyId, IdAllocationMode.MANUAL);
   }
 
   private static CreateAccountInviteCommand newTenantAdmin() {
     return command(
-        AccountInviteTargetRole.TENANT_ADMIN,
-        NEW_TENANT,
-        IdAllocationMode.MANUAL,
-        null,
-        null,
-        null);
+        AccountInviteTargetRole.TENANT_ADMIN, NEW_TENANT, IdAllocationMode.MANUAL, null, null);
   }
 
   private static CreateAccountInviteCommand command(
@@ -313,8 +314,7 @@ class AccountInviteReservationReleaseIT {
       Long tenantId,
       IdAllocationMode tenantMode,
       Long agencyId,
-      IdAllocationMode agencyMode,
-      String batch) {
+      IdAllocationMode agencyMode) {
     return new CreateAccountInviteCommand(
         role,
         tenantId,
@@ -326,7 +326,6 @@ class AccountInviteReservationReleaseIT {
         null,
         tenantMode,
         agencyMode,
-        null,
-        batch);
+        null);
   }
 }

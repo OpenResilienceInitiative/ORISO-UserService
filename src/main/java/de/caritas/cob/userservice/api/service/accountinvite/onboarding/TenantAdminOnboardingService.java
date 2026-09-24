@@ -126,9 +126,7 @@ public class TenantAdminOnboardingService {
       return new OnboardingInviteState(resolved.invite(), true, null, null);
     }
     if (resolved.joinsExistingTenant()) {
-      // ORISO-Admin#1026 slices 4/5: the Träger exists (an EXISTING invite, or a further admin of
-      // a new Träger that another admin created first). It has its own DPA; the invitee confirms
-      // nothing on its behalf, so no contract text is shown.
+      // The Träger already has its own DPA; the invitee confirms nothing on its behalf.
       return new OnboardingInviteState(resolved.invite(), false, null, null, true);
     }
     var lookup = operatorDpaContentClient.lookupPublishedDpa();
@@ -311,11 +309,8 @@ public class TenantAdminOnboardingService {
   }
 
   /**
-   * Registration on an invite into an EXISTING Träger (ORISO-Admin#1026, slice 4): the invitee
-   * joins the Träger as one more Träger admin. Nothing of the new-Träger path applies — no Träger
-   * is created, no tenant-ID reservation is consumed, no organisation data is needed and no DPA is
-   * signed (the Träger's agreement already exists). Same single-use claim, same Keycloak
-   * compensation and same TOTP resume contract as the new-Träger path.
+   * No Träger, reservation or DPA here, but the same single-use claim, Keycloak compensation and
+   * TOTP resume contract as the new-Träger path.
    */
   private TenantAdminRegistrationResult joinExistingTenant(
       AccountInvite invite, RegisterTenantAdminCommand command, LocalDateTime now) {
@@ -361,11 +356,7 @@ public class TenantAdminOnboardingService {
     }
   }
 
-  /**
-   * Whether the invitee joins a Träger that already exists instead of creating one: an invite into
-   * an EXISTING Träger (slice 4), or a further admin of a new Träger whose first admin already
-   * finished onboarding and created it (slice 5, "whoever registers first creates the unit").
-   */
+  /** Also a further admin of a new Träger: whoever registers first creates it. */
   private boolean joinsExistingTenant(AccountInvite invite) {
     if (invite.getTenantIdAllocationMode() == IdAllocationMode.EXISTING) {
       return true;
@@ -379,7 +370,7 @@ public class TenantAdminOnboardingService {
             invite.getId());
   }
 
-  /** Slice 5 trigger: the Träger exists and has an admin — release the invites waiting for it. */
+  /** The Träger exists and has an admin: release the invites waiting for it. */
   private void publishTenantCreated(Long tenantId) {
     eventPublisher.publishEvent(
         new InviteUnitCreatedEvent(InviteUnitType.TENANT, tenantId, tenantId));
@@ -762,8 +753,7 @@ public class TenantAdminOnboardingService {
     if (command == null) {
       throw new BadRequestException("Request body is required");
     }
-    // organisation.name is only required for a NEW Träger; registerTenantAdmin checks it once the
-    // invite is known (an invite into an existing Träger names no organisation).
+    // organisation.name is checked in registerTenantAdmin: an EXISTING-Träger invite has none.
     if (isBlank(command.password()) || command.password().length() < MIN_PASSWORD_LENGTH) {
       throw new BadRequestException(
           "account.password must be at least " + MIN_PASSWORD_LENGTH + " characters long");
@@ -857,7 +847,7 @@ public class TenantAdminOnboardingService {
       String dpaContent,
       /** Why {@code dpaContent} is absent; null when present or when there is no DPA step. */
       DpaUnavailableReason dpaUnavailableReason,
-      /** The invitee joins an existing Träger (slices 4/5): no organisation or DPA step. */
+      /** The invitee joins an existing Träger: no organisation or DPA step. */
       boolean joinsExistingTenant) {
 
     public OnboardingInviteState(

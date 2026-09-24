@@ -21,15 +21,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Accepts an AGENCY_ADMIN invite whose invitee does NOT also counsel (ORISO-Admin#1026, slice 3):
- * creates an agency-admin account — the same Keycloak roles and {@code admin}/{@code admin_agency}
- * rows the Admin panel's agency-admin form writes — and binds it to the invite's agency. No
- * consultant is created. The invitee who also counsels takes the consultant path of {@link
- * CounsellorInviteProvisioningService} instead.
- *
- * <p>Same lifecycle as the consultant path: the invite is marked {@code IN_PROGRESS}, the account
- * is created, the invite is claimed single-use, and any failure removes the Keycloak account again
- * and records {@code FAILED} so the resumable link can be retried.
+ * AGENCY_ADMIN invites whose invitee does not also counsel. On failure the Keycloak account is
+ * removed again so the resumable link can be retried.
  */
 @Slf4j
 @Service

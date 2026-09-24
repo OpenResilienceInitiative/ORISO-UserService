@@ -49,17 +49,7 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.client.HttpClientErrorException;
 
-/**
- * Inviting a person into a Träger that ALREADY exists (ORISO-Admin#1026, slice 4): {@code
- * tenantIdAllocationMode = EXISTING}. Built like the agency case of slice 2: nothing is reserved,
- * the Träger must exist, and the caller must be allowed to act in it — the platform admin in any
- * Träger, a Träger admin only in their own, an agency admin only in their own (and only for
- * counsellors). It serves Träger-admin invites into an existing Träger and counsellor / agency
- * admin invites whose Träger is given.
- *
- * <p>Runs against a real database; only the remote services (TenantService, AgencyService,
- * Keycloak, SMTP) are replaced.
- */
+/** Invites with {@code tenantIdAllocationMode = EXISTING}; only remote services are mocked. */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)

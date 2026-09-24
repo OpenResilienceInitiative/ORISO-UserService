@@ -47,15 +47,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Inviting a person into an agency that ALREADY exists (ORISO-Admin#1026, slice 2): {@code
- * agencyIdAllocationMode = EXISTING}. No ID is reserved; the agency must exist, must not be deleted
- * and must belong to the invite's tenant, and the caller must be allowed to act in it. The old
- * reservation modes (AUTO/MANUAL) are unchanged.
- *
- * <p>Runs against a real database; only the remote services (AgencyService, TenantService,
- * Keycloak, SMTP) are replaced.
- */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
@@ -128,8 +119,6 @@ class AccountInviteExistingAgencyIT {
     accountInviteRepository.deleteAll();
   }
 
-  // --- the happy path per role ------------------------------------------------------------------
-
   @Test
   void createInvite_Should_BindToTheExistingAgencyWithoutReserving_When_TenantAdminUsesExisting() {
     actAsTenantAdmin();
@@ -173,8 +162,6 @@ class AccountInviteExistingAgencyIT {
     assertThat(invite.getDepartmentId()).isEqualTo(31L);
   }
 
-  // --- scope ------------------------------------------------------------------------------------
-
   @Test
   void createInvite_Should_Refuse403_When_TenantAdminUsesExistingForAForeignTenantsAgency() {
     actAsTenantAdmin();
@@ -191,8 +178,6 @@ class AccountInviteExistingAgencyIT {
     assertThatThrownBy(() -> service.createInvite(existing(null, TWO_TOPIC_AGENCY, 21L)))
         .isInstanceOf(ForbiddenException.class);
   }
-
-  // --- validation -------------------------------------------------------------------------------
 
   @Test
   void createInvite_Should_Refuse404_When_TheExistingAgencyIsDeleted() {
@@ -236,8 +221,6 @@ class AccountInviteExistingAgencyIT {
         .isInstanceOf(BadRequestException.class);
   }
 
-  // --- backwards compatibility ------------------------------------------------------------------
-
   @Test
   void createInvite_Should_StillReserve_When_TheAdminSendsManual() {
     actAsPlatformAdmin();
@@ -248,8 +231,7 @@ class AccountInviteExistingAgencyIT {
     AccountInvite invite =
         service.createInvite(
             new CreateAccountInviteCommand(
-                // Slice 5: a counsellor into a new agency waits for its admin; the unit's admin
-                // invite is the one that reserves.
+                // A counsellor into a new agency waits; only the unit's admin invite reserves.
                 AccountInviteTargetRole.AGENCY_ADMIN,
                 OWN_TENANT,
                 "manual@example.org",
@@ -265,8 +247,6 @@ class AccountInviteExistingAgencyIT {
     verify(agencyIdAllocationClient).reserve(500L, OWN_TENANT);
     verify(existingAgencyClient, never()).find(anyLong());
   }
-
-  // --- helpers ----------------------------------------------------------------------------------
 
   private void actAsTenantAdmin() {
     actAs(

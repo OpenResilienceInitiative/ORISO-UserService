@@ -165,10 +165,8 @@ class AccountInviteReservationOrchestrationIT {
             .toList();
     List<Object> conflicts = outcomes.stream().filter(ConflictException.class::isInstance).toList();
 
-    // Slice 5 (ORISO-Admin#1026): a further admin of the same new Träger shares the first one's
-    // reservation. Which outcome the race produces depends on timing — the second invite either
-    // sees the first one's saved reservation and joins it, or both reach the ledger together and
-    // the loser gets the 409. Either way the ID is reserved exactly once.
+    // Timing decides whether the second invite joins the first reservation or gets the 409;
+    // either way the ID is reserved exactly once.
     assertThat(successes.size() + conflicts.size()).isEqualTo(2);
     assertThat(successes).isNotEmpty();
     assertThat(successes).extracting(AccountInvite::getTenantId).containsOnly(21L);

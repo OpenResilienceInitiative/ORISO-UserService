@@ -62,12 +62,7 @@ import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
-/**
- * The trigger of the queue (ORISO-Admin#1026, slice 5): when a unit's first admin finishes
- * onboarding and the unit exists, the invites waiting for it are released automatically — sent with
- * their template, or turned into a DRAFT without one. Several admins for the same new Träger: the
- * first creates it, the others join it.
- */
+/** Of several admins for the same new Träger, the first creates it and the others join it. */
 @SpringBootTest
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
@@ -98,7 +93,7 @@ class QueuedInviteReleaseOnOnboardingIT {
   @MockitoBean private TenantCreationClient tenantCreationClient;
   @MockitoBean private OperatorDpaContentClient operatorDpaContentClient;
 
-  /** The tenant's active topics — the founding admin gives the new agency one of them (Q28). */
+  /** The founding admin gives the new agency one of these topics. */
   @MockitoBean private TopicService topicService;
 
   private Long templateId;

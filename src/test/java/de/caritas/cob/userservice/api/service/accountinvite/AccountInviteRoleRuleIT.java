@@ -43,19 +43,6 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * The role field and the rule "a higher unit invites a lower one" (ORISO-Admin#1026, slice 3),
- * enforced by the server:
- *
- * <ul>
- *   <li>platform admin: every role, everywhere;
- *   <li>Träger admin: Träger admins, agency admins and counsellors, in their own Träger only;
- *   <li>agency admin: counsellors into their own agencies only.
- * </ul>
- *
- * <p>An agency-admin invite carries "also counsellor" (default on, the invitee may change it while
- * onboarding) and always names its agency.
- */
 @DataJpaTest
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
@@ -192,8 +179,7 @@ class AccountInviteRoleRuleIT {
         .isInstanceOf(ForbiddenException.class);
   }
 
-  // --- the "also counsellor" flag
-  // -----------------------------------------------------------------
+  // --- the "also counsellor" flag ---
 
   @Test
   void agencyAdminInvite_Should_DefaultToAlsoCounsellor() {

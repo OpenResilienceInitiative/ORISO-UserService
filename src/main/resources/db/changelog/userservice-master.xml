@@ -206,4 +206,5 @@
   <include file="db/changelog/changeset/20260921_account_invite_also_counsellor/changeSet.xml"/>
   <include file="db/changelog/changeset/20260921_account_invite_unit_queue/changeSet.xml"/>
   <include file="db/changelog/changeset/20260921_topic_permission_1026/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260924_account_invite_drop_import_batch/changeSet.xml"/>
 </databaseChangeLog>

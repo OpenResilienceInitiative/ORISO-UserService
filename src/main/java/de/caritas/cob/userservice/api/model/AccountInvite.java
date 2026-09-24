@@ -88,9 +88,8 @@ public class AccountInvite {
   private Long departmentId;
 
   /**
-   * How the invite's tenant ID was allocated (ORISO-Admin#1026): AUTO/MANUAL = a new Träger whose
-   * ID this invite reserved, EXISTING = a Träger that already exists (nothing reserved; its
-   * onboarding joins the Träger instead of creating one). Null on rows created before #1026.
+   * AUTO/MANUAL = a new Träger whose ID this invite reserved, EXISTING = joins an existing Träger.
+   * Null on older rows.
    */
   @Enumerated(EnumType.STRING)
   @Column(name = "tenant_id_allocation_mode", length = 16)
@@ -101,17 +100,11 @@ public class AccountInvite {
   @Column(name = "agency_id_allocation_mode", length = 16)
   private IdAllocationMode agencyIdAllocationMode;
 
-  /**
-   * AGENCY_ADMIN invites (ORISO-Admin#1026, slice 3): whether the agency admin also counsels — the
-   * inviter's proposal, which the invitee may change during onboarding. Null for every other role.
-   */
+  /** AGENCY_ADMIN only: the inviter's proposal, the invitee may change it; null for other roles. */
   @Column(name = "also_counsellor")
   private Boolean alsoCounsellor;
 
-  /**
-   * ORISO-Admin#1026 slice 5: which not-yet-created unit a {@code WAITING_FOR_UNIT} invite waits
-   * for — its {@code agencyId} (AGENCY) or its {@code tenantId} (TENANT). Cleared on release.
-   */
+  /** Whether agencyId (AGENCY) or tenantId (TENANT) names the missing unit; cleared on release. */
   @Enumerated(EnumType.STRING)
   @Column(name = "waiting_for_unit", length = 16)
   private InviteUnitType waitingForUnit;
@@ -123,13 +116,6 @@ public class AccountInvite {
   /** Validity of a waiting invite in days, counted from the actual send (not from creation). */
   @Column(name = "queued_expiry_days")
   private Long queuedExpiryDays;
-
-  /**
-   * Client-chosen ID of the CSV import that created the invite. Rows of one import may name a new
-   * unit before its admin row arrives: they wait (problem NO_UNIT_ADMIN) instead of being refused.
-   */
-  @Column(name = "import_batch_id", length = 64)
-  private String importBatchId;
 
   @Column(name = "token_hash", length = 64)
   private String tokenHash;
