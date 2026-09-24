@@ -2624,7 +2624,9 @@ components:
       x-internal: true
       description: >-
         NONE, SELECT_EXISTING or CREATE (case-insensitive); the CSV import may send true (= CREATE)
-        or false (= NONE). Omitted on create = the agency default; agency admins always get CREATE.
+        or false (= NONE). Omitted on create (e.g. a CSV row without that column) = SELECT_EXISTING,
+        whatever the agency default says; an explicit value always wins; agency admins always get
+        CREATE.
       oneOf:
         - $ref: '#/components/schemas/TopicPermissionDTO'
         - type: boolean

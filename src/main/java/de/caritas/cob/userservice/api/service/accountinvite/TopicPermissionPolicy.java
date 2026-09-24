@@ -8,13 +8,11 @@ import java.util.List;
 /** How far an invited counsellor may extend their own topics. Pure rules, no lookups. */
 public final class TopicPermissionPolicy {
 
-  /** Must match what AgencyService writes onto every newly created agency. */
-  static final TopicPermission NEW_AGENCY_DEFAULT = TopicPermission.NONE;
-
-  // TODO(ORISO-Admin#1026): open product question. Frank decided "new invites default NONE", but
-  // an omitted value still takes the agency default (CREATE for every existing agency). Once he
-  // confirms, set this to false; nothing else changes.
-  static final boolean OMITTED_TAKES_THE_AGENCY_DEFAULT = true;
+  /**
+   * An invite that names no permission (e.g. a CSV row without that column) lets the counsellor
+   * pick their own departments, whatever the agency default says (product decision, #1026).
+   */
+  static final TopicPermission OMITTED = TopicPermission.SELECT_EXISTING;
 
   private TopicPermissionPolicy() {}
 
@@ -31,7 +29,7 @@ public final class TopicPermissionPolicy {
     if (role != AccountInviteTargetRole.COUNSELLOR) {
       return TopicPermission.NONE;
     }
-    TopicPermission permission = requested != null ? requested : omitted(agency, newAgency);
+    TopicPermission permission = requested != null ? requested : OMITTED;
     requireATopicToPick(
         permission, departmentId, newAgency, agency == null ? List.of() : agency.topicIds());
     return permission;
@@ -63,15 +61,5 @@ public final class TopicPermissionPolicy {
   /** An agency admin founds or runs the agency, so they always bring its topics. */
   private static boolean alwaysCreates(AccountInviteTargetRole role) {
     return role == AccountInviteTargetRole.AGENCY_ADMIN;
-  }
-
-  private static TopicPermission omitted(AgencyFacts.Agency agency, boolean newAgency) {
-    if (!OMITTED_TAKES_THE_AGENCY_DEFAULT) {
-      return TopicPermission.NONE;
-    }
-    if (newAgency) {
-      return NEW_AGENCY_DEFAULT;
-    }
-    return agency == null ? TopicPermission.CREATE : agency.defaultPermission();
   }
 }

@@ -959,7 +959,7 @@ public class AccountInviteService {
       IdAllocationMode agencyIdAllocationMode,
       /** AGENCY_ADMIN only; null = true. Any other role must leave it null. */
       Boolean alsoCounsellor,
-      /** The admin's choice; null = the agency default. */
+      /** The admin's choice; null = SELECT_EXISTING (TopicPermissionPolicy). */
       TopicPermission topicPermission) {
 
     public CreateAccountInviteCommand(

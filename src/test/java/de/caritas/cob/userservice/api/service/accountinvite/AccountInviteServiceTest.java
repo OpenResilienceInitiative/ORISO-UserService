@@ -440,7 +440,7 @@ class AccountInviteServiceTest {
                 "New",
                 "Counsellor",
                 null,
-                null,
+                11L,
                 30L));
 
     assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
@@ -566,7 +566,7 @@ class AccountInviteServiceTest {
                 "A",
                 "B",
                 null,
-                null,
+                11L,
                 null));
 
     assertThat(invite.getRecipientEmail()).isEqualTo("free@example.org");
@@ -678,7 +678,7 @@ class AccountInviteServiceTest {
                 "A",
                 "B",
                 null,
-                null,
+                11L,
                 null));
 
     assertThat(invite.getRecipientEmail()).isEqualTo("reusable@example.org");
@@ -1681,7 +1681,7 @@ class AccountInviteServiceTest {
             "New",
             "Counsellor",
             null,
-            null,
+            11L,
             30L);
 
     AccountInvite invite = service.createInvite(command);
@@ -2034,7 +2034,7 @@ class AccountInviteServiceTest {
             null,
             null,
             3L,
-            null,
+            11L,
             null,
             null,
             null));

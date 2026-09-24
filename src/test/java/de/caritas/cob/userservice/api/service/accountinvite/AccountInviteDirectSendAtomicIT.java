@@ -575,7 +575,7 @@ class AccountInviteDirectSendAtomicIT {
         firstName,
         "Lovelace",
         null,
-        null,
+        11L,
         30L,
         null,
         null);

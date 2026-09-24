@@ -434,7 +434,7 @@ class AccountInviteTenantScopeIT {
         .thenReturn(
             Optional.of(
                 new AgencyFacts.Agency(
-                    agencyId, tenantId, false, java.util.List.of(), TopicPermission.CREATE)));
+                    agencyId, tenantId, false, java.util.List.of(11L), TopicPermission.CREATE)));
   }
 
   private static CreateAccountInviteCommand invite(

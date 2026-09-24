@@ -142,14 +142,15 @@ class AccountInviteTopicPermissionIT {
   // --- prefill at invite time -------------------------------------------------------------------
 
   @Test
-  void createInvite_Should_TakeTheAgencyDefault_When_TheAdminLeavesThePermissionOpen() {
+  void createInvite_Should_LetTheCounsellorSelectTopics_When_TheAdminLeavesThePermissionOpen() {
     actAsTenantAdmin();
 
+    // Whatever the agency default says, e.g. a CSV row without that column.
     assertThat(
             invites
                 .createInvite(withPermission(counsellorInto(LEGACY_AGENCY, 11L), null))
                 .getTopicPermission())
-        .isEqualTo(TopicPermission.CREATE);
+        .isEqualTo(TopicPermission.SELECT_EXISTING);
     assertThat(
             invites
                 .createInvite(withPermission(counsellorInto(SELECT_AGENCY, 21L), null))
@@ -159,7 +160,7 @@ class AccountInviteTopicPermissionIT {
             invites
                 .createInvite(withPermission(counsellorInto(NEW_STYLE_AGENCY, 51L), null))
                 .getTopicPermission())
-        .isEqualTo(TopicPermission.NONE);
+        .isEqualTo(TopicPermission.SELECT_EXISTING);
   }
 
   @Test
@@ -216,7 +217,7 @@ class AccountInviteTopicPermissionIT {
             withPermission(counsellorWaitingForNewAgency(), TopicPermission.CREATE));
 
     assertThat(open.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
-    assertThat(open.getTopicPermission()).isEqualTo(TopicPermission.NONE);
+    assertThat(open.getTopicPermission()).isEqualTo(TopicPermission.SELECT_EXISTING);
     assertThat(free.getTopicPermission()).isEqualTo(TopicPermission.CREATE);
     assertThat(fixed.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
     assertThat(accountInviteRepository.findById(fixed.getId()).orElseThrow().getTopicPermission())
@@ -247,7 +248,8 @@ class AccountInviteTopicPermissionIT {
     actAsTenantAdmin();
 
     AccountInvite invite =
-        invites.createInvite(withPermission(counsellorInto(NEW_STYLE_AGENCY, null), null));
+        invites.createInvite(
+            withPermission(counsellorInto(NEW_STYLE_AGENCY, null), TopicPermission.NONE));
 
     assertThat(invite.getTopicPermission()).isEqualTo(TopicPermission.NONE);
   }
@@ -377,7 +379,7 @@ class AccountInviteTopicPermissionIT {
     assertThatThrownBy(() -> service.updatePermission(invite.getId(), TopicPermission.NONE))
         .isInstanceOf(ForbiddenException.class);
     assertThat(accountInviteRepository.findById(invite.getId()).orElseThrow().getTopicPermission())
-        .isEqualTo(TopicPermission.CREATE);
+        .isEqualTo(invite.getTopicPermission());
   }
 
   @Test
@@ -386,7 +388,8 @@ class AccountInviteTopicPermissionIT {
     AccountInvite counsellorInvite =
         invites.createInvite(withPermission(counsellorInto(LEGACY_AGENCY, 11L), null));
     AccountInvite topiclessInvite =
-        invites.createInvite(withPermission(counsellorInto(TOPICLESS_AGENCY, null), null));
+        invites.createInvite(
+            withPermission(counsellorInto(TOPICLESS_AGENCY, null), TopicPermission.CREATE));
     givenAPendingAdminForTheNewAgency();
     AccountInvite waitingInvite =
         invites.createInvite(withPermission(counsellorWaitingForNewAgency(), null));

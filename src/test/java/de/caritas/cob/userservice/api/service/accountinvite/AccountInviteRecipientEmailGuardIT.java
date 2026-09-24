@@ -161,14 +161,7 @@ class AccountInviteRecipientEmailGuardIT {
 
   private CreateAccountInviteCommand counsellorInviteFor(String recipientEmail) {
     return new CreateAccountInviteCommand(
-        AccountInviteTargetRole.COUNSELLOR,
-        7L,
-        recipientEmail,
-        "Ada",
-        "Lovelace",
-        null,
-        null,
-        null);
+        AccountInviteTargetRole.COUNSELLOR, 7L, recipientEmail, "Ada", "Lovelace", null, 11L, null);
   }
 
   private void persistInvite(
