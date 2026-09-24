@@ -76,8 +76,7 @@ public class AccountInviteController {
                 IdAllocationMode.class, safe.tenantIdAllocationMode, "tenantIdAllocationMode"),
             parseOptionalEnum(
                 IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"),
-            safe.alsoCounsellor,
-            safe.importBatchId);
+            safe.alsoCounsellor);
 
     if (safe.templateId != null) {
       InviteSendResult result = accountInviteService.createAndSendInvite(command, safe.templateId);
@@ -390,14 +389,6 @@ public class AccountInviteController {
      * other role → 400.
      */
     public Boolean alsoCounsellor;
-
-    /**
-     * ORISO-Admin#1026 slice 5, CSV import: one client-chosen ID (at most 64 characters, e.g. a
-     * UUID) for all rows of one file. A row into a not-yet-created unit whose admin row comes later
-     * in the same file is then stored WAITING_FOR_UNIT with {@code queueProblem NO_UNIT_ADMIN}
-     * instead of being refused with 409, so the order of the rows does not matter.
-     */
-    public String importBatchId;
   }
 
   public static class SendInviteRequestDTO {
@@ -505,9 +496,6 @@ public class AccountInviteController {
      */
     public String queueProblem;
 
-    /** Slice 5: the CSV import the invite came from, if any. */
-    public String importBatchId;
-
     public String provisioningStatus;
     public String provisionedUserId;
     public String inviteStatus;
@@ -608,7 +596,6 @@ public class AccountInviteController {
       dto.alsoCounsellor = invite.getAlsoCounsellor();
       dto.waitingForUnit =
           invite.getWaitingForUnit() == null ? null : invite.getWaitingForUnit().name();
-      dto.importBatchId = invite.getImportBatchId();
       dto.provisioningStatus =
           invite.getProvisioningStatus() == null ? null : invite.getProvisioningStatus().name();
       dto.provisionedUserId = invite.getProvisionedUserId();
@@ -642,13 +629,7 @@ public class AccountInviteController {
    * does not even advertise that vocabulary (ORISO-Admin#896). Admin endpoints keep the full shape
    * with {@code dpaSignedAt} present-as-null until signed.
    */
-  @JsonIgnoreProperties({
-    "dpaForwardedAt",
-    "dpaForwardCount",
-    "dpaSignedAt",
-    "queueProblem",
-    "importBatchId"
-  })
+  @JsonIgnoreProperties({"dpaForwardedAt", "dpaForwardCount", "dpaSignedAt", "queueProblem"})
   public static class PublicAccountInviteResponseDTO extends AccountInviteResponseDTO {}
 
   public static class PagedAccountInviteResponseDTO {

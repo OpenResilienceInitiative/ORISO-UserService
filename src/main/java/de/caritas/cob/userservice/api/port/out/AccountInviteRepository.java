@@ -235,6 +235,20 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
   List<Long> findIdsWaitingForAgency(
       @Param("status") AccountInviteStatus status, @Param("agencyId") Long agencyId);
 
+  /** Moves a waiting invite to DRAFT; 0 when another release got there first. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.DRAFT,"
+          + " i.waitingForUnit = NULL, i.expiresAt = :expiresAt, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus"
+          + ".WAITING_FOR_UNIT")
+  int claimWaitingInvite(
+      @Param("id") Long id,
+      @Param("expiresAt") LocalDateTime expiresAt,
+      @Param("now") LocalDateTime now);
+
   /** The invites waiting for a tenant that is about to exist (slice 5 release). */
   @Query(
       "SELECT i.id FROM AccountInvite i WHERE i.status = :status"

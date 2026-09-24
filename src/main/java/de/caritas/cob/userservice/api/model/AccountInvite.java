@@ -124,13 +124,6 @@ public class AccountInvite {
   @Column(name = "queued_expiry_days")
   private Long queuedExpiryDays;
 
-  /**
-   * Client-chosen ID of the CSV import that created the invite. Rows of one import may name a new
-   * unit before its admin row arrives: they wait (problem NO_UNIT_ADMIN) instead of being refused.
-   */
-  @Column(name = "import_batch_id", length = 64)
-  private String importBatchId;
-
   @Column(name = "token_hash", length = 64)
   private String tokenHash;
 

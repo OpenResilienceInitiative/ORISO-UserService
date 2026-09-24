@@ -118,20 +118,16 @@ class AccountInviteControllerTest {
   }
 
   @Test
-  void createInvite_Should_PassTheRoleFieldsAndTheImportBatch_AndExposeTheQueueState() {
-    // ORISO-Admin#1026 slices 3 + 5: alsoCounsellor and importBatchId reach the command; a waiting
-    // invite answers with waitingForUnit and its derived queueProblem.
+  void createInvite_Should_PassTheRoleFields_AndExposeTheQueueState() {
     var request = new AccountInviteController.CreateAccountInviteRequestDTO();
     request.targetRole = AccountInviteTargetRole.COUNSELLOR.name();
     request.recipientEmail = "queued@example.org";
     request.agencyId = 500L;
     request.agencyIdAllocationMode = "MANUAL";
-    request.importBatchId = "csv-batch-1";
 
     var invite = sampleInvite();
     invite.setStatus(AccountInviteStatus.WAITING_FOR_UNIT);
     invite.setWaitingForUnit(InviteUnitType.AGENCY);
-    invite.setImportBatchId("csv-batch-1");
     when(accountInviteService.createInvite(any())).thenReturn(invite);
     when(accountInviteService.calculateAccessGate(invite))
         .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
@@ -142,12 +138,10 @@ class AccountInviteControllerTest {
     var commandCaptor =
         ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
     verify(accountInviteService).createInvite(commandCaptor.capture());
-    assertEquals("csv-batch-1", commandCaptor.getValue().importBatchId());
     assertNotNull(body);
     assertEquals("WAITING_FOR_UNIT", body.inviteStatus);
     assertEquals("AGENCY", body.waitingForUnit);
     assertEquals("NO_UNIT_ADMIN", body.queueProblem);
-    assertEquals("csv-batch-1", body.importBatchId);
   }
 
   @Test
