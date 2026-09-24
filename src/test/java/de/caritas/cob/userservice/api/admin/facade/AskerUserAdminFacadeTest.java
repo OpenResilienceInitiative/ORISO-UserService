@@ -10,7 +10,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -39,7 +39,7 @@ public class AskerUserAdminFacadeTest {
 
   @Mock private DeletionLifecycleService deletionLifecycleService;
 
-  @Mock private AdminCallerScope adminCallerScope;
+  @Mock private AdminScope adminScope;
 
   @Test
   public void markAskerForDeletion_Should_throwNotFoundException_When_askerDoesNotExist() {

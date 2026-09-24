@@ -11,7 +11,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDT
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
-import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantResponseDTOBuilder;
 import de.caritas.cob.userservice.api.admin.service.consultant.TransactionalStep;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
@@ -74,7 +75,7 @@ public class GrantConsultantIdentityService {
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
-  private final @NonNull AdminCallerScope adminCallerScope;
+  private final @NonNull AdminScope adminScope;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
@@ -99,8 +100,8 @@ public class GrantConsultantIdentityService {
                 () ->
                     new BadRequestException(String.format("Admin with id %s not found", adminId)));
 
-    adminCallerScope.assertMayActOnAdmin(admin);
-    adminCallerScope.assertMayUseAgencies(dto.getAgencyIds());
+    adminScope.assertMay(Target.admin(admin.getId()));
+    adminScope.assertMay(Target.agencies(dto.getAgencyIds()));
 
     if (consultantRepository.findByIdAndDeleteDateIsNull(adminId).isPresent()) {
       throw new CustomValidationHttpStatusException(

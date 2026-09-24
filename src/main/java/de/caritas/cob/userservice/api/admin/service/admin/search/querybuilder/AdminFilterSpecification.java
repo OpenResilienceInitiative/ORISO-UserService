@@ -43,12 +43,9 @@ public class AdminFilterSpecification {
     };
   }
 
-  /** Admins sharing at least one of {@code agencyIds}; none if the set is empty. */
+  /** Admins sharing at least one of {@code agencyIds}. */
   public static Specification<Admin> withinAgencies(java.util.Set<Long> agencyIds) {
     return (root, query, cb) -> {
-      if (agencyIds.isEmpty()) {
-        return cb.disjunction();
-      }
       var adminAgency = query.subquery(String.class);
       var adminAgencyRoot = adminAgency.from(AdminAgency.class);
       adminAgency

@@ -795,7 +795,8 @@ public class SessionService {
     }
   }
 
-  private boolean isConsultantPermittedToSession(Consultant consultant, Session session) {
+  /** Whether {@code consultant} advises, supervises or may take on {@code session}. */
+  public boolean isConsultantPermittedToSession(Consultant consultant, Session session) {
     try {
       checkConsultantAssignment(consultant, session);
     } catch (ForbiddenException e) {

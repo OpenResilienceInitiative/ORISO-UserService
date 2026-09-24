@@ -10,7 +10,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
-import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import java.util.Collections;
@@ -34,7 +34,7 @@ class SessionAdminServiceTest {
 
   @Mock private SessionRepository sessionRepository;
 
-  @Mock private AdminCallerScope adminCallerScope;
+  @Mock private AdminScope adminScope;
 
   // ---------------------------------------------------------------------------
   // findSessions — page/perPage bounds

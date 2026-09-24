@@ -363,6 +363,7 @@ class UserSessionControllerDelegateTest {
         .thenReturn(consultantToAssign);
     when(consultantService.getConsultant("consultant-id"))
         .thenReturn(Optional.of(consultantToKeep));
+    when(sessionService.isConsultantPermittedToSession(consultantToKeep, session)).thenReturn(true);
 
     var response = delegate.assignSession(1L, "assigned-consultant-id");
 
@@ -586,11 +587,14 @@ class UserSessionControllerDelegateTest {
         .thenReturn(Set.of(AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY));
     when(userAccountProvider.retrieveValidatedConsultantById("assigned-consultant-id"))
         .thenReturn(consultantToAssign);
+    var caller = consultant("consultant-id");
+    when(consultantService.getConsultant("consultant-id")).thenReturn(Optional.of(caller));
+    when(sessionService.isConsultantPermittedToSession(caller, session)).thenReturn(true);
     var response = delegate.assignSession(1L, "assigned-consultant-id");
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(assignEnquiryFacade).assignRegisteredEnquiry(session, consultantToAssign);
-    verifyNoInteractions(assignSessionFacade, consultantService);
+    verifyNoInteractions(assignSessionFacade);
   }
 
   @Test

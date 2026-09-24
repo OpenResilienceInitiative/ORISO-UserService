@@ -29,8 +29,7 @@ class UserIdentitiesServiceTest {
 
   @InjectMocks private UserIdentitiesService userIdentitiesService;
 
-  @Mock
-  private de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope adminCallerScope;
+  @Mock private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
 
   @Test
   void getUserIdentities_Should_ReturnHasAdminIdentityTrue_When_AdminExists() {

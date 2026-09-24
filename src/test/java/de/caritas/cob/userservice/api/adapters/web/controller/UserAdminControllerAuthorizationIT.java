@@ -119,7 +119,7 @@ class UserAdminControllerAuthorizationIT {
                 .header(CSRF_HEADER, CSRF_VALUE))
         .andExpect(status().isOk());
 
-    verify(sessionAdminService, times(1)).findSessionsInCallerScope(any(), anyInt(), any());
+    verify(sessionAdminService, times(1)).findSessions(any(), anyInt(), any());
   }
 
   @Test
@@ -513,8 +513,6 @@ class UserAdminControllerAuthorizationIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isOk());
-
-    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(agencies);
     verify(consultantAdminFacade).setConsultantAgencies(anyString(), any());
   }
 

@@ -36,8 +36,7 @@ class AdminUserFacadeTest {
 
   @InjectMocks private AdminUserFacade adminUserFacade;
 
-  @Mock
-  private de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope adminCallerScope;
+  @Mock private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
 
   @Mock private AgencyAdminUserService agencyAdminUserService;
   @Mock private AdminAgencyRelationService adminAgencyRelationService;

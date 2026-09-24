@@ -150,7 +150,7 @@ class UserAdminControllerIT {
         .perform(get(SESSION_PATH).param(PAGE_PARAM, "0").param(PER_PAGE_PARAM, "1"))
         .andExpect(status().isOk());
 
-    verify(this.sessionAdminService, times(1)).findSessionsInCallerScope(eq(0), eq(1), any());
+    verify(this.sessionAdminService, times(1)).findSessions(eq(0), eq(1), any());
   }
 
   @Test
@@ -278,8 +278,6 @@ class UserAdminControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isOk());
-
-    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(anyList());
     verify(consultantAdminFacade).setConsultantAgencies(eq(consultantId), anyList());
   }
 
@@ -306,7 +304,7 @@ class UserAdminControllerIT {
     var agencies = givenAgenciesToSet();
     doThrow(new ForbiddenException(""))
         .when(consultantAdminFacade)
-        .checkPermissionsToAssignedAgencies(anyList());
+        .setConsultantAgencies(eq(consultantId), anyList());
 
     mvc.perform(
             put("/useradmin/consultants/{consultantId}/agencies", consultantId)

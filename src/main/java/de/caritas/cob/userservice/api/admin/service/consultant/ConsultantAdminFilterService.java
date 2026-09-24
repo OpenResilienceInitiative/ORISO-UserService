@@ -6,10 +6,10 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSearchResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.OrderEnum;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.consultant.querybuilder.ConsultantFilterSpecification;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -25,6 +25,7 @@ import org.springframework.stereotype.Service;
 public class ConsultantAdminFilterService {
 
   private final @NonNull ConsultantRepository consultantRepository;
+  private final @NonNull AdminScope adminScope;
 
   /**
    * Searches for consultants by given {@link ConsultantFilter}, limits the result by perPage and
@@ -40,31 +41,12 @@ public class ConsultantAdminFilterService {
       final Integer perPage,
       final ConsultantFilter consultantFilter,
       final Sort sort) {
-    return findConsultants(
-        page, perPage, consultantFilter, sort, buildSpecification(consultantFilter));
-  }
-
-  /**
-   * Like {@link #findFilteredConsultants(Integer, Integer, ConsultantFilter, Sort)}, but only
-   * returns consultants with an active relation to one of the given agencies. Used for callers
-   * whose reach ends at their own agencies (Beratungsstellen admins).
-   *
-   * @param consultantFilter the filter object containing filter values
-   * @param page the current requested page (1 = first page)
-   * @param perPage the amount of items in one page
-   * @param sort the requested sort
-   * @param agencyIds the agencies the result is limited to; empty yields an empty result
-   * @return the result list
-   */
-  public ConsultantSearchResultDTO findFilteredConsultants(
-      final Integer page,
-      final Integer perPage,
-      final ConsultantFilter consultantFilter,
-      final Sort sort,
-      final Set<Long> agencyIds) {
     var specification =
-        Specification.where(buildSpecification(consultantFilter))
-            .and(ConsultantFilterSpecification.withActiveRelationToAnyOf(agencyIds));
+        adminScope.narrow(
+            buildSpecification(consultantFilter),
+            (root, query, cb, agencyIds) ->
+                ConsultantFilterSpecification.withActiveRelationToAnyOf(agencyIds)
+                    .toPredicate(root, query, cb));
     return findConsultants(page, perPage, consultantFilter, sort, specification);
   }
 

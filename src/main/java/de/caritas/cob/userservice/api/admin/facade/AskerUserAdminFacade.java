@@ -3,7 +3,8 @@ package de.caritas.cob.userservice.api.admin.facade;
 import static java.util.Objects.nonNull;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AskerResponseDTO;
-import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
@@ -24,7 +25,7 @@ public class AskerUserAdminFacade {
   private final @NonNull UserService userService;
   private final @NonNull UsernameTranscoder usernameTranscoder;
   private final @NonNull DeletionLifecycleService deletionLifecycleService;
-  private final @NonNull AdminCallerScope adminCallerScope;
+  private final @NonNull AdminScope adminScope;
 
   /**
    * Marks the asker with the given id for deletion.
@@ -32,7 +33,7 @@ public class AskerUserAdminFacade {
    * @param userId the id of the asker
    */
   public void markAskerForDeletion(String userId) {
-    adminCallerScope.assertMayActOnAsker(userId);
+    adminScope.assertMay(Target.adviceSeeker(userId));
     User user =
         userService
             .getUser(userId)
@@ -49,7 +50,7 @@ public class AskerUserAdminFacade {
   }
 
   public void pauseAskerDeletion(String userId, String reason, Integer months, String pausedBy) {
-    adminCallerScope.assertMayActOnAsker(userId);
+    adminScope.assertMay(Target.adviceSeeker(userId));
     User user =
         userService
             .getUser(userId)
@@ -64,7 +65,7 @@ public class AskerUserAdminFacade {
   }
 
   public AskerResponseDTO getAsker(String userId) {
-    adminCallerScope.assertMayActOnAsker(userId);
+    adminScope.assertMay(Target.adviceSeeker(userId));
     User user =
         userService
             .getUser(userId)

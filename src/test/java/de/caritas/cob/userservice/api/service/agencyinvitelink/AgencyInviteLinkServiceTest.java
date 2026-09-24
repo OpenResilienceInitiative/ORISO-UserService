@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -35,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -53,12 +55,12 @@ class AgencyInviteLinkServiceTest {
 
   @InjectMocks private AgencyInviteLinkService service;
 
-  @Mock
-  private de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope adminCallerScope;
+  @Mock private AdminScope adminScope;
 
   @BeforeEach
   void setTenantContext() {
     TenantContext.setCurrentTenant(1L);
+    Mockito.lenient().when(adminScope.current()).thenReturn(new AdminScope.Tenant(1L));
   }
 
   @AfterEach
@@ -171,6 +173,9 @@ class AgencyInviteLinkServiceTest {
   @Test
   void create_Should_ThrowForbidden_When_NoTenantContext() {
     TenantContext.clear();
+    Mockito.lenient()
+        .when(adminScope.current())
+        .thenThrow(new ForbiddenException("act without a tenant of their own"));
     CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();
 
     assertThatThrownBy(() -> service.create(cmd))

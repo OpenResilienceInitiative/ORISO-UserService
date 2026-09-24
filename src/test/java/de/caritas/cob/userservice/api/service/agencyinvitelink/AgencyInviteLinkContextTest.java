@@ -40,8 +40,7 @@ class AgencyInviteLinkContextTest {
   @Mock private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
   @InjectMocks private AgencyInviteLinkService service;
 
-  @Mock
-  private de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope adminCallerScope;
+  @Mock private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
 
   @AfterEach
   void noWritesOrProvisioning() {

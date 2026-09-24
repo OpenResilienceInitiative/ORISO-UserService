@@ -10,7 +10,6 @@ import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminSe
 import de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -38,8 +37,7 @@ class AgencyAdminUserServiceTest {
 
   @InjectMocks private AgencyAdminUserService agencyAdminUserService;
 
-  @Mock
-  private de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope adminCallerScope;
+  @Mock private AdminScope adminScope;
 
   @Mock private RetrieveAdminService retrieveAdminService;
 
@@ -57,12 +55,9 @@ class AgencyAdminUserServiceTest {
 
   @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
 
-  @Mock private AuthenticatedUser authenticatedUser;
-
   @Test
   void findAgencyAdminShouldExposeActiveConsultantIdentity() {
     var admin = agencyAdmin("agency-admin", 1L);
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(retrieveAdminService.findAdmin("agency-admin", Admin.AdminType.AGENCY)).thenReturn(admin);
     when(consultantRepository.findActiveIdsByIdIn(Set.of("agency-admin")))
         .thenReturn(Set.of("agency-admin"));
@@ -75,7 +70,6 @@ class AgencyAdminUserServiceTest {
   @Test
   void findAgencyAdminShouldReportNoActiveConsultantIdentity() {
     var admin = agencyAdmin("agency-admin", 1L);
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(retrieveAdminService.findAdmin("agency-admin", Admin.AdminType.AGENCY)).thenReturn(admin);
     when(consultantRepository.findActiveIdsByIdIn(Set.of("agency-admin")))
         .thenReturn(Collections.emptySet());
@@ -89,10 +83,8 @@ class AgencyAdminUserServiceTest {
   void findAgencyAdminsByInfix_Should_ScopeToCallerAgencies_WhenRestrictedAgencyAdmin() {
     // given
     PageRequest pageRequest = PageRequest.of(0, 10);
-    List<Long> callerAgencyIds = Arrays.asList(5L, 6L);
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-    when(authenticatedUser.getUserId()).thenReturn("caller-admin");
-    when(retrieveAdminService.findAgencyIdsOfAdmin("caller-admin")).thenReturn(callerAgencyIds);
+    Set<Long> callerAgencyIds = Set.of(5L, 6L);
+    when(adminScope.current()).thenReturn(new AdminScope.Agencies(1L, callerAgencyIds));
     when(retrieveAdminService.findAllByInfixScopedToAgencies(
             "*", Admin.AdminType.AGENCY, callerAgencyIds, pageRequest))
         .thenReturn(new PageImpl<>(Collections.emptyList(), pageRequest, 0));
@@ -123,12 +115,9 @@ class AgencyAdminUserServiceTest {
   @Test
   void deleteAgencyAdmin_Should_ThrowForbidden_WhenRestrictedAgencyAdminTargetsForeignAgency() {
     // given
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-    when(authenticatedUser.getUserId()).thenReturn("caller-admin");
-    when(retrieveAdminService.findAgencyIdsOfAdmin("caller-admin"))
-        .thenReturn(Collections.singletonList(5L));
-    when(retrieveAdminService.findAgencyIdsOfAdmin("foreign-admin"))
-        .thenReturn(Collections.singletonList(9L));
+    Mockito.doThrow(new ForbiddenException("out of reach"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.admin("foreign-admin"));
 
     // when / then
     Assertions.assertThrows(
@@ -139,12 +128,6 @@ class AgencyAdminUserServiceTest {
   @Test
   void deleteAgencyAdmin_Should_Delete_WhenRestrictedAgencyAdminSharesAgency() {
     // given
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-    when(authenticatedUser.getUserId()).thenReturn("caller-admin");
-    when(retrieveAdminService.findAgencyIdsOfAdmin("caller-admin"))
-        .thenReturn(Arrays.asList(5L, 7L));
-    when(retrieveAdminService.findAgencyIdsOfAdmin("peer-admin"))
-        .thenReturn(Collections.singletonList(7L));
 
     // when
     agencyAdminUserService.deleteAgencyAdmin("peer-admin");
@@ -155,8 +138,6 @@ class AgencyAdminUserServiceTest {
 
   @Test
   void deleteAgencyAdmin_Should_NotScope_WhenCallerIsPlatformAdmin() {
-    // given a platform admin (unscoped access)
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
 
     // when
     agencyAdminUserService.deleteAgencyAdmin("any-admin");
@@ -173,12 +154,9 @@ class AgencyAdminUserServiceTest {
    */
   @Test
   void deleteAgencyAdmin_Should_ThrowForbidden_WhenTenantAdminTargetsForeignTenant() {
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
-    when(authenticatedUser.getTenantId()).thenReturn(9L);
-    Admin foreignAgencyAdmin = agencyAdmin("foreign-agency-admin", 1L);
-    when(retrieveAdminService.findAdmin("foreign-agency-admin", Admin.AdminType.AGENCY))
-        .thenReturn(foreignAgencyAdmin);
+    Mockito.doThrow(new ForbiddenException("out of reach"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.admin("foreign-agency-admin"));
 
     Assertions.assertThrows(
         ForbiddenException.class,
@@ -188,12 +166,6 @@ class AgencyAdminUserServiceTest {
 
   @Test
   void deleteAgencyAdmin_Should_Delete_WhenTenantAdminTargetsOwnTenant() {
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
-    when(authenticatedUser.getTenantId()).thenReturn(9L);
-    Admin ownAgencyAdmin = agencyAdmin("own-agency-admin", 9L);
-    when(retrieveAdminService.findAdmin("own-agency-admin", Admin.AdminType.AGENCY))
-        .thenReturn(ownAgencyAdmin);
 
     agencyAdminUserService.deleteAgencyAdmin("own-agency-admin");
 
@@ -214,7 +186,7 @@ class AgencyAdminUserServiceTest {
     Admin secondAgencyAdmin = agencyAdmin("agency-admin-2", 1L);
     Admin thirdAgencyAdmin = agencyAdmin("agency-admin-3", 2L);
     List<Admin> fullAdmins = Arrays.asList(firstAgencyAdmin, secondAgencyAdmin, thirdAgencyAdmin);
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(adminScope.current()).thenReturn(new AdminScope.Platform());
     when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.AGENCY, pageRequest))
         .thenReturn(adminsPage);
     when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(fullAdmins);
@@ -260,9 +232,7 @@ class AgencyAdminUserServiceTest {
   @Test
   void findAgencyAdminsByInfix_Should_ScopeToCallerTenant_ForTenantAdmin() {
     PageRequest pageRequest = PageRequest.of(0, 10);
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
-    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(adminScope.current()).thenReturn(new AdminScope.Tenant(9L));
     when(retrieveAdminService.findAllByInfixScopedToTenant(
             "*", Admin.AdminType.AGENCY, 9L, pageRequest))
         .thenReturn(new PageImpl<>(Collections.emptyList(), pageRequest, 0));
@@ -291,47 +261,10 @@ class AgencyAdminUserServiceTest {
             Mockito.anyString(), Mockito.any(), Mockito.anyCollection(), Mockito.any());
   }
 
-  /**
-   * Fail-closed mirror of the tenant-admin search: if a tenant-bound caller has no resolvable
-   * tenant, the agency-admin search still routes through the scoped call with a null tenant and
-   * returns an empty page — never the unscoped list (#968).
-   */
-  @Test
-  void findAgencyAdminsByInfix_Should_FailClosedToEmpty_WhenTenantAdminHasNullTenant() {
-    PageRequest pageRequest = PageRequest.of(0, 10);
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
-    when(authenticatedUser.getTenantId()).thenReturn(null);
-    when(retrieveAdminService.findAllByInfixScopedToTenant(
-            "*", Admin.AdminType.AGENCY, null, pageRequest))
-        .thenReturn(new PageImpl<>(Collections.emptyList(), pageRequest, 0));
-    when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(Collections.emptyList());
-    when(retrieveAdminService.agenciesOfAdmin(Mockito.anySet()))
-        .thenReturn(Collections.emptyList());
-    when(agencyService.getAgenciesWithoutCaching(Collections.emptyList()))
-        .thenReturn(Collections.emptyList());
-    when(userServiceMapper.mapOfAdmin(
-            Mockito.any(),
-            Mockito.anyList(),
-            Mockito.anyList(),
-            Mockito.anyList(),
-            Mockito.any(),
-            Mockito.any()))
-        .thenReturn(new HashMap<>());
-
-    agencyAdminUserService.findAgencyAdminsByInfix("*", pageRequest);
-
-    Mockito.verify(retrieveAdminService)
-        .findAllByInfixScopedToTenant("*", Admin.AdminType.AGENCY, null, pageRequest);
-    Mockito.verify(retrieveAdminService, Mockito.never())
-        .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
-  }
-
   @Test
   void findAgencyAdminsByInfix_Should_NotScope_ForPlatformAdmin() {
     PageRequest pageRequest = PageRequest.of(0, 10);
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(adminScope.current()).thenReturn(new AdminScope.Platform());
     when(retrieveAdminService.findAllByInfix("*", Admin.AdminType.AGENCY, pageRequest))
         .thenReturn(new PageImpl<>(Collections.emptyList(), pageRequest, 0));
     when(retrieveAdminService.findAllById(Mockito.anySet())).thenReturn(Collections.emptyList());

@@ -2,7 +2,7 @@ package de.caritas.cob.userservice.api.admin.service.session;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
-import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.session.pageprovider.AgencyScopedSessionPageProvider;
 import de.caritas.cob.userservice.api.admin.service.session.pageprovider.PageProviderFactory;
 import de.caritas.cob.userservice.api.admin.service.session.pageprovider.SessionPageProvider;
@@ -20,58 +20,23 @@ import org.springframework.transaction.annotation.Transactional;
 public class SessionAdminService {
 
   private final @NonNull SessionRepository sessionRepository;
-  private final @NonNull AdminCallerScope adminCallerScope;
+  private final @NonNull AdminScope adminScope;
 
   /**
-   * Like {@link #findSessions(Integer, Integer, SessionFilter)}, narrowed to what the calling admin
-   * may see: a Beratungsstellen admin only gets the sessions of their own agencies, a Träger admin
-   * the sessions of their own tenant (tenant filter), the platform admin everything. This is the
-   * entry point of {@code GET /useradmin/sessions}.
+   * Finds the sessions matching {@code sessionFilter} within the caller's reach.
    *
-   * @param page the current page
-   * @param perPage number of items per page
-   * @param sessionFilter criteria to filter on sessions
    * @return a generated {@link SessionAdminResultDTO} containing the results
    */
-  @Transactional(readOnly = true)
-  public SessionAdminResultDTO findSessionsInCallerScope(
-      Integer page, Integer perPage, SessionFilter sessionFilter) {
-    var agencyRestriction = adminCallerScope.agencyRestriction();
-    if (agencyRestriction.isEmpty()) {
-      return findSessions(page, perPage, sessionFilter);
-    }
-    Pageable pageable = PageRequest.of(Math.max(page - 1, 0), Math.max(perPage, 1));
-    SessionPageProvider sessionPageProvider =
-        new AgencyScopedSessionPageProvider(
-            this.sessionRepository, sessionFilter, agencyRestriction.get());
-    return SessionAdminResultDTOBuilder.getInstance()
-        .withPage(page)
-        .withPerPage(perPage)
-        .withFilter(sessionFilter)
-        .withResultPage(sessionPageProvider.executeQuery(pageable))
-        .build();
-  }
-
-  /**
-   * Finds existing sessions filtered by {@link SessionFilter} and retrieves all sessions if no
-   * filter is set.
-   *
-   * @param page the current page
-   * @param perPage number of items per page
-   * @param sessionFilter criteria to filter on sessions
-   * @return a generated {@link SessionAdminResultDTO} containing the results
-   */
-  // Read-only transaction: one Hibernate session for the whole page. The tenant filter itself no
-  // longer depends on it (it is auto-enabled on every session, see TenantFilter).
   @Transactional(readOnly = true)
   public SessionAdminResultDTO findSessions(
       Integer page, Integer perPage, SessionFilter sessionFilter) {
     Pageable pageable = PageRequest.of(Math.max(page - 1, 0), Math.max(perPage, 1));
-
-    var sessionPageProvider =
-        PageProviderFactory.getInstance(this.sessionRepository, sessionFilter)
-            .retrieveFirstSupportedSessionPageProvider();
-
+    SessionPageProvider sessionPageProvider =
+        adminScope.current() instanceof AdminScope.Agencies agencies
+            ? new AgencyScopedSessionPageProvider(
+                this.sessionRepository, sessionFilter, agencies.ids())
+            : PageProviderFactory.getInstance(this.sessionRepository, sessionFilter)
+                .retrieveFirstSupportedSessionPageProvider();
     return SessionAdminResultDTOBuilder.getInstance()
         .withPage(page)
         .withPerPage(perPage)
