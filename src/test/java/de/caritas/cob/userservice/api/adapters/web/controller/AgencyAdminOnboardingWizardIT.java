@@ -19,6 +19,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
@@ -39,6 +41,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocat
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.AgencyCreationClient;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
@@ -63,6 +68,7 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@WithTenant(1L)
 class AgencyAdminOnboardingWizardIT {
 
   private static final long TENANT = 79L;
@@ -74,12 +80,21 @@ class AgencyAdminOnboardingWizardIT {
   private static final String CSRF = "it-csrf-token";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
 
+  /** The public route resolves to the main tenant, as on the single-domain deployment. */
+  @MockitoBean private TenantResolverService tenantResolverService;
+
+  @MockitoBean private TenantService tenantService;
+
   @Autowired private MockMvc mockMvc;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private AdminRepository adminRepository;
   @Autowired private AdminAgencyRepository adminAgencyRepository;
 
   @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
+
+  @MockitoBean
+  private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
+
   @MockitoBean private KeycloakService keycloakService;
   @MockitoBean private AgencyService agencyService;
   @MockitoBean private AgencyCreationClient agencyCreationClient;
@@ -145,7 +160,8 @@ class AgencyAdminOnboardingWizardIT {
         .andExpect(jsonPath("$.phase").value("PENDING_2FA_ACTIVATION"));
 
     verify(consultantAdminFacade).createNewConsultant(any(CreateConsultantDTO.class));
-    Admin admin = adminRepository.findById(CONSULTANT_ID).orElseThrow();
+    // Read as the invite's Träger: the new admin must have landed in it.
+    Admin admin = Tenants.in(TENANT, () -> adminRepository.findById(CONSULTANT_ID).orElseThrow());
     assertThat(admin.getType()).isEqualTo(Admin.AdminType.AGENCY);
     assertThat(adminAgencyRepository.findByAdminIdAndAgencyId(CONSULTANT_ID, AGENCY)).hasSize(1);
     verify(keycloakService).updateRole(CONSULTANT_ID, UserRole.RESTRICTED_AGENCY_ADMIN);
@@ -162,7 +178,8 @@ class AgencyAdminOnboardingWizardIT {
         .andExpect(jsonPath("$.twoFactor.secret").value("ADMINTOTPSECRET"));
 
     verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
-    Admin admin = adminRepository.findById(ADMIN_ONLY_ID).orElseThrow();
+    // Read as the invite's Träger: the new admin must have landed in it.
+    Admin admin = Tenants.in(TENANT, () -> adminRepository.findById(ADMIN_ONLY_ID).orElseThrow());
     assertThat(admin.getType()).isEqualTo(Admin.AdminType.AGENCY);
     assertThat(admin.getTenantId()).isEqualTo(TENANT);
     assertThat(adminAgencyRepository.findByAdminIdAndAgencyId(ADMIN_ONLY_ID, AGENCY)).hasSize(1);
