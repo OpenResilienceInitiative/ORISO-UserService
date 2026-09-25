@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.admin.service.listpreference;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.AdminListPreference;
 import de.caritas.cob.userservice.api.port.out.AdminListPreferenceRepository;
 import java.time.LocalDateTime;
@@ -46,7 +47,11 @@ public class AdminListPreferenceService {
   }
 
   /** Replaces the caller's sort for one tab; rejects anything the tab cannot sort by. */
+  // Must not become @Transactional: the retry below needs the failed insert's own rollback.
   public void saveOwnSort(String userId, String tab, ListSort sort) {
+    if (userId == null) {
+      throw new ForbiddenException("a list sort needs an identified caller");
+    }
     var allowedFields = FIELDS_BY_TAB.get(tab);
     if (allowedFields == null) {
       throw new BadRequestException("unknown list tab");

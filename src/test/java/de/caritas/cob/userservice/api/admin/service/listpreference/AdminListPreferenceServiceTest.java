@@ -1,12 +1,15 @@
 package de.caritas.cob.userservice.api.admin.service.listpreference;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService.ListSort;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.model.AdminListPreference;
 import de.caritas.cob.userservice.api.port.out.AdminListPreferenceRepository;
 import java.util.Optional;
@@ -42,5 +45,13 @@ class AdminListPreferenceServiceTest {
     assertThat(saved.getValue().getId()).isEqualTo(7L);
     assertThat(saved.getValue().getSortField()).isEqualTo("LASTNAME");
     assertThat(saved.getValue().getSortOrder()).isEqualTo("DESC");
+  }
+
+  @Test
+  void saveOwnSort_refusesACallerWithoutUserId() {
+    assertThatThrownBy(
+            () -> service.saveOwnSort(null, "consultants", new ListSort("LASTNAME", "DESC")))
+        .isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(repository);
   }
 }
