@@ -2,8 +2,6 @@ package de.caritas.cob.userservice.api.tenant;
 
 import static de.caritas.cob.userservice.api.tenant.TenantResolverService.TECHNICAL_TENANT_ID;
 
-import java.util.concurrent.atomic.AtomicReference;
-import java.util.function.Supplier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -12,6 +10,10 @@ public class TenantContextProvider {
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
+
+  public boolean isMultiTenancyEnabled() {
+    return multiTenancyEnabled;
+  }
 
   public void setTechnicalContextIfMultiTenancyIsEnabled() {
     if (multiTenancyEnabled) {
@@ -28,13 +30,6 @@ public class TenantContextProvider {
   /** Background work has no caller, so it runs in the technical tenant and leaves none behind. */
   public Runnable inTechnicalContext(Runnable task) {
     return () -> TenantContext.runWith(technicalTenant(), task);
-  }
-
-  /** Like {@link #inTechnicalContext}, for work that returns a result. */
-  public <T> T supplyInTechnicalContext(Supplier<T> work) {
-    var result = new AtomicReference<T>();
-    TenantContext.runWith(technicalTenant(), () -> result.set(work.get()));
-    return result.get();
   }
 
   /** Work handed to another thread keeps the tenant of the thread that handed it over. */

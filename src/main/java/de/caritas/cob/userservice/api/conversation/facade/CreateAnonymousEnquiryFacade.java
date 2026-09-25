@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.conversation.service.AnonymousConversation
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUserCreatorService;
 import de.caritas.cob.userservice.api.conversation.service.user.anonymous.AnonymousUsernameRegistry;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.UserHelper;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -41,12 +42,11 @@ public class CreateAnonymousEnquiryFacade {
    */
   public CreateAnonymousEnquiryResponseDTO createAnonymousEnquiry(
       CreateAnonymousEnquiryDTO createAnonymousEnquiryDTO) {
-    if (TenantContext.contextIsSet()) {
-      return createAnonymousEnquiry(createAnonymousEnquiryDTO, false);
+    // Without a tenant the new user and session would be written without one.
+    if (tenantContextProvider.isMultiTenancyEnabled() && !TenantContext.contextIsSet()) {
+      throw new ForbiddenException("An anonymous enquiry needs a tenant");
     }
-    // Public route without a tenant: the anonymous chat is routed across Träger by topic.
-    return tenantContextProvider.supplyInTechnicalContext(
-        () -> createAnonymousEnquiry(createAnonymousEnquiryDTO, false));
+    return createAnonymousEnquiry(createAnonymousEnquiryDTO, false);
   }
 
   /**
