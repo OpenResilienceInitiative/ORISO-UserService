@@ -43,13 +43,19 @@ public class IdReservationReleaseScheduler {
       }
       lease = acquiredLease.get();
       tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
+      var pendingTaskIds = processor.pendingTaskIds();
+      if (pendingTaskIds.isEmpty()) {
+        // No work, no service session: the technical identity is only used when a release is due.
+        return;
+      }
       var technicalUser = identityClientConfig.getTechnicalUser();
       var login =
           identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
-      TechnicalAccessTokenContext.set(login.accessToken());
-      for (Long taskId : processor.pendingTaskIds()) {
+      // Ambient (not explicit) because the allocation clients are shared with the admin-triggered
+      // invite flow, which must keep sending the admin's own token. Scoped to the releases only.
+      for (Long taskId : pendingTaskIds) {
         try {
-          processor.process(taskId);
+          TechnicalAccessTokenContext.runWith(login.accessToken(), () -> processor.process(taskId));
         } catch (RuntimeException exception) {
           log.warn("Could not process reservation release task {}", taskId, exception);
         }
