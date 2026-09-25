@@ -4,7 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
-/** The server always comes from the stored platform settings; the caller only picks the inbox. */
+/** The server comes from deployment settings; only the recipient affects sending. */
 @Data
 public class GlobalSmtpTestEmailDTO {
 

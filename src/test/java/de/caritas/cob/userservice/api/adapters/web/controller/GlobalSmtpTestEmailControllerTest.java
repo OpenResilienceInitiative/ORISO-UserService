@@ -44,11 +44,10 @@ class GlobalSmtpTestEmailControllerTest {
   }
 
   @Test
-  void sendGlobalSmtpTestEmail_illegalStateException_returnsBadRequestWithExceptionMessage()
-      throws Exception {
+  void sendGlobalSmtpTestEmail_configurationException_returnsNamedSetting() throws Exception {
     // Business reason: misconfiguration details should be surfaced directly for quick correction.
     var dto = validDto();
-    doThrow(new IllegalStateException("SMTP host missing"))
+    doThrow(new GlobalSmtpTestEmailService.ConfigurationException("SMTP_HOST is missing"))
         .when(globalSmtpTestEmailService)
         .sendTestEmail(dto);
 
@@ -56,7 +55,22 @@ class GlobalSmtpTestEmailControllerTest {
 
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     assertNotNull(response.getBody());
-    assertEquals("SMTP host missing", ((Map<?, ?>) response.getBody()).get("message"));
+    assertEquals("SMTP_HOST is missing", ((Map<?, ?>) response.getBody()).get("message"));
+  }
+
+  @Test
+  void sendGlobalSmtpTestEmail_unexpectedIllegalStateDoesNotExposeSmtpReply() throws Exception {
+    var dto = validDto();
+    doThrow(new IllegalStateException("AUTH failed: secret value from provider"))
+        .when(globalSmtpTestEmailService)
+        .sendTestEmail(dto);
+
+    var response = controller.sendGlobalSmtpTestEmail(dto);
+
+    assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    assertEquals(
+        "SMTP test mail could not be sent. Please verify your SMTP settings.",
+        ((Map<?, ?>) response.getBody()).get("message"));
   }
 
   @Test
@@ -73,7 +87,7 @@ class GlobalSmtpTestEmailControllerTest {
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     assertNotNull(response.getBody());
     assertEquals(
-        "SMTP authentication failed. Please verify stored SMTP credentials and provider auth policy.",
+        "SMTP authentication failed. Please verify deployment SMTP credentials and provider auth policy.",
         ((Map<?, ?>) response.getBody()).get("message"));
   }
 
