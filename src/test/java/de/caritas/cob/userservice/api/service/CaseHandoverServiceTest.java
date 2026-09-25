@@ -7,6 +7,7 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -155,6 +156,9 @@ class CaseHandoverServiceTest {
     when(caseHandoverRequestRepository.save(any(CaseHandoverRequest.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
     when(matrixSynapseService.getRoomMembers(anyString())).thenReturn(Optional.of(List.of()));
+    // Revoking co-access gives the requester their member power level back first (#200).
+    when(matrixSynapseService.setUserPowerLevel(anyString(), anyString(), eq(0), anyString()))
+        .thenReturn(true);
     when(scheduledTaskClaimService.tryClaim(anyString(), any())).thenReturn(true);
     when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
   }
@@ -582,6 +586,8 @@ class CaseHandoverServiceTest {
     assertEquals("CLIENT_CONSENT_DECLINED", status.getStatus());
     assertFalse(status.isCanViewContent());
     assertEquals("CLIENT_CONSENT_DECLINED", status.getAuditOutcome());
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", 0, "previous-token");
     verify(matrixSynapseService)
         .removeUserFromRoom("!room:matrix", "@requester:matrix", "previous-token");
   }
@@ -2051,6 +2057,132 @@ class CaseHandoverServiceTest {
         .auditOutcome("ACCESS_GRANTED")
         .tenantId(7L)
         .build();
+  }
+
+  // #200: co-access is read-only. Session rooms use events_default 0, so for the lifetime of the
+  // grant the requester's power level drops to -1 and Synapse refuses their messages.
+
+  private void givenAdviceIsGrantedWithoutWaitingForTheClient() {
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(
+            tenantPolicies(
+                "Rat benötigt",
+                180,
+                de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .CaseHandoverConsentValue.OPT_OUT,
+                Set.of()));
+  }
+
+  private void givenARoomTheRequesterCanJoin() {
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(matrixSynapseService.loginAsUserAccessToken("@requester:matrix"))
+        .thenReturn("requester-token");
+    when(matrixSynapseService.getRoomMembers("!room:matrix"))
+        .thenReturn(Optional.of(List.of("@previous:matrix")));
+    when(matrixSynapseService.joinRoom("!room:matrix", "requester-token")).thenReturn(true);
+  }
+
+  @Test
+  void requestAccess_makesAdviceCoAccessReadOnlyInTheMatrixRoom() {
+    givenAdviceIsGrantedWithoutWaitingForTheClient();
+    givenARoomTheRequesterCanJoin();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", -1, "previous-token"))
+        .thenReturn(true);
+
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Zweitmeinung");
+
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", -1, "previous-token");
+  }
+
+  @Test
+  void requestAccess_refusesAdviceCoAccessThatCannotBeMadeReadOnly() {
+    givenAdviceIsGrantedWithoutWaitingForTheClient();
+    givenARoomTheRequesterCanJoin();
+
+    assertThrows(
+        InternalServerErrorException.class,
+        () ->
+            caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Zweitmeinung"));
+
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void requestAccess_takeoverLeavesTheRequestersPowerLevelAlone() {
+    givenARoomTheRequesterCanJoin();
+
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
+
+    verify(matrixSynapseService, never())
+        .setUserPowerLevel(anyString(), anyString(), anyInt(), anyString());
+  }
+
+  @Test
+  void resolveClientConsent_makesApprovedAdviceCoAccessReadOnly() {
+    CaseHandoverRequest request = pendingConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    givenARoomTheRequesterCanJoin();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", -1, "previous-token"))
+        .thenReturn(true);
+
+    caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", -1, "previous-token");
+  }
+
+  private CaseHandoverRequest expiredAdviceGrantOfAStandingMember() {
+    CaseHandoverRequest request = grantedAdviceRequest();
+    request.setMatrixMembershipAdded(false);
+    request.setExpiresAt(LocalDateTime.of(2026, 8, 16, 10, 0));
+    session.setMatrixRoomId("!room:matrix");
+    requester.setMatrixUserId("@requester:matrix");
+    previous.setMatrixUserId("@previous:matrix");
+    when(matrixSynapseService.loginAsUserAccessToken("@previous:matrix"))
+        .thenReturn("previous-token");
+    when(caseHandoverRequestRepository.findByStatusAndAccessTypeAndExpiresAtLessThanEqual(
+            CaseHandoverRequest.Status.GRANTED,
+            CaseHandoverRequest.AccessType.CO_ACCESS,
+            LocalDateTime.of(2026, 8, 16, 10, 0)))
+        .thenReturn(List.of(request));
+    when(caseHandoverRequestRepository.findByIdForUpdate(request.getId()))
+        .thenReturn(Optional.of(request));
+    return request;
+  }
+
+  @Test
+  void expireCoAccess_givesAStandingMemberTheirPowerLevelBack() {
+    CaseHandoverRequest request = expiredAdviceGrantOfAStandingMember();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", 0, "previous-token"))
+        .thenReturn(true);
+
+    assertEquals(1, caseHandoverService.expireCoAccess());
+
+    assertEquals(CaseHandoverRequest.Status.EXPIRED, request.getStatus());
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", 0, "previous-token");
+    verifyNoMatrixRemoval();
+  }
+
+  @Test
+  void expireCoAccess_keepsTheGrantForTheNextSweepWhenThePowerLevelCannotBeRestored() {
+    CaseHandoverRequest request = expiredAdviceGrantOfAStandingMember();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", 0, "previous-token"))
+        .thenReturn(false);
+
+    assertEquals(0, caseHandoverService.expireCoAccess());
+
+    assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
   }
 
   private CaseHandoverRequest grantedAdviceRequest() {
