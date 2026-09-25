@@ -434,6 +434,30 @@ class TenantAdminUserServiceTest {
   }
 
   @Test
+  void findTenantAdminsByInfix_Should_FindNothing_ForAgencyAdmin() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(authenticatedUser.getUserId()).thenReturn("agency-admin");
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfixScopedToTenant(
+            Mockito.anyString(), Mockito.any(), Mockito.anyLong(), Mockito.any(PageRequest.class));
+  }
+
+  @Test
   void findTenantAdminsByInfix_Should_NotScope_ForPlatformAdmin() {
     PageRequest pageRequest = PageRequest.of(0, 10);
     Page<Admin.AdminBase> emptyPage = new PageImpl<>(List.of(), pageRequest, 0);

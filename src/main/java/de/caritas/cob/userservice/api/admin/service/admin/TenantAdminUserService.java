@@ -128,6 +128,10 @@ public class TenantAdminUserService {
     if (reach instanceof AdminScope.Platform) {
       return retrieveAdminService.findAllByInfix(infix, Admin.AdminType.TENANT, pageRequest);
     }
+    // An agency admin's reach holds no Träger admin, though the route admits USER_ADMIN.
+    if (reach instanceof AdminScope.Agencies) {
+      return Page.empty(pageRequest);
+    }
     return retrieveAdminService.findAllByInfixScopedToTenant(
         infix, Admin.AdminType.TENANT, reach.tenantId(), pageRequest);
   }
