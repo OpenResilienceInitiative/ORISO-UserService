@@ -23,6 +23,10 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
 
+/**
+ * Outside the tenant filter on purpose: the public wizard finds an invite by its token before any
+ * tenant is known, so admin reads are scoped by {@code AccountInviteAccessPolicy} instead.
+ */
 @Entity
 @Table(
     name = "account_invite",
