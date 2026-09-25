@@ -5,17 +5,14 @@ import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettings
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
-import jakarta.mail.Authenticator;
+import de.caritas.cob.userservice.api.service.email.OrisoSmtpTransport;
 import jakarta.mail.Message;
-import jakarta.mail.PasswordAuthentication;
-import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import java.time.OffsetDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.Map;
-import java.util.Properties;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -42,7 +39,7 @@ public class GlobalSmtpTestEmailService {
     void send(MimeMessage message) throws Exception;
   }
 
-  private SmtpTransport transport = Transport::send;
+  private SmtpTransport transport = OrisoSmtpTransport::send;
 
   public void sendTestEmail(GlobalSmtpTestEmailDTO dto) throws Exception {
     var credentials =
@@ -52,26 +49,13 @@ public class GlobalSmtpTestEmailService {
                 () ->
                     new IllegalStateException(
                         "SMTP credentials are not configured in application settings."));
-    Properties props = new Properties();
-    props.put("mail.smtp.auth", "true");
-    props.put("mail.smtp.host", dto.getHost());
-    props.put("mail.smtp.port", String.valueOf(dto.getPort()));
-    if (Boolean.TRUE.equals(dto.getSecure())) {
-      props.put("mail.smtp.ssl.enable", "true");
-    } else {
-      props.put("mail.smtp.starttls.enable", "true");
-    }
-
     jakarta.mail.Session session =
-        jakarta.mail.Session.getInstance(
-            props,
-            new Authenticator() {
-              @Override
-              protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(
-                    credentials.getGlobalSmtpUsername(), credentials.getGlobalSmtpPassword());
-              }
-            });
+        OrisoSmtpTransport.session(
+            dto.getHost(),
+            dto.getPort(),
+            Boolean.TRUE.equals(dto.getSecure()),
+            credentials.getGlobalSmtpUsername(),
+            credentials.getGlobalSmtpPassword());
 
     var email = renderSmtpTest(dto);
     MimeMessage message = new MimeMessage(session);
