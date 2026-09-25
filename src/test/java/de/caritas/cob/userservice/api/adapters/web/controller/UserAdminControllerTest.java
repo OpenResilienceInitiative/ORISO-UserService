@@ -164,7 +164,7 @@ class UserAdminControllerTest {
     when(adminDtoMapper.mappedFieldOf("email")).thenReturn("email");
     when(adminUserFacade.findAgencyAdminsByInfix("john", SearchFilter.NONE, 1, 20, "email", true))
         .thenReturn(Map.of());
-    when(adminDtoMapper.adminSearchResultOf(any(), any(), any(), any(), any(), any()))
+    when(adminDtoMapper.adminSearchResultOf(any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(new AdminSearchResultDTO());
 
     var response = controller.searchAgencyAdmins("john", 2, 20, "email", "asc", null, null);
@@ -565,7 +565,7 @@ class UserAdminControllerTest {
     when(adminDtoMapper.mappedFieldOf("email")).thenReturn("email");
     when(adminUserFacade.findTenantAdminsByInfix("jane", SearchFilter.NONE, 0, 20, "email", false))
         .thenReturn(Map.of());
-    when(adminDtoMapper.adminSearchResultOf(any(), any(), any(), any(), any(), any()))
+    when(adminDtoMapper.adminSearchResultOf(any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(new AdminSearchResultDTO());
 
     var response = controller.searchTenantAdmins("jane", 1, 20, "email", "desc", null);
@@ -582,7 +582,7 @@ class UserAdminControllerTest {
     when(adminUserFacade.findAgencyAdminsByInfix(
             "hello world", SearchFilter.NONE, 0, 10, "name", true))
         .thenReturn(Map.of());
-    when(adminDtoMapper.adminSearchResultOf(any(), any(), any(), any(), any(), any()))
+    when(adminDtoMapper.adminSearchResultOf(any(), any(), any(), any(), any(), any(), any()))
         .thenReturn(new AdminSearchResultDTO());
 
     var response = controller.searchAgencyAdmins(encoded, 1, 10, "name", "asc", null, null);

@@ -132,12 +132,14 @@ public class AgencyAdminUserService {
                   filter.agencyIds(),
                   pageRequest);
       case AdminScope.Agencies agencies ->
-          retrieveAdminService.findAllByInfixFiltered(
-              infix,
-              Admin.AdminType.AGENCY,
-              filter.tenantId(),
-              filter.narrowAgencies(agencies.ids()),
-              pageRequest);
+          agencies.tenantId() != null && filter.isTenantOutside(agencies.tenantId())
+              ? Page.empty(pageRequest)
+              : retrieveAdminService.findAllByInfixFiltered(
+                  infix,
+                  Admin.AdminType.AGENCY,
+                  filter.tenantId(),
+                  filter.narrowAgencies(agencies.ids()),
+                  pageRequest);
     };
   }
 

@@ -244,7 +244,7 @@ class UserConsultantControllerDelegateTest {
             "person@example.org", true, List.of(1L), SearchFilter.NONE, 0, 20, "lastName", true))
         .thenReturn(resultMap);
     when(consultantDtoMapper.consultantSearchResultOf(
-            resultMap, "person%40example.org", 1, 20, "LASTNAME", "asc"))
+            resultMap, "person%40example.org", 1, 20, "LASTNAME", "asc", SearchFilter.NONE))
         .thenReturn(searchResult);
 
     var response =
@@ -278,7 +278,8 @@ class UserConsultantControllerDelegateTest {
     when(accountManager.findConsultantsByInfix(
             "smith", false, List.of(), SearchFilter.NONE, 0, 20, "lastName", true))
         .thenReturn(resultMap);
-    when(consultantDtoMapper.consultantSearchResultOf(resultMap, "smith", 1, 20, "LASTNAME", "asc"))
+    when(consultantDtoMapper.consultantSearchResultOf(
+            resultMap, "smith", 1, 20, "LASTNAME", "asc", SearchFilter.NONE))
         .thenReturn(searchResult);
 
     var response = delegate.searchConsultants("smith", 1, 20, "LASTNAME", "asc", SearchFilter.NONE);
@@ -301,7 +302,7 @@ class UserConsultantControllerDelegateTest {
             "Müller", false, List.of(), SearchFilter.NONE, 0, 20, "firstName", true))
         .thenReturn(resultMap);
     when(consultantDtoMapper.consultantSearchResultOf(
-            resultMap, "M%C3%BCller", 1, 20, "FIRSTNAME", "asc"))
+            resultMap, "M%C3%BCller", 1, 20, "FIRSTNAME", "asc", SearchFilter.NONE))
         .thenReturn(searchResult);
 
     var response =
@@ -324,7 +325,7 @@ class UserConsultantControllerDelegateTest {
             "smith", false, List.of(), SearchFilter.NONE, 0, 20, "lastName", false))
         .thenReturn(resultMap);
     when(consultantDtoMapper.consultantSearchResultOf(
-            resultMap, "smith", 1, 20, "LASTNAME", "desc"))
+            resultMap, "smith", 1, 20, "LASTNAME", "desc", SearchFilter.NONE))
         .thenReturn(searchResult);
 
     var response =

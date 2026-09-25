@@ -991,18 +991,6 @@ class UserAdminControllerE2EIT {
   }
 
   @Test
-  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
-  void searchTenantAdmins_Should_returnNothing_When_tragerAdminFiltersByForeignTenantId()
-      throws Exception {
-    when(authenticatedUser.getTenantId()).thenReturn(FILTER_TENANT_A);
-    givenFilterAdmin("b3-tenant-a1", AdminType.TENANT, FILTER_TENANT_A);
-    givenFilterAdmin("b3-tenant-b1", AdminType.TENANT, FILTER_TENANT_B);
-
-    assertFilteredSearch(TENANT_ADMINS_SEARCH, "&tenantId=" + FILTER_TENANT_B);
-    assertFilteredSearch(TENANT_ADMINS_SEARCH, "&tenantId=" + FILTER_TENANT_A, "b3-tenant-a1");
-  }
-
-  @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
   void searchAgencyAdmins_Should_filterByTenantIdAndAgencyId_When_platformAdmin() throws Exception {
     when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
@@ -1040,20 +1028,18 @@ class UserAdminControllerE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN, AuthorityValue.RESTRICTED_AGENCY_ADMIN})
-  void searchAgencyAdmins_Should_notWidenScope_When_bstAdminFiltersByForeignAgencyOrTenant()
+  void searchAgencyAdmins_Should_notWidenScope_When_bstAdminFiltersByForeignAgency()
       throws Exception {
     when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
     when(authenticatedUser.getUserId()).thenReturn("b3-agency-a1");
-    when(authenticatedUser.getTenantId()).thenReturn(FILTER_TENANT_A);
     givenFilterAdmin("b3-agency-a1", AdminType.AGENCY, FILTER_TENANT_A, FILTER_AGENCY_X);
     givenFilterAdmin("b3-agency-a3", AdminType.AGENCY, FILTER_TENANT_A, FILTER_AGENCY_Y);
-    givenFilterAdmin("b3-agency-b1", AdminType.AGENCY, FILTER_TENANT_B, FILTER_AGENCY_X);
 
+    // Single-tenant here; the tenant-bound cases live in UserAdminIdScopeIT (multi-tenant).
     assertFilteredSearch(AGENCY_ADMINS_SEARCH, "&agencyId=" + FILTER_AGENCY_Y);
-    assertFilteredSearch(AGENCY_ADMINS_SEARCH, "&tenantId=" + FILTER_TENANT_B);
     assertFilteredSearch(
         AGENCY_ADMINS_SEARCH,
-        "&agencyId=" + FILTER_AGENCY_X + "&tenantId=" + FILTER_TENANT_A,
+        "&agencyId=" + FILTER_AGENCY_X + "," + FILTER_AGENCY_Y,
         "b3-agency-a1");
   }
 

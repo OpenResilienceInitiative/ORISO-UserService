@@ -265,8 +265,7 @@ class AgencyAdminUserServiceTest {
     when(adminScope.current()).thenReturn(new AdminScope.Tenant(9L));
     givenEmptyAdminMapping();
 
-    agencyAdminUserService.findAgencyAdminsByInfix(
-        "*", new SearchFilter(10L, null), pageRequest);
+    agencyAdminUserService.findAgencyAdminsByInfix("*", new SearchFilter(10L, null), pageRequest);
 
     Mockito.verify(retrieveAdminService, Mockito.never())
         .findAllByInfixFiltered(
@@ -304,6 +303,20 @@ class AgencyAdminUserServiceTest {
 
     Mockito.verify(retrieveAdminService)
         .findAllByInfixFiltered("*", Admin.AdminType.AGENCY, null, List.of(6L), pageRequest);
+  }
+
+  @Test
+  void findAgencyAdminsByInfix_Should_ReturnEmpty_WhenAgencyAdminFiltersForeignTenant() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    when(adminScope.current()).thenReturn(new AdminScope.Agencies(1L, Set.of(5L)));
+    givenEmptyAdminMapping();
+
+    agencyAdminUserService.findAgencyAdminsByInfix(
+        "*", new SearchFilter(2L, List.of(5L)), pageRequest);
+
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfixFiltered(
+            Mockito.anyString(), Mockito.any(), Mockito.any(), Mockito.any(), Mockito.any());
   }
 
   @Test

@@ -519,15 +519,12 @@ public class UserAdminController implements UseradminApi {
     String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
+    var filter = new SearchFilter(tenantId, agencyId);
     var resultMap =
         adminUserFacade.findAgencyAdminsByInfix(
-            decodedInfix,
-            new SearchFilter(tenantId, agencyId),
-            page - 1,
-            perPage,
-            mappedField,
-            isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
+            decodedInfix, filter, page - 1, perPage, mappedField, isAscending);
+    var result =
+        adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order, filter);
 
     return ResponseEntity.ok(result);
   }
@@ -538,15 +535,12 @@ public class UserAdminController implements UseradminApi {
     String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
+    var filter = new SearchFilter(tenantId, null);
     var resultMap =
         adminUserFacade.findTenantAdminsByInfix(
-            decodedInfix,
-            new SearchFilter(tenantId, null),
-            page - 1,
-            perPage,
-            mappedField,
-            isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
+            decodedInfix, filter, page - 1, perPage, mappedField, isAscending);
+    var result =
+        adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order, filter);
     return ResponseEntity.ok(result);
   }
 

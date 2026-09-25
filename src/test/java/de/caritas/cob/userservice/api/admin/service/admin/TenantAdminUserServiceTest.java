@@ -429,7 +429,9 @@ class TenantAdminUserServiceTest {
     when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
     when(authenticatedUser.getTenantId()).thenReturn(null);
 
-    assertThatThrownBy(() -> tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest))
+    assertThatThrownBy(
+            () ->
+                tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest))
         .isInstanceOf(ForbiddenException.class);
     Mockito.verifyNoInteractions(retrieveAdminService);
   }
@@ -496,8 +498,7 @@ class TenantAdminUserServiceTest {
             Mockito.any()))
         .thenReturn(new HashMap<>());
 
-    tenantAdminUserService.findTenantAdminsByInfix(
-        "*", new SearchFilter(10L, null), pageRequest);
+    tenantAdminUserService.findTenantAdminsByInfix("*", new SearchFilter(10L, null), pageRequest);
 
     Mockito.verify(retrieveAdminService, Mockito.never())
         .findAllByInfixScopedToTenant(

@@ -106,7 +106,8 @@ class UserConsultantControllerDelegate {
             isAscending);
 
     var result =
-        consultantDtoMapper.consultantSearchResultOf(resultMap, query, page, perPage, field, order);
+        consultantDtoMapper.consultantSearchResultOf(
+            resultMap, query, page, perPage, field, order, filter);
 
     if (authenticatedUser.hasRestrictedAgencyPriviliges() && result.getEmbedded() != null) {
       result

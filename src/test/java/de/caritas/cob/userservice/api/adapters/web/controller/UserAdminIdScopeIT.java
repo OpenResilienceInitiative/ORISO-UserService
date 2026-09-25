@@ -400,6 +400,66 @@ class UserAdminIdScopeIT {
         withCsrf(delete("/useradmin/agencyadmins/" + target.getId() + "/agencies/" + agencyId)));
   }
 
+  // --- #1263 B3: the Träger/Beratungsstelle search filter only narrows the caller's reach ------
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmins_Should_FindNothing_When_TenantAdminFiltersForeignTenant()
+      throws Exception {
+    actAsTenantAdmin();
+
+    assertThat(searchIds("/useradmin/tenantadmins/search", "&tenantId=" + FOREIGN_TENANT))
+        .isEmpty();
+    assertThat(searchIds("/useradmin/tenantadmins/search", "&tenantId=" + OWN_TENANT))
+        .contains(ownTenantAdmin.getId());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_NotWiden_When_AgencyAdminFiltersForeignAgencyOrTenant()
+      throws Exception {
+    actAsAgencyAdmin();
+
+    assertThat(searchIds("/useradmin/agencyadmins/search", "&tenantId=" + FOREIGN_TENANT))
+        .isEmpty();
+    assertThat(
+            searchIds("/useradmin/agencyadmins/search", "&agencyId=" + OTHER_AGENCY_OF_OWN_TENANT))
+        .isEmpty();
+    assertThat(searchIds("/useradmin/agencyadmins/search", "&agencyId=" + FOREIGN_TENANT_AGENCY))
+        .isEmpty();
+    assertThat(
+            searchIds(
+                "/useradmin/agencyadmins/search",
+                "&tenantId=" + OWN_TENANT + "&agencyId=" + OWN_AGENCY))
+        .containsExactlyInAnyOrder(callingAgencyAdmin.getId(), ownAgencyAdmin.getId());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_KeepOwnTenant_When_TenantAdminFiltersForeignAgency()
+      throws Exception {
+    actAsTenantAdmin();
+
+    assertThat(searchIds("/useradmin/agencyadmins/search", "&agencyId=" + FOREIGN_TENANT_AGENCY))
+        .isEmpty();
+    assertThat(
+            searchIds("/useradmin/agencyadmins/search", "&agencyId=" + OTHER_AGENCY_OF_OWN_TENANT))
+        .containsExactly(otherAgencyAdmin.getId());
+  }
+
+  private List<String> searchIds(String path, String filter) throws Exception {
+    var body =
+        mockMvc
+            .perform(
+                withCsrf(
+                    get(path + "?query=*&page=1&perPage=100&field=FIRSTNAME&order=ASC" + filter)))
+            .andExpect(status().isOk())
+            .andReturn()
+            .getResponse()
+            .getContentAsString();
+    return com.jayway.jsonpath.JsonPath.read(body, "$._embedded[*]._embedded.id");
+  }
+
   private static MockHttpServletRequestBuilder withCsrf(MockHttpServletRequestBuilder request) {
     return request.cookie(CSRF_COOKIE).header(CSRF_HEADER, CSRF_VALUE);
   }
