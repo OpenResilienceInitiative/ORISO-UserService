@@ -275,13 +275,22 @@ public class AdminScope {
         .collect(Collectors.toCollection(HashSet::new));
   }
 
-  /** A counsellor marked for deletion keeps the agencies it had, so its deletion stays pausable. */
+  /**
+   * A counsellor marked for deletion keeps the agencies it had then, so its deletion stays
+   * pausable.
+   */
   private Set<Long> agencyIdsOf(Consultant consultant) {
-    var relations =
-        consultant.getDeleteDate() == null
-            ? consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(consultant.getId())
-            : consultantAgencyRepository.findByConsultantId(consultant.getId());
-    return relations.stream()
+    if (consultant.getDeleteDate() == null) {
+      return consultantAgencyRepository
+          .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
+          .stream()
+          .map(ConsultantAgency::getAgencyId)
+          .filter(Objects::nonNull)
+          .collect(Collectors.toCollection(HashSet::new));
+    }
+    // Only the relations the deletion removed carry the counsellor's own delete date.
+    return consultantAgencyRepository.findByConsultantId(consultant.getId()).stream()
+        .filter(relation -> consultant.getDeleteDate().equals(relation.getDeleteDate()))
         .map(ConsultantAgency::getAgencyId)
         .filter(Objects::nonNull)
         .collect(Collectors.toCollection(HashSet::new));
