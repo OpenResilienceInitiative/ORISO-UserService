@@ -482,7 +482,7 @@ public class AccountInviteService {
     }
     List<Long> topicIds = agency.topicIds() == null ? List.of() : agency.topicIds();
     Long departmentId = command.departmentId();
-    if (departmentId != null && !topicIds.isEmpty() && !topicIds.contains(departmentId)) {
+    if (departmentId != null && !topicIds.contains(departmentId)) {
       throw new BadRequestException(
           "departmentId " + departmentId + " is not a topic of agency " + command.agencyId());
     }

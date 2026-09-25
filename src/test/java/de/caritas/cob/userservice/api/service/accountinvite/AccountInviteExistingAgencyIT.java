@@ -81,6 +81,9 @@ class AccountInviteExistingAgencyIT {
   /** Soft-deleted agency of tenant 1. */
   private static final long DELETED_AGENCY = 4L;
 
+  /** Agency of tenant 1 that has no topic yet. */
+  private static final long TOPICLESS_AGENCY = 5L;
+
   /** An agency ID that does not exist. */
   private static final long MISSING_AGENCY = 999L;
 
@@ -114,6 +117,7 @@ class AccountInviteExistingAgencyIT {
     givenAgency(TWO_TOPIC_AGENCY, OWN_TENANT, false, List.of(21L, 22L));
     givenAgency(FOREIGN_TENANT_AGENCY, FOREIGN_TENANT, false, List.of(31L));
     givenAgency(DELETED_AGENCY, OWN_TENANT, true, List.of(41L));
+    givenAgency(TOPICLESS_AGENCY, OWN_TENANT, false, List.of());
     when(existingAgencyClient.find(MISSING_AGENCY)).thenReturn(Optional.empty());
   }
 
@@ -222,6 +226,16 @@ class AccountInviteExistingAgencyIT {
 
     assertThatThrownBy(() -> service.createInvite(existing(null, TWO_TOPIC_AGENCY, 99L)))
         .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void createInvite_Should_Refuse400_When_TheAgencyHasNoTopicButADepartmentIsNamed() {
+    actAsTenantAdmin();
+
+    // 31 is a topic of another Träger's agency; an agency without topics must not take it.
+    assertThatThrownBy(() -> service.createInvite(existing(null, TOPICLESS_AGENCY, 31L)))
+        .isInstanceOf(BadRequestException.class);
+    assertThat(accountInviteRepository.count()).isZero();
   }
 
   @Test
