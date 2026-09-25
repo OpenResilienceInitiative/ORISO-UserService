@@ -171,16 +171,28 @@ class AgencyInviteLinkServiceTest {
   }
 
   @Test
-  void create_Should_ThrowForbidden_When_NoTenantContext() {
+  void create_Should_ThrowForbidden_When_TheCallerHasNoTenant() {
     TenantContext.clear();
-    Mockito.lenient()
-        .when(adminScope.current())
-        .thenThrow(new ForbiddenException("act without a tenant of their own"));
+    Mockito.when(authenticatedUser.getTenantId()).thenReturn(null);
+    Mockito.when(authenticatedUser.getRoles()).thenReturn(java.util.Set.of("tenant-admin"));
+    var realScope =
+        new AdminScope(
+            authenticatedUser,
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.AdminRepository.class),
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.AdminAgencyRepository.class),
+            consultantRepository,
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.class),
+            agencyService,
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.UserRepository.class),
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.UserAgencyRepository.class));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        realScope, "multitenancyEnabled", true);
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "adminScope", realScope);
     CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();
 
-    assertThatThrownBy(() -> service.create(cmd))
-        .isInstanceOf(ForbiddenException.class)
-        .hasMessageContaining("tenant");
+    assertThatThrownBy(() -> service.create(cmd)).isInstanceOf(ForbiddenException.class);
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
   }
 
   @Test
