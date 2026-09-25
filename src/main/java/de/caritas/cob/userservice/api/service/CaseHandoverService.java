@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponse
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -91,6 +92,12 @@ public class CaseHandoverService {
   private static final String OUTCOME_ACCESS_EXPIRED = "ACCESS_EXPIRED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
+  private static final String OUTCOME_RECLAIMED = "RECLAIMED";
+
+  /** ADR-002: "counsellor left" has no reclaim. ASSIGNMENT_ENDED is its successor (#1245). */
+  private static final Set<String> PERMANENT_HANDOVER_REASONS =
+      Set.of("COUNSELLOR_LEFT", "ASSIGNMENT_ENDED");
+
   private static final String CO_ACCESS_EXPIRY_TASK = "case-handover-co-access-expiry";
 
   /**
@@ -537,18 +544,24 @@ public class CaseHandoverService {
           .build();
     }
 
-    return latestFor(sessionId, requester)
-        .map(this::toStatus)
-        .orElse(
-            CaseHandoverStatus.builder()
-                .sessionId(sessionId)
-                .status(OUTCOME_NOT_REQUESTED)
-                .canViewContent(false)
-                .clientConsent(CaseHandoverConsentMode.NONE)
-                .clientConsentRequired(false)
-                .policyAuthority(POLICY_AUTHORITY)
-                .auditOutcome(OUTCOME_NOT_REQUESTED)
-                .build());
+    CaseHandoverStatus status =
+        latestFor(sessionId, requester)
+            .map(this::toStatus)
+            .orElse(
+                CaseHandoverStatus.builder()
+                    .sessionId(sessionId)
+                    .status(OUTCOME_NOT_REQUESTED)
+                    .canViewContent(false)
+                    .clientConsent(CaseHandoverConsentMode.NONE)
+                    .clientConsentRequired(false)
+                    .policyAuthority(POLICY_AUTHORITY)
+                    .auditOutcome(OUTCOME_NOT_REQUESTED)
+                    .build());
+    status.setCanReclaim(
+        takeoverFrom(session, requester)
+            .filter(takeover -> isReclaimable(session, takeover))
+            .isPresent());
+    return status;
   }
 
   @Transactional(readOnly = true)
@@ -764,6 +777,92 @@ public class CaseHandoverService {
     CaseHandoverRequest saved = caseHandoverRequestRepository.save(request);
     notifyConsentDeclined(saved);
     return toClientStatus(saved);
+  }
+
+  /**
+   * ADR-002 reveal lifecycle: the counsellor a takeover moved the case away from takes it back on
+   * return. The cover counsellor keeps their Matrix membership (under Megolm a removed member could
+   * never be given the history back) and the curtain re-hides them, the mirror image of the
+   * takeover. A permanent reason has no reclaim.
+   */
+  @Transactional
+  public CaseHandoverStatus reclaim(Long sessionId) {
+    Consultant original = retrieveCurrentConsultant();
+    Session session = getSession(sessionId);
+    CaseHandoverRequest takeover =
+        takeoverFrom(session, original)
+            .orElseThrow(
+                () ->
+                    new ForbiddenException(
+                        "Only the counsellor a takeover moved the case away from can reclaim it"));
+    if (!isReclaimable(session, takeover)) {
+      throw new ConflictException("This takeover cannot be reclaimed");
+    }
+
+    LocalDateTime now = LocalDateTime.now(clock);
+    session.setConsultant(original);
+    session.setUpdateDate(now);
+    sessionRepository.save(session);
+    takeover.setStatus(Status.RECLAIMED);
+    takeover.setAuditOutcome(OUTCOME_RECLAIMED);
+    takeover.setResolvedAt(now);
+    caseHandoverRequestRepository.save(takeover);
+    demoteCoverCounsellor(session, takeover.getRequesterConsultant());
+    attachStandingSupervisorAfterCommit(sessionId, original);
+    return getStatus(sessionId);
+  }
+
+  /**
+   * The takeover gave the cover counsellor the owner's level with the original counsellor's token,
+   * so both sit at the same level now, and Matrix refuses to lower another member whose level is
+   * not below your own. Lowering your own entry is always allowed, so the cover counsellor does it.
+   * Best effort like the takeover side: the reclaim never fails over room rights.
+   */
+  private void demoteCoverCounsellor(Session session, Consultant cover) {
+    String roomId = session.getMatrixRoomId();
+    if (isBlank(roomId) || cover == null || isBlank(cover.getMatrixUserId())) {
+      return;
+    }
+    try {
+      String coverToken = matrixSynapseService.loginAsUserAccessToken(cover.getMatrixUserId());
+      if (isBlank(coverToken)
+          || !matrixSynapseService.setUserPowerLevel(
+              roomId, cover.getMatrixUserId(), MEMBER_POWER_LEVEL, coverToken)) {
+        log.warn(
+            "Could not return the cover counsellor of session {} to member level in room {}",
+            session.getId(),
+            roomId);
+      }
+    } catch (RuntimeException exception) {
+      log.warn(
+          "Could not return the cover counsellor of session {} to member level ({})",
+          session.getId(),
+          exception.getClass().getSimpleName());
+    }
+  }
+
+  private Optional<CaseHandoverRequest> takeoverFrom(Session session, Consultant consultant) {
+    return java.util.stream.Stream.of(Status.GRANTED, Status.GRANTED_PENDING_CLIENT_OPTOUT)
+        .flatMap(
+            status ->
+                caseHandoverRequestRepository
+                    .findBySessionIdAndStatusOrderByCreatedAtDesc(session.getId(), status)
+                    .stream())
+        .filter(request -> effectiveAccessType(request) == AccessType.TAKEOVER)
+        .max(
+            java.util.Comparator.comparing(
+                CaseHandoverRequest::getCreatedAt,
+                java.util.Comparator.nullsFirst(java.util.Comparator.naturalOrder())))
+        .filter(
+            takeover ->
+                takeover.getPreviousConsultant() != null
+                    && takeover.getPreviousConsultant().getId().equals(consultant.getId()));
+  }
+
+  /** Not for a permanent reason, and the cover counsellor still owns the case. */
+  private boolean isReclaimable(Session session, CaseHandoverRequest takeover) {
+    return !PERMANENT_HANDOVER_REASONS.contains(normalizeReasonCode(takeover.getReasonCode()))
+        && isActiveOwner(session, takeover.getRequesterConsultant());
   }
 
   /**
@@ -2113,5 +2212,6 @@ public class CaseHandoverService {
     private LocalDateTime resolvedAt;
     private String accessType;
     private LocalDateTime expiresAt;
+    private boolean canReclaim;
   }
 }
