@@ -34,6 +34,7 @@ public class AgencyAdminInviteProvisioningService {
   private final @NonNull CreateAdminService createAdminService;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
+  private final @NonNull AcceptTimeAgencyCheck acceptTimeAgencyCheck;
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptAsAgencyAdmin(String rawToken, String username, String password) {
@@ -65,6 +66,7 @@ public class AgencyAdminInviteProvisioningService {
     TenantData requestTenant = snapshotTenantContext();
     TenantContext.setCurrentTenant(invite.getTenantId());
     try {
+      acceptTimeAgencyCheck.requireLiveAgency(invite);
       var admin =
           createAdminService.createNewAgencyAdminInTenant(toAdmin(invite, username, password));
       adminId = admin.getId();

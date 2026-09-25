@@ -11,9 +11,6 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -35,11 +32,10 @@ public class CounsellorInviteProvisioningService {
   private final @NonNull ConsultantAdminFacade consultantAdminFacade;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull CreateConsultantSaga createConsultantSaga;
-  private final @NonNull IdentityAuthentication identityAuthentication;
-  private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
+  private final @NonNull AcceptTimeAgencyCheck acceptTimeAgencyCheck;
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
@@ -79,7 +75,8 @@ public class CounsellorInviteProvisioningService {
     try {
       // Inside the try: a failed service login must mark the invite FAILED (retryable) instead of
       // leaving it IN_PROGRESS, which would answer every retry with 409.
-      technicalAccessToken = loginTechnicalUser();
+      technicalAccessToken = acceptTimeAgencyCheck.serviceToken();
+      acceptTimeAgencyCheck.requireLiveAgency(invite, technicalAccessToken);
       // The service identity is ambient ONLY around the remote calls that need it: consultant
       // creation and agency assignment reach TenantService/AgencyService/ConsultingTypeService
       // through the shared admin services, which read the bearer from the header supplier.
@@ -134,22 +131,6 @@ public class CounsellorInviteProvisioningService {
     } finally {
       restoreTenantContext(requestTenant);
     }
-  }
-
-  private String loginTechnicalUser() {
-    var technicalUser = identityClientConfig.getTechnicalUser();
-    IdentityLogin login;
-    try {
-      login =
-          identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
-    } catch (RuntimeException exception) {
-      // The failure reason is persisted on the invite; keep identity-provider text out of it.
-      throw new IllegalStateException("Service authentication unavailable", exception);
-    }
-    if (login == null || login.accessToken() == null || login.accessToken().isBlank()) {
-      throw new IllegalStateException("Service authentication unavailable");
-    }
-    return login.accessToken();
   }
 
   private static TenantData snapshotTenantContext() {
