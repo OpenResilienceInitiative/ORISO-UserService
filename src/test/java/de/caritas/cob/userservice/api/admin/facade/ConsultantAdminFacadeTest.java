@@ -13,9 +13,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.common.collect.Lists;
@@ -43,6 +45,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -93,6 +96,32 @@ class ConsultantAdminFacadeTest {
   }
 
   @Test
+  void updateConsultant_Should_notUpdate_When_counsellorIsOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.counsellor("c-1"));
+
+    assertThrows(
+        ForbiddenException.class, () -> consultantAdminFacade.updateConsultant("c-1", null));
+
+    verifyNoInteractions(consultantAdminService);
+  }
+
+  @Test
+  void markConsultantAgencyForDeletion_Should_notDelete_When_agencyIsOutOfScope() {
+    lenient()
+        .doThrow(new ForbiddenException("out of scope"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.agencies(List.of(1L)));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> consultantAdminFacade.markConsultantAgencyForDeletion("c-1", 1L));
+
+    verifyNoInteractions(consultantAgencyAdminService);
+  }
+
+  @Test
   void findConsultantAgencies_Should_useConsultantAdminFilterService() {
     var consultantId = "1da238c6-cd46-4162-80f1-bff74eafeAAA";
 
@@ -134,6 +163,49 @@ class ConsultantAdminFacadeTest {
     this.consultantAdminFacade.createNewConsultantAgency("c-1", agency);
 
     verify(this.relationCreatorService).createNewConsultantAgency("c-1", agency);
+  }
+
+  @Test
+  void createNewConsultantAgency_Should_notCreate_When_counsellorIsOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.counsellor("c-1"));
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            consultantAdminFacade.createNewConsultantAgency(
+                "c-1", new CreateConsultantAgencyDTO().agencyId(1L)));
+
+    verifyNoInteractions(relationCreatorService);
+  }
+
+  @Test
+  void createNewConsultantAgency_Should_notCreate_When_agencyIsOutOfScope() {
+    lenient()
+        .doThrow(new ForbiddenException("out of scope"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.agencies(List.of(1L)));
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            consultantAdminFacade.createNewConsultantAgency(
+                "c-1", new CreateConsultantAgencyDTO().agencyId(1L)));
+
+    verifyNoInteractions(relationCreatorService);
+  }
+
+  @Test
+  void repairConsultantChatIdentity_Should_notProvision_When_counsellorIsOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.counsellor("c-1"));
+
+    assertThrows(
+        ForbiddenException.class, () -> consultantAdminFacade.repairConsultantChatIdentity("c-1"));
+
+    verifyNoInteractions(consultantChatIdentityService, consultantAdminService);
   }
 
   @Test
@@ -452,6 +524,39 @@ class ConsultantAdminFacadeTest {
                 "consultantId", Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(3L))));
 
     verify(relationCreatorService, never()).createNewConsultantAgency(any(), any());
+  }
+
+  @Test
+  void setConsultantAgencies_Should_checkOnlyAddedAndRemovedAgencies() {
+    when(consultantAgencyAdminService.findConsultantAgencyIds("consultantId"))
+        .thenReturn(Lists.newArrayList(1L, 2L));
+
+    consultantAdminFacade.setConsultantAgencies(
+        "consultantId",
+        Lists.newArrayList(
+            new CreateConsultantAgencyDTO().agencyId(2L),
+            new CreateConsultantAgencyDTO().agencyId(3L)));
+
+    verify(adminScope).assertMay(AdminScope.Target.agencies(Set.of(1L, 3L)));
+  }
+
+  @Test
+  void setConsultantAgencies_Should_notChangeAnything_When_anAgencyIsOutOfScope() {
+    when(consultantAgencyAdminService.findConsultantAgencyIds("consultantId"))
+        .thenReturn(Lists.newArrayList(1L));
+    lenient()
+        .doThrow(new ForbiddenException("out of scope"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.agencies(Set.of(1L, 3L)));
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            consultantAdminFacade.setConsultantAgencies(
+                "consultantId", Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(3L))));
+
+    verify(consultantAgencyAdminService, never()).markConsultantAgenciesForDeletion(any(), any());
+    verifyNoInteractions(relationCreatorService);
   }
 
   @Test

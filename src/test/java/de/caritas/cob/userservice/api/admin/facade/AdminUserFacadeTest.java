@@ -1,9 +1,13 @@
 package de.caritas.cob.userservice.api.admin.facade;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anySet;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -18,9 +22,12 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.AdminFilterService;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import java.util.ArrayList;
 import java.util.List;
@@ -36,7 +43,7 @@ class AdminUserFacadeTest {
 
   @InjectMocks private AdminUserFacade adminUserFacade;
 
-  @Mock private de.caritas.cob.userservice.api.admin.service.admin.AdminScope adminScope;
+  @Mock private AdminScope adminScope;
 
   @Mock private AgencyAdminUserService agencyAdminUserService;
   @Mock private AdminAgencyRelationService adminAgencyRelationService;
@@ -192,5 +199,24 @@ class AdminUserFacadeTest {
 
     verify(this.adminFilterService).findFilteredAdmins(page, perPage, adminFilter, sort);
     verify(this.adminAgencyRelationService).appendAgenciesForAdmins(anySet());
+  }
+
+  @Test
+  void findAgencyIdsOfAdminInCallerScope_Should_ReturnAgencies_When_AdminInScope() {
+    when(agencyAdminUserService.findAgenciesOfAdmin("123")).thenReturn(List.of(7L));
+
+    assertThat(adminUserFacade.findAgencyIdsOfAdminInCallerScope("123")).containsExactly(7L);
+
+    verify(adminScope).assertMay(Target.admin("123"));
+  }
+
+  @Test
+  void findAgencyIdsOfAdminInCallerScope_Should_NotReadAgencies_When_ScopeDenies() {
+    doThrow(new ForbiddenException("out of scope")).when(adminScope).assertMay(Target.admin("123"));
+
+    assertThatThrownBy(() -> adminUserFacade.findAgencyIdsOfAdminInCallerScope("123"))
+        .isInstanceOf(ForbiddenException.class);
+
+    verify(agencyAdminUserService, never()).findAgenciesOfAdmin(any());
   }
 }
