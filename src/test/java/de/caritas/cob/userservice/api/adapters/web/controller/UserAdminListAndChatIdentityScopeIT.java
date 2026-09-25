@@ -333,6 +333,18 @@ class UserAdminListAndChatIdentityScopeIT {
 
   @Test
   @AsAgencyAdmin
+  void getConsultants_Should_NotList_ConsultantWhoseOwnAgencyRelationIsDeleted() throws Exception {
+    var formerConsultant = persistConsultant(OWN_TENANT, true, OWN_AGENCY);
+    deleteRelation(formerConsultant, OWN_AGENCY);
+    actAsAgencyAdmin();
+
+    var body = contentOf(consultantList().param("perPage", ALL));
+
+    assertThat(body).doesNotContain(formerConsultant.getId()).contains(ownConsultant.getId());
+  }
+
+  @Test
+  @AsAgencyAdmin
   void getConsultants_Should_List_OwnAgencyConsultant_When_AgencyAdminFiltersByOwnAgency()
       throws Exception {
     actAsAgencyAdmin();
@@ -426,6 +438,24 @@ class UserAdminListAndChatIdentityScopeIT {
     assertThat(byConsultant).contains(ownSession.getUser().getUserId());
   }
 
+  @Test
+  @AsAgencyAdmin
+  void getSessions_Should_List_OwnAgencySession_When_AgencyAdminFiltersByAskerOrConsultingType()
+      throws Exception {
+    actAsAgencyAdmin();
+
+    var byAsker =
+        contentOf(
+            sessionList().param("perPage", ALL).param("asker", ownSession.getUser().getUserId()));
+    var byConsultingType =
+        contentOf(sessionList().param("perPage", ALL).param("consultingType", "1"));
+
+    assertThat(byAsker).contains(ownSession.getUser().getUserId());
+    assertThat(byConsultingType)
+        .contains(ownSession.getUser().getUserId())
+        .doesNotContain(otherAgencyAsker.getUserId());
+  }
+
   // --- POST /useradmin/consultants/{id}/chat-identity ---------------------------------------
 
   @Test
@@ -468,7 +498,8 @@ class UserAdminListAndChatIdentityScopeIT {
 
     mockMvc.perform(repairChatIdentity(ownChatlessConsultant)).andExpect(status().isOk());
 
-    assertThat(matrixUserIdOf(ownChatlessConsultant)).isNotNull();
+    assertThat(matrixUserIdOf(ownChatlessConsultant))
+        .isEqualTo("@" + ownChatlessConsultant.getUsername() + ":synthetic.oriso.test");
   }
 
   // --- helpers ------------------------------------------------------------------------------
@@ -500,6 +531,21 @@ class UserAdminListAndChatIdentityScopeIT {
   private void givenChatServerProvisions() throws Exception {
     when(matrixSynapseService.createUserIdWithoutReactivation(anyString(), anyString(), any()))
         .thenAnswer(call -> "@" + call.getArgument(0) + ":synthetic.oriso.test");
+  }
+
+  private void deleteRelation(Consultant consultant, long agencyId) {
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    try {
+      consultantAgencyRepository.findByConsultantId(consultant.getId()).stream()
+          .filter(relation -> relation.getAgencyId().equals(agencyId))
+          .forEach(
+              relation -> {
+                relation.setDeleteDate(java.time.LocalDateTime.now());
+                consultantAgencyRepository.save(relation);
+              });
+    } finally {
+      TenantContext.clear();
+    }
   }
 
   private String matrixUserIdOf(Consultant consultant) {

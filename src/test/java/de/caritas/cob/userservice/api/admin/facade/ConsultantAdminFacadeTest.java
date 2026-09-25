@@ -46,6 +46,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -97,6 +98,43 @@ class ConsultantAdminFacadeTest {
         1, 1, new ConsultantFilter(), new Sort().field(FieldEnum.EMAIL));
 
     verify(this.consultantAdminFilterService).findFilteredConsultants(eq(1), eq(1), any(), any());
+  }
+
+  @Test
+  void findFilteredConsultants_Should_useAgencyScopedQuery_When_callerIsRestrictedToAgencies() {
+    when(adminCallerScope.agencyRestriction()).thenReturn(Optional.of(Set.of(1L)));
+
+    consultantAdminFacade.findFilteredConsultants(1, 1, new ConsultantFilter(), null);
+
+    verify(consultantAdminFilterService)
+        .findFilteredConsultants(eq(1), eq(1), any(), any(), eq(Set.of(1L)));
+    verify(consultantAdminFilterService, never())
+        .findFilteredConsultants(any(), any(), any(), any());
+  }
+
+  @Test
+  void updateConsultant_Should_notUpdate_When_counsellorIsOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminCallerScope)
+        .assertMayActOnConsultant("c-1");
+
+    assertThrows(
+        ForbiddenException.class, () -> consultantAdminFacade.updateConsultant("c-1", null));
+
+    verifyNoInteractions(consultantAdminService);
+  }
+
+  @Test
+  void markConsultantAgencyForDeletion_Should_notDelete_When_agencyIsOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminCallerScope)
+        .assertMayUseAgencies(List.of(1L));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> consultantAdminFacade.markConsultantAgencyForDeletion("c-1", 1L));
+
+    verifyNoInteractions(consultantAgencyAdminService);
   }
 
   @Test
