@@ -134,7 +134,7 @@ class AdminAgencyRelationServiceTest {
 
     service.synchronizeAdminAgenciesRelation("admin1", relationsTo(5L));
 
-    assertCheckedAgencies(6L);
+    assertCheckedAgencies(Set.of(), Set.of(6L));
   }
 
   @Test
@@ -143,7 +143,7 @@ class AdminAgencyRelationServiceTest {
 
     service.synchronizeAdminAgenciesRelation("admin1", relationsTo(6L, 5L));
 
-    assertCheckedAgencies();
+    assertCheckedAgencies(Set.of(), Set.of());
   }
 
   @Test
@@ -152,7 +152,7 @@ class AdminAgencyRelationServiceTest {
 
     service.synchronizeAdminAgenciesRelation("admin1", null);
 
-    assertCheckedAgencies(5L, 6L);
+    assertCheckedAgencies(Set.of(), Set.of(5L, 6L));
   }
 
   @Test
@@ -161,7 +161,7 @@ class AdminAgencyRelationServiceTest {
 
     service.synchronizeAdminAgenciesRelation("admin1", relationsTo(6L, 7L));
 
-    assertCheckedAgencies(5L, 7L);
+    assertCheckedAgencies(Set.of(7L), Set.of(5L));
   }
 
   // ─── appendAgenciesForAdmins ──────────────────────────────────────────────
@@ -293,8 +293,9 @@ class AdminAgencyRelationServiceTest {
         .toList();
   }
 
-  private void assertCheckedAgencies(Long... agencyIds) {
-    verify(adminScope).assertMay(AdminScope.Target.agencies(Set.of(agencyIds)));
+  private void assertCheckedAgencies(Set<Long> added, Set<Long> removed) {
+    verify(adminScope).assertMay(AdminScope.Target.agencies(added));
+    verify(adminScope).assertMay(AdminScope.Target.removedAgencies(removed));
   }
 
   private AdminDTO buildAdmin(String id) {
