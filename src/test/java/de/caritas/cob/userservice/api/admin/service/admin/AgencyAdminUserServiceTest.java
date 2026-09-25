@@ -65,6 +65,7 @@ class AgencyAdminUserServiceTest {
     var response = agencyAdminUserService.findAgencyAdmin("agency-admin");
 
     assertThat(response.getEmbedded().getHasOtherIdentity()).isTrue();
+    Mockito.verify(adminScope).assertMay(AdminScope.Target.admin("agency-admin"));
   }
 
   @Test
@@ -125,29 +126,6 @@ class AgencyAdminUserServiceTest {
     Mockito.verify(deleteAdminService, Mockito.never()).deleteAgencyAdmin(Mockito.any());
   }
 
-  @Test
-  void deleteAgencyAdmin_Should_Delete_WhenRestrictedAgencyAdminSharesAgency() {
-    // given
-
-    // when
-    agencyAdminUserService.deleteAgencyAdmin("peer-admin");
-
-    // then
-    Mockito.verify(deleteAdminService).deleteAgencyAdmin("peer-admin");
-  }
-
-  @Test
-  void deleteAgencyAdmin_Should_NotScope_WhenCallerIsPlatformAdmin() {
-
-    // when
-    agencyAdminUserService.deleteAgencyAdmin("any-admin");
-
-    // then no agency lookup happens and deletion proceeds
-    Mockito.verify(retrieveAdminService, Mockito.never()).findAgencyIdsOfAdmin(Mockito.any());
-    Mockito.verify(retrieveAdminService, Mockito.never()).findAdmin(Mockito.any(), Mockito.any());
-    Mockito.verify(deleteAdminService).deleteAgencyAdmin("any-admin");
-  }
-
   /**
    * #968: a tenant admin (not restricted agency admin, not platform admin) must not act on agency
    * admins of other tenants via the by-id endpoints — mirrors the search-side tenant scoping.
@@ -165,11 +143,12 @@ class AgencyAdminUserServiceTest {
   }
 
   @Test
-  void deleteAgencyAdmin_Should_Delete_WhenTenantAdminTargetsOwnTenant() {
+  void deleteAgencyAdmin_Should_CheckTheScopeBeforeDeleting() {
+    agencyAdminUserService.deleteAgencyAdmin("agency-admin");
 
-    agencyAdminUserService.deleteAgencyAdmin("own-agency-admin");
-
-    Mockito.verify(deleteAdminService).deleteAgencyAdmin("own-agency-admin");
+    var order = Mockito.inOrder(adminScope, deleteAdminService);
+    order.verify(adminScope).assertMay(AdminScope.Target.admin("agency-admin"));
+    order.verify(deleteAdminService).deleteAgencyAdmin("agency-admin");
   }
 
   @Test
