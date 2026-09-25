@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -20,6 +21,8 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.AdminAgency;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -28,6 +31,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
@@ -166,6 +170,107 @@ class AdminScopeTest {
         .isInstanceOf(ForbiddenException.class);
     assertThatThrownBy(() -> adminScope.assertMay(Target.placedIn(5L, 7L)))
         .isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(agencyService);
+  }
+
+  @Test
+  void current_Should_BeOwnAgencies_When_TechnicalUserIsAlsoAgencyAdmin() {
+    actAs(4L, UserRole.TECHNICAL, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenOwnAgencies(7L);
+
+    assertThat(adminScope.current()).isEqualTo(new Agencies(4L, Set.of(7L)));
+  }
+
+  @Test
+  void narrow_Should_Deny_When_Tenant0AdminIsNoPlatformAdmin() {
+    actAs(0L, UserRole.USER_ADMIN);
+
+    assertThatThrownBy(() -> adminScope.<Admin>narrow(null, (root, query, cb, ids) -> null))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMay_Should_DenyAdminWithoutSharedAgency_When_AgencyAdminOnSingleTenantDeployment() {
+    ReflectionTestUtils.setField(adminScope, "multitenancyEnabled", false);
+    actAs(null, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenOwnAgencies(7L);
+    when(adminRepository.findById("other")).thenReturn(Optional.of(admin("other", 5L)));
+    when(adminAgencyRepository.findByAdminId("other"))
+        .thenReturn(List.of(AdminAgency.builder().agencyId(8L).build()));
+
+    assertThatThrownBy(() -> adminScope.assertMay(Target.admin("other")))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMay_Should_AllowOwnTenantCounsellorAccount_And_DenyForeignOne() {
+    actAs(4L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenCounsellor("own", 4L, null);
+    givenCounsellor("foreign", 5L, null);
+
+    assertThatCode(() -> adminScope.assertMay(Target.account("own"))).doesNotThrowAnyException();
+    assertThatThrownBy(() -> adminScope.assertMay(Target.account("foreign")))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMay_Should_DenyDeletedCounsellor_When_ItLeftTheCallersAgencyBeforeDeletion() {
+    actAs(4L, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenOwnAgencies(10L);
+    givenDeletedCounsellorWhoLeftAgency10AndWasDeletedFromAgency11();
+
+    assertThatThrownBy(() -> adminScope.assertMay(Target.counsellor("deleted")))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMay_Should_AllowDeletedCounsellor_When_ItBelongedToTheCallersAgencyAtDeletion() {
+    actAs(4L, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenOwnAgencies(11L);
+    givenDeletedCounsellorWhoLeftAgency10AndWasDeletedFromAgency11();
+
+    assertThatCode(() -> adminScope.assertMay(Target.counsellor("deleted")))
+        .doesNotThrowAnyException();
+  }
+
+  /** The deletion stamps the relations it removes with the counsellor's own delete date. */
+  private void givenDeletedCounsellorWhoLeftAgency10AndWasDeletedFromAgency11() {
+    var deletedAt = LocalDateTime.of(2026, 9, 25, 10, 0);
+    var counsellor = givenCounsellor("deleted", 4L, deletedAt);
+    when(consultantAgencyRepository.findByConsultantId("deleted"))
+        .thenReturn(
+            List.of(
+                relation(counsellor, 10L, deletedAt.minusDays(30)),
+                relation(counsellor, 11L, deletedAt)));
+  }
+
+  private Consultant givenCounsellor(String id, long tenantId, LocalDateTime deleteDate) {
+    var counsellor = new Consultant();
+    counsellor.setId(id);
+    counsellor.setTenantId(tenantId);
+    counsellor.setDeleteDate(deleteDate);
+    when(consultantRepository.findById(id)).thenReturn(Optional.of(counsellor));
+    return counsellor;
+  }
+
+  private static ConsultantAgency relation(Consultant counsellor, long agencyId, LocalDateTime at) {
+    var relation = new ConsultantAgency();
+    relation.setConsultant(counsellor);
+    relation.setAgencyId(agencyId);
+    relation.setDeleteDate(at);
+    return relation;
+  }
+
+  private static Admin admin(String id, long tenantId) {
+    return Admin.builder()
+        .id(id)
+        .tenantId(tenantId)
+        .username(id)
+        .firstName("F")
+        .lastName("A")
+        .email(id + "@synthetic.oriso.test")
+        .type(Admin.AdminType.AGENCY)
+        .build();
   }
 
   @Test
