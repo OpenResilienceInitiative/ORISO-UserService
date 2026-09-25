@@ -209,4 +209,5 @@
   <include file="db/changelog/changeset/20260924_account_invite_drop_import_batch/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_account_invite_timeline/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_consultant_topic_per_agency_1264/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260925_consultant_topic_agency_key_1264/changeSet.xml"/>
 </databaseChangeLog>

@@ -5,7 +5,11 @@ Status: draft · Date: 2026-09-25
 ## Decision
 
 Add a nullable `agency_id` column to `consultant_topic` and widen the unique key
-from `(consultant_id, topic_id)` to `(consultant_id, topic_id, agency_id)`.
+from `(consultant_id, topic_id)` to `(consultant_id, topic_id, agency_id)`. MariaDB treats NULLs
+in a unique key as distinct, so the key actually uses a stored generated column
+`agency_key = COALESCE(agency_id, -1)` (not 0: agency 0 exists in seed data). The JPA entity
+does not map `agency_key`; H2 test schemas therefore carry no such key, and the MariaDB contract
+job (`ConsultantTopicUniqueKeyMariaDbIT`) guards it.
 One row now means "this counsellor offers topic T **at centre A**" (Fachbereich = centre × topic).
 
 Why this and not a new link table from `consultant_agency` to topic:
