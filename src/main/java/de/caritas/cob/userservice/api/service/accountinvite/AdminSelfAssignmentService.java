@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -45,6 +46,8 @@ public class AdminSelfAssignmentService {
   private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
+  private final @NonNull ConsultantTopicAgencyCompatibilityValidator
+      topicAgencyCompatibilityValidator;
 
   @Transactional
   public SelfAssignmentResult assign(SelfAssignmentCommand command) {
@@ -97,6 +100,9 @@ public class AdminSelfAssignmentService {
         throw alreadyAssigned();
       }
       List<Long> topics = resolveTopics(topicIds, agency);
+      // Same uncached coverage check as a new identity gets in GrantConsultantIdentityService.
+      topicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+          topics, List.of(agency.id()), agency.tenantId());
       consultantAgencyRelationCreatorService.createNewConsultantAgency(
           userId, new CreateConsultantAgencyDTO().agencyId(agency.id()));
       addTopics(counsellor.get(), topics);
