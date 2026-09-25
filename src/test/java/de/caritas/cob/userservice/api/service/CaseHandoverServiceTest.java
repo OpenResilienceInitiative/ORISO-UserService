@@ -7,7 +7,6 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.ArgumentMatchers.isNull;
@@ -2114,13 +2113,46 @@ class CaseHandoverServiceTest {
   }
 
   @Test
-  void requestAccess_takeoverLeavesTheRequestersPowerLevelAlone() {
+  void requestAccess_givesTheTakeoverRecipientTheOwnersPowerLevel() {
     givenARoomTheRequesterCanJoin();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", 100, "previous-token"))
+        .thenReturn(true);
 
     caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
 
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", 100, "previous-token");
     verify(matrixSynapseService, never())
-        .setUserPowerLevel(anyString(), anyString(), anyInt(), anyString());
+        .setUserPowerLevel(anyString(), anyString(), eq(-1), anyString());
+  }
+
+  /** An absence cover must never fail over Matrix room rights: at level 0 the owner can post. */
+  @Test
+  void requestAccess_completesTheTakeoverWhenTheOwnersPowerLevelCannotBeSet() {
+    givenARoomTheRequesterCanJoin();
+
+    var status =
+        caseHandoverService.requestAccess(123L, "COUNSELLOR_IS_ILL", "Colleague is unavailable.");
+
+    assertEquals("GRANTED", status.getStatus());
+    assertEquals(requester, session.getConsultant());
+  }
+
+  @Test
+  void resolveClientConsent_givesTheApprovedTakeoverRecipientTheOwnersPowerLevel() {
+    CaseHandoverRequest request = pendingTakeoverConsentRequest();
+    when(caseHandoverRequestRepository.findByIdAndSessionId(88L, 123L))
+        .thenReturn(Optional.of(request));
+    givenARoomTheRequesterCanJoin();
+    when(matrixSynapseService.setUserPowerLevel(
+            "!room:matrix", "@requester:matrix", 100, "previous-token"))
+        .thenReturn(true);
+
+    caseHandoverService.resolveClientConsent(123L, 88L, true);
+
+    verify(matrixSynapseService)
+        .setUserPowerLevel("!room:matrix", "@requester:matrix", 100, "previous-token");
   }
 
   @Test

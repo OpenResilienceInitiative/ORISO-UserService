@@ -102,6 +102,9 @@ public class CaseHandoverService {
 
   private static final int MEMBER_POWER_LEVEL = 0;
 
+  /** The level an assigned counsellor gets on assignment (AssignEnquiryFacade). */
+  private static final int OWNER_POWER_LEVEL = 100;
+
   private record ClientHandoverCopy(
       String grantedTitle,
       String grantedDescription,
@@ -655,10 +658,7 @@ public class CaseHandoverService {
     if (hasGrantedAccess(status)) {
       request.setMatrixMembershipAdded(
           ensureRequesterJoinedMatrixRoom(
-              session,
-              requester,
-              session.getConsultant(),
-              request.getAccessType() == AccessType.CO_ACCESS));
+              session, requester, session.getConsultant(), request.getAccessType()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
         session.setConsultant(requester);
         session.setUpdateDate(now);
@@ -735,7 +735,7 @@ public class CaseHandoverService {
               session,
               request.getRequesterConsultant(),
               request.getPreviousConsultant(),
-              request.getAccessType() == AccessType.CO_ACCESS));
+              request.getAccessType()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
         session.setConsultant(request.getRequesterConsultant());
         session.setUpdateDate(now);
@@ -1854,7 +1854,7 @@ public class CaseHandoverService {
   }
 
   private boolean ensureRequesterJoinedMatrixRoom(
-      Session session, Consultant requester, Consultant previousConsultant, boolean readOnly) {
+      Session session, Consultant requester, Consultant previousConsultant, AccessType accessType) {
     if (session == null || isBlank(session.getMatrixRoomId())) {
       return false;
     }
@@ -1919,10 +1919,22 @@ public class CaseHandoverService {
         wasMemberBefore);
 
     // Fail closed: a co-access that could write to the advice seeker must not be granted at all.
-    if (readOnly
+    if (accessType == AccessType.CO_ACCESS
         && !matrixSynapseService.setUserPowerLevel(
             roomId, requester.getMatrixUserId(), CO_ACCESS_POWER_LEVEL, previousConsultantToken)) {
       throw new InternalServerErrorException("Case handover co-access could not be made read-only");
+    }
+    // The new owner needs the owner's room rights: later co-access grants on this case lower and
+    // restore levels and remove members with the owner's token. Never block an absence cover over
+    // this, though: at level 0 the new owner can still post.
+    if (accessType == AccessType.TAKEOVER
+        && !matrixSynapseService.setUserPowerLevel(
+            roomId, requester.getMatrixUserId(), OWNER_POWER_LEVEL, previousConsultantToken)) {
+      log.warn(
+          "Could not give the new owner {} of session {} the owner power level in room {}",
+          requester.getUsername(),
+          session.getId(),
+          roomId);
     }
 
     // The previous counsellor deliberately keeps their membership. ADR-002's reveal lifecycle has
