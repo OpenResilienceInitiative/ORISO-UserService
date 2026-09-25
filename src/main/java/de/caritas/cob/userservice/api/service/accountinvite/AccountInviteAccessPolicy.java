@@ -162,12 +162,12 @@ public class AccountInviteAccessPolicy {
    * Träger A would write a text Träger B sees in its list and sends to its own people.
    */
   public Long templateOwnerTenantId() {
-    return callerScope().tenantId();
+    return templateScope().tenantId();
   }
 
   /** Whether the caller sees every Träger's templates, not just their own and the platform's. */
   public boolean seesEveryTemplate() {
-    return callerScope().kind() == Kind.UNRESTRICTED;
+    return templateScope().kind() == Kind.UNRESTRICTED;
   }
 
   /**
@@ -175,7 +175,7 @@ public class AccountInviteAccessPolicy {
    * may use a platform template ({@code null}); a Träger's own template is theirs alone.
    */
   public boolean canUseTemplate(Long templateTenantId) {
-    Scope scope = callerScope();
+    Scope scope = templateScope();
     return scope.kind() == Kind.UNRESTRICTED
         || templateTenantId == null
         || templateTenantId.equals(scope.tenantId());
@@ -216,7 +216,7 @@ public class AccountInviteAccessPolicy {
    * hiding them (house rule "disable, don't hide").
    */
   public boolean canChangeTemplate(Long templateTenantId) {
-    Scope scope = callerScope();
+    Scope scope = templateScope();
     return scope.kind() == Kind.UNRESTRICTED
         || (templateTenantId != null && templateTenantId.equals(scope.tenantId()));
   }
@@ -314,6 +314,18 @@ public class AccountInviteAccessPolicy {
   }
 
   /** The caller's own tenant, or {@code null} for the platform (0) and single-tenant contexts. */
+  /** Same kind and Träger as {@link #callerScope()}; templates never need the agency ids. */
+  private Scope templateScope() {
+    Long callerTenantId = boundTenantId();
+    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
+      return new Scope(Kind.AGENCY, callerTenantId, Set.of());
+    }
+    if (authenticatedUser.isPlatformAdmin() || callerTenantId == null) {
+      return new Scope(Kind.UNRESTRICTED, null, null);
+    }
+    return new Scope(Kind.TENANT, callerTenantId, null);
+  }
+
   private Long boundTenantId() {
     Long tenantId = authenticatedUser.getTenantId();
     if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
