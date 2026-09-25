@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -35,12 +36,14 @@ import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.AgencyCreationClient;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
+import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
@@ -104,8 +107,16 @@ class AgencyAdminOnboardingWizardIT {
   /** The tenant's active topics — the wizard offers them on top of the agency's coverage. */
   @MockitoBean private TopicService topicService;
 
+  /** The accept re-checks the agency with the service token (ORISO-Admin#1026 P2-3). */
+  @MockitoBean private AgencyFacts agencyFacts;
+
   @BeforeEach
   void upstreams() {
+    when(agencyFacts.find(anyLong()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
     when(agencyService.getAgencyWithoutCaching(AGENCY))
         .thenReturn(new AgencyDTO().id(AGENCY).tenantId(TENANT).topicIds(List.of(TOPIC)));
     when(agencyService.getAgencyWithoutCaching(NEW_AGENCY)).thenReturn(null);
@@ -280,6 +291,57 @@ class AgencyAdminOnboardingWizardIT {
         .createAgencyWithReservedId(
             eq(NEW_AGENCY), eq("Beratungsstelle Nord"), eq(TENANT), eq(List.of(TOPIC)));
     verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+  }
+
+  /** ORISO-Admin#1026 P2-3: the agency may be soft-deleted between invite and accept. */
+  @Test
+  void register_Should_CreateNothing_When_TheExistingAgencyWasDeletedSinceTheInvite()
+      throws Exception {
+    agencyAsSeenByServiceToken(new AgencyFacts.Agency(AGENCY, TENANT, true, List.of(TOPIC)));
+    String token = seedAgencyAdminInvite(AGENCY, false);
+
+    register(token, "admin_only", false, null).andExpect(status().isNotFound());
+
+    assertNoAgencyAdminCreated();
+  }
+
+  @Test
+  void register_Should_CreateNothing_When_TheExistingAgencyIsGone() throws Exception {
+    when(agencyFacts.find(AGENCY)).thenReturn(Optional.empty());
+    String token = seedAgencyAdminInvite(AGENCY, false);
+
+    register(token, "admin_only", false, null).andExpect(status().isNotFound());
+
+    assertNoAgencyAdminCreated();
+  }
+
+  @Test
+  void register_Should_CreateNothing_When_TheAgencyBelongsToAnotherTenant() throws Exception {
+    // The service token sees every tenant, unlike the inviting admin's token.
+    agencyAsSeenByServiceToken(new AgencyFacts.Agency(AGENCY, TENANT + 1, false, List.of(TOPIC)));
+    String token = seedAgencyAdminInvite(AGENCY, false);
+
+    register(token, "admin_only", false, null).andExpect(status().isNotFound());
+
+    assertNoAgencyAdminCreated();
+  }
+
+  /** The invitee is anonymous, so the agency is only readable with the service token. */
+  private void agencyAsSeenByServiceToken(AgencyFacts.Agency agency) {
+    when(agencyFacts.find(AGENCY))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TechnicalAccessTokenContext.get()).contains("technical-access-token");
+              return Optional.of(agency);
+            });
+  }
+
+  private void assertNoAgencyAdminCreated() {
+    verify(keycloakService, never()).createUser(any(UserDTO.class), anyString(), anyString());
+    assertThat(adminAgencyRepository.findByAdminId(ADMIN_ONLY_ID)).isEmpty();
+    AccountInvite invite = accountInviteRepository.findAll().get(0);
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    assertThat(invite.getProvisionedUserId()).isNull();
   }
 
   private org.springframework.test.web.servlet.ResultActions register(

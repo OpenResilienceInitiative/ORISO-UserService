@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -28,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -115,8 +117,16 @@ class CounsellorOnboardingWizardIT {
    */
   @MockitoBean private AgencyService agencyService;
 
+  /** The accept re-checks the agency with the service token (ORISO-Admin#1026 P2-3). */
+  @MockitoBean private AgencyFacts agencyFacts;
+
   @BeforeEach
   void configureProvisioning() {
+    when(agencyFacts.find(anyLong()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
     agencyIsHealthy();
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
         .thenReturn(

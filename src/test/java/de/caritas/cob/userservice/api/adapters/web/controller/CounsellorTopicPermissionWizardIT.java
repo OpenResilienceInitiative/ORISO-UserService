@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
@@ -26,6 +27,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -42,6 +44,7 @@ import java.time.LocalDateTime;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -103,8 +106,16 @@ class CounsellorTopicPermissionWizardIT {
   @MockitoBean private AgencyService agencyService;
   @MockitoBean private TopicService topicService;
 
+  /** The accept re-checks the agency with the service token (ORISO-Admin#1026 P2-3). */
+  @MockitoBean private AgencyFacts agencyFacts;
+
   @BeforeEach
   void upstreams() {
+    when(agencyFacts.find(anyLong()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
     agencyOffers(AGENCY_TOPIC_A, AGENCY_TOPIC_B);
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(

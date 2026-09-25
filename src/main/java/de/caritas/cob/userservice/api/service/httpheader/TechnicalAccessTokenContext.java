@@ -13,9 +13,10 @@ import java.util.function.Supplier;
  * String)}) where a client allows it. Human-triggered calls never use this context
  * (ORISO-Helm#367).
  *
- * <p>Remaining ambient scopes: the counsellor invite provisioning saga (consultant creation, agency
- * assignment and their rollback, which reach TenantService/AgencyService/ConsultingType clients
- * through the shared admin services) and the reservation-release retry scheduler.
+ * <p>Remaining ambient scopes: the counsellor invite provisioning saga (agency re-check, consultant
+ * creation, agency assignment and their rollback, which reach
+ * TenantService/AgencyService/ConsultingType clients through the shared admin services) and the
+ * reservation-release retry scheduler.
  */
 public final class TechnicalAccessTokenContext {
 
