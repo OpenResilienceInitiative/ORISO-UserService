@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -24,6 +25,10 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -95,6 +100,8 @@ class AccountInviteTenantScopeIT {
   private AccountInvite foreignTenantCounsellorInvite;
   private AccountInvite foreignAgencyCounsellorInvite;
   private AccountInvite ownAgencyAgencyAdminInvite;
+
+  private final Map<Long, AgencyDTO> knownAgencies = new HashMap<>();
 
   @BeforeEach
   void seedInvitesOfTwoTenants() {
@@ -425,8 +432,14 @@ class AccountInviteTenantScopeIT {
   }
 
   private void givenAgency(long agencyId, long tenantId) {
-    when(agencyService.getAgencyWithoutCaching(agencyId))
-        .thenReturn(new AgencyDTO().id(agencyId).tenantId(tenantId));
+    var agency = new AgencyDTO().id(agencyId).tenantId(tenantId);
+    when(agencyService.getAgencyWithoutCaching(agencyId)).thenReturn(agency);
+    knownAgencies.put(agencyId, agency);
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            call ->
+                ((List<?>) call.getArgument(0))
+                    .stream().map(knownAgencies::get).filter(Objects::nonNull).toList());
   }
 
   private static CreateAccountInviteCommand invite(
