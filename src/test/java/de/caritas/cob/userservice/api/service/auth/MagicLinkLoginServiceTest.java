@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -543,8 +544,17 @@ class MagicLinkLoginServiceTest {
     when(emailRenderer.render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("subject", "<html></html>", "text"));
 
-    assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
-        .doesNotThrowAnyException();
+    try (var logs = LogbackCaptor.forClass(MagicLinkLoginService.class)) {
+      assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
+          .doesNotThrowAnyException();
+      assertThat(logs.events()).isNotEmpty();
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage()).doesNotContain("testuser");
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+    }
 
     verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
   }

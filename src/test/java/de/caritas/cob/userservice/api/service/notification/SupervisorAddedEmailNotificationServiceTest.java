@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSuppli
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -203,8 +204,18 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(eq(4L), any()))
         .thenReturn(Optional.of(settings));
 
-    // sendEmailSafely catches any smtp connection error — no exception should escape
-    service.notifyEmailAddressChanged("johndoe", "john@example.com", 4L, null, null);
+    // A failed SMTP exchange may include the recipient in the provider's exception text.
+    try (var logs = LogbackCaptor.forClass(SupervisorAddedEmailNotificationService.class)) {
+      service.notifyEmailAddressChanged("johndoe", "john@example.com", 4L, null, null);
+
+      assertThat(logs.events()).isNotEmpty();
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage()).doesNotContain("john@example.com");
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+    }
   }
 
   // ── resolveUserWithEmail ──────────────────────────────────────────────────

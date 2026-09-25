@@ -196,11 +196,7 @@ public class SupervisorAddedEmailNotificationService {
     try {
       sendDirectSmtpHtmlEmail(smtpSettings, recipientEmail, email);
     } catch (Exception ex) {
-      log.error(
-          "Failed to send system notification email to {} with subject '{}'",
-          recipientEmail,
-          email.subject(),
-          ex);
+      log.error("Failed to send system notification email ({})", ex.getClass().getSimpleName());
     }
   }
 
@@ -235,7 +231,7 @@ public class SupervisorAddedEmailNotificationService {
     message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipientEmail));
     message.setSubject(email.subject(), "UTF-8");
     message.setContent(OrisoEmailMime.alternative(email));
-    log.info("Sending direct SMTP system notification email to {}", recipientEmail);
+    log.info("Sending direct SMTP system notification email");
     Transport.send(message);
   }
 
