@@ -633,6 +633,70 @@ class UserControllerConsultantE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
+  void searchConsultantsShouldSortByUpdateDateFallingBackToCreateDate() throws Exception {
+    givenAnInfix();
+    givenAgencyServiceReturningDummyAgencies();
+    // "Zuletzt aktualisiert" = update_date, else create_date; ties broken by id.
+    givenConsultantMatchingWithDates("b1-sort-consultant-1", at(2020, 1), at(2020, 6));
+    givenConsultantMatchingWithDates("b1-sort-consultant-2", at(2025, 1), null);
+    givenConsultantMatchingWithDates("b1-sort-consultant-3", at(2019, 1), at(2022, 1));
+    givenConsultantMatchingWithDates("b1-sort-consultant-4", at(2025, 1), null);
+
+    assertConsultantSearchOrder(
+        "DESC",
+        "b1-sort-consultant-4",
+        "b1-sort-consultant-2",
+        "b1-sort-consultant-3",
+        "b1-sort-consultant-1");
+    assertConsultantSearchOrder(
+        "ASC",
+        "b1-sort-consultant-1",
+        "b1-sort-consultant-3",
+        "b1-sort-consultant-2",
+        "b1-sort-consultant-4");
+  }
+
+  private static LocalDateTime at(int year, int month) {
+    return LocalDateTime.of(year, month, 1, 12, 0);
+  }
+
+  private void givenConsultantMatchingWithDates(
+      String id, LocalDateTime createDate, LocalDateTime updateDate) {
+    var dbConsultant = consultantRepository.findAll().iterator().next();
+    var newConsultant = new Consultant();
+    BeanUtils.copyProperties(dbConsultant, newConsultant);
+    newConsultant.setId(id);
+    newConsultant.setUsername(RandomStringUtils.randomAlphabetic(8));
+    newConsultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
+    newConsultant.setFirstName(aStringWithoutInfix(infix));
+    newConsultant.setLastName(aStringWithInfix(infix));
+    newConsultant.setEmail(aValidEmailWithoutInfix(infix));
+    newConsultant.setStatus(ConsultantStatus.CREATED);
+    newConsultant.setDeleteDate(null);
+    newConsultant.setCreateDate(createDate);
+    newConsultant.setUpdateDate(updateDate);
+    consultantRepository.save(newConsultant);
+    consultantIdsToDelete.add(id);
+  }
+
+  private void assertConsultantSearchOrder(String order, String... expectedIds) throws Exception {
+    mockMvc
+        .perform(
+            get("/users/consultants/search")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept("application/hal+json")
+                .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8))
+                .param("page", "1")
+                .param("perPage", "10")
+                .param("field", "UPDATE_DATE")
+                .param("order", order))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("_embedded[*]._embedded.id", contains(expectedIds)));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
   void searchConsultantsShouldRespondOkAndPayloadIfStarQueryIsGiven() throws Exception {
     givenAnInfix();
     givenConsultantsMatching(easyRandom.nextInt(20) + 11, infix);
