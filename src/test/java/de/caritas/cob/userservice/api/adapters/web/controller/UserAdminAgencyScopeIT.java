@@ -830,12 +830,13 @@ class UserAdminAgencyScopeIT {
 
   @Test
   @AsTenantAdmin
-  void getConsultant_Should_Refuse_When_Tenant0AdminIsNoPlatformAdmin() throws Exception {
+  void getConsultants_Should_Refuse_When_Tenant0AdminIsNoPlatformAdmin() throws Exception {
     Tenants.actAs(caller, "tenant-zero-admin", 0L, UserRole.TENANT_ADMIN, UserRole.USER_ADMIN);
 
+    // A list, not one counsellor: tenant 0 lifts the tenant filter, so only the guard stops it.
     var result =
         mockMvc
-            .perform(get("/useradmin/consultants/" + foreignTenantConsultant.getId()))
+            .perform(get("/useradmin/consultants").param("page", "1").param("perPage", "5000"))
             .andReturn();
 
     assertThat(result.getResponse().getContentAsString())
