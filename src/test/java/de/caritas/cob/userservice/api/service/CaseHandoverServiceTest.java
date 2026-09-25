@@ -14,11 +14,13 @@ import static org.mockito.Mockito.atLeastOnce;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
@@ -2215,6 +2217,151 @@ class CaseHandoverServiceTest {
     assertEquals(0, caseHandoverService.expireCoAccess());
 
     assertEquals(CaseHandoverRequest.Status.GRANTED, request.getStatus());
+  }
+
+  // #200: the co-access colleague extends their own read-only access (option A, no new consent).
+
+  @ParameterizedTest
+  @ValueSource(strings = {"GRANTED", "GRANTED_PENDING_CLIENT_OPTOUT"})
+  void extendCoAccess_addsTheGrantedDurationToTheOldEndAndAuditsIt(String grantedStatus) {
+    CaseHandoverRequest grant =
+        activeAdviceGrant(CaseHandoverRequest.Status.valueOf(grantedStatus));
+
+    CaseHandoverStatus status = caseHandoverService.extendCoAccess(123L);
+
+    // the old end (10:30) + the 180 minutes granted, so an early click wastes nothing
+    assertEquals(LocalDateTime.of(2026, 8, 16, 13, 30), status.getExpiresAt());
+    assertEquals("ACCESS_EXTENDED", grant.getAuditOutcome());
+    assertEquals(LocalDateTime.of(2026, 8, 16, 10, 0), grant.getResolvedAt());
+    // an advice seeker who has not answered an opt-out yet can still decline
+    assertEquals(grantedStatus, status.getStatus());
+    assertTrue(status.isCanViewContent());
+    // one extension per grant
+    assertFalse(status.isCanExtend());
+    verify(caseHandoverRequestRepository).save(grant);
+  }
+
+  @Test
+  void extendCoAccess_refusesASecondExtensionOfTheSameGrant() {
+    CaseHandoverRequest grant = activeAdviceGrant(CaseHandoverRequest.Status.GRANTED);
+    grant.setAuditOutcome("ACCESS_EXTENDED");
+
+    assertThrows(ConflictException.class, () -> caseHandoverService.extendCoAccess(123L));
+
+    assertEquals(LocalDateTime.of(2026, 8, 16, 10, 30), grant.getExpiresAt());
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void extendCoAccess_allowsOneExtensionAgainOnANewGrantAfterExpiry() {
+    CaseHandoverRequest expired = grantedAdviceRequest();
+    expired.setStatus(CaseHandoverRequest.Status.EXPIRED);
+    expired.setAuditOutcome("ACCESS_EXPIRED");
+    expired.setExpiresAt(LocalDateTime.of(2026, 8, 16, 9, 0));
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(expired));
+    when(caseHandoverPolicyCacheService.getEffective(7L))
+        .thenReturn(
+            tenantPolicies(
+                "Rat benötigt",
+                180,
+                de.caritas.cob.userservice.tenantadminservice.generated.web.model
+                    .CaseHandoverConsentValue.OPT_OUT,
+                Set.of()));
+    caseHandoverService.requestAccess(123L, "COUNSELLOR_ASKED_FOR_ADVICE", "Noch eine Frage");
+    ArgumentCaptor<CaseHandoverRequest> saved = ArgumentCaptor.forClass(CaseHandoverRequest.class);
+    verify(caseHandoverRequestRepository).save(saved.capture());
+    when(caseHandoverRequestRepository.findBySessionIdAndStatusAndAccessType(
+            123L,
+            CaseHandoverRequest.Status.GRANTED_PENDING_CLIENT_OPTOUT,
+            CaseHandoverRequest.AccessType.CO_ACCESS))
+        .thenReturn(List.of(saved.getValue()));
+
+    // granted at 10:00 for 180 minutes, extended at once: never beyond two durations
+    assertEquals(
+        LocalDateTime.of(2026, 8, 16, 16, 0),
+        caseHandoverService.extendCoAccess(123L).getExpiresAt());
+    assertThrows(ConflictException.class, () -> caseHandoverService.extendCoAccess(123L));
+    assertEquals(LocalDateTime.of(2026, 8, 16, 16, 0), saved.getValue().getExpiresAt());
+  }
+
+  @Test
+  void extendCoAccess_doesNotAskTheAdviceSeekerAgainNorTouchTheRoomOrTheOwner() {
+    activeAdviceGrant(CaseHandoverRequest.Status.GRANTED);
+    session.setMatrixRoomId("!room:matrix");
+
+    caseHandoverService.extendCoAccess(123L);
+
+    verifyNoInteractions(
+        eventNotificationService, matrixSynapseService, matrixSessionSystemMessageService);
+    assertEquals(previous, session.getConsultant());
+  }
+
+  @Test
+  void extendCoAccess_refusesOnceTheAccessHasExpired() {
+    CaseHandoverRequest grant = activeAdviceGrant(CaseHandoverRequest.Status.GRANTED);
+    grant.setExpiresAt(LocalDateTime.of(2026, 8, 16, 10, 0));
+
+    assertThrows(ConflictException.class, () -> caseHandoverService.extendCoAccess(123L));
+
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void extendCoAccess_refusesACounsellorWhoDoesNotHoldTheCoAccess() {
+    CaseHandoverRequest grant = activeAdviceGrant(CaseHandoverRequest.Status.GRANTED);
+    grant.setRequesterConsultant(consultant("other", "Other Counsellor"));
+
+    assertThrows(ConflictException.class, () -> caseHandoverService.extendCoAccess(123L));
+
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  @Test
+  void getStatus_offersExtensionWhileTheCoAccessIsActive() {
+    CaseHandoverRequest grant = grantedAdviceRequest();
+    grant.setExpiresAt(LocalDateTime.of(2026, 8, 16, 10, 30));
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(grant));
+
+    assertTrue(caseHandoverService.getStatus(123L).isCanExtend());
+  }
+
+  @Test
+  void getStatus_offersNoExtensionOnceTheCoAccessHasExpired() {
+    CaseHandoverRequest grant = grantedAdviceRequest();
+    grant.setExpiresAt(LocalDateTime.of(2026, 8, 16, 10, 0));
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(grant));
+
+    assertFalse(caseHandoverService.getStatus(123L).isCanExtend());
+  }
+
+  @Test
+  void getStatus_offersNoExtensionForATakeover() {
+    CaseHandoverRequest takeover = grantedAdviceRequest();
+    takeover.setReasonCode("COUNSELLOR_IS_ILL");
+    takeover.setAccessType(CaseHandoverRequest.AccessType.TAKEOVER);
+    takeover.setMaxAccessDurationMinutes(null);
+    when(caseHandoverRequestRepository.findBySessionIdAndRequesterConsultantIdOrderByCreatedAtDesc(
+            123L, "requester"))
+        .thenReturn(List.of(takeover));
+
+    assertFalse(caseHandoverService.getStatus(123L).isCanExtend());
+  }
+
+  /** The current requester's advice co-access, ending at 10:30 — half an hour after "now". */
+  private CaseHandoverRequest activeAdviceGrant(CaseHandoverRequest.Status status) {
+    CaseHandoverRequest grant = grantedAdviceRequest();
+    grant.setStatus(status);
+    grant.setExpiresAt(LocalDateTime.of(2026, 8, 16, 10, 30));
+    when(caseHandoverRequestRepository.findBySessionIdAndStatusAndAccessType(
+            123L, status, CaseHandoverRequest.AccessType.CO_ACCESS))
+        .thenReturn(List.of(grant));
+    return grant;
   }
 
   private CaseHandoverRequest grantedAdviceRequest() {

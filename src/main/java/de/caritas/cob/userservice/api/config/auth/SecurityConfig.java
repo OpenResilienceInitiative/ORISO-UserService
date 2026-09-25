@@ -395,6 +395,8 @@ public class SecurityConfig {
                     "/service/users/chat-series/**",
                     "/users/sessions/{sessionId:[0-9]+}/case-handover",
                     "/service/users/sessions/{sessionId:[0-9]+}/case-handover",
+                    "/users/sessions/{sessionId:[0-9]+}/case-handover/extend",
+                    "/service/users/sessions/{sessionId:[0-9]+}/case-handover/extend",
                     "/users/sessions/{sessionId:[0-9]+}/supervisors",
                     "/users/sessions/{sessionId:[0-9]+}/supervisors/{supervisorId:[0-9]+}",
                     "/service/users/sessions/{sessionId:[0-9]+}/supervisors",

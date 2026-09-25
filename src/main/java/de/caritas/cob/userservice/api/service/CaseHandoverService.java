@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponse
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -89,6 +90,7 @@ public class CaseHandoverService {
       "CLIENT_OPTOUT_DECLINED_AFTER_TAKEOVER";
   private static final String OUTCOME_CLIENT_CONSENT_DECLINED = "CLIENT_CONSENT_DECLINED";
   private static final String OUTCOME_ACCESS_EXPIRED = "ACCESS_EXPIRED";
+  private static final String OUTCOME_ACCESS_EXTENDED = "ACCESS_EXTENDED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
   private static final String CO_ACCESS_EXPIRY_TASK = "case-handover-co-access-expiry";
@@ -549,6 +551,58 @@ public class CaseHandoverService {
                 .policyAuthority(POLICY_AUTHORITY)
                 .auditOutcome(OUTCOME_NOT_REQUESTED)
                 .build());
+  }
+
+  /**
+   * #200: the colleague holding an advice co-access extends it once while it is still open, so an
+   * OPT_IN consent cannot be stretched indefinitely; more time needs a new request and its consent.
+   * The advice seeker is not asked again; a consent step for OPT_IN would wrap {@link
+   * #applyCoAccessExtension}.
+   */
+  @Transactional
+  public CaseHandoverStatus extendCoAccess(Long sessionId) {
+    Consultant requester = retrieveCurrentConsultant();
+    Session session = getSession(sessionId);
+    verifyEligibleForSession(session, requester);
+
+    // Locked read: an expiry sweep that already holds this grant finishes first and wins.
+    CaseHandoverRequest grant =
+        List.of(Status.GRANTED, Status.GRANTED_PENDING_CLIENT_OPTOUT).stream()
+            .flatMap(
+                status ->
+                    caseHandoverRequestRepository
+                        .findBySessionIdAndStatusAndAccessType(
+                            sessionId, status, AccessType.CO_ACCESS)
+                        .stream())
+            .filter(request -> requester.getId().equals(request.getRequesterConsultant().getId()))
+            .filter(this::isExtendable)
+            .findFirst()
+            .orElseThrow(() -> new ConflictException("No active co-access to extend"));
+    return toStatus(applyCoAccessExtension(grant));
+  }
+
+  /**
+   * Adds the granted duration to the current end, so an early click does not waste the single
+   * extension; the total stays within two durations. Audited on the same row, like expiry: once the
+   * access expires, the log no longer shows that it was extended.
+   */
+  private CaseHandoverRequest applyCoAccessExtension(CaseHandoverRequest grant) {
+    grant.setExpiresAt(
+        grant
+            .getExpiresAt()
+            .plusMinutes(
+                validateMaxAccessDuration(ADVICE_NEEDED, grant.getMaxAccessDurationMinutes())));
+    grant.setAuditOutcome(OUTCOME_ACCESS_EXTENDED);
+    grant.setResolvedAt(LocalDateTime.now(clock));
+    return caseHandoverRequestRepository.save(grant);
+  }
+
+  private boolean isExtendable(CaseHandoverRequest request) {
+    return hasGrantedAccess(request.getStatus())
+        && effectiveAccessType(request) == AccessType.CO_ACCESS
+        && request.getExpiresAt() != null
+        && request.getExpiresAt().isAfter(LocalDateTime.now(clock))
+        && !OUTCOME_ACCESS_EXTENDED.equals(request.getAuditOutcome());
   }
 
   @Transactional(readOnly = true)
@@ -1404,6 +1458,7 @@ public class CaseHandoverService {
         .resolvedAt(request.getResolvedAt())
         .accessType(accessType.name())
         .expiresAt(request.getExpiresAt())
+        .canExtend(isExtendable(request))
         .build();
   }
 
@@ -2113,5 +2168,6 @@ public class CaseHandoverService {
     private LocalDateTime resolvedAt;
     private String accessType;
     private LocalDateTime expiresAt;
+    private boolean canExtend;
   }
 }

@@ -100,6 +100,14 @@ public class CaseHandoverController {
             sessionId, requestId, Boolean.TRUE.equals(decision.getApproved())));
   }
 
+  @PostMapping({
+    "/users/sessions/{sessionId}/case-handover/extend",
+    "/service/users/sessions/{sessionId}/case-handover/extend"
+  })
+  public ResponseEntity<CaseHandoverStatus> extendCoAccess(@PathVariable Long sessionId) {
+    return ResponseEntity.ok(caseHandoverService.extendCoAccess(sessionId));
+  }
+
   @PostMapping({"/users/case-handover/batch", "/service/users/case-handover/batch"})
   public ResponseEntity<List<CaseHandoverBatchResultDTO>> requestBatchAccess(
       @Valid @RequestBody CaseHandoverBatchRequestDTO request) {
