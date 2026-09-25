@@ -90,15 +90,22 @@ class NotificationMailComposerTest {
   }
 
   @Test
-  void refusesUnsupportedOccasionsAndUnavailableLanguages() {
+  void refusesUnsupportedOccasions() {
     assertThatThrownBy(() -> composer.compose(mail("free-text"), 7L))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("free-text");
-    assertThatThrownBy(
-            () ->
-                composer.compose(mail("daily-enquiry-notification").language(LanguageCode.FR), 7L))
-        .isInstanceOf(IllegalArgumentException.class)
-        .hasMessageContaining("fr");
+  }
+
+  @Test
+  void composesEveryNewAppLanguageInBothMimeParts() {
+    for (var language :
+        List.of(LanguageCode.FR, LanguageCode.RU, LanguageCode.TI, LanguageCode.TR)) {
+      var result = composer.compose(mail("daily-enquiry-notification").language(language), 7L);
+      assertThat(result.html())
+          .contains("<html lang=\"" + language.getValue().toLowerCase() + "\">");
+      assertThat(result.subject()).isNotBlank().doesNotContain("Ihre Tagesübersicht");
+      assertThat(result.text()).isNotBlank().doesNotContain("Ihre Tagesübersicht");
+    }
   }
 
   @Test

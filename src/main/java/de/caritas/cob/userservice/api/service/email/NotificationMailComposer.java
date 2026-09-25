@@ -100,6 +100,10 @@ public class NotificationMailComposer {
             : OrisoEmailRenderer.Tone.DE_FORMAL;
       }
       case EN -> OrisoEmailRenderer.Tone.EN;
+      case FR -> OrisoEmailRenderer.Tone.FR;
+      case RU -> OrisoEmailRenderer.Tone.RU;
+      case TI -> OrisoEmailRenderer.Tone.TI;
+      case TR -> OrisoEmailRenderer.Tone.TR;
       default ->
           throw new IllegalArgumentException(
               "Notification language has no installed template: " + language);

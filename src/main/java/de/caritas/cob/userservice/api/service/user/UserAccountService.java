@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.user;
 
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -166,12 +167,17 @@ public class UserAccountService {
               userOpt
                   .map(User::getUsername)
                   .orElse(consultantOpt.map(Consultant::getUsername).orElse(userId));
+          LanguageCode language =
+              userOpt
+                  .map(User::getLanguageCode)
+                  .orElseGet(() -> consultantOpt.map(Consultant::getLanguageCode).orElse(null));
           supervisorAddedEmailNotificationService.notifyEmailAddressChanged(
               username,
               updatedEmail,
               tenantId,
               TenantContext.getCurrentTenantData(),
-              authenticatedUser.getAccessToken());
+              authenticatedUser.getAccessToken(),
+              language);
         });
   }
 

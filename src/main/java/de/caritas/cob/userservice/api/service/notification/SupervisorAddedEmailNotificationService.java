@@ -150,17 +150,23 @@ public class SupervisorAddedEmailNotificationService {
 
   @Async
   public void notifyEmailAddressChanged(
-      String username, String newEmail, Long tenantId, TenantData tenantData, String accessToken) {
+      String username,
+      String newEmail,
+      Long tenantId,
+      TenantData tenantData,
+      String accessToken,
+      LanguageCode languageCode) {
     if (!isNotBlank(newEmail) || !isNotBlank(username) || tenantId == null) {
       return;
     }
+    OrisoEmailRenderer.Tone tone = OrisoEmailRenderer.Tone.of(languageCode);
     var smtpSettings = resolveSmtpSettings(tenantId, accessToken);
     if (smtpSettings == null) {
       return;
     }
     String appUrl = resolveAppFrontendUrl(tenantData);
     String themeColor = resolveThemeColor(smtpSettings);
-    sendEmailSafely(smtpSettings, newEmail, renderEmailChanged(username, appUrl, themeColor));
+    sendEmailSafely(smtpSettings, newEmail, renderEmailChanged(username, appUrl, themeColor, tone));
   }
 
   private Long resolveTenantId(User sessionUser, Consultant supervisor) {
@@ -325,10 +331,10 @@ public class SupervisorAddedEmailNotificationService {
   }
 
   private OrisoEmailRenderer.RenderedEmail renderEmailChanged(
-      String username, String appUrl, String themeColor) {
+      String username, String appUrl, String themeColor, OrisoEmailRenderer.Tone tone) {
     Map<String, String> values = new LinkedHashMap<>(emailBrand.values(appUrl, themeColor));
     values.put("username", username);
-    return emailRenderer.render("email-geaendert", OrisoEmailRenderer.Tone.DE_FORMAL, values);
+    return emailRenderer.render("email-geaendert", tone, values);
   }
 
   private String buildSessionUrl(String baseUrl, Long sessionId, boolean consultantView) {
@@ -358,51 +364,64 @@ public class SupervisorAddedEmailNotificationService {
   }
 
   private LanguageCode languageCodeOf(User user) {
-    return user != null && user.getLanguageCode() != null
-        ? user.getLanguageCode()
-        : LanguageCode.de;
+    if (user == null || user.getLanguageCode() == null) {
+      throw new IllegalArgumentException("Advice seeker language is missing");
+    }
+    return user.getLanguageCode();
   }
 
   private LanguageCode languageCodeOf(Consultant consultant) {
-    return consultant != null && consultant.getLanguageCode() != null
-        ? consultant.getLanguageCode()
-        : LanguageCode.de;
+    if (consultant == null || consultant.getLanguageCode() == null) {
+      throw new IllegalArgumentException("Counsellor language is missing");
+    }
+    return consultant.getLanguageCode();
   }
 
-  private boolean isGerman(LanguageCode languageCode) {
-    return languageCode == null || "de".equalsIgnoreCase(languageCode.name());
-  }
-
-  /**
-   * What the advice seeker is told.
-   *
-   * <p>Deliberately names nobody. The previous version put the supervisor's display name and the
-   * session number into a mail to an advice seeker, which is exactly what ADR-019 forbids: a mail
-   * to an advice seeker states that something happened, and the application — behind a login,
-   * encrypted — states what. The counsellor's copy below is unchanged in substance, because a
-   * counsellor's mail may carry operational detail.
-   */
+  /** The seeker statement deliberately names nobody and carries no case reference. */
   String askerStatementSupervisorJoined(LanguageCode languageCode) {
-    return isGerman(languageCode)
-        ? "Eine weitere Fachkraft unterstützt Ihre Beratung ab sofort mit."
-        : "Another member of staff is now supporting your counselling.";
+    return switch (OrisoEmailRenderer.Tone.of(languageCode)) {
+      case DE_FORMAL, DE_INFORMAL ->
+          "Eine weitere Fachkraft unterstützt Ihre Beratung ab sofort mit.";
+      case EN -> "Another member of staff is now supporting your counselling.";
+      case FR -> "Un autre professionnel participe désormais à votre accompagnement.";
+      case RU -> "Теперь в вашей консультации участвует ещё один специалист.";
+      case TI -> "ካልእ ሰራሕተኛ ካብ ሕጂ ንደሓር ኣብ ምኽርኹም ይሕግዝ ኣሎ።";
+      case TR -> "Artık başka bir uzman da danışmanlığınıza destek veriyor.";
+    };
   }
 
   String askerStatementSupervisorLeft(LanguageCode languageCode) {
-    return isGerman(languageCode)
-        ? "Eine Fachkraft unterstützt Ihre Beratung nicht mehr mit."
-        : "A member of staff is no longer supporting your counselling.";
+    return switch (OrisoEmailRenderer.Tone.of(languageCode)) {
+      case DE_FORMAL, DE_INFORMAL -> "Eine Fachkraft unterstützt Ihre Beratung nicht mehr mit.";
+      case EN -> "A member of staff is no longer supporting your counselling.";
+      case FR -> "Un professionnel ne participe plus à votre accompagnement.";
+      case RU -> "Один из специалистов больше не участвует в вашей консультации.";
+      case TI -> "ሓደ ሰራሕተኛ ኣብ ምኽርኹም ደጊም ኣይሕግዝን እዩ።";
+      case TR -> "Bir uzman artık danışmanlığınıza destek vermiyor.";
+    };
   }
 
   String staffStatementSupervisorAdded(LanguageCode languageCode) {
-    return isGerman(languageCode)
-        ? "Sie wurden als Supervisor-Berater:in zu diesem Vorgang hinzugefügt."
-        : "You were added as supervisor consultant to this case.";
+    return switch (OrisoEmailRenderer.Tone.of(languageCode)) {
+      case DE_FORMAL, DE_INFORMAL ->
+          "Sie wurden als Supervisor-Berater:in zu diesem Vorgang hinzugefügt.";
+      case EN -> "You were added as supervisor consultant to this case.";
+      case FR -> "Vous avez été ajouté à ce dossier en tant que professionnel superviseur.";
+      case RU -> "Вы добавлены к этому делу в качестве консультанта-супервизора.";
+      case TI -> "ከም ተቆጻጻሪ ኣማኻሪ ናብዚ ጉዳይ ተወሲኽኩም ኣለኹም።";
+      case TR -> "Bu vakaya süpervizör danışman olarak eklendiniz.";
+    };
   }
 
   String staffStatementSupervisorRemoved(LanguageCode languageCode) {
-    return isGerman(languageCode)
-        ? "Sie wurden als Supervisor-Berater:in aus diesem Vorgang entfernt."
-        : "You were removed as supervisor consultant from this case.";
+    return switch (OrisoEmailRenderer.Tone.of(languageCode)) {
+      case DE_FORMAL, DE_INFORMAL ->
+          "Sie wurden als Supervisor-Berater:in aus diesem Vorgang entfernt.";
+      case EN -> "You were removed as supervisor consultant from this case.";
+      case FR -> "Vous avez été retiré de ce dossier en tant que professionnel superviseur.";
+      case RU -> "Вы удалены из этого дела в качестве консультанта-супервизора.";
+      case TI -> "ከም ተቆጻጻሪ ኣማኻሪ ካብዚ ጉዳይ ተኣሊኹም ኣለኹም።";
+      case TR -> "Bu vakadan süpervizör danışman olarak çıkarıldınız.";
+    };
   }
 }
