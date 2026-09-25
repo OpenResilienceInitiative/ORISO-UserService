@@ -494,6 +494,35 @@ public class Consultant implements TenantAware, NotificationsAware {
   }
 
   /**
+   * Adds topics for one counselling centre (#1264) and keeps every existing row, also the same
+   * topic at other centres. A {@code null} or empty collection adds nothing.
+   */
+  @JsonIgnore
+  public void addTopicsForAgency(Long agencyId, Collection<Long> topicIds) {
+    if (isNull(topicIds) || topicIds.isEmpty()) {
+      return;
+    }
+    if (isNull(this.consultantTopics)) {
+      this.consultantTopics = new HashSet<>();
+    }
+    var now = LocalDateTime.now();
+    topicIds.stream()
+        .filter(Objects::nonNull)
+        .distinct()
+        .map(
+            topicId ->
+                ConsultantTopic.builder()
+                    .consultant(this)
+                    .agencyId(agencyId)
+                    .topicId(topicId)
+                    .createDate(now)
+                    .updateDate(now)
+                    .build())
+        .filter(row -> !this.consultantTopics.contains(row))
+        .forEach(this.consultantTopics::add);
+  }
+
+  /**
    * Create paths (#1264): stores the topics per centre when the flow selected centres, otherwise
    * keeps the legacy rows without a centre.
    */

@@ -257,6 +257,39 @@ class AdminSelfAssignmentIT {
   }
 
   @Test
+  void aTopicAlreadyHeldAtOneCentre_Should_GetItsOwnRowAtTheNewCentre() {
+    givenTopic(counsellingCaller, OWN_AGENCY, 11L);
+    givenAgency(OTHER_OWN_TENANT_AGENCY, OWN_TENANT, List.of(11L, 21L));
+    actAsTenantAdmin(counsellingCaller.getId());
+
+    service.assign(
+        new SelfAssignmentCommand(
+            SelfAssignmentRole.COUNSELLOR, OTHER_OWN_TENANT_AGENCY, List.of(11L)));
+
+    assertThat(topicRowsOf(counsellingCaller))
+        .containsExactlyInAnyOrder(List.of(OWN_AGENCY, 11L), List.of(OTHER_OWN_TENANT_AGENCY, 11L));
+    // #1264: removing the first centre keeps the topic at the new one.
+    consultantTopicRepository.deleteByConsultantIdAndAgencyId(
+        counsellingCaller.getId(), OWN_AGENCY);
+    assertThat(topicRowsOf(counsellingCaller))
+        .containsExactly(List.of(OTHER_OWN_TENANT_AGENCY, 11L));
+  }
+
+  @Test
+  void aNewTopic_Should_BeStoredForTheNewCentre_NotForEveryCentre() {
+    givenTopic(counsellingCaller, OWN_AGENCY, 11L);
+    givenAgency(OTHER_OWN_TENANT_AGENCY, OWN_TENANT, List.of(21L, 22L));
+    actAsTenantAdmin(counsellingCaller.getId());
+
+    service.assign(
+        new SelfAssignmentCommand(
+            SelfAssignmentRole.COUNSELLOR, OTHER_OWN_TENANT_AGENCY, List.of(21L)));
+
+    assertThat(topicRowsOf(counsellingCaller))
+        .containsExactlyInAnyOrder(List.of(OWN_AGENCY, 11L), List.of(OTHER_OWN_TENANT_AGENCY, 21L));
+  }
+
+  @Test
   void anAdminWhoAlreadyCounsels_Should_BeRejected_When_NoTopicForAMultiTopicAgency() {
     givenAgency(OTHER_OWN_TENANT_AGENCY, OWN_TENANT, List.of(21L, 22L));
     actAsTenantAdmin(counsellingCaller.getId());
@@ -395,6 +428,27 @@ class AdminSelfAssignmentIT {
             .createDate(now)
             .updateDate(now)
             .build());
+  }
+
+  private void givenTopic(Consultant consultant, long agencyId, long topicId) {
+    var now = LocalDateTime.now();
+    consultantTopicRepository.save(
+        ConsultantTopic.builder()
+            .consultant(consultant)
+            .agencyId(agencyId)
+            .topicId(topicId)
+            .createDate(now)
+            .updateDate(now)
+            .build());
+  }
+
+  /** The consultant's rows as [agencyId, topicId] pairs. */
+  private List<List<Long>> topicRowsOf(Consultant consultant) {
+    return consultantTopicRepository
+        .findAgencyTopicRowsByConsultantIdIn(List.of(consultant.getId()))
+        .stream()
+        .map(row -> java.util.Arrays.asList((Long) row[1], (Long) row[2]))
+        .toList();
   }
 
   private void givenAgency(long agencyId, long tenantId, List<Long> topicIds) {

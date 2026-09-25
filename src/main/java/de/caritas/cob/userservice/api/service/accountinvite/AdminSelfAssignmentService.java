@@ -16,11 +16,10 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import java.util.LinkedHashSet;
+import java.util.Collection;
 import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -101,11 +100,12 @@ public class AdminSelfAssignmentService {
       }
       List<Long> topics = resolveTopics(topicIds, agency);
       // Same uncached coverage check as a new identity gets in GrantConsultantIdentityService.
-      topicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
-          topics, List.of(agency.id()), agency.tenantId());
+      var topicsByAgency =
+          topicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+              topics, List.of(agency.id()), agency.tenantId());
       consultantAgencyRelationCreatorService.createNewConsultantAgency(
           userId, new CreateConsultantAgencyDTO().agencyId(agency.id()));
-      addTopics(counsellor.get(), topics);
+      addTopics(counsellor.get(), agency.id(), topicsByAgency.get(agency.id()));
       log.info("Admin {} assigned themselves as counsellor of agency {}", userId, agency.id());
       return false;
     }
@@ -121,14 +121,9 @@ public class AdminSelfAssignmentService {
     return true;
   }
 
-  /** Routing finds counsellors by topic only, so the new agency's topics join the existing ones. */
-  private void addTopics(Consultant consultant, List<Long> topicIds) {
-    Set<Long> merged = new LinkedHashSet<>();
-    if (consultant.getConsultantTopics() != null) {
-      consultant.getConsultantTopics().forEach(topic -> merged.add(topic.getTopicId()));
-    }
-    merged.addAll(topicIds);
-    consultant.replaceTopics(merged);
+  /** The new centre's topics join the existing rows; a topic held elsewhere gets its own row. */
+  private void addTopics(Consultant consultant, Long agencyId, Collection<Long> topicIds) {
+    consultant.addTopicsForAgency(agencyId, topicIds);
     consultantRepository.save(consultant);
   }
 
