@@ -33,6 +33,8 @@ class ReplicaSafetyInventoryContractTest {
           "tenant-admin-cache",
           "topics-cache",
           "operator-dpa-content-cache",
+          "platform-operator-organisation-cache",
+          "traeger-organisation-cache",
           "account-invite-reservation-release-scheduler",
           "account-invite-expiry-number-release-scheduler",
           "case-handover-policy-cache-refresh",

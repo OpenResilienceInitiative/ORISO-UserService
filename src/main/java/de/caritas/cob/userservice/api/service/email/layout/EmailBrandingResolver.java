@@ -53,7 +53,7 @@ public class EmailBrandingResolver {
       @NonNull TenantTemplateSupplier tenantTemplateSupplier,
       @Value("${email.branding.name:ORISO}") String platformName,
       @Value("${email.branding.logo-url:}") String platformLogoUrl,
-      @Value("${app.base.url:}") String applicationBaseUrl) {
+      @Value("${app.base.url}") String applicationBaseUrl) {
     this.tenantService = tenantService;
     this.tenantTemplateSupplier = tenantTemplateSupplier;
     this.platformName = platformName;

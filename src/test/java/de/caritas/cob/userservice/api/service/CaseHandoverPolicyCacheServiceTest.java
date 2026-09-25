@@ -257,11 +257,15 @@ class CaseHandoverPolicyCacheServiceTest {
             .policies(Map.of("somePolicy", generalPolicy))
             .caseHandoverPolicies(new CaseHandoverPolicies().reasons(Map.of()));
     var requested = new CaseHandoverPolicies().reasons(Map.of());
-    when(tenantControllerApi.getTenantPermissionPolicies(42L)).thenReturn(current);
-    when(tenantControllerApi.updateTenantPermissionPolicies(42L, current)).thenReturn(current);
+    when(tenantControllerApi.getTenantPermissionPoliciesAsCaller(42L)).thenReturn(current);
+    when(tenantControllerApi.updateTenantPermissionPoliciesAsCaller(42L, current))
+        .thenReturn(current);
     when(repository.findById(42L)).thenReturn(Optional.empty());
 
     assertThat(service.updateEffective(42L, requested).getReasons()).isEmpty();
+
+    // The admin-triggered read-modify-write never runs as the service identity.
+    verify(tenantControllerApi, never()).getTenantPermissionPolicies(any());
 
     assertThat(current.getPolicies()).containsKey("somePolicy");
     assertThat(current.getCaseHandoverPolicies()).isSameAs(requested);

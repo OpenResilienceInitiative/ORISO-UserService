@@ -5,16 +5,15 @@
 
 {{ctaBlock}}
 
-----------------------------------------------------------------
-Wir fragen Sie nie per E-Mail nach Ihrem Passwort. Geben Sie diesen Link an niemanden weiter.
+{{assuranceBlock}}
 
 {{orgName}}
 {{orgAddress}}
 {{contactLine}}
 
-{{platformName}} ist ein Angebot von {{orgName}}.
+{{offeringName}} ist ein Angebot von {{operatorName}}.
 
 Datenschutz: {{privacyUrl}}
 Impressum: {{imprintUrl}}
 
-Diese E-Mail gehört zu Ihrer Einladung und lässt sich nicht abbestellen. Bitte antworten Sie nicht darauf.
+{{footerNote}}

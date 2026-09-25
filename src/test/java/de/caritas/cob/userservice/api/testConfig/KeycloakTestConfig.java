@@ -73,7 +73,8 @@ public class KeycloakTestConfig {
 
       @Override
       public IdentityLogin login(String userName, String password) {
-        return new IdentityLogin("", 0, 0, "");
+        // A real login always yields an access token; service flows fail closed without one.
+        return new IdentityLogin("synthetic-service-token", 0, 0, "");
       }
 
       @Override
