@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.admin.service.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.junit.jupiter.params.provider.Arguments.arguments;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.never;
@@ -14,6 +15,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Agencies;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Platform;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Reach;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Tenant;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -37,9 +39,13 @@ import java.util.List;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -134,6 +140,51 @@ class AdminScopeTest {
     actAs(null, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
     givenOwnAgencies(7L);
     assertThat(adminScope.current()).isEqualTo(new Agencies(null, Set.of(7L)));
+  }
+
+  /** Pins the tenant-0 rule for every kind of caller; {@code null} means refused. */
+  static Stream<Arguments> tenantZeroRuleCallers() {
+    return Stream.of(
+        arguments(
+            "platform admin",
+            0L,
+            List.of(UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN),
+            new Platform()),
+        arguments("technical user", 0L, List.of(UserRole.TECHNICAL), new Platform()),
+        arguments(
+            "technical user without tenant", null, List.of(UserRole.TECHNICAL), new Platform()),
+        arguments(
+            "tenant admin",
+            4L,
+            List.of(UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN),
+            new Tenant(4L)),
+        arguments(
+            "agency admin",
+            4L,
+            List.of(UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN),
+            new Agencies(4L, Set.of(7L))),
+        arguments(
+            "tenant-0 user admin without platform roles", 0L, List.of(UserRole.USER_ADMIN), null),
+        arguments(
+            "tenant-0 agency admin",
+            0L,
+            List.of(UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN),
+            null),
+        arguments("missing tenant", null, List.of(UserRole.USER_ADMIN), null));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("tenantZeroRuleCallers")
+  void current_Should_ApplyTheTenantZeroRule(
+      String callerKind, Long tenantId, List<UserRole> roles, Reach expected) {
+    actAs(tenantId, roles.toArray(UserRole[]::new));
+    givenOwnAgencies(7L);
+
+    if (expected == null) {
+      assertThatThrownBy(adminScope::current).isInstanceOf(ForbiddenException.class);
+    } else {
+      assertThat(adminScope.current()).isEqualTo(expected);
+    }
   }
 
   @Test
