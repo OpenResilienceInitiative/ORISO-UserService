@@ -10,10 +10,12 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -67,6 +69,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AdminSelfAssignmentService.class,
+  ConsultantTopicAgencyCompatibilityValidator.class,
   AccountInviteAccessPolicy.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AdminSelfAssignmentIT.CallerConfig.class,
@@ -269,6 +272,24 @@ class AdminSelfAssignmentIT {
   }
 
   @Test
+  void anAdminWhoAlreadyCounsels_Should_BeRejected_When_TopicNotOfferedByAgency() {
+    givenTopic(counsellingCaller, 11L);
+    givenAgency(OTHER_OWN_TENANT_AGENCY, OWN_TENANT, List.of(21L, 22L));
+    actAsTenantAdmin(counsellingCaller.getId());
+
+    assertThatThrownBy(
+            () ->
+                service.assign(
+                    new SelfAssignmentCommand(
+                        SelfAssignmentRole.COUNSELLOR, OTHER_OWN_TENANT_AGENCY, List.of(99L))))
+        .isInstanceOf(BadRequestException.class);
+    verify(consultantAgencyRelationCreatorService, never())
+        .createNewConsultantAgency(anyString(), any());
+    assertThat(consultantTopicRepository.findTopicIdsByConsultantId(counsellingCaller.getId()))
+        .containsExactly(11L);
+  }
+
+  @Test
   void anAdminWhoAlreadyCounselsInThatAgency_Should_Get409() {
     actAsTenantAdmin(counsellingCaller.getId());
 
@@ -379,5 +400,7 @@ class AdminSelfAssignmentIT {
   private void givenAgency(long agencyId, long tenantId, List<Long> topicIds) {
     when(agencyFacts.find(agencyId))
         .thenReturn(Optional.of(new AgencyFacts.Agency(agencyId, tenantId, false, topicIds)));
+    when(agencyService.getAgenciesWithoutCaching(List.of(agencyId)))
+        .thenReturn(List.of(new AgencyDTO().id(agencyId).tenantId(tenantId).topicIds(topicIds)));
   }
 }
