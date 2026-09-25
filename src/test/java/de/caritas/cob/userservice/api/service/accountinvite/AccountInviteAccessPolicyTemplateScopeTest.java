@@ -1,9 +1,11 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.verifyNoInteractions;
 
 import de.caritas.cob.userservice.api.config.auth.UserRole;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -61,6 +63,29 @@ class AccountInviteAccessPolicyTemplateScopeTest {
     assertThat(policy.templateOwnerTenantId()).isNull();
     assertThat(policy.canChangeTemplate(null)).isTrue();
     assertThat(policy.canUseTemplate(FOREIGN_TENANT)).isTrue();
+  }
+
+  @Test
+  void templateDecisions_Should_Refuse_When_TenantZeroCallerLacksPlatformAdminRoles() {
+    actAs(0L, UserRole.USER_ADMIN);
+
+    assertThatThrownBy(() -> policy.seesEveryTemplate()).isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> policy.templateOwnerTenantId()).isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> policy.canChangeTemplate(null)).isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void templateDecisions_Should_BeUnrestricted_When_CallerHasNoTenantOnSingleTenantDeployment() {
+    actAs(null, UserRole.USER_ADMIN);
+
+    assertThat(policy.seesEveryTemplate()).isTrue();
+  }
+
+  @Test
+  void templateDecisions_Should_BeUnrestricted_When_TechnicalUser() {
+    actAs(0L, UserRole.TECHNICAL);
+
+    assertThat(policy.seesEveryTemplate()).isTrue();
   }
 
   private void actAs(Long tenantId, UserRole... roles) {

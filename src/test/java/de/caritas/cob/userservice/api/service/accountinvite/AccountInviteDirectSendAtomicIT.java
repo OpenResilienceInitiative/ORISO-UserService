@@ -91,6 +91,8 @@ class AccountInviteDirectSendAtomicIT {
   void setUp() {
     when(authenticatedUser.getUserId()).thenReturn("admin-1");
     when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    // The platform operator sends here; an unstubbed mock would be a tenant-0 caller without roles.
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
     when(identityEmailOwnerLookup.findByEmail(RECIPIENT)).thenReturn(Optional.empty());
     when(tenantIdAllocationClient.reserve(null))
         .thenReturn(new TenantIdReservation(17L, "reservation-17"));
