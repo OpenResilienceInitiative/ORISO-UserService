@@ -48,11 +48,12 @@ class AccountInviteAccessPolicyTemplateScopeTest {
   @Mock private AgencyService agencyService;
 
   private final AuthenticatedUser caller = new AuthenticatedUser();
+  private AdminScope adminScope;
   private AccountInviteAccessPolicy policy;
 
   @BeforeEach
   void setUp() {
-    var adminScope =
+    adminScope =
         new AdminScope(
             caller,
             adminRepository,
@@ -108,9 +109,13 @@ class AccountInviteAccessPolicyTemplateScopeTest {
 
   @Test
   void templateDecisions_Should_BeUnrestricted_When_CallerHasNoTenantOnSingleTenantDeployment() {
+    ReflectionTestUtils.setField(adminScope, "multitenancyEnabled", false);
     actAs(null, UserRole.USER_ADMIN);
-
     assertThat(policy.seesEveryTemplate()).isTrue();
+
+    // Tenant 0 is no single-tenant reading: it stays refused without platform roles.
+    actAs(0L, UserRole.USER_ADMIN);
+    assertThatThrownBy(() -> policy.seesEveryTemplate()).isInstanceOf(ForbiddenException.class);
   }
 
   @Test
@@ -151,9 +156,8 @@ class AccountInviteAccessPolicyTemplateScopeTest {
             "tenant-0 agency admin",
             0L,
             List.of(UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN),
-            new TemplateReach(false, null, false, false)),
-        // Templates read a missing tenant as a single-tenant deployment.
-        arguments("missing tenant", null, List.of(UserRole.USER_ADMIN), unrestricted));
+            null),
+        arguments("missing tenant", null, List.of(UserRole.USER_ADMIN), null));
   }
 
   @ParameterizedTest(name = "{0}")
