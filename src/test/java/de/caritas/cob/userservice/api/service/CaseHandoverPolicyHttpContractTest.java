@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
@@ -56,8 +57,8 @@ class CaseHandoverPolicyHttpContractTest {
   private final MockRestServiceServer server = MockRestServiceServer.createServer(rest);
   private final IdentityAuthentication identity = mock(IdentityAuthentication.class);
   private final IdentityClientConfig identityConfig = mock(IdentityClientConfig.class);
-  private final SecurityHeaderSupplier headers =
-      new SecurityHeaderSupplier(mock(AuthenticatedUser.class));
+  private final AuthenticatedUser requestUser = mock(AuthenticatedUser.class);
+  private final SecurityHeaderSupplier headers = new SecurityHeaderSupplier(requestUser);
   private final TenantAdminServiceApiControllerFactory factory =
       new TenantAdminServiceApiControllerFactory();
   private final TenantCaseHandoverPolicyCacheRepository cacheRepository =
@@ -75,6 +76,7 @@ class CaseHandoverPolicyHttpContractTest {
     technical.setUsername("synthetic-service");
     technical.setPassword("synthetic-password");
     when(identityConfig.getTechnicalUser()).thenReturn(technical);
+    lenient().when(requestUser.getAccessToken()).thenReturn("synthetic-admin-token");
     when(identity.login("synthetic-service", "synthetic-password"))
         .thenReturn(new IdentityLogin("synthetic-token", 60, 120, "synthetic-refresh"));
     ReflectionTestUtils.setField(headers, "csrfHeaderProperty", "X-CSRF-TOKEN");
@@ -146,15 +148,24 @@ class CaseHandoverPolicyHttpContractTest {
           }}}}
         """;
 
+    // Cache miss: the last-known-good snapshot is filled by the service identity ...
     server
-        .expect(ExpectedCount.twice(), requestTo(POLICY_URL))
+        .expect(ExpectedCount.once(), requestTo(POLICY_URL))
         .andExpect(method(HttpMethod.GET))
+        .andExpect(header("Authorization", "Bearer synthetic-token"))
+        .andRespond(withSuccess(storedWithoutDuration, MediaType.APPLICATION_JSON));
+    // ... but the admin's read-modify-write reaches TenantService with the admin's own token.
+    server
+        .expect(ExpectedCount.once(), requestTo(POLICY_URL))
+        .andExpect(method(HttpMethod.GET))
+        .andExpect(header("Authorization", "Bearer synthetic-admin-token"))
         .andRespond(withSuccess(storedWithoutDuration, MediaType.APPLICATION_JSON));
 
     var sentBody = new java.util.concurrent.atomic.AtomicReference<String>();
     server
         .expect(requestTo(POLICY_URL))
         .andExpect(method(HttpMethod.PUT))
+        .andExpect(header("Authorization", "Bearer synthetic-admin-token"))
         .andExpect(
             request ->
                 sentBody.set(
