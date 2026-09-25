@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import de.caritas.cob.userservice.api.adapters.web.controller.AccountInviteController;
 import de.caritas.cob.userservice.api.adapters.web.controller.AdminSelfAssignmentController;
+import de.caritas.cob.userservice.api.adapters.web.controller.ConsultantRoleController;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import java.io.IOException;
 import java.lang.reflect.Field;
@@ -72,14 +73,22 @@ class AccountInviteApiContractTest {
             "NO_PENDING_UNIT_ADMIN",
             "UNIT_NOT_CREATED",
             "SELF_ASSIGNMENT_ALREADY_EXISTS",
-            "CONSULTANT_IDENTITY_ALREADY_GRANTED")
+            "CONSULTANT_IDENTITY_ALREADY_GRANTED",
+            "INVITE_ALREADY_ACCEPTED",
+            "INVITE_NOT_PENDING",
+            "ROLE_CHANGE_NEEDS_NEW_INVITE",
+            "ONLY_UNIT_ADMIN",
+            "ROLE_ALREADY_GRANTED")
         .allMatch(known::contains);
   }
 
   private static Set<String> adminRoutes() {
     Set<String> routes = new HashSet<>();
     for (Class<?> controller :
-        List.of(AccountInviteController.class, AdminSelfAssignmentController.class)) {
+        List.of(
+            AccountInviteController.class,
+            AdminSelfAssignmentController.class,
+            ConsultantRoleController.class)) {
       for (Method method : controller.getDeclaredMethods()) {
         addRoutes(routes, "get", mappingPaths(method.getAnnotation(GetMapping.class)));
         addRoutes(routes, "post", mappingPaths(method.getAnnotation(PostMapping.class)));
@@ -92,7 +101,8 @@ class AccountInviteApiContractTest {
   private static void addRoutes(Set<String> routes, String httpMethod, String[] paths) {
     for (String path : paths) {
       if (path.startsWith("/useradmin/account-invites")
-          || path.startsWith("/useradmin/self-assignments")) {
+          || path.startsWith("/useradmin/self-assignments")
+          || path.startsWith("/useradmin/consultants/")) {
         routes.add(httpMethod + " " + path);
       }
     }
