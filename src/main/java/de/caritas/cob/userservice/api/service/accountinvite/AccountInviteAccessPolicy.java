@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -320,10 +321,21 @@ public class AccountInviteAccessPolicy {
     if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
       return new Scope(Kind.AGENCY, callerTenantId, Set.of());
     }
-    if (authenticatedUser.isPlatformAdmin() || callerTenantId == null) {
+    if (authenticatedUser.isPlatformAdmin()
+        || isTechnicalUser()
+        || authenticatedUser.getTenantId() == null) {
       return new Scope(Kind.UNRESTRICTED, null, null);
     }
+    // Tenant 0 is nobody's Träger: without the platform-admin roles it reaches no template.
+    if (callerTenantId == null) {
+      throw denyTemplate("use invite e-mail templates from tenant 0 without platform-admin roles");
+    }
     return new Scope(Kind.TENANT, callerTenantId, null);
+  }
+
+  private boolean isTechnicalUser() {
+    var roles = authenticatedUser.getRoles();
+    return roles != null && roles.contains(UserRole.TECHNICAL.getValue());
   }
 
   private Long boundTenantId() {
