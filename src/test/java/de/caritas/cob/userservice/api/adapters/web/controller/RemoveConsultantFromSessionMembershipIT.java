@@ -171,6 +171,30 @@ class RemoveConsultantFromSessionMembershipIT {
         .removeMemberFromRoom(MATRIX_ROOM, roomMember.getMatrixUserId());
   }
 
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION})
+  void removeFromSession_Should_Refuse_When_CallerIsAdviceSeekerOfAnotherSession()
+      throws Exception {
+    actAsAdviceSeeker(fixtures.adviceSeeker(TENANT).getUserId());
+
+    var result = mockMvc.perform(removeFromSession(roomMember)).andReturn();
+
+    verify(groupChatMembershipService, never()).removeMemberFromRoom(anyString(), anyString());
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION})
+  void removeFromSession_Should_Remove_When_CallerIsTheSessionsAdviceSeeker() throws Exception {
+    actAsAdviceSeeker(session.getUser().getUserId());
+
+    var result = mockMvc.perform(removeFromSession(roomMember)).andReturn();
+
+    assertStatus(result, 204);
+    verify(groupChatMembershipService)
+        .removeMemberFromRoom(MATRIX_ROOM, roomMember.getMatrixUserId());
+  }
+
   // --- helpers ----------------------------------------------------------------------------------
 
   private MockHttpServletRequestBuilder removeFromSession(Consultant consultant) {
@@ -196,6 +220,11 @@ class RemoveConsultantFromSessionMembershipIT {
   private void actAs(Consultant consultant) {
     Tenants.actAs(caller, consultant.getId(), TENANT, UserRole.CONSULTANT);
     caller.setUsername(consultant.getUsername());
+    caller.setGrantedAuthorities(Set.of(AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION));
+  }
+
+  private void actAsAdviceSeeker(String userId) {
+    Tenants.actAs(caller, userId, TENANT, UserRole.USER);
     caller.setGrantedAuthorities(Set.of(AuthorityValue.ASSIGN_CONSULTANT_TO_SESSION));
   }
 

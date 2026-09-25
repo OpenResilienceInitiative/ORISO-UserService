@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -31,7 +32,10 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispa
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -81,6 +85,9 @@ class AccountInviteExistingAgencyIT {
   /** Soft-deleted agency of tenant 1. */
   private static final long DELETED_AGENCY = 4L;
 
+  /** Agency of tenant 1 that has no topic yet. */
+  private static final long TOPICLESS_AGENCY = 5L;
+
   /** An agency ID that does not exist. */
   private static final long MISSING_AGENCY = 999L;
 
@@ -91,6 +98,8 @@ class AccountInviteExistingAgencyIT {
       return new AuthenticatedUser();
     }
   }
+
+  private final Map<Long, AgencyDTO> knownAgencies = new HashMap<>();
 
   @Autowired private AccountInviteService service;
   @Autowired private AccountInviteRepository accountInviteRepository;
@@ -114,6 +123,7 @@ class AccountInviteExistingAgencyIT {
     givenAgency(TWO_TOPIC_AGENCY, OWN_TENANT, false, List.of(21L, 22L));
     givenAgency(FOREIGN_TENANT_AGENCY, FOREIGN_TENANT, false, List.of(31L));
     givenAgency(DELETED_AGENCY, OWN_TENANT, true, List.of(41L));
+    givenAgency(TOPICLESS_AGENCY, OWN_TENANT, false, List.of());
     when(existingAgencyClient.find(MISSING_AGENCY)).thenReturn(Optional.empty());
   }
 
@@ -225,6 +235,16 @@ class AccountInviteExistingAgencyIT {
   }
 
   @Test
+  void createInvite_Should_Refuse400_When_TheAgencyHasNoTopicButADepartmentIsNamed() {
+    actAsTenantAdmin();
+
+    // 31 is a topic of another Träger's agency; an agency without topics must not take it.
+    assertThatThrownBy(() -> service.createInvite(existing(null, TOPICLESS_AGENCY, 31L)))
+        .isInstanceOf(BadRequestException.class);
+    assertThat(accountInviteRepository.count()).isZero();
+  }
+
+  @Test
   void createInvite_Should_StillReserve_When_TheAdminSendsManual() {
     actAsPlatformAdmin();
     when(agencyIdAllocationClient.reserve(500L, OWN_TENANT)).thenReturn(500L);
@@ -276,8 +296,12 @@ class AccountInviteExistingAgencyIT {
   }
 
   private void givenAgency(long agencyId, long tenantId, boolean deleted, List<Long> topicIds) {
-    when(agencyService.getAgencyWithoutCaching(agencyId))
-        .thenReturn(new AgencyDTO().id(agencyId).tenantId(tenantId).topicIds(topicIds));
+    knownAgencies.put(agencyId, new AgencyDTO().id(agencyId).tenantId(tenantId).topicIds(topicIds));
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            call ->
+                ((List<?>) call.getArgument(0))
+                    .stream().map(knownAgencies::get).filter(Objects::nonNull).toList());
     when(existingAgencyClient.find(agencyId))
         .thenReturn(Optional.of(new ExistingAgency(agencyId, tenantId, deleted, topicIds)));
   }

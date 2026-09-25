@@ -168,9 +168,11 @@ public class AdminScope {
           case AdviceSeekerTarget asker -> mayActOnAdviceSeeker(reach, asker.id());
           case AccountTarget account -> mayReadAccount(reach, account.id());
           case AgenciesTarget agencies -> mayUseAgencies(reach, agencies.ids());
+            // Only the platform, returned above, may target an unnamed Träger.
           case TenantTarget tenant ->
-              tenant.id() == null
-                  || (!(reach instanceof Agencies) && isTenantReach(reach, tenant.id()));
+              tenant.id() != null
+                  && !(reach instanceof Agencies)
+                  && isTenantReach(reach, tenant.id());
           case PlacedTarget placed -> mayActOnPlaced(reach, placed);
         };
     if (!allowed) {

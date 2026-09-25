@@ -16,6 +16,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnExpression;
 import org.springframework.http.HttpMethod;
 import org.springframework.lang.Nullable;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.web.util.matcher.RequestMatcher;
 import org.springframework.stereotype.Component;
 import org.springframework.web.filter.OncePerRequestFilter;
@@ -59,7 +60,15 @@ public class HttpTenantFilter extends OncePerRequestFilter {
       throws ServletException, IOException {
     if (requiresTenantFilterMatcher.matches(request)) {
       log.debug("Trying to resolve tenant for request coming from URI {}", request.getRequestURI());
-      Long tenantId = tenantResolverService.resolve(request);
+      Long tenantId;
+      try {
+        tenantId = tenantResolverService.resolve(request);
+      } catch (AccessDeniedException denied) {
+        // Thrown before ExceptionTranslationFilter, which would otherwise never turn it into a 403.
+        log.warn("Refused request to {}: {}", request.getRequestURI(), denied.getMessage());
+        response.sendError(HttpServletResponse.SC_FORBIDDEN);
+        return;
+      }
       resolveSubdomain(tenantId);
       log.debug("Setting current tenant context to: " + tenantId);
       TenantContext.setCurrentTenant(tenantId);
