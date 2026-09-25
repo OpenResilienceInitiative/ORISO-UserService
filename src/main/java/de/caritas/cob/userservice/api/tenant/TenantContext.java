@@ -63,6 +63,11 @@ public class TenantContext {
     return result.get();
   }
 
+  /** Runs {@code task} in {@code tenantId} and restores the previous context. */
+  public static void runIn(Long tenantId, Runnable task) {
+    runWith(new TenantData(tenantId, null), task);
+  }
+
   /** Runs {@code task} with {@code tenantData} (none if null) and restores the previous context. */
   static void runWith(TenantData tenantData, Runnable task) {
     var previous = CURRENT_TENANT_DATA.get();

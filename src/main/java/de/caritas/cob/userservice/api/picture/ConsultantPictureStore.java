@@ -1,11 +1,13 @@
 package de.caritas.cob.userservice.api.picture;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantPicture;
 import de.caritas.cob.userservice.api.port.out.ConsultantPictureRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.persistence.EntityManager;
 import jakarta.persistence.EntityNotFoundException;
 import org.springframework.context.annotation.Lazy;
@@ -126,19 +128,34 @@ public class ConsultantPictureStore {
    */
   @Transactional
   public void replaceForOnboarding(String rawToken, byte[] bytes, String contentType) {
-    String consultantId =
-        onboarding.requireOnboardingPictureInvite(rawToken).getProvisionedUserId();
-    var consultant = lockActiveConsultant(consultantId);
-    pictures.save(new ConsultantPicture(consultant.getId(), bytes, contentType));
+    var invite = onboarding.requireOnboardingPictureInvite(rawToken);
+    inInviteTenant(
+        invite,
+        () -> {
+          var consultant = lockActiveConsultant(invite.getProvisionedUserId());
+          pictures.save(new ConsultantPicture(consultant.getId(), bytes, contentType));
+        });
   }
 
   /** Issue #1049 onboarding: the same publish decision, with the invite token as the credential. */
   @Transactional
   public void writeInternalOnlyForOnboarding(String rawToken, boolean internalOnly) {
-    String consultantId =
-        onboarding.requireOnboardingPictureInvite(rawToken).getProvisionedUserId();
-    var consultant = lockActiveConsultant(consultantId);
-    picture(consultant.getId(), "Picture not found").setInternalOnly(internalOnly);
+    var invite = onboarding.requireOnboardingPictureInvite(rawToken);
+    inInviteTenant(
+        invite,
+        () -> {
+          var consultant = lockActiveConsultant(invite.getProvisionedUserId());
+          picture(consultant.getId(), "Picture not found").setInternalOnly(internalOnly);
+        });
+  }
+
+  /** The public wizard runs in the route's tenant; the invited counsellor lives in the invite's. */
+  private static void inInviteTenant(AccountInvite invite, Runnable write) {
+    if (invite.getTenantId() == null) {
+      write.run();
+      return;
+    }
+    TenantContext.runIn(invite.getTenantId(), write);
   }
 
   private ConsultantPicture picture(String id, String message) {

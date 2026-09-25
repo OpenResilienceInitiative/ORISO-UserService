@@ -100,13 +100,18 @@ public class TopicConsultantRoutingService {
       return Collections.emptyList();
     }
 
-    List<String> topicConsultantIds = consultantTopicRepository.findConsultantIdsByTopicId(topicId);
+    // Same shared topic queue as availability, so eligibility is cross-tenant too.
+    List<String> topicConsultantIds =
+        TenantContext.supplyAcrossTenants(
+            () -> consultantTopicRepository.findConsultantIdsByTopicId(topicId));
     if (topicConsultantIds.isEmpty()) {
       diagnosticMetrics.recordRouting(RoutingStage.ELIGIBILITY, RoutingOutcome.NO_ASSIGNMENT, 0);
       return Collections.emptyList();
     }
 
-    List<Consultant> consultants = consultantRepository.findAllByIdIn(topicConsultantIds);
+    List<Consultant> consultants =
+        TenantContext.supplyAcrossTenants(
+            () -> consultantRepository.findAllByIdIn(topicConsultantIds));
     List<String> activeConsultantIds =
         consultants.stream()
             .filter(consultant -> consultant != null && !consultant.isAbsent())
