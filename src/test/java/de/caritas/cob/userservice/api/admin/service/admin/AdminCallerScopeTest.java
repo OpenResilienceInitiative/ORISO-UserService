@@ -15,6 +15,9 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.AdminAgency;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -23,8 +26,10 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
@@ -154,6 +159,54 @@ class AdminCallerScopeTest {
         .lastName("Admin")
         .email("target@synthetic.oriso.test")
         .build();
+  }
+
+  @Test
+  void
+      assertMayActOnConsultant_Should_Refuse_When_DeletedCounsellorLeftCallersAgencyBeforeDeletion() {
+    givenDeletedCounsellorWhoLeftAgency10AndWasDeletedFromAgency11();
+    actAsAgencyAdminOf(10L);
+
+    assertThatThrownBy(() -> adminCallerScope.assertMayActOnConsultant("deleted-counsellor"))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMayActOnConsultant_Should_Allow_When_DeletedCounsellorBelongedToCallersAgency() {
+    givenDeletedCounsellorWhoLeftAgency10AndWasDeletedFromAgency11();
+    actAsAgencyAdminOf(11L);
+
+    assertThatCode(() -> adminCallerScope.assertMayActOnConsultant("deleted-counsellor"))
+        .doesNotThrowAnyException();
+  }
+
+  /** The deletion stamps the relations it removes with the counsellor's own delete date. */
+  private void givenDeletedCounsellorWhoLeftAgency10AndWasDeletedFromAgency11() {
+    var deletedAt = LocalDateTime.of(2026, 9, 25, 10, 0);
+    var counsellor = new Consultant();
+    counsellor.setId("deleted-counsellor");
+    counsellor.setTenantId(OWN_TENANT);
+    counsellor.setDeleteDate(deletedAt);
+    when(consultantRepository.findById("deleted-counsellor")).thenReturn(Optional.of(counsellor));
+    when(consultantAgencyRepository.findByConsultantId("deleted-counsellor"))
+        .thenReturn(
+            List.of(
+                relation(counsellor, 10L, deletedAt.minusDays(30)),
+                relation(counsellor, 11L, deletedAt)));
+  }
+
+  private static ConsultantAgency relation(Consultant counsellor, long agencyId, LocalDateTime at) {
+    var relation = new ConsultantAgency();
+    relation.setConsultant(counsellor);
+    relation.setAgencyId(agencyId);
+    relation.setDeleteDate(at);
+    return relation;
+  }
+
+  private void actAsAgencyAdminOf(long agencyId) {
+    actAs(OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    when(adminAgencyRepository.findByAdminId(caller.getUserId()))
+        .thenReturn(List.of(AdminAgency.builder().agencyId(agencyId).build()));
   }
 
   private void givenAgencies(AgencyDTO... agencies) {
