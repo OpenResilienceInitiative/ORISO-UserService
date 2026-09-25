@@ -32,7 +32,6 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -233,9 +232,10 @@ public class ConsultantAdminFacade {
             .toList();
     // Only changed relations are checked: an agency admin keeps, untouched, the other agencies of
     // a shared counsellor.
-    var changedAgencyIds = new HashSet<>(agencyIdsToDelete);
-    agenciesToCreate.forEach(agency -> changedAgencyIds.add(agency.getAgencyId()));
-    adminScope.assertMay(Target.agencies(changedAgencyIds));
+    adminScope.assertMay(
+        Target.agencies(
+            agenciesToCreate.stream().map(CreateConsultantAgencyDTO::getAgencyId).toList()));
+    adminScope.assertMay(Target.removedAgencies(agencyIdsToDelete));
     if (!agencyIdsToDelete.isEmpty()) {
       consultantAgencyAdminService.markConsultantAgenciesForDeletion(
           consultantId, agencyIdsToDelete);
@@ -270,7 +270,7 @@ public class ConsultantAdminFacade {
    */
   public void markConsultantAgencyForDeletion(String consultantId, Long agencyId) {
     adminScope.assertMay(Target.counsellor(consultantId));
-    adminScope.assertMay(Target.agencies(List.of(agencyId)));
+    adminScope.assertMay(Target.removedAgencies(List.of(agencyId)));
     this.consultantAgencyAdminService.markConsultantAgencyForDeletion(consultantId, agencyId);
   }
 

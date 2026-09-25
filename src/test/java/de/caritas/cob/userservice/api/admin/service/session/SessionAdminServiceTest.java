@@ -40,6 +40,12 @@ class SessionAdminServiceTest {
 
   @Mock private AdminScope adminScope;
 
+  /** Production returns a reach or throws, never null. */
+  @org.junit.jupiter.api.BeforeEach
+  void tenantWideByDefault() {
+    when(adminScope.current()).thenReturn(new AdminScope.Tenant(1L));
+  }
+
   // ---------------------------------------------------------------------------
   // findSessions — page/perPage bounds
   // ---------------------------------------------------------------------------
