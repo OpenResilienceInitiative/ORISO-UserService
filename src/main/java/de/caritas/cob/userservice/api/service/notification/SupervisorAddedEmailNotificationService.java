@@ -50,7 +50,7 @@ public class SupervisorAddedEmailNotificationService {
   @Value("${app.base.url}")
   private String applicationBaseUrl;
 
-  @Value("${system.notification.frontend.base-url:${app.base.url}}")
+  @Value("${system.notification.frontend.base-url}")
   private String publicFrontendBaseUrl;
 
   @Value("${identity.email-dummy-suffix}")
@@ -60,7 +60,6 @@ public class SupervisorAddedEmailNotificationService {
   public void notifySupervisorAdded(
       User sessionUser,
       Consultant supervisor,
-      String supervisorDisplayName,
       Long sessionId,
       TenantData tenantData,
       String accessToken) {
@@ -108,7 +107,6 @@ public class SupervisorAddedEmailNotificationService {
   public void notifySupervisorRemoved(
       User sessionUser,
       Consultant supervisor,
-      String supervisorDisplayName,
       Long sessionId,
       TenantData tenantData,
       String accessToken) {
