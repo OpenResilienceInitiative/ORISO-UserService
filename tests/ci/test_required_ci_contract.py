@@ -327,6 +327,15 @@ class RequiredCiContractTest(unittest.TestCase):
             self.assertNotIn("LIQUIBASE_IT_DB_URL", integration)
             self.assertNotIn("mariadb:", integration)
 
+    def test_tenant_filter_job_reads_only_and_runs_with_redis_like_the_other_it_jobs(self):
+        workflow = (ROOT / ".github/workflows/ci-pull-request.yml").read_text()
+        tenant_filter = job_block(workflow, "tenant-filter-on-integration-tests")
+
+        self.assertIn("permissions:\n      contents: read", tenant_filter)
+        self.assertIn("services:\n      redis:\n        image: redis:7-alpine", tenant_filter)
+        self.assertIn('--health-cmd "redis-cli ping"', tenant_filter)
+        self.assertIn("ORISO_LOCAL_REDIS_IT: true", tenant_filter)
+
     def test_full_integration_suite_is_required_without_quarantine(self):
         runner = (ROOT / "scripts/ci/run-required-integration-tests.sh").read_text()
         settings = ROOT / "scripts/ci/github-maven-settings.xml"
