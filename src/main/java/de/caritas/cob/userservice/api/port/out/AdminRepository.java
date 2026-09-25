@@ -36,32 +36,6 @@ public interface AdminRepository
   Page<AdminBase> findAllByInfix(String infix, Admin.AdminType type, Pageable pageable);
 
   /**
-   * Same infix search as {@link #findAllByInfix}, but restricted to admins that are assigned to at
-   * least one of the given agencies. Used to scope the agency-admin list for restricted agency
-   * admins so they only ever see admins of their own agencies (and never other Träger's admins).
-   */
-  @Query(
-      value =
-          "SELECT a.id as id, a.firstName as firstName, a.lastName as lastName, a.email as email, a.tenantId as tenantId "
-              + ", a.type as type, a.updateDate as updateDate, COALESCE(a.updateDate, a.createDate) as lastUpdated "
-              + "FROM Admin a "
-              + "WHERE"
-              + "  type = ?2 "
-              + "AND a.id IN (SELECT aa.admin.id FROM AdminAgency aa WHERE aa.agencyId IN ?3) "
-              + "AND ("
-              + "  ?1 = '*' "
-              + "  OR ("
-              + "    UPPER(a.id) = UPPER(?1)"
-              + "    OR UPPER(a.firstName) LIKE CONCAT('%', UPPER(?1), '%')"
-              + "    OR UPPER(a.lastName) LIKE CONCAT('%', UPPER(?1), '%')"
-              + "    OR UPPER(a.email) LIKE CONCAT('%', UPPER(?1), '%')"
-              + "    OR CAST(a.tenantId AS string) LIKE CONCAT('%', UPPER(?1), '%')"
-              + "  )"
-              + " )")
-  Page<AdminBase> findAllByInfixAndAgencyIds(
-      String infix, Admin.AdminType type, Collection<Long> agencyIds, Pageable pageable);
-
-  /**
    * Same infix search as {@link #findAllByInfix}, but restricted to the given tenant. Used to scope
    * the tenant-admin and agency-admin lists for a caller whose authority is tenant-bound, so a
    * single tenant admin cannot enumerate admins of other tenants via the search endpoints (#968).
@@ -86,6 +60,37 @@ public interface AdminRepository
               + " )")
   Page<AdminBase> findAllByInfixAndTenantId(
       String infix, Admin.AdminType type, Long tenantId, Pageable pageable);
+
+  /**
+   * Same infix search as {@link #findAllByInfix}, restricted to admins of any of the given agencies
+   * and, when {@code tenantId} is not null, to that tenant. Backs the Träger/Beratungsstelle filter
+   * of the agency-admin list (#1263).
+   */
+  @Query(
+      value =
+          "SELECT a.id as id, a.firstName as firstName, a.lastName as lastName, a.email as email, a.tenantId as tenantId "
+              + ", a.type as type, a.updateDate as updateDate, COALESCE(a.updateDate, a.createDate) as lastUpdated "
+              + "FROM Admin a "
+              + "WHERE"
+              + "  type = ?2 "
+              + "AND (?3 IS NULL OR a.tenantId = ?3) "
+              + "AND a.id IN (SELECT aa.admin.id FROM AdminAgency aa WHERE aa.agencyId IN ?4) "
+              + "AND ("
+              + "  ?1 = '*' "
+              + "  OR ("
+              + "    UPPER(a.id) = UPPER(?1)"
+              + "    OR UPPER(a.firstName) LIKE CONCAT('%', UPPER(?1), '%')"
+              + "    OR UPPER(a.lastName) LIKE CONCAT('%', UPPER(?1), '%')"
+              + "    OR UPPER(a.email) LIKE CONCAT('%', UPPER(?1), '%')"
+              + "    OR CAST(a.tenantId AS string) LIKE CONCAT('%', UPPER(?1), '%')"
+              + "  )"
+              + " )")
+  Page<AdminBase> findAllByInfixAndTenantIdAndAgencyIds(
+      String infix,
+      Admin.AdminType type,
+      Long tenantId,
+      Collection<Long> agencyIds,
+      Pageable pageable);
 
   @Query(value = "SELECT a FROM Admin a WHERE id = ?1 AND type = ?2")
   Optional<Admin> findByIdAndType(String adminId, Admin.AdminType type);

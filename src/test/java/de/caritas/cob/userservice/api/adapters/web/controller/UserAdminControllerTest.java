@@ -40,6 +40,7 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
 import java.lang.reflect.Method;
@@ -161,15 +162,16 @@ class UserAdminControllerTest {
   void searchAgencyAdmins_mapsSortAndPageBeforeDelegation() {
     // Business reason: admin search must pass normalized paging and sorting to repository layer.
     when(adminDtoMapper.mappedFieldOf("email")).thenReturn("email");
-    when(adminUserFacade.findAgencyAdminsByInfix("john", 1, 20, "email", true))
+    when(adminUserFacade.findAgencyAdminsByInfix("john", SearchFilter.NONE, 1, 20, "email", true))
         .thenReturn(Map.of());
     when(adminDtoMapper.adminSearchResultOf(any(), any(), any(), any(), any(), any()))
         .thenReturn(new AdminSearchResultDTO());
 
-    var response = controller.searchAgencyAdmins("john", 2, 20, "email", "asc");
+    var response = controller.searchAgencyAdmins("john", 2, 20, "email", "asc", null, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(adminUserFacade).findAgencyAdminsByInfix("john", 1, 20, "email", true);
+    verify(adminUserFacade)
+        .findAgencyAdminsByInfix("john", SearchFilter.NONE, 1, 20, "email", true);
   }
 
   @Test
@@ -561,30 +563,33 @@ class UserAdminControllerTest {
   @Test
   void searchTenantAdmins_Should_delegate() {
     when(adminDtoMapper.mappedFieldOf("email")).thenReturn("email");
-    when(adminUserFacade.findTenantAdminsByInfix("jane", 0, 20, "email", false))
+    when(adminUserFacade.findTenantAdminsByInfix("jane", SearchFilter.NONE, 0, 20, "email", false))
         .thenReturn(Map.of());
     when(adminDtoMapper.adminSearchResultOf(any(), any(), any(), any(), any(), any()))
         .thenReturn(new AdminSearchResultDTO());
 
-    var response = controller.searchTenantAdmins("jane", 1, 20, "email", "desc");
+    var response = controller.searchTenantAdmins("jane", 1, 20, "email", "desc", null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(adminUserFacade).findTenantAdminsByInfix("jane", 0, 20, "email", false);
+    verify(adminUserFacade)
+        .findTenantAdminsByInfix("jane", SearchFilter.NONE, 0, 20, "email", false);
   }
 
   @Test
   void searchAgencyAdmins_Should_urlDecodeNonEmailQuery() {
     String encoded = URLEncoder.encode("hello world", StandardCharsets.UTF_8);
     when(adminDtoMapper.mappedFieldOf("name")).thenReturn("name");
-    when(adminUserFacade.findAgencyAdminsByInfix("hello world", 0, 10, "name", true))
+    when(adminUserFacade.findAgencyAdminsByInfix(
+            "hello world", SearchFilter.NONE, 0, 10, "name", true))
         .thenReturn(Map.of());
     when(adminDtoMapper.adminSearchResultOf(any(), any(), any(), any(), any(), any()))
         .thenReturn(new AdminSearchResultDTO());
 
-    var response = controller.searchAgencyAdmins(encoded, 1, 10, "name", "asc");
+    var response = controller.searchAgencyAdmins(encoded, 1, 10, "name", "asc", null, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(adminUserFacade).findAgencyAdminsByInfix("hello world", 0, 10, "name", true);
+    verify(adminUserFacade)
+        .findAgencyAdminsByInfix("hello world", SearchFilter.NONE, 0, 10, "name", true);
   }
 
   @Test

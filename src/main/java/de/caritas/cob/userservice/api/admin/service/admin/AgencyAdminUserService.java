@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collections;
@@ -80,8 +81,9 @@ public class AgencyAdminUserService {
     return retrieveAdminService.findAgencyIdsOfAdmin(adminId);
   }
 
-  public Map<String, Object> findAgencyAdminsByInfix(String infix, PageRequest pageRequest) {
-    Page<AdminBase> adminsPage = findScopedAgencyAdminsByInfix(infix, pageRequest);
+  public Map<String, Object> findAgencyAdminsByInfix(
+      String infix, SearchFilter filter, PageRequest pageRequest) {
+    Page<AdminBase> adminsPage = findScopedAgencyAdminsByInfix(infix, filter, pageRequest);
     var adminIds = adminsPage.stream().map(AdminBase::getId).collect(Collectors.toSet());
     var fullAdmins = retrieveAdminService.findAllById(adminIds);
 
@@ -110,16 +112,32 @@ public class AgencyAdminUserService {
         idsWithConsultantIdentity);
   }
 
-  private Page<AdminBase> findScopedAgencyAdminsByInfix(String infix, PageRequest pageRequest) {
+  /**
+   * The Träger/Beratungsstelle filter (#1263) only narrows the caller's reach: a Träger outside it
+   * yields an empty page, and requested agencies are intersected with an agency admin's own.
+   */
+  private Page<AdminBase> findScopedAgencyAdminsByInfix(
+      String infix, SearchFilter filter, PageRequest pageRequest) {
     return switch (adminScope.current()) {
       case AdminScope.Platform platform ->
-          retrieveAdminService.findAllByInfix(infix, Admin.AdminType.AGENCY, pageRequest);
+          retrieveAdminService.findAllByInfixFiltered(
+              infix, Admin.AdminType.AGENCY, filter.tenantId(), filter.agencyIds(), pageRequest);
       case AdminScope.Tenant tenant ->
-          retrieveAdminService.findAllByInfixScopedToTenant(
-              infix, Admin.AdminType.AGENCY, tenant.tenantId(), pageRequest);
+          filter.isTenantOutside(tenant.tenantId())
+              ? Page.empty(pageRequest)
+              : retrieveAdminService.findAllByInfixFiltered(
+                  infix,
+                  Admin.AdminType.AGENCY,
+                  tenant.tenantId(),
+                  filter.agencyIds(),
+                  pageRequest);
       case AdminScope.Agencies agencies ->
-          retrieveAdminService.findAllByInfixScopedToAgencies(
-              infix, Admin.AdminType.AGENCY, agencies.ids(), pageRequest);
+          retrieveAdminService.findAllByInfixFiltered(
+              infix,
+              Admin.AdminType.AGENCY,
+              filter.tenantId(),
+              filter.narrowAgencies(agencies.ids()),
+              pageRequest);
     };
   }
 

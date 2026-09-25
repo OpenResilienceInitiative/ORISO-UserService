@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import java.util.List;
@@ -240,13 +241,15 @@ class UserConsultantControllerDelegateTest {
     when(adminUserFacade.findAdminUserAgencyIds(ADMIN_ID)).thenReturn(List.of(1L));
     when(consultantDtoMapper.mappedFieldOf("LASTNAME")).thenReturn("lastName");
     when(accountManager.findConsultantsByInfix(
-            "person@example.org", true, List.of(1L), 0, 20, "lastName", true))
+            "person@example.org", true, List.of(1L), SearchFilter.NONE, 0, 20, "lastName", true))
         .thenReturn(resultMap);
     when(consultantDtoMapper.consultantSearchResultOf(
             resultMap, "person%40example.org", 1, 20, "LASTNAME", "asc"))
         .thenReturn(searchResult);
 
-    var response = delegate.searchConsultants("person%40example.org", 1, 20, "LASTNAME", "asc");
+    var response =
+        delegate.searchConsultants(
+            "person%40example.org", 1, 20, "LASTNAME", "asc", SearchFilter.NONE);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(searchResult);
@@ -272,12 +275,13 @@ class UserConsultantControllerDelegateTest {
                                         new AgencyAdminResponseDTO().id(2L))))));
     when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
     when(consultantDtoMapper.mappedFieldOf("LASTNAME")).thenReturn("lastName");
-    when(accountManager.findConsultantsByInfix("smith", false, List.of(), 0, 20, "lastName", true))
+    when(accountManager.findConsultantsByInfix(
+            "smith", false, List.of(), SearchFilter.NONE, 0, 20, "lastName", true))
         .thenReturn(resultMap);
     when(consultantDtoMapper.consultantSearchResultOf(resultMap, "smith", 1, 20, "LASTNAME", "asc"))
         .thenReturn(searchResult);
 
-    var response = delegate.searchConsultants("smith", 1, 20, "LASTNAME", "asc");
+    var response = delegate.searchConsultants("smith", 1, 20, "LASTNAME", "asc", SearchFilter.NONE);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(searchResult.getEmbedded().get(0).getEmbedded().getAgencies())
@@ -294,17 +298,19 @@ class UserConsultantControllerDelegateTest {
     when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
     when(consultantDtoMapper.mappedFieldOf("FIRSTNAME")).thenReturn("firstName");
     when(accountManager.findConsultantsByInfix(
-            "Müller", false, List.of(), 0, 20, "firstName", true))
+            "Müller", false, List.of(), SearchFilter.NONE, 0, 20, "firstName", true))
         .thenReturn(resultMap);
     when(consultantDtoMapper.consultantSearchResultOf(
             resultMap, "M%C3%BCller", 1, 20, "FIRSTNAME", "asc"))
         .thenReturn(searchResult);
 
-    var response = delegate.searchConsultants("M%C3%BCller", 1, 20, "FIRSTNAME", "asc");
+    var response =
+        delegate.searchConsultants("M%C3%BCller", 1, 20, "FIRSTNAME", "asc", SearchFilter.NONE);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(accountManager)
-        .findConsultantsByInfix("Müller", false, List.of(), 0, 20, "firstName", true);
+        .findConsultantsByInfix(
+            "Müller", false, List.of(), SearchFilter.NONE, 0, 20, "firstName", true);
   }
 
   @Test
@@ -314,13 +320,15 @@ class UserConsultantControllerDelegateTest {
     var searchResult = new ConsultantSearchResultDTO();
     when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
     when(consultantDtoMapper.mappedFieldOf("LASTNAME")).thenReturn("lastName");
-    when(accountManager.findConsultantsByInfix("smith", false, List.of(), 0, 20, "lastName", false))
+    when(accountManager.findConsultantsByInfix(
+            "smith", false, List.of(), SearchFilter.NONE, 0, 20, "lastName", false))
         .thenReturn(resultMap);
     when(consultantDtoMapper.consultantSearchResultOf(
             resultMap, "smith", 1, 20, "LASTNAME", "desc"))
         .thenReturn(searchResult);
 
-    var response = delegate.searchConsultants("smith", 1, 20, "LASTNAME", "desc");
+    var response =
+        delegate.searchConsultants("smith", 1, 20, "LASTNAME", "desc", SearchFilter.NONE);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     var isAscendingCaptor = ArgumentCaptor.forClass(Boolean.class);
@@ -329,6 +337,7 @@ class UserConsultantControllerDelegateTest {
             eq("smith"),
             eq(false),
             eq(List.of()),
+            eq(SearchFilter.NONE),
             eq(0),
             eq(20),
             eq("lastName"),

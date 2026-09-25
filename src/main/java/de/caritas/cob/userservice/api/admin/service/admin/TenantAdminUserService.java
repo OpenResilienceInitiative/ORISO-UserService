@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestExceptio
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collections;
 import java.util.List;
@@ -102,8 +103,9 @@ public class TenantAdminUserService {
     this.deleteAdminService.deleteTenantAdmin(adminId);
   }
 
-  public Map<String, Object> findTenantAdminsByInfix(String infix, PageRequest pageRequest) {
-    Page<AdminBase> adminsPage = findScopedTenantAdminsByInfix(infix, pageRequest);
+  public Map<String, Object> findTenantAdminsByInfix(
+      String infix, SearchFilter filter, PageRequest pageRequest) {
+    Page<AdminBase> adminsPage = findScopedTenantAdminsByInfix(infix, filter, pageRequest);
     var adminIds = adminsPage.stream().map(AdminBase::getId).collect(Collectors.toSet());
     var fullAdmins = retrieveAdminService.findAllById(adminIds);
 
@@ -123,13 +125,18 @@ public class TenantAdminUserService {
         idsWithConsultantIdentity);
   }
 
-  private Page<AdminBase> findScopedTenantAdminsByInfix(String infix, PageRequest pageRequest) {
+  /** The Träger filter (#1263) only narrows: a Träger outside the caller's reach is empty. */
+  private Page<AdminBase> findScopedTenantAdminsByInfix(
+      String infix, SearchFilter filter, PageRequest pageRequest) {
     var reach = adminScope.current();
     if (reach instanceof AdminScope.Platform) {
-      return retrieveAdminService.findAllByInfix(infix, Admin.AdminType.TENANT, pageRequest);
+      return filter.tenantId() == null
+          ? retrieveAdminService.findAllByInfix(infix, Admin.AdminType.TENANT, pageRequest)
+          : retrieveAdminService.findAllByInfixScopedToTenant(
+              infix, Admin.AdminType.TENANT, filter.tenantId(), pageRequest);
     }
     // An agency admin's reach holds no Träger admin, though the route admits USER_ADMIN.
-    if (reach instanceof AdminScope.Agencies) {
+    if (reach instanceof AdminScope.Agencies || filter.isTenantOutside(reach.tenantId())) {
       return Page.empty(pageRequest);
     }
     return retrieveAdminService.findAllByInfixScopedToTenant(

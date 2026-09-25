@@ -274,8 +274,9 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
 
   public HalLink pageLinkOf(String query, int page, int perPage, String field, String order) {
     var httpEntity =
-        methodOn(UserController.class).searchConsultants(query, page, perPage, field, order);
+        methodOn(UserController.class)
+            .searchConsultants(query, page, perPage, field, order, null, null);
 
-    return halLinkOf(httpEntity, MethodEnum.GET);
+    return expandedHalLinkOf(httpEntity, MethodEnum.GET);
   }
 }

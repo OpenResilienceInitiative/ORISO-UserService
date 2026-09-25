@@ -57,6 +57,13 @@ public interface DtoMapperUtils {
     return new HalLink().href(link.getHref()).method(method).templated(link.isTemplated());
   }
 
+  /** Like {@link #halLinkOf}, but drops unset optional query parameters (e.g. search filters). */
+  default HalLink expandedHalLinkOf(HttpEntity<?> httpEntity, MethodEnum method) {
+    var link = linkTo(httpEntity).withSelfRel().expand();
+
+    return new HalLink().href(link.getHref()).method(method).templated(link.isTemplated());
+  }
+
   default String mappedFieldOf(String field) {
     switch (field) {
       case "FIRSTNAME":

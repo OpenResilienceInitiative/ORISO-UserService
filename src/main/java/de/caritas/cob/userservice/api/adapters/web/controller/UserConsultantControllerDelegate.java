@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.LogService;
@@ -84,7 +85,12 @@ class UserConsultantControllerDelegate {
   }
 
   ResponseEntity<ConsultantSearchResultDTO> searchConsultants(
-      String query, Integer page, Integer perPage, String field, String order) {
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      SearchFilter filter) {
     var decodedInfix = determineDecodedInfix(query).trim();
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = consultantDtoMapper.mappedFieldOf(field);
@@ -93,6 +99,7 @@ class UserConsultantControllerDelegate {
             decodedInfix,
             authenticatedUser.hasRestrictedAgencyPriviliges(),
             getAgenciesToFilterConsultants(),
+            filter,
             page - 1,
             perPage,
             mappedField,

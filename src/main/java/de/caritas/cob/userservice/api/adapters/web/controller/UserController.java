@@ -59,6 +59,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.IdentityManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
@@ -430,8 +431,15 @@ public class UserController implements UsersApi {
 
   @Override
   public ResponseEntity<ConsultantSearchResultDTO> searchConsultants(
-      String query, Integer page, Integer perPage, String field, String order) {
-    return userConsultantControllerDelegate.searchConsultants(query, page, perPage, field, order);
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      Long tenantId,
+      List<Long> agencyId) {
+    return userConsultantControllerDelegate.searchConsultants(
+        query, page, perPage, field, order, new SearchFilter(tenantId, agencyId));
   }
 
   /**

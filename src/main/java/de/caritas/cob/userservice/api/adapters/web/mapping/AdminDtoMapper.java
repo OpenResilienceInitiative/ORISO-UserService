@@ -96,9 +96,10 @@ public class AdminDtoMapper implements DtoMapperUtils {
 
   private HalLink pageLinkOf(String query, int page, int perPage, String field, String order) {
     var httpEntity =
-        methodOn(UserAdminController.class).searchAgencyAdmins(query, page, perPage, field, order);
+        methodOn(UserAdminController.class)
+            .searchAgencyAdmins(query, page, perPage, field, order, null, null);
 
-    return halLinkOf(httpEntity, MethodEnum.GET);
+    return expandedHalLinkOf(httpEntity, MethodEnum.GET);
   }
 
   public HalLink adminLinkOf(String id, MethodEnum method) {
