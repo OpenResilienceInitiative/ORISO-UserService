@@ -487,7 +487,7 @@ public class AccountInviteController {
     /** AGENCY_ADMIN invites only; omitted = true. Set for any other role → 400. */
     public Boolean alsoCounsellor;
 
-    /** Object, not enum: the CSV import sends true/false. Omitted = the agency's default. */
+    /** Object, not enum: the CSV import sends true/false. Omitted = SELECT_EXISTING. */
     public Object topicPermission;
   }
 

@@ -38,10 +38,11 @@ public class AccountInviteTopicPermissionService {
     if (inviteId == null) {
       throw new BadRequestException("inviteId is required");
     }
-    AccountInvite invite =
-        accountInviteRepository
-            .findById(inviteId)
-            .orElseThrow(() -> new NotFoundException("Account invite not found"));
+    AccountInvite invite = accountInviteRepository.findById(inviteId).orElse(null);
+    if (invite == null) {
+      accessPolicy.authorizeMissing(inviteId);
+      throw new NotFoundException("Account invite not found");
+    }
     accessPolicy.authorizeAccess(invite);
     if (permission == null) {
       throw new BadRequestException("topicPermission is required");

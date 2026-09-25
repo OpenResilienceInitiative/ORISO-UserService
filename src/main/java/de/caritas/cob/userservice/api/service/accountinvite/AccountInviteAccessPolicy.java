@@ -8,9 +8,8 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.util.EnumSet;
-import java.util.Optional;
+import java.util.List;
 import java.util.Set;
-import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,16 +49,14 @@ public class AccountInviteAccessPolicy {
   }
 
   /** Returns the command, stamped with the caller's tenant if it named none. */
-  public CreateAccountInviteCommand authorizeCreate(
-      CreateAccountInviteCommand command, Supplier<Optional<AgencyFacts.Agency>> agency) {
+  public CreateAccountInviteCommand authorizeCreate(CreateAccountInviteCommand command) {
     if (command == null || command.targetRole() == null) {
       // Missing fields are answered as 400 by the service's own validation.
       return command;
     }
     return switch (adminScope.current()) {
       case AdminScope.Platform platform -> command;
-      case AdminScope.Tenant tenant ->
-          authorizeTenantAdminCreate(command, tenant.tenantId(), agency);
+      case AdminScope.Tenant tenant -> authorizeTenantAdminCreate(command, tenant.tenantId());
       case AdminScope.Agencies agencies -> authorizeAgencyAdminCreate(command, agencies);
     };
   }
@@ -82,6 +79,16 @@ public class AccountInviteAccessPolicy {
             || (requestedTargetRole != null
                 && requestedTargetRole != AccountInviteTargetRole.COUNSELLOR);
     return new InviteListScope(tenantId, AccountInviteTargetRole.COUNSELLOR, agencies.ids(), empty);
+  }
+
+  /**
+   * A scoped admin gets 403 for a missing invite as for a foreign one, so the status never tells
+   * that a foreign invite exists; the platform sees every invite and keeps 404.
+   */
+  public void authorizeMissing(Long inviteId) {
+    if (!(adminScope.current() instanceof AdminScope.Platform)) {
+      throw deny("act on invite " + inviteId);
+    }
   }
 
   /** Covers every action on an existing invite: send, resend, revoke, waive 2FA. */
@@ -145,9 +152,7 @@ public class AccountInviteAccessPolicy {
   }
 
   private CreateAccountInviteCommand authorizeTenantAdminCreate(
-      CreateAccountInviteCommand command,
-      Long callerTenantId,
-      Supplier<Optional<AgencyFacts.Agency>> agency) {
+      CreateAccountInviteCommand command, Long callerTenantId) {
     if (!invitableByTenantReach().contains(command.targetRole())) {
       throw deny("invite a " + command.targetRole());
     }
@@ -158,10 +163,9 @@ public class AccountInviteAccessPolicy {
     }
     assertTenantIsOwn(command.tenantId(), callerTenantId);
     if (command.agencyId() != null
-        && !IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
-        && !agency.get().map(found -> callerTenantId.equals(found.tenantId())).orElse(false)) {
+        && !IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
       // The accepted invite would attach the new account to that agency.
-      throw deny("invite into agency " + command.agencyId());
+      adminScope.assertMay(Target.agencies(List.of(command.agencyId())));
     }
     return withCallerTenant(command, callerTenantId);
   }

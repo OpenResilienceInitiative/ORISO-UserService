@@ -71,7 +71,7 @@ public class InviteRoleChange {
     AccountInviteTargetRole to = command.targetRole();
     Supplier<Optional<AgencyFacts.Agency>> agency = oneLookupOf(invite);
     CreateAccountInviteCommand asNewInvite = asNewInvite(invite, command);
-    accessPolicy.authorizeCreate(asNewInvite, agency);
+    accessPolicy.authorizeCreate(asNewInvite);
     if (from == to) {
       return keepRole(invite, command.alsoCounsellor(), now);
     }

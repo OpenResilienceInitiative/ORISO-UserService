@@ -2,16 +2,17 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
-import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
@@ -23,7 +24,10 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispa
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.UUID;
 import org.junit.jupiter.api.AfterEach;
@@ -91,6 +95,8 @@ class AccountInviteRoleRuleIT {
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
+
+  private final Map<Long, AgencyDTO> knownAgencies = new HashMap<>();
 
   @BeforeEach
   void givenTenantsAndAgencies() {
@@ -268,11 +274,15 @@ class AccountInviteRoleRuleIT {
   }
 
   private void givenAgency(long agencyId, long tenantId, long topicId) {
+    knownAgencies.put(agencyId, new AgencyDTO().id(agencyId).tenantId(tenantId));
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            call ->
+                ((List<?>) call.getArgument(0))
+                    .stream().map(knownAgencies::get).filter(Objects::nonNull).toList());
     when(agencyFacts.find(agencyId))
         .thenReturn(
-            Optional.of(
-                new AgencyFacts.Agency(
-                    agencyId, tenantId, false, List.of(topicId), TopicPermission.CREATE)));
+            Optional.of(new AgencyFacts.Agency(agencyId, tenantId, false, List.of(topicId))));
   }
 
   private static CreateAccountInviteCommand tenantAdmin(Long tenantId) {

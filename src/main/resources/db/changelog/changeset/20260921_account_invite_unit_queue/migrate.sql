@@ -1,6 +1,6 @@
--- ORISO-Admin#1026 slice 5: invites into a not-yet-created Beratungsstelle / Träger wait (status
--- WAITING_FOR_UNIT, fits the existing VARCHAR(32) status column) and are sent when the unit's
--- first admin finishes onboarding. The expiry clock starts at that send.
+-- Invites into a not-yet-created Beratungsstelle / Träger wait (status WAITING_FOR_UNIT, fits the
+-- existing VARCHAR(32) status column) and are sent when the unit's first admin finishes
+-- onboarding. The expiry clock starts at that send.
 ALTER TABLE account_invite
   ADD COLUMN IF NOT EXISTS waiting_for_unit VARCHAR(16) NULL,
   ADD COLUMN IF NOT EXISTS queued_template_id BIGINT NULL,

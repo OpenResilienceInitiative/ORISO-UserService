@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -18,6 +19,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
@@ -41,6 +43,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdA
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
@@ -97,6 +100,7 @@ class AccountInviteRoleChangeIT {
   @MockitoBean private TenantService tenantService;
   @MockitoBean private KeycloakService keycloakService;
   @MockitoBean private AgencyFacts agencyFacts;
+  @MockitoBean private AgencyService agencyService;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
 
@@ -115,6 +119,14 @@ class AccountInviteRoleChangeIT {
     when(keycloakService.findByEmail(anyString())).thenReturn(Optional.empty());
     when(agencyFacts.find(AGENCY)).thenReturn(Optional.of(agency(AGENCY, OWN_TENANT)));
     when(agencyFacts.find(OTHER_AGENCY)).thenReturn(Optional.of(agency(OTHER_AGENCY, OWN_TENANT)));
+    // AdminScope checks a Träger admin's agencies in one batch.
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            call ->
+                ((List<?>) call.getArgument(0))
+                    .stream()
+                        .map(id -> new AgencyDTO().id((Long) id).tenantId(OWN_TENANT))
+                        .toList());
     when(agencyIdAllocationClient.getAvailability(AGENCY)).thenReturn(IdAllocationStatus.ASSIGNED);
     when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
         .thenReturn(IdAllocationStatus.RESERVED);
@@ -433,7 +445,7 @@ class AccountInviteRoleChangeIT {
   }
 
   private static AgencyFacts.Agency agency(long id, long tenantId) {
-    return new AgencyFacts.Agency(id, tenantId, false, List.of(TOPIC), TopicPermission.CREATE);
+    return new AgencyFacts.Agency(id, tenantId, false, List.of(TOPIC));
   }
 
   private static AccountInvite counsellorInvite(long tenantId, long agencyId) {

@@ -85,7 +85,7 @@ public class InviteTargetResolver {
       CreateAccountInviteCommand command, AgencyFacts.Agency existing) {
     List<Long> topicIds = existing.topicIds();
     Long departmentId = command.departmentId();
-    if (departmentId != null && !topicIds.isEmpty() && !topicIds.contains(departmentId)) {
+    if (departmentId != null && !topicIds.contains(departmentId)) {
       throw new BadRequestException(
           "departmentId " + departmentId + " is not a topic of agency " + command.agencyId());
     }

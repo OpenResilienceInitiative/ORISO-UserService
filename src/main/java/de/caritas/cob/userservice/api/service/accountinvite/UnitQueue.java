@@ -89,10 +89,11 @@ public class UnitQueue {
   }
 
   /**
-   * Sends each invite waiting for the now existing unit with its queued template, or leaves a
-   * DRAFT. One failure does not hold up the others. Returns the IDs this call released.
+   * Sends each invite of {@code tenantId} waiting for the now existing unit with its queued
+   * template, or leaves a DRAFT. One failure does not hold up the others. Returns the IDs this call
+   * released.
    */
-  public List<Long> release(InviteUnitType unitType, Long unitId) {
+  public List<Long> release(InviteUnitType unitType, Long unitId, Long tenantId) {
     if (unitType == null || unitId == null) {
       return List.of();
     }
@@ -102,7 +103,7 @@ public class UnitQueue {
                 transaction ->
                     unitType == InviteUnitType.AGENCY
                         ? accountInviteRepository.findIdsWaitingForAgency(
-                            AccountInviteStatus.WAITING_FOR_UNIT, unitId)
+                            AccountInviteStatus.WAITING_FOR_UNIT, unitId, tenantId)
                         : accountInviteRepository.findIdsWaitingForTenant(
                             AccountInviteStatus.WAITING_FOR_UNIT, unitId));
     List<Long> released = new ArrayList<>();

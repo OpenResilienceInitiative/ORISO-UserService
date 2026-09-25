@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.tenant;
 import de.caritas.cob.userservice.api.model.TenantAware;
 import de.caritas.cob.userservice.api.model.TenantFilter;
 import jakarta.persistence.EntityNotFoundException;
-import java.util.Objects;
 import org.hibernate.Hibernate;
 import org.hibernate.ObjectNotFoundException;
 import org.hibernate.annotations.Filter;
@@ -11,26 +10,38 @@ import org.hibernate.event.spi.LoadEvent;
 import org.hibernate.event.spi.LoadEventListener;
 
 /**
- * Hibernate filters skip loads by primary key, so a row of another tenant is hidden here. Rows
- * without a tenant stay loadable; associations are reached through an already checked root.
+ * Hibernate filters skip loads by primary key, so a row the entity's filter condition hides is
+ * hidden here too, rows without a tenant included. Associations are reached through a checked root.
  */
 public class TenantScopedLoadByIdListener implements LoadEventListener {
 
-  private static final ClassValue<Boolean> TENANT_FILTERED =
+  /** Which condition of {@link TenantFilter} an entity declares, if any. */
+  private enum Boundary {
+    NONE,
+    STRICT,
+    LEGACY_ROWS_OF_TENANT_ONE
+  }
+
+  private static final Long LEGACY_TENANT = 1L;
+
+  private static final ClassValue<Boundary> BOUNDARY =
       new ClassValue<>() {
         @Override
-        protected Boolean computeValue(Class<?> type) {
+        protected Boundary computeValue(Class<?> type) {
           if (!TenantAware.class.isAssignableFrom(type)) {
-            return false;
+            return Boundary.NONE;
           }
           for (var current = type; current != null; current = current.getSuperclass()) {
             for (Filter filter : current.getAnnotationsByType(Filter.class)) {
               if (TenantFilter.NAME.equals(filter.name())) {
-                return true;
+                return TenantFilter.CONDITION_WITH_LEGACY_ROWS_OF_TENANT_ONE.equals(
+                        filter.condition())
+                    ? Boundary.LEGACY_ROWS_OF_TENANT_ONE
+                    : Boundary.STRICT;
               }
             }
           }
-          return false;
+          return Boundary.NONE;
         }
       };
 
@@ -42,7 +53,8 @@ public class TenantScopedLoadByIdListener implements LoadEventListener {
       return;
     }
     var entity = event.getResult();
-    if (!TENANT_FILTERED.get(Hibernate.getClass(entity))) {
+    var boundary = BOUNDARY.get(Hibernate.getClass(entity));
+    if (boundary == Boundary.NONE) {
       return;
     }
     var currentTenant = currentTenantOf(event);
@@ -50,13 +62,14 @@ public class TenantScopedLoadByIdListener implements LoadEventListener {
       return;
     }
     Long rowTenant;
+    // Side effect: a getReference() proxy is initialised here, one select earlier than without it.
     try {
       rowTenant = ((TenantAware) Hibernate.unproxy(entity)).getTenantId();
     } catch (ObjectNotFoundException | EntityNotFoundException missing) {
       // Left to Hibernate: a reference to a missing row fails on first use.
       return;
     }
-    if (rowTenant == null || Objects.equals(rowTenant, currentTenant)) {
+    if (isVisible(boundary, rowTenant, currentTenant)) {
       return;
     }
     if (findById) {
@@ -65,6 +78,14 @@ public class TenantScopedLoadByIdListener implements LoadEventListener {
       throw new EntityNotFoundException(
           "No " + event.getEntityClassName() + " with id " + event.getEntityId());
     }
+  }
+
+  /** Mirrors the SQL condition of the entity's filter, so a list and a load agree. */
+  private static boolean isVisible(Boundary boundary, Long rowTenant, Long currentTenant) {
+    if (rowTenant == null) {
+      return boundary == Boundary.LEGACY_ROWS_OF_TENANT_ONE && LEGACY_TENANT.equals(currentTenant);
+    }
+    return rowTenant.equals(currentTenant);
   }
 
   /** The argument the tenant filter uses in this session right now, {@code null} if it is off. */

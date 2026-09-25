@@ -23,7 +23,6 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
-import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -327,9 +326,6 @@ class AdminSelfAssignmentIT {
 
   private void givenAgency(long agencyId, long tenantId, List<Long> topicIds) {
     when(agencyFacts.find(agencyId))
-        .thenReturn(
-            Optional.of(
-                new AgencyFacts.Agency(
-                    agencyId, tenantId, false, topicIds, TopicPermission.CREATE)));
+        .thenReturn(Optional.of(new AgencyFacts.Agency(agencyId, tenantId, false, topicIds)));
   }
 }
