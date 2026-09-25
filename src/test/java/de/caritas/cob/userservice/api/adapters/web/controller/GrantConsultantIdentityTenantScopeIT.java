@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -17,11 +18,13 @@ import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControlle
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -44,6 +47,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
 import java.util.Arrays;
@@ -103,6 +107,7 @@ class GrantConsultantIdentityTenantScopeIT {
   @Autowired private AdminRepository adminRepository;
   @Autowired private AdminAgencyRepository adminAgencyRepository;
   @Autowired private ConsultantRepository consultantRepository;
+  @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
 
@@ -130,6 +135,7 @@ class GrantConsultantIdentityTenantScopeIT {
   @MockitoBean SessionTopicEnrichmentService sessionTopicEnrichmentService;
   @MockitoBean MatrixSynapseService matrixUserClient;
   @MockitoBean AgencyService agencyService;
+  @MockitoBean ConsultingTypeManager consultingTypeManager;
   @MockitoBean ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
 
   @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
@@ -152,6 +158,8 @@ class GrantConsultantIdentityTenantScopeIT {
         .thenReturn("@synthetic:matrix.test");
     when(chatRecoveryEnrollmentPolicyService.forNewConsultant(any()))
         .thenReturn(new RecoveryPolicySnapshot("RECOVERY_KEY", 1L));
+    when(consultingTypeManager.getConsultingTypeSettings(anyInt()))
+        .thenReturn(new ExtendedConsultingTypeResponseDTO());
     givenAgency(OWN_AGENCY, OWN_TENANT);
     givenAgency(OTHER_AGENCY_OF_OWN_TENANT, OWN_TENANT);
     givenAgency(FOREIGN_TENANT_AGENCY, FOREIGN_TENANT);
@@ -209,6 +217,16 @@ class GrantConsultantIdentityTenantScopeIT {
     assertThat(consultantOf(ownTenantAdmin.getId())).isPresent();
   }
 
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void grant_Should_Succeed_When_TenantAdminAssignsAnAgencyOfOwnTenant() throws Exception {
+    actAsTenantAdmin();
+
+    grant(ownTenantAdmin, List.of(OWN_AGENCY)).andExpect(status().isOk());
+
+    assertThat(agenciesOfConsultant(ownTenantAdmin)).containsOnly(OWN_AGENCY);
+  }
+
   // --- Beratungsstellen admin (restricted agency admin of agency OWN_AGENCY) -------------------
 
   @Test
@@ -251,6 +269,16 @@ class GrantConsultantIdentityTenantScopeIT {
     assertThat(consultantOf(ownAgencyAdmin.getId())).isPresent();
   }
 
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void grant_Should_Succeed_When_AgencyAdminAssignsOwnAgency() throws Exception {
+    actAsAgencyAdmin();
+
+    grant(ownAgencyAdmin, List.of(OWN_AGENCY)).andExpect(status().isOk());
+
+    assertThat(agenciesOfConsultant(ownAgencyAdmin)).containsOnly(OWN_AGENCY);
+  }
+
   // --- Platform admin (tenant 0) ---------------------------------------------------------------
 
   @Test
@@ -263,6 +291,16 @@ class GrantConsultantIdentityTenantScopeIT {
     assertThat(consultantOf(foreignTenantAdmin.getId())).isPresent();
   }
 
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void grant_Should_Succeed_When_PlatformAdminAssignsAnAgencyOfAnyTenant() throws Exception {
+    actAsPlatformAdmin();
+
+    grant(foreignTenantAdmin, List.of(FOREIGN_TENANT_AGENCY)).andExpect(status().isOk());
+
+    assertThat(agenciesOfConsultant(foreignTenantAdmin)).containsOnly(FOREIGN_TENANT_AGENCY);
+  }
+
   private void assertNoConsultantIdentityGranted(Admin target) {
     verify((IdentityRoleUpdater) identityClient, never()).ensureRoles(any(), any());
     assertThat(consultantOf(target.getId())).isEmpty();
@@ -273,6 +311,13 @@ class GrantConsultantIdentityTenantScopeIT {
       String id) {
     TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
     return consultantRepository.findByIdAndDeleteDateIsNull(id);
+  }
+
+  private Set<Long> agenciesOfConsultant(Admin target) {
+    TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
+    return consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(target.getId()).stream()
+        .map(de.caritas.cob.userservice.api.model.ConsultantAgency::getAgencyId)
+        .collect(Collectors.toSet());
   }
 
   private ResultActions grant(Admin target, List<Long> agencyIds) throws Exception {
