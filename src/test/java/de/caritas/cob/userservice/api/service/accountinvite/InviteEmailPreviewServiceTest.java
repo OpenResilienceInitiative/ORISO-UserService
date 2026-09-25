@@ -12,14 +12,13 @@ import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService.InviteEmailPreview;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService.PreviewCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteFrameMailRendererFixture;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailTransport;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
-import de.caritas.cob.userservice.api.service.email.layout.BrandedEmailLayoutRenderer;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
-import de.caritas.cob.userservice.api.service.email.layout.EmailContentSanitizer;
 import java.time.Instant;
 import java.util.Map;
 import java.util.Optional;
@@ -56,15 +55,13 @@ class InviteEmailPreviewServiceTest {
   @BeforeEach
   void setUp() {
     acceptUrlBuilder =
-        new InviteAcceptUrlBuilder(
-            "https://app.oriso.org", "https://admin.oriso.org", "https://app.oriso.org");
+        new InviteAcceptUrlBuilder("https://app.example.org", "https://admin.example.org");
     dispatchService =
         new InviteMailDispatchService(
             restTemplate,
             applicationSettingsService,
             inviteMailTransport,
-            emailBrandingResolver,
-            new BrandedEmailLayoutRenderer(new EmailContentSanitizer()),
+            InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver),
             "http://consultingtypeservice:8080/service",
             "smtp-user",
             "smtp-pass");
@@ -123,12 +120,12 @@ class InviteEmailPreviewServiceTest {
 
     assertThat(tenantPreview.sampleAcceptUrl())
         .isEqualTo(
-            "https://admin.oriso.org/admin/tenant-onboarding/"
+            "https://admin.example.org/admin/tenant-onboarding/"
                 + InviteEmailPreviewService.SAMPLE_TOKEN);
     // #997: counsellor invites land on the PUBLIC ADMIN wizard, not the app acceptance page.
     assertThat(counsellorPreview.sampleAcceptUrl())
         .isEqualTo(
-            "https://admin.oriso.org/admin/counsellor-onboarding/"
+            "https://admin.example.org/admin/counsellor-onboarding/"
                 + InviteEmailPreviewService.SAMPLE_TOKEN);
   }
 
