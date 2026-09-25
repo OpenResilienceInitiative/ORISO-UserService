@@ -47,6 +47,21 @@ class ConsultantTopicAgencyCompatibilityValidatorTest {
   }
 
   @Test
+  void validateGrantTopicsAgainstSelectedAgencies_ReturnsTopicsPerSelectedCentre() {
+    when(agencyService.getAgenciesWithoutCaching(List.of(10L, 20L)))
+        .thenReturn(
+            List.of(
+                agency(10L, 1L, false, List.of(3L, 7L)), agency(20L, 1L, false, List.of(7L, 9L))));
+
+    var topicsByAgency =
+        validator.validateGrantTopicsAgainstSelectedAgencies(
+            List.of(3L, 7L), List.of(10L, 20L), 1L);
+
+    org.assertj.core.api.Assertions.assertThat(topicsByAgency)
+        .isEqualTo(java.util.Map.of(10L, java.util.Set.of(3L, 7L), 20L, java.util.Set.of(7L)));
+  }
+
+  @Test
   void validateGrantTopicsAgainstSelectedAgencies_AllowsTopicsCoveredByOfflineAgency() {
     when(agencyService.getAgenciesWithoutCaching(List.of(10L, 20L)))
         .thenReturn(

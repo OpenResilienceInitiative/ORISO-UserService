@@ -33,9 +33,14 @@ public class ConsultantTopicAgencyCompatibilityValidator {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull ConsultantTopicRepository consultantTopicRepository;
 
-  public void validateGrantTopicsAgainstSelectedAgencies(
+  /**
+   * @return the topics per selected centre (#1264): each topic is stored for every selected centre
+   *     that offers it
+   */
+  public Map<Long, Set<Long>> validateGrantTopicsAgainstSelectedAgencies(
       Collection<Long> topicIds, Collection<Long> agencyIds, Long tenantId) {
-    validateTopicsCoveredByAgencies(topicIds, agencyIds, tenantId);
+    var agencies = validateTopicsCoveredByAgencies(topicIds, agencyIds, tenantId);
+    return distributeOverOfferingAgencies(topicIds, agencies);
   }
 
   public void validateTopicUpdateAgainstAssignedAgencies(
@@ -65,6 +70,11 @@ public class ConsultantTopicAgencyCompatibilityValidator {
     if (topicIds == null) {
       return null;
     }
+    return distributeOverOfferingAgencies(topicIds, agencies);
+  }
+
+  private Map<Long, Set<Long>> distributeOverOfferingAgencies(
+      Collection<Long> topicIds, List<AgencyDTO> agencies) {
     var selectedTopicIds = Set.copyOf(normalizedIds(topicIds));
     Map<Long, Set<Long>> target = new TreeMap<>();
     agencies.forEach(

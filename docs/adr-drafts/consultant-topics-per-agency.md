@@ -50,7 +50,18 @@ The consultant self-service profile edit (`PUT /users/data`) built an `UpdateAdm
 whose `topicIds` defaulted to `[]`, which the update read as "remove every topic". A counsellor
 saving their own profile lost all admin-assigned topics. Fixed here: self-service sends `null`.
 
-## Out of scope (later slices)
+## Write paths
 
-Admin form (C2b), create/invite/onboarding write paths (still write `agency_id = NULL`),
-pruning topic rows when a centre is removed from the consultant, routing per centre.
+- Admin create (`CreateConsultantSaga`) and grant-identity (`GrantConsultantIdentityService`): with
+  `agencyIds` each topic is stored for every selected centre that offers it; without `agencyIds`
+  the flow has no centre, so rows stay legacy (`agency_id = NULL`).
+- Invite accept and onboarding wizard (`CounsellorInviteProvisioningService`, shared by both): the
+  invite is about exactly one centre, so the new rows are pinned to `invite.agencyId` right after
+  the centre relation is created.
+- CSV import (`createNewConsultant(ImportRecord, ...)`): no centre context, rows stay legacy.
+- Removing a centre (`PUT .../agencies` and `DELETE .../agencies/{id}`, both via
+  `ConsultantAgencyAdminService.markAsDeleted`) deletes that centre's rows; legacy rows stay.
+
+## Out of scope
+
+Admin form (C2b), routing per centre (product question).

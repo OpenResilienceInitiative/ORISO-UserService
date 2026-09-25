@@ -101,12 +101,14 @@ public class CreateConsultantSaga {
     setCurrentTenant(createConsultantDTO);
     validateTenantId(createConsultantDTO);
     ensureTenantIdResolved(createConsultantDTO);
+    java.util.Map<Long, java.util.Set<Long>> topicIdsByAgencyId = null;
     if (createConsultantDTO.getAgencyIds() != null
         && !createConsultantDTO.getAgencyIds().isEmpty()) {
-      consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
-          createConsultantDTO.getTopicIds(),
-          createConsultantDTO.getAgencyIds(),
-          createConsultantDTO.getTenantId());
+      topicIdsByAgencyId =
+          consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+              createConsultantDTO.getTopicIds(),
+              createConsultantDTO.getAgencyIds(),
+              createConsultantDTO.getTenantId());
     }
 
     assertLicensesNotExceeded(createConsultantDTO);
@@ -115,7 +117,8 @@ public class CreateConsultantSaga {
         new CreateConsultantDTOAbsenceInputAdapter(createConsultantDTO));
 
     ConsultantCreationInput consultantCreationInput =
-        new CreateConsultantDTOCreationInputAdapter(createConsultantDTO);
+        new CreateConsultantDTOCreationInputAdapter(createConsultantDTO)
+            .withTopicIdsByAgencyId(topicIdsByAgencyId);
 
     var roles = asSet(CONSULTANT.getValue());
     addGroupChatConsultantRole(createConsultantDTO, roles);
@@ -496,7 +499,8 @@ public class CreateConsultantSaga {
             .notificationsSettings(serializeToJsonString(allActiveNotifications()))
             .build();
 
-    consultant.replaceTopics(consultantCreationInput.getTopicIds());
+    consultant.assignInitialTopics(
+        consultantCreationInput.getTopicIds(), consultantCreationInput.getTopicIdsByAgencyId());
     // Normalised in one shared place so a half avatar choice can never be persisted.
     ConsultantAvatars.apply(
         consultant,

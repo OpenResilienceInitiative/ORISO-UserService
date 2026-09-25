@@ -10,11 +10,15 @@ import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAgencyTopicsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTopicDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
+import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -62,6 +66,8 @@ class ConsultantTopicsPerAgencyIT {
   @Autowired private ConsultantTopicRepository consultantTopicRepository;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private JdbcTemplate jdbcTemplate;
+  @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
+  @Autowired private ConsultantAdminFacade consultantAdminFacade;
 
   @MockitoBean private AgencyService agencyService;
   @MockitoBean private TopicService topicService;
@@ -188,6 +194,48 @@ class ConsultantTopicsPerAgencyIT {
 
     assertThat(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID))
         .containsExactly(TOPIC_A_ONLY);
+  }
+
+  @Test
+  void removingACentre_deletesThatCentresTopics_andKeepsLegacyRows() {
+    update(
+        dto()
+            .topicsByAgency(
+                List.of(centre(CENTRE_A, TOPIC_BOTH, TOPIC_A_ONLY), centre(CENTRE_B, TOPIC_BOTH))));
+    insertLegacyRow(TOPIC_A_ONLY);
+    var remaining =
+        consultantAgencyRepository.findByConsultantIdAndDeleteDateIsNull(CONSULTANT_ID).stream()
+            .map(ConsultantAgency::getAgencyId)
+            .filter(agencyId -> agencyId != CENTRE_B)
+            .map(agencyId -> new CreateConsultantAgencyDTO().agencyId(agencyId))
+            .toList();
+
+    consultantAdminFacade.setConsultantAgencies(CONSULTANT_ID, remaining);
+
+    var embedded = consultantAdminService.findConsultantById(CONSULTANT_ID).getEmbedded();
+    assertThat(embedded.getTopicsByAgency())
+        .containsExactly(
+            new ConsultantAgencyTopicsDTO().topicIds(List.of(TOPIC_A_ONLY)),
+            centre(CENTRE_A, TOPIC_BOTH, TOPIC_A_ONLY));
+  }
+
+  @Test
+  void unscopedTopics_canBePinnedToTheCentreAFlowIsAbout() {
+    insertLegacyRow(TOPIC_BOTH);
+
+    consultantTopicRepository.assignUnscopedTopicsToAgency(CONSULTANT_ID, CENTRE_B);
+
+    var embedded = consultantAdminService.findConsultantById(CONSULTANT_ID).getEmbedded();
+    assertThat(embedded.getTopicsByAgency()).containsExactly(centre(CENTRE_B, TOPIC_BOTH));
+  }
+
+  private void insertLegacyRow(long topicId) {
+    jdbcTemplate.update(
+        "INSERT INTO consultant_topic (id, consultant_id, topic_id, create_date, update_date)"
+            + " VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+        990000 + topicId,
+        CONSULTANT_ID,
+        topicId);
   }
 
   private void update(UpdateAdminConsultantDTO request) {

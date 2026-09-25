@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.session.ConsultantLeftAgencyEvent;
@@ -48,6 +49,7 @@ public class ConsultantAgencyAdminService {
   private final @NonNull AgencyAdminService agencyAdminService;
   private final @NonNull ConsultantAgencyDeletionValidationService agencyDeletionValidationService;
   private final @NonNull ApplicationEventPublisher eventPublisher;
+  private final @NonNull ConsultantTopicRepository consultantTopicRepository;
 
   /**
    * Returns all Agencies for the given consultantId.
@@ -263,7 +265,16 @@ public class ConsultantAgencyAdminService {
     this.agencyDeletionValidationService.validateAndMarkForDeletion(consultantAgency);
     consultantAgency.setDeleteDate(nowInUtc());
     this.consultantAgencyRepository.save(consultantAgency);
+    deleteTopicsOfRemovedCentre(consultantAgency);
     announceDetachedAgency(consultantAgency);
+  }
+
+  /** #1264: topics offered at a centre go with it; rows without a centre (legacy) stay. */
+  private void deleteTopicsOfRemovedCentre(ConsultantAgency consultantAgency) {
+    if (consultantAgency.getConsultant() != null) {
+      consultantTopicRepository.deleteByConsultantIdAndAgencyId(
+          consultantAgency.getConsultant().getId(), consultantAgency.getAgencyId());
+    }
   }
 
   /**

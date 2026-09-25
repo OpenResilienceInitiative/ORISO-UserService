@@ -493,6 +493,20 @@ public class Consultant implements TenantAware, NotificationsAware {
     this.consultantTopics.addAll(target);
   }
 
+  /**
+   * Create paths (#1264): stores the topics per centre when the flow selected centres, otherwise
+   * keeps the legacy rows without a centre.
+   */
+  @JsonIgnore
+  public void assignInitialTopics(
+      Collection<Long> topicIds, Map<Long, ? extends Collection<Long>> topicIdsByAgencyId) {
+    if (topicIdsByAgencyId != null && !topicIdsByAgencyId.isEmpty()) {
+      replaceTopicsPerAgency(topicIdsByAgencyId);
+    } else {
+      replaceTopics(topicIds);
+    }
+  }
+
   @JsonIgnore
   public boolean isInAgency(long agencyId) {
     if (isNull(consultantAgencies)) {
