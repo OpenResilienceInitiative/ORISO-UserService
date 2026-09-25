@@ -7,10 +7,12 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.AdminAgency;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import java.util.List;
+import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -50,25 +52,54 @@ public class CounsellorAgencyAdminGrantService {
    */
   public void grantAgencyAdmin(String userId, Long agencyId, AccountInvite invite) {
     AGENCY_ADMIN_ROLES.forEach(role -> identityClient.updateRole(userId, role));
+    bindAdmin(
+        userId,
+        agencyId,
+        () ->
+            Admin.builder()
+                .id(userId)
+                .type(Admin.AdminType.AGENCY)
+                .tenantId(invite.getTenantId())
+                .username(invite.getRecipientEmail())
+                .firstName(invite.getFirstName())
+                .lastName(invite.getLastName())
+                .email(invite.getRecipientEmail())
+                .createDate(nowInUtc())
+                .updateDate(nowInUtc())
+                .build());
+    log.info(
+        "Granted agency admin rights for agency {} to the invitee of invite {}",
+        agencyId,
+        invite.getId());
+  }
 
-    Admin admin =
-        adminRepository
-            .findById(userId)
-            .orElseGet(
-                () ->
-                    Admin.builder()
-                        .id(userId)
-                        .type(Admin.AdminType.AGENCY)
-                        .tenantId(invite.getTenantId())
-                        .username(invite.getRecipientEmail())
-                        .firstName(invite.getFirstName())
-                        .lastName(invite.getLastName())
-                        .email(invite.getRecipientEmail())
-                        .createDate(nowInUtc())
-                        .updateDate(nowInUtc())
-                        .build());
-    Admin savedAdmin = adminRepository.save(admin);
+  /**
+   * The same grant for a counsellor whose account exists. Rows first, realm roles last: inside the
+   * caller's transaction a refused role rolls the rows back.
+   */
+  public void grantAgencyAdmin(Consultant consultant, Long agencyId) {
+    bindAdmin(
+        consultant.getId(),
+        agencyId,
+        () ->
+            Admin.builder()
+                .id(consultant.getId())
+                .type(Admin.AdminType.AGENCY)
+                .tenantId(consultant.getTenantId())
+                .username(consultant.getUsername())
+                .firstName(consultant.getFirstName())
+                .lastName(consultant.getLastName())
+                .email(consultant.getEmail())
+                .createDate(nowInUtc())
+                .updateDate(nowInUtc())
+                .build());
+    // Flushes both rows, so a constraint failure stops us before Keycloak changes.
+    adminRepository.flush();
+    AGENCY_ADMIN_ROLES.forEach(role -> identityClient.updateRole(consultant.getId(), role));
+  }
 
+  private void bindAdmin(String userId, Long agencyId, Supplier<Admin> newAdmin) {
+    Admin savedAdmin = adminRepository.save(adminRepository.findById(userId).orElseGet(newAdmin));
     adminAgencyRepository.save(
         AdminAgency.builder()
             .admin(savedAdmin)
@@ -76,9 +107,5 @@ public class CounsellorAgencyAdminGrantService {
             .createDate(nowInUtc())
             .updateDate(nowInUtc())
             .build());
-    log.info(
-        "Granted agency admin rights for agency {} to the invitee of invite {}",
-        agencyId,
-        invite.getId());
   }
 }

@@ -37,11 +37,9 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-AgencyService
-        # AgencyService dev HEAD: the merge of ORISO-AgencyService#295, which added
-        # AgencyDTO.reservedAgencyId on top of #294's effective group-chat settings (the pin
-        # dev last moved here in afa1ca0a). Both halves this branch's consumer specs need are
-        # now on dev, so this is an ordinary repin, not a companion-PR pin.
-        ref: ${{ github.event_name == 'pull_request' && '5aace67c8bb82b29770085b19000d21c1982a1b5' || 'pre-dev' }}
+        # AgencyService dev HEAD. UserService no longer reads counsellorTopicPermission, so this
+        # branch needs no companion pin to ORISO-AgencyService#308.
+        ref: ${{ github.event_name == 'pull_request' && 'bbdc934477212020b8c43d8bf3cb28a30081156c' || 'pre-dev' }}
         path: .providers/agency
         persist-credentials: false
 

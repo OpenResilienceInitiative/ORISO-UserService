@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -79,7 +80,7 @@ class AccountManagerTest {
 
     // when
     accountManager.findConsultantsByInfix(
-        "infix", false, Lists.newArrayList(), 1, 10, "email", true);
+        "infix", false, Lists.newArrayList(), SearchFilter.NONE, 1, 10, "email", true);
 
     // then
     Mockito.verify(consultantRepository)
@@ -102,7 +103,7 @@ class AccountManagerTest {
     assertDoesNotThrow(
         () ->
             accountManager.findConsultantsByInfix(
-                "infix", false, Lists.newArrayList(), 1, 10, "email", true));
+                "infix", false, Lists.newArrayList(), SearchFilter.NONE, 1, 10, "email", true));
 
     // then: the listing is still mapped, just without agency data
     Mockito.verify(userServiceMapper)
@@ -125,7 +126,7 @@ class AccountManagerTest {
 
     // when
     accountManager.findConsultantsByInfix(
-        "infix", false, Lists.newArrayList(), 1, 10, "email", true);
+        "infix", false, Lists.newArrayList(), SearchFilter.NONE, 1, 10, "email", true);
 
     // then: soft-deleted consultant-agency relations must not be resolved at all
     Mockito.verify(consultantAgencyRepository)
@@ -145,7 +146,7 @@ class AccountManagerTest {
 
     // when
     accountManager.findConsultantsByInfix(
-        "infix", true, Lists.newArrayList(1L), 1, 10, "email", true);
+        "infix", true, Lists.newArrayList(1L), SearchFilter.NONE, 1, 10, "email", true);
 
     // then
     Mockito.verify(consultantRepository)
@@ -366,7 +367,8 @@ class AccountManagerTest {
                 Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class)))
         .thenReturn(page);
 
-    accountManager.findConsultantsByInfix("test", false, List.of(), 0, 10, "id", true);
+    accountManager.findConsultantsByInfix(
+        "test", false, List.of(), SearchFilter.NONE, 0, 10, "id", true);
 
     Mockito.verify(consultantRepository)
         .findAllByInfix(Mockito.eq("test"), Mockito.eq(5L), Mockito.any(PageRequest.class));
@@ -406,7 +408,9 @@ class AccountManagerTest {
                 Mockito.any()))
         .thenReturn(Map.of("total", 1));
 
-    var result = accountManager.findConsultantsByInfix("test", false, List.of(), 0, 10, "id", true);
+    var result =
+        accountManager.findConsultantsByInfix(
+            "test", false, List.of(), SearchFilter.NONE, 0, 10, "id", true);
 
     assertThat(result).containsKey("total");
     Mockito.verify(tenantService).getRestrictedTenantData(5L);
@@ -442,7 +446,8 @@ class AccountManagerTest {
                 Mockito.any()))
         .thenReturn(Map.of("total", 1));
 
-    accountManager.findConsultantsByInfix("test", false, List.of(), 0, 10, "id", true);
+    accountManager.findConsultantsByInfix(
+        "test", false, List.of(), SearchFilter.NONE, 0, 10, "id", true);
 
     @SuppressWarnings("unchecked")
     var captor =
@@ -489,7 +494,8 @@ class AccountManagerTest {
                 Mockito.any()))
         .thenReturn(Map.of("total", 1));
 
-    accountManager.findConsultantsByInfix("test", false, List.of(), 0, 10, "id", true);
+    accountManager.findConsultantsByInfix(
+        "test", false, List.of(), SearchFilter.NONE, 0, 10, "id", true);
 
     @SuppressWarnings("unchecked")
     var captor =

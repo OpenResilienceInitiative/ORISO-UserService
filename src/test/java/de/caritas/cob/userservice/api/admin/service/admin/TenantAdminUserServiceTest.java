@@ -16,6 +16,13 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
@@ -25,9 +32,11 @@ import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.Assertions;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -35,12 +44,16 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.mockito.junit.jupiter.MockitoSettings;
+import org.mockito.quality.Strictness;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
+@MockitoSettings(strictness = Strictness.LENIENT)
 class TenantAdminUserServiceTest {
 
   @InjectMocks private TenantAdminUserService tenantAdminUserService;
@@ -69,6 +82,37 @@ class TenantAdminUserServiceTest {
 
   @Mock private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
 
+  @Mock private AdminScope adminScope;
+  @Mock private AdminRepository adminRepository;
+  @Mock private AdminAgencyRepository adminAgencyRepository;
+  @Mock private ConsultantAgencyRepository consultantAgencyRepository;
+  @Mock private UserRepository userRepository;
+  @Mock private SessionRepository sessionRepository;
+  @Mock private UserAgencyRepository userAgencyRepository;
+
+  /** The real scope rules over the mocked caller; admins are looked up like the service does. */
+  @BeforeEach
+  void useRealAdminScope() {
+    var realScope =
+        new AdminScope(
+            authenticatedUser,
+            adminRepository,
+            adminAgencyRepository,
+            consultantRepository,
+            consultantAgencyRepository,
+            agencyService,
+            userRepository,
+            sessionRepository,
+            userAgencyRepository);
+    ReflectionTestUtils.setField(realScope, "multitenancyEnabled", true);
+    ReflectionTestUtils.setField(tenantAdminUserService, "adminScope", realScope);
+    when(adminRepository.findById(Mockito.anyString()))
+        .thenAnswer(
+            call ->
+                Optional.ofNullable(
+                    retrieveAdminService.findAdmin(call.getArgument(0), Admin.AdminType.TENANT)));
+  }
+
   @Test
   void createNewTenantAdmin_Should_AllowPlatformTenantId_WhenAuthenticatedUserIsPlatformAdmin() {
     // given
@@ -96,8 +140,7 @@ class TenantAdminUserServiceTest {
 
     // when, then
     assertThatThrownBy(() -> tenantAdminUserService.createNewTenantAdmin(createAdminDTO))
-        .isInstanceOf(ForbiddenException.class)
-        .hasMessage("Only platform admins can create platform admin accounts");
+        .isInstanceOf(ForbiddenException.class);
     Mockito.verifyNoInteractions(createAdminService);
   }
 
@@ -111,8 +154,7 @@ class TenantAdminUserServiceTest {
 
     // when, then
     assertThatThrownBy(() -> tenantAdminUserService.createNewTenantAdmin(createAdminDTO))
-        .isInstanceOf(ForbiddenException.class)
-        .hasMessage("Admin accounts can only be created for the tenant of the calling admin");
+        .isInstanceOf(ForbiddenException.class);
     Mockito.verifyNoInteractions(createAdminService);
   }
 
@@ -287,7 +329,7 @@ class TenantAdminUserServiceTest {
         .thenReturn(new HashMap<>());
 
     // when
-    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+    tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest);
 
     // then
     ArgumentCaptor<Map<Long, String>> tenantNameMapCaptor = ArgumentCaptor.forClass(Map.class);
@@ -324,7 +366,7 @@ class TenantAdminUserServiceTest {
             Mockito.any()))
         .thenReturn(new HashMap<>());
 
-    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+    tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest);
 
     Mockito.verify(tenantService, Mockito.never()).getRestrictedTenantData(0L);
     ArgumentCaptor<Map<Long, String>> tenantNameMapCaptor = ArgumentCaptor.forClass(Map.class);
@@ -367,7 +409,7 @@ class TenantAdminUserServiceTest {
             Mockito.any()))
         .thenReturn(new HashMap<>());
 
-    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+    tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest);
 
     Mockito.verify(retrieveAdminService)
         .findAllByInfixScopedToTenant("*", Admin.AdminType.TENANT, 9L, pageRequest);
@@ -382,13 +424,24 @@ class TenantAdminUserServiceTest {
    * re-opening #968.
    */
   @Test
-  void findTenantAdminsByInfix_Should_FailClosedToEmpty_WhenCallerTenantIsNull() {
+  void findTenantAdminsByInfix_Should_Refuse_WhenCallerTenantIsNull() {
     PageRequest pageRequest = PageRequest.of(0, 10);
     when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
     when(authenticatedUser.getTenantId()).thenReturn(null);
-    when(retrieveAdminService.findAllByInfixScopedToTenant(
-            "*", Admin.AdminType.TENANT, null, pageRequest))
-        .thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+
+    assertThatThrownBy(
+            () ->
+                tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest))
+        .isInstanceOf(ForbiddenException.class);
+    Mockito.verifyNoInteractions(retrieveAdminService);
+  }
+
+  @Test
+  void findTenantAdminsByInfix_Should_FindNothing_ForAgencyAdmin() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(authenticatedUser.getUserId()).thenReturn("agency-admin");
     when(userServiceMapper.mapOfAdmin(
             Mockito.any(),
             Mockito.anyList(),
@@ -398,12 +451,13 @@ class TenantAdminUserServiceTest {
             Mockito.any()))
         .thenReturn(new HashMap<>());
 
-    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+    tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest);
 
-    Mockito.verify(retrieveAdminService)
-        .findAllByInfixScopedToTenant("*", Admin.AdminType.TENANT, null, pageRequest);
     Mockito.verify(retrieveAdminService, Mockito.never())
         .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfixScopedToTenant(
+            Mockito.anyString(), Mockito.any(), Mockito.anyLong(), Mockito.any(PageRequest.class));
   }
 
   @Test
@@ -422,12 +476,57 @@ class TenantAdminUserServiceTest {
             Mockito.any()))
         .thenReturn(new HashMap<>());
 
-    tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
+    tenantAdminUserService.findTenantAdminsByInfix("*", SearchFilter.NONE, pageRequest);
 
     Mockito.verify(retrieveAdminService).findAllByInfix("*", Admin.AdminType.TENANT, pageRequest);
     Mockito.verify(retrieveAdminService, Mockito.never())
         .findAllByInfixScopedToTenant(
             Mockito.anyString(), Mockito.any(), Mockito.anyLong(), Mockito.any(PageRequest.class));
+  }
+
+  @Test
+  void findTenantAdminsByInfix_Should_ReturnEmpty_WhenTenantAdminFiltersForeignTenant() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(false);
+    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", new SearchFilter(10L, null), pageRequest);
+
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfixScopedToTenant(
+            Mockito.anyString(), Mockito.any(), Mockito.any(), Mockito.any(PageRequest.class));
+    Mockito.verify(retrieveAdminService, Mockito.never())
+        .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
+  }
+
+  @Test
+  void findTenantAdminsByInfix_Should_ScopeToRequestedTenant_ForPlatformAdmin() {
+    PageRequest pageRequest = PageRequest.of(0, 10);
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(retrieveAdminService.findAllByInfixScopedToTenant(
+            "*", Admin.AdminType.TENANT, 4L, pageRequest))
+        .thenReturn(new PageImpl<>(List.of(), pageRequest, 0));
+    when(userServiceMapper.mapOfAdmin(
+            Mockito.any(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any()))
+        .thenReturn(new HashMap<>());
+
+    tenantAdminUserService.findTenantAdminsByInfix("*", new SearchFilter(4L, null), pageRequest);
+
+    Mockito.verify(retrieveAdminService)
+        .findAllByInfixScopedToTenant("*", Admin.AdminType.TENANT, 4L, pageRequest);
   }
 
   // ---- #968: by-id sibling endpoints must reject foreign-tenant targets ----

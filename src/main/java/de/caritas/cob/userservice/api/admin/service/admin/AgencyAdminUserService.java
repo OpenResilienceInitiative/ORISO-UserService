@@ -5,17 +5,18 @@ import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.admin.create.CreateAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.delete.DeleteAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.RetrieveAdminService;
 import de.caritas.cob.userservice.api.admin.service.admin.update.UpdateAdminService;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminBase;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collections;
@@ -43,15 +44,19 @@ public class AgencyAdminUserService {
   private final @NonNull AgencyService agencyService;
   private final @NonNull TenantService tenantService;
   private final @NonNull ConsultantRepository consultantRepository;
-  private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminScope adminScope;
 
   public AdminResponseDTO createNewAgencyAdmin(final CreateAdminDTO createAgencyAdminDTO) {
+    if (adminScope.current() instanceof AdminScope.Agencies) {
+      // A higher role creates a lower one; agency admins only invite counsellors.
+      throw new ForbiddenException("An agency admin may not create admin accounts");
+    }
     final Admin newAdmin = createAdminService.createNewAgencyAdmin(createAgencyAdminDTO);
     return AdminResponseDTOBuilder.getInstance(newAdmin).buildAgencyAdminResponseDTO();
   }
 
   public AdminResponseDTO findAgencyAdmin(final String adminId) {
-    assertCallerMayAccessAgencyAdmin(adminId);
+    adminScope.assertMay(Target.admin(adminId));
     final Admin admin = retrieveAdminService.findAdmin(adminId, Admin.AdminType.AGENCY);
     var responseDTO = AdminResponseDTOBuilder.getInstance(admin).buildAgencyAdminResponseDTO();
     responseDTO
@@ -62,63 +67,23 @@ public class AgencyAdminUserService {
 
   public AdminResponseDTO updateAgencyAdmin(
       final String adminId, final UpdateAgencyAdminDTO updateAgencyAdminDTO) {
-    assertCallerMayAccessAgencyAdmin(adminId);
+    adminScope.assertMay(Target.admin(adminId));
     final Admin updatedAdmin = updateAdminService.updateAgencyAdmin(adminId, updateAgencyAdminDTO);
     return AdminResponseDTOBuilder.getInstance(updatedAdmin).buildAgencyAdminResponseDTO();
   }
 
   public void deleteAgencyAdmin(final String adminId) {
-    assertCallerMayAccessAgencyAdmin(adminId);
+    adminScope.assertMay(Target.admin(adminId));
     this.deleteAdminService.deleteAgencyAdmin(adminId);
-  }
-
-  /**
-   * A restricted agency admin (an agency-level admin without the broader agency-super-admin role)
-   * may only act on agency admins that share at least one of their own agencies; every other
-   * non-platform caller (single-tenant admin, tenant super admin, agency super admin without shared
-   * agencies) may only act on agency admins of their own tenant (#968). Platform admins keep the
-   * full view. Prevents a caller from reading, editing or deleting admins of other Träger or other
-   * tenants by targeting their id directly, mirroring the search-side scoping applied by {@link
-   * #findScopedAgencyAdminsByInfix}.
-   */
-  private void assertCallerMayAccessAgencyAdmin(final String targetAdminId) {
-    if (authenticatedUser.isPlatformAdmin()) {
-      return;
-    }
-    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
-      var callerAgencyIds =
-          retrieveAdminService.findAgencyIdsOfAdmin(authenticatedUser.getUserId());
-      var targetAgencyIds = retrieveAdminService.findAgencyIdsOfAdmin(targetAdminId);
-      if (Collections.disjoint(callerAgencyIds, targetAgencyIds)) {
-        log.warn(
-            "Restricted agency admin {} attempted to access agency admin {} outside their agencies",
-            authenticatedUser.getUserId(),
-            targetAdminId);
-        throw new ForbiddenException(
-            "Agency admin is not allowed to access an admin outside their own agencies");
-      }
-      return;
-    }
-    Admin target = retrieveAdminService.findAdmin(targetAdminId, Admin.AdminType.AGENCY);
-    Long callerTenantId = authenticatedUser.getTenantId();
-    if (callerTenantId == null || !callerTenantId.equals(target.getTenantId())) {
-      log.warn(
-          "Tenant admin {} (tenant {}) attempted to access agency admin {} in tenant {}",
-          authenticatedUser.getUserId(),
-          callerTenantId,
-          targetAdminId,
-          target.getTenantId());
-      throw new ForbiddenException(
-          "Tenant admin is not allowed to access an admin outside their own tenant");
-    }
   }
 
   public List<Long> findAgenciesOfAdmin(final String adminId) {
     return retrieveAdminService.findAgencyIdsOfAdmin(adminId);
   }
 
-  public Map<String, Object> findAgencyAdminsByInfix(String infix, PageRequest pageRequest) {
-    Page<AdminBase> adminsPage = findScopedAgencyAdminsByInfix(infix, pageRequest);
+  public Map<String, Object> findAgencyAdminsByInfix(
+      String infix, SearchFilter filter, PageRequest pageRequest) {
+    Page<AdminBase> adminsPage = findScopedAgencyAdminsByInfix(infix, filter, pageRequest);
     var adminIds = adminsPage.stream().map(AdminBase::getId).collect(Collectors.toSet());
     var fullAdmins = retrieveAdminService.findAllById(adminIds);
 
@@ -148,24 +113,34 @@ public class AgencyAdminUserService {
   }
 
   /**
-   * Returns the infix-matched agency admins visible to the current caller. A restricted agency
-   * admin only sees admins of their own agencies; a tenant-bound caller (single-tenant or tenant
-   * super admin) is scoped to their own tenant so they cannot enumerate agency admins of other
-   * tenants (#968); only platform admins keep the full list. This closes both the cross-Träger leak
-   * within a tenant and the cross-tenant leak across tenants.
+   * The Träger/Beratungsstelle filter (#1263) only narrows the caller's reach: a Träger outside it
+   * yields an empty page, and requested agencies are intersected with an agency admin's own.
    */
-  private Page<AdminBase> findScopedAgencyAdminsByInfix(String infix, PageRequest pageRequest) {
-    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
-      var callerAgencyIds =
-          retrieveAdminService.findAgencyIdsOfAdmin(authenticatedUser.getUserId());
-      return retrieveAdminService.findAllByInfixScopedToAgencies(
-          infix, Admin.AdminType.AGENCY, callerAgencyIds, pageRequest);
-    }
-    if (!authenticatedUser.isPlatformAdmin()) {
-      return retrieveAdminService.findAllByInfixScopedToTenant(
-          infix, Admin.AdminType.AGENCY, authenticatedUser.getTenantId(), pageRequest);
-    }
-    return retrieveAdminService.findAllByInfix(infix, Admin.AdminType.AGENCY, pageRequest);
+  private Page<AdminBase> findScopedAgencyAdminsByInfix(
+      String infix, SearchFilter filter, PageRequest pageRequest) {
+    return switch (adminScope.current()) {
+      case AdminScope.Platform platform ->
+          retrieveAdminService.findAllByInfixFiltered(
+              infix, Admin.AdminType.AGENCY, filter.tenantId(), filter.agencyIds(), pageRequest);
+      case AdminScope.Tenant tenant ->
+          filter.isTenantOutside(tenant.tenantId())
+              ? Page.empty(pageRequest)
+              : retrieveAdminService.findAllByInfixFiltered(
+                  infix,
+                  Admin.AdminType.AGENCY,
+                  tenant.tenantId(),
+                  filter.agencyIds(),
+                  pageRequest);
+      case AdminScope.Agencies agencies ->
+          agencies.tenantId() != null && filter.isTenantOutside(agencies.tenantId())
+              ? Page.empty(pageRequest)
+              : retrieveAdminService.findAllByInfixFiltered(
+                  infix,
+                  Admin.AdminType.AGENCY,
+                  filter.tenantId(),
+                  filter.narrowAgencies(agencies.ids()),
+                  pageRequest);
+    };
   }
 
   public AdminResponseDTO patchAgencyAdmin(String adminId, PatchAdminDTO patchAdminDTO) {

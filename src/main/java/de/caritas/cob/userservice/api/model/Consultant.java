@@ -34,9 +34,7 @@ import lombok.Setter;
 import org.apache.lucene.analysis.core.LowerCaseFilterFactory;
 import org.apache.lucene.analysis.standard.ClassicTokenizerFactory;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.search.annotations.Analyzer;
 import org.hibernate.search.annotations.AnalyzerDef;
@@ -71,10 +69,7 @@ import org.springframework.lang.Nullable;
     filters = {
       @TokenFilterDef(factory = LowerCaseFilterFactory.class),
     })
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION)
 public class Consultant implements TenantAware, NotificationsAware {
 
   protected static final String EMAIL_ANALYZER = "emailAnalyzer";
@@ -287,6 +282,16 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Column(name = "two_factor_required", nullable = false, columnDefinition = "bit default false")
   @Builder.Default
   private Boolean twoFactorRequired = false;
+
+  /** Column default CREATE keeps the old behaviour for every existing counsellor. */
+  @Enumerated(EnumType.STRING)
+  @Column(
+      name = "topic_permission",
+      nullable = false,
+      length = 32,
+      columnDefinition = "varchar(32) default 'CREATE'")
+  @Builder.Default
+  private TopicPermission topicPermission = TopicPermission.CREATE;
 
   /**
    * Whether this counsellor must replace their password before using the account. Set for logins

@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
@@ -36,6 +35,7 @@ import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenera
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.helper.EmailUrlDecoder;
 import de.caritas.cob.userservice.api.service.identity.UserIdentitiesService;
@@ -213,8 +213,6 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> createConsultantAgency(
       @PathVariable String consultantId, CreateConsultantAgencyDTO createConsultantAgencyDTO) {
-    consultantAdminFacade.checkPermissionsToAssignedAgencies(
-        Lists.newArrayList(createConsultantAgencyDTO));
     this.consultantAdminFacade.createNewConsultantAgency(consultantId, createConsultantAgencyDTO);
     return new ResponseEntity<>(HttpStatus.CREATED);
   }
@@ -222,7 +220,6 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
-    this.consultantAdminFacade.checkPermissionsToAssignedAgencies(agencyList);
     this.consultantAdminFacade.setConsultantAgencies(consultantId, agencyList);
     return ResponseEntity.ok().build();
   }
@@ -443,7 +440,7 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<List<Long>> getAdminAgencies(@PathVariable String adminId) {
-    var adminAgencies = this.adminUserFacade.findAdminUserAgencyIds(adminId);
+    var adminAgencies = this.adminUserFacade.findAgencyIdsOfAdminInCallerScope(adminId);
     return ResponseEntity.ok(adminAgencies);
   }
 
@@ -512,28 +509,38 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<AdminSearchResultDTO> searchAgencyAdmins(
-      String query, Integer page, Integer perPage, String field, String order) {
+      String query,
+      Integer page,
+      Integer perPage,
+      String field,
+      String order,
+      Long tenantId,
+      List<Long> agencyId) {
     String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
+    var filter = new SearchFilter(tenantId, agencyId);
     var resultMap =
         adminUserFacade.findAgencyAdminsByInfix(
-            decodedInfix, page - 1, perPage, mappedField, isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
+            decodedInfix, filter, page - 1, perPage, mappedField, isAscending);
+    var result =
+        adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order, filter);
 
     return ResponseEntity.ok(result);
   }
 
   @Override
   public ResponseEntity<AdminSearchResultDTO> searchTenantAdmins(
-      String query, Integer page, Integer perPage, String field, String order) {
+      String query, Integer page, Integer perPage, String field, String order, Long tenantId) {
     String decodedInfix = determineDecodedInfix(query);
     var isAscending = order.equalsIgnoreCase("asc");
     var mappedField = adminDtoMapper.mappedFieldOf(field);
+    var filter = new SearchFilter(tenantId, null);
     var resultMap =
         adminUserFacade.findTenantAdminsByInfix(
-            decodedInfix, page - 1, perPage, mappedField, isAscending);
-    var result = adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order);
+            decodedInfix, filter, page - 1, perPage, mappedField, isAscending);
+    var result =
+        adminDtoMapper.adminSearchResultOf(resultMap, query, page, perPage, field, order, filter);
     return ResponseEntity.ok(result);
   }
 

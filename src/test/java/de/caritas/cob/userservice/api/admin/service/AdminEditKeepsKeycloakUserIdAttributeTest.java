@@ -34,6 +34,7 @@ import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -260,6 +261,8 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
   void updateConsultant_Should_sendUserIdAlongWithTheNewProfile() {
     givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setId(ADMIN_ID);
     consultant.setUsername(ENCODED_USERNAME);
     consultant.setTenantId(2L);
@@ -296,6 +299,8 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
     setField(keycloakService, "multiTenancyEnabled", false);
     givenKeycloakHoldsUserWithIdentityAttributes("old@example.org");
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setId(ADMIN_ID);
     consultant.setUsername("plainname");
     consultant.setTenantId(null);
@@ -331,6 +336,8 @@ class AdminEditKeepsKeycloakUserIdAttributeTest {
   void updateConsultant_Should_notTouchKeycloak_When_identityDataIsUnchanged() {
     // guards the caller contract: no update call means nothing can be wiped
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setId(ADMIN_ID);
     consultant.setFirstName("Same");
     consultant.setLastName("Name");

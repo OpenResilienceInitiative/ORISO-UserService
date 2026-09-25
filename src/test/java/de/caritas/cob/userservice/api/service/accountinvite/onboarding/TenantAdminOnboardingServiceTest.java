@@ -90,6 +90,8 @@ class TenantAdminOnboardingServiceTest {
    */
   @Mock private PlatformTransactionManager transactionManager;
 
+  @Mock private org.springframework.context.ApplicationEventPublisher eventPublisher;
+
   private TenantAdminOnboardingService service;
 
   @BeforeEach
@@ -108,6 +110,7 @@ class TenantAdminOnboardingServiceTest {
             publicDpaForwardClient,
             dpaForwardEmailService,
             new UsernameTranscoder(),
+            eventPublisher,
             transactionManager);
     // the real service resolves a path-only link against the configured App origin; the default
     // here passes an already-absolute link straight through, as production does

@@ -667,6 +667,24 @@ paths:
             enum: [ ASC, DESC ]
             default: ASC
             pattern: '^(ASC|DESC)$'
+        - name: tenantId
+          in: query
+          description: Only rows of this Träger (tenant). Never widens the caller's own scope;
+            a tenant outside it yields an empty result.
+          required: false
+          schema:
+            type: integer
+            format: int64
+        - name: agencyId
+          in: query
+          description: Only agency admins who administer this Beratungsstelle (agency). Repeat the parameter or pass a
+            comma-separated list to match any of several agencies. Never widens the caller's own scope.
+          required: false
+          schema:
+            type: array
+            items:
+              type: integer
+              format: int64
       responses:
         200:
           description: OK - successful operation
@@ -1003,6 +1021,15 @@ paths:
               enum: [ ASC, DESC ]
               default: ASC
               pattern: '^(ASC|DESC)$'
+          - name: tenantId
+            in: query
+            description: Only rows of this Träger (tenant). Never widens the caller's own scope;
+              a tenant outside it yields an empty result. There is no agencyId filter here, as
+              tenant admins are not bound to agencies, so an agencyId parameter is ignored.
+            required: false
+            schema:
+              type: integer
+              format: int64
         responses:
           200:
             description: OK - successful operation
@@ -1142,6 +1169,422 @@ paths:
           security:
             - Bearer: [ ]
 
+  # Account invites and self-assignment are served by hand-written controllers
+  # (AccountInviteController, AdminSelfAssignmentController). x-internal keeps the generator from
+  # adding them to UseradminApi, whose implementation would then map the same routes twice.
+  /useradmin/account-invites:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Creates an account invite, and sends it when templateId is set [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      description: >-
+        An invite into a Träger or Beratungsstelle that does not exist yet (COUNSELLOR with a
+        new agency, AGENCY_ADMIN with a new Träger) is stored as WAITING_FOR_UNIT and not sent;
+        it needs a pending admin invite for the same new unit and goes out once that admin has
+        onboarded.
+      operationId: createAccountInvite
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateAccountInviteRequest'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - invalid field combination, unknown enum value, or a topic permission that leaves the counsellor without any topic
+        403:
+          description: FORBIDDEN - role, Träger or agency outside the caller's scope
+        404:
+          description: NOT FOUND - an EXISTING Träger or agency that does not exist (or is deleted)
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+        502:
+          description: BAD GATEWAY - SMTP failed; the invite is kept only when delivery is uncertain
+      security:
+        - Bearer: [ ]
+    get:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Lists the account invites in the caller''s scope [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: listAccountInvites
+      parameters:
+        - name: tab
+          in: query
+          description: >-
+            The Admin's tab. TENANT = Träger admins who found a new Träger; UNIT = everyone joining
+            a unit. The list and phaseCounts both cover only this tab.
+          schema:
+            type: string
+            enum: [TENANT, UNIT]
+        - name: target_role
+          in: query
+          schema:
+            $ref: '#/components/schemas/AccountInviteTargetRole'
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/AccountInviteStatus'
+        - name: progress_phase
+          in: query
+          description: One status tile; phaseCounts in the answer ignore this and status.
+          schema:
+            $ref: '#/components/schemas/AccountInviteProgressPhase'
+        - name: tenant_id
+          in: query
+          schema:
+            type: integer
+            format: int64
+        - name: query
+          in: query
+          schema:
+            type: string
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: size
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PagedAccountInvites'
+        400:
+          description: BAD REQUEST - unknown filter value
+        403:
+          description: FORBIDDEN - another tenant was requested
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/send:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Sends a stored invite; for a WAITING_FOR_UNIT invite this is its release [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: sendAccountInvite
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendAccountInviteRequest'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - accepted, revoked or superseded invite
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+        404:
+          description: NOT FOUND - invite or template unknown
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+        502:
+          description: BAD GATEWAY - SMTP failed
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/resend:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Replaces the invite link and sends it again [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: resendAccountInvite
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendAccountInviteRequest'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - accepted or revoked invite
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+        502:
+          description: BAD GATEWAY - SMTP failed
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/revoke:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Revokes an invite and gives back a Träger or agency number no other invite needs [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: revokeAccountInvite
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - accepted invite
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/topic-permission:
+    put:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Sets an invited counsellor''s topic permission; after onboarding it changes the counsellor''s own value [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: updateAccountInviteTopicPermission
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              properties:
+                topicPermission:
+                  $ref: '#/components/schemas/TopicPermissionInput'
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - missing or unknown value, a non-counsellor invite, or no topic left to pick
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+        404:
+          description: NOT FOUND - invite unknown
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/role:
+    put:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Changes the role of an invite nobody has accepted yet [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      description: >-
+        WAITING_FOR_UNIT, DRAFT and EMAIL_SENT invites only. COUNSELLOR and AGENCY_ADMIN swap
+        (both use the same onboarding link, so a sent link stays valid); the caller may only set
+        a role they could invite ("higher invites lower"). A promoted counsellor gets
+        alsoCounsellor true unless the request says false; a demoted admin loses it. An invite
+        that now has to wait for its new agency moves to WAITING_FOR_UNIT (its sent link stops
+        working and the last template goes out on release); a waiting counsellor who becomes an
+        admin of the new agency leaves the queue as a DRAFT sharing that agency's reservation.
+        An accepted invite is not changed here: use POST /useradmin/consultants/{consultantId}/roles.
+      operationId: changeAccountInviteRole
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [targetRole]
+              properties:
+                targetRole:
+                  $ref: '#/components/schemas/AccountInviteTargetRole'
+                alsoCounsellor:
+                  type: boolean
+                  description: AGENCY_ADMIN only (400 otherwise); omitted keeps it, or true on promotion.
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - missing or unknown role, alsoCounsellor for a non-admin role, or no topic left to pick
+        403:
+          description: FORBIDDEN - invite outside the caller's scope (other Träger or agency), or a role the caller could not invite
+        404:
+          description: NOT FOUND - invite unknown
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+      security:
+        - Bearer: [ ]
+  /useradmin/consultants/{consultantId}/roles:
+    post:
+      x-internal: true
+      tags:
+        - consultant-role-controller
+      summary: 'Adds a role to an existing counsellor account; only AGENCY_ADMIN [Authorization: tenant-admin, user-admin]'
+      description: >-
+        Makes the counsellor Beratungsstellen-Admin of one agency they counsel in: the admin row,
+        its admin_agency relation and the Keycloak roles restricted-agency-admin and user-admin,
+        in that order inside one transaction (a refused Keycloak role leaves no rows). Removing a
+        role stays in the Users area.
+      operationId: addConsultantRole
+      parameters:
+        - name: consultantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [AGENCY_ADMIN]
+                agencyId:
+                  type: integer
+                  format: int64
+                  description: Omitted = the counsellor's only agency.
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                x-internal: true
+                properties:
+                  consultantId:
+                    type: string
+                  role:
+                    type: string
+                    enum: [AGENCY_ADMIN]
+                  agencyIds:
+                    type: array
+                    description: Every agency the account administers now.
+                    items:
+                      type: integer
+                      format: int64
+        400:
+          description: BAD REQUEST - missing or other role, or an agency the counsellor does not counsel in
+        403:
+          description: FORBIDDEN - counsellor outside the caller's scope (other Träger), or a caller who may not invite agency admins (Beratungsstellen-Admins)
+        404:
+          description: NOT FOUND - counsellor unknown or marked for deletion
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/waive-two-factor:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Waives the mandatory 2FA setup of an invite [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: waiveAccountInviteTwoFactor
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              properties:
+                reason:
+                  type: string
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - reason missing
+        403:
+          description: FORBIDDEN - invite outside the caller's scope
+      security:
+        - Bearer: [ ]
+  /useradmin/self-assignments:
+    post:
+      x-internal: true
+      tags:
+        - admin-self-assignment-controller
+      summary: 'Adds the calling admin''s own account as counsellor of an agency; no e-mail [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: assignSelf
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SelfAssignmentRequest'
+      responses:
+        201:
+          description: CREATED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SelfAssignment'
+        400:
+          description: BAD REQUEST - unknown role (AGENCY_ADMIN is not offered), missing agency, or no topic to counsel in
+        403:
+          description: FORBIDDEN - agency outside the caller's scope
+        404:
+          description: NOT FOUND - agency unknown or deleted
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+      security:
+        - Bearer: [ ]
+    get:
+      x-internal: true
+      tags:
+        - admin-self-assignment-controller
+      summary: 'The agencies the caller administers and counsels in [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      operationId: getSelfAssignments
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                x-internal: true
+                properties:
+                  agencyAdminAgencyIds:
+                    type: array
+                    items:
+                      type: integer
+                      format: int64
+                  counsellorAgencyIds:
+                    type: array
+                    items:
+                      type: integer
+                      format: int64
+      security:
+        - Bearer: [ ]
 components:
   schemas:
     RootDTO:
@@ -1506,10 +1949,23 @@ components:
             Id of the chosen counsellor motif, only meaningful with avatarKind = ICON. Null
             leaves the stored value untouched; an empty string clears it — which also demotes a
             stored ICON choice to INITIALS, because a half choice is never persisted.
+        topicPermission:
+          $ref: '#/components/schemas/TopicPermissionDTO'
+
+    TopicPermissionDTO:
+      type: string
+      enum: [NONE, SELECT_EXISTING, CREATE]
+      description: >-
+        How far a counsellor may extend their own topics (ORISO-Admin#1026). NONE = only the
+        assigned department, SELECT_EXISTING = pick among the agency's departments, CREATE =
+        add further topics of the Traeger (today's behaviour). On an update, null leaves the
+        stored value untouched.
 
     ConsultantDTO:
       type: object
       properties:
+        topicPermission:
+          $ref: '#/components/schemas/TopicPermissionDTO'
         id:
           type: string
           example: "0f2cca9c-9303-4791-a0a5-a1ce16f1524f"
@@ -2131,6 +2587,336 @@ components:
             - 'DEFAULT_AGENCY'
 
 
+
+    CreateAccountInviteRequest:
+      type: object
+      x-internal: true
+      required: [targetRole, recipientEmail]
+      properties:
+        targetRole:
+          $ref: '#/components/schemas/AccountInviteTargetRole'
+        tenantId:
+          type: integer
+          format: int64
+          description: Required for MANUAL and EXISTING; a Träger-bound caller gets their own when omitted.
+        recipientEmail:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        agencyId:
+          type: integer
+          format: int64
+        departmentId:
+          type: integer
+          format: int64
+          description: The counsellor's topic; defaults to the agency's only topic.
+        expiresInDays:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 365
+          default: 30
+          description: For a waiting invite the clock starts at the release, not at creation.
+        templateId:
+          type: integer
+          format: int64
+          description: Set = create and send in one step; a waiting invite keeps it for its release.
+        acceptBaseUrl:
+          type: string
+          deprecated: true
+          description: Ignored; the accept link is server configuration.
+        tenantIdAllocationMode:
+          $ref: '#/components/schemas/IdAllocationMode'
+        agencyIdAllocationMode:
+          $ref: '#/components/schemas/IdAllocationMode'
+        alsoCounsellor:
+          type: boolean
+          description: AGENCY_ADMIN only (400 otherwise); omitted = true.
+        topicPermission:
+          $ref: '#/components/schemas/TopicPermissionInput'
+    SendAccountInviteRequest:
+      type: object
+      x-internal: true
+      properties:
+        templateId:
+          type: integer
+          format: int64
+        acceptBaseUrl:
+          type: string
+          deprecated: true
+          description: Ignored; the accept link is server configuration.
+    AccountInvite:
+      type: object
+      x-internal: true
+      properties:
+        id:
+          type: integer
+          format: int64
+        targetRole:
+          $ref: '#/components/schemas/AccountInviteTargetRole'
+        tenantId:
+          type: integer
+          format: int64
+        recipientEmail:
+          type: string
+        firstName:
+          type: string
+        lastName:
+          type: string
+        agencyId:
+          type: integer
+          format: int64
+        departmentId:
+          type: integer
+          format: int64
+        tenantIdAllocationMode:
+          $ref: '#/components/schemas/IdAllocationMode'
+        agencyIdAllocationMode:
+          $ref: '#/components/schemas/IdAllocationMode'
+        alsoCounsellor:
+          type: boolean
+          description: AGENCY_ADMIN invites only; null for every other role.
+        waitingForUnit:
+          type: string
+          enum: [AGENCY, TENANT]
+          description: Set while inviteStatus is WAITING_FOR_UNIT; the Admin shows "Beratungsstelle noch nicht angelegt".
+        queueProblem:
+          type: string
+          enum: [NO_UNIT_ADMIN]
+          description: A waiting invite whose unit has no pending admin invite any more; derived on read.
+        provisioningStatus:
+          type: string
+        provisionedUserId:
+          type: string
+        inviteStatus:
+          $ref: '#/components/schemas/AccountInviteStatus'
+        emailVerificationStatus:
+          type: string
+        emailDeliveryStatus:
+          type: string
+        twoFactorStatus:
+          type: string
+        accessGateStatus:
+          type: string
+        expiresAt:
+          type: string
+          format: date-time
+        acceptedAt:
+          type: string
+          format: date-time
+        revokedAt:
+          type: string
+          format: date-time
+        supersededAt:
+          type: string
+          format: date-time
+        twoFactorWaivedBy:
+          type: string
+        twoFactorWaivedAt:
+          type: string
+          format: date-time
+        twoFactorWaiverReason:
+          type: string
+        createDate:
+          type: string
+          format: date-time
+        rawToken:
+          type: string
+          description: Only in the answer that sent the mail.
+        acceptUrl:
+          type: string
+          description: Only in the answer that sent the mail.
+        dpaForwardedAt:
+          type: string
+          format: date-time
+        dpaForwardCount:
+          type: integer
+        dpaSignedAt:
+          type: string
+          format: date-time
+        topicPermission:
+          $ref: '#/components/schemas/TopicPermissionDTO'
+        phase:
+          type: string
+          description: Public accept endpoint only.
+        progressPhase:
+          $ref: '#/components/schemas/AccountInviteProgressPhase'
+        unitCreatedAt:
+          type: string
+          format: date-time
+          description: >-
+            When the new unit this invite needed was created, set once: the release of a
+            WAITING_FOR_UNIT invite, or for a Träger admin founding a new Träger its creation.
+        sentAt:
+          type: string
+          format: date-time
+          description: When the latest invite mail was sent.
+        accountCreatedAt:
+          type: string
+          format: date-time
+          description: When the account was created (same moment as acceptedAt).
+        twoFactorDoneAt:
+          type: string
+          format: date-time
+          description: When 2FA was activated or waived (acceptedAt when not required); null until then.
+        accountRoles:
+          type: array
+          nullable: true
+          description: Accepted invites only; the roles the account holds now, also ones added later.
+          items:
+            $ref: '#/components/schemas/AccountInviteTargetRole'
+        completedAt:
+          type: string
+          format: date-time
+          description: >-
+            When the last gate passed (2FA activated or waived; for TENANT_ADMIN also the DPA
+            signature). Null while a gate is open, and for 2FA activations before this field.
+    PagedAccountInvites:
+      type: object
+      x-internal: true
+      properties:
+        content:
+          type: array
+          items:
+            $ref: '#/components/schemas/AccountInvite'
+        totalElements:
+          type: integer
+          format: int64
+        totalPages:
+          type: integer
+        page:
+          type: integer
+        size:
+          type: integer
+        phaseCounts:
+          type: object
+          description: >-
+            Invites per progress phase over all pages of the tab and the caller's scope; ignores the
+            status and progress_phase filters.
+          additionalProperties:
+            type: integer
+            format: int64
+        phaseDetailCounts:
+          type: object
+          description: >-
+            Per progress phase, what its count is made of: the invite status, or for NEEDS_ACTION
+            why it is stuck (DELIVERY_FAILED, LINK_EXPIRED, PROVISIONING_FAILED, NO_UNIT_ADMIN,
+            EXPIRED).
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: integer
+              format: int64
+    AccountInviteProgressPhase:
+      type: string
+      x-internal: true
+      enum: [PREPARED, INVITED, ACCOUNT_CREATED, DONE, NEEDS_ACTION, CLOSED]
+      description: >-
+        The Admin's status tiles, derived in one place (InviteProgress). PREPARED = draft or
+        waiting (Vorbereitet); INVITED = mail sent, link valid (Eingeladen); ACCOUNT_CREATED = a
+        gate is open (Konto angelegt); DONE = all gates passed (Fertig); NEEDS_ACTION = bounced,
+        expired, provisioning failed or no admin for its new unit (Braucht Aktion); CLOSED =
+        revoked or replaced, no tile.
+    AccountInviteTargetRole:
+      type: string
+      x-internal: true
+      enum: [TENANT_ADMIN, AGENCY_ADMIN, COUNSELLOR, ADVICE_SEEKER, PLATFORM_ADMIN]
+    AccountInviteStatus:
+      type: string
+      x-internal: true
+      enum: [WAITING_FOR_UNIT, DRAFT, EMAIL_SENT, ACCEPTED, EXPIRED, REVOKED, SUPERSEDED]
+    IdAllocationMode:
+      type: string
+      x-internal: true
+      enum: [AUTO, MANUAL, EXISTING]
+      description: AUTO/MANUAL reserve a new ID; EXISTING names a unit that exists (nothing is reserved).
+    TopicPermissionInput:
+      x-internal: true
+      description: >-
+        NONE, SELECT_EXISTING or CREATE (case-insensitive); the CSV import may send true (= CREATE)
+        or false (= NONE). Omitted on create (e.g. a CSV row without that column) = SELECT_EXISTING,
+        whatever the agency default says; an explicit value always wins; agency admins always get
+        CREATE.
+      oneOf:
+        - $ref: '#/components/schemas/TopicPermissionDTO'
+        - type: boolean
+    SelfAssignmentRequest:
+      type: object
+      x-internal: true
+      required: [role, agencyId]
+      properties:
+        role:
+          type: string
+          enum: [COUNSELLOR]
+        agencyId:
+          type: integer
+          format: int64
+        topicIds:
+          type: array
+          items:
+            type: integer
+            format: int64
+          description: Omitted = the agency's only topic; required when it offers several.
+    SelfAssignment:
+      type: object
+      x-internal: true
+      properties:
+        role:
+          type: string
+          enum: [COUNSELLOR]
+        agencyId:
+          type: integer
+          format: int64
+        userId:
+          type: string
+        consultantIdentityCreated:
+          type: boolean
+
+  parameters:
+    InviteId:
+      name: inviteId
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+
+  responses:
+    AccountInviteConflict:
+      description: >-
+        CONFLICT. X-Reason names the case; a 409 without it is a Träger or agency number that is
+        already taken or already exists (use EXISTING).
+      headers:
+        X-Reason:
+          schema:
+            type: string
+            enum:
+              - EMAIL_NOT_AVAILABLE
+              - NO_PENDING_UNIT_ADMIN
+              - UNIT_NOT_CREATED
+              - SELF_ASSIGNMENT_ALREADY_EXISTS
+              - CONSULTANT_IDENTITY_ALREADY_GRANTED
+              - INVITE_ALREADY_ACCEPTED
+              - INVITE_NOT_PENDING
+              - ROLE_CHANGE_NEEDS_NEW_INVITE
+              - ONLY_UNIT_ADMIN
+              - ROLE_ALREADY_GRANTED
+          description: >-
+            EMAIL_NOT_AVAILABLE - the address has an account or an open invite;
+            NO_PENDING_UNIT_ADMIN - a waiting invite needs a pending admin invite for its new unit;
+            UNIT_NOT_CREATED - a waiting invite cannot be sent before its unit exists;
+            SELF_ASSIGNMENT_ALREADY_EXISTS / CONSULTANT_IDENTITY_ALREADY_GRANTED - the admin
+            already counsels in that agency;
+            INVITE_ALREADY_ACCEPTED - the account exists, add a role to the account instead;
+            INVITE_NOT_PENDING - the invite was revoked, replaced or has expired;
+            ROLE_CHANGE_NEEDS_NEW_INVITE - a TENANT_ADMIN (or other non-agency) role cannot be
+            swapped in, it has another placement and link: revoke and invite anew;
+            ONLY_UNIT_ADMIN - the invite is the only pending admin of its new agency, so
+            counsellors would wait for nobody: invite another admin first;
+            ROLE_ALREADY_GRANTED - the account already administers that agency, or is a Träger
+            or platform admin.
 
   securitySchemes:
     Bearer:

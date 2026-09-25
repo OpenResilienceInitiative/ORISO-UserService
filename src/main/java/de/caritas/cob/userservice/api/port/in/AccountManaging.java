@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.port.in;
 
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.SearchFilter;
 import java.util.Collection;
 import java.util.Map;
 import java.util.Optional;
@@ -21,6 +22,7 @@ public interface AccountManaging {
       String infix,
       boolean shouldFilterByAgencies,
       Collection<Long> agenciesToFilterConsultants,
+      SearchFilter filter,
       int pageNumber,
       int pageSize,
       String fieldName,
