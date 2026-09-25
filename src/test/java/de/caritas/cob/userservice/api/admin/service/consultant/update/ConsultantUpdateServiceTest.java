@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.service.ConsultantPublicSlugService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import org.jeasy.random.EasyRandom;
@@ -210,6 +211,8 @@ public class ConsultantUpdateServiceTest {
 
   private Consultant consultantWithId(String id) {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setId(id);
     consultant.setTenantId(1L);
     consultant.setAssignedSupervisorId(null);
@@ -227,6 +230,8 @@ public class ConsultantUpdateServiceTest {
   @Test
   public void updateConsultant_Should_callServicesCorrectly_When_givenConsultantDataIsValid() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setTenantId(1L);
     when(this.consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
     UpdateAdminConsultantDTO updateConsultant =
@@ -256,6 +261,8 @@ public class ConsultantUpdateServiceTest {
   public void
       updateConsultant_Should_skipIdentityAndAppointmentSync_When_selfServiceOnlyRequestsPublicSlug() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setTenantId(1L);
     consultant.setFirstName("Direct");
     consultant.setLastName("Consultant");
@@ -289,6 +296,8 @@ public class ConsultantUpdateServiceTest {
   public void
       updateConsultant_Should_callServicesCorrectly_And_AddGroupChatConsultantRole_When_givenConsultantDataIsValidAndGroupChatFlagIsGiven() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     when(this.consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
     UpdateAdminConsultantDTO updateConsultant =
         new EasyRandom().nextObject(UpdateAdminConsultantDTO.class);
@@ -310,6 +319,8 @@ public class ConsultantUpdateServiceTest {
   public void
       updateConsultant_Should_callServicesCorrectly_And_RemoveGroupChatConsultantRole_When_givenConsultantDataIsValidAndGroupChatFlagIsGiven() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     when(this.consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
     UpdateAdminConsultantDTO updateConsultant =
         new EasyRandom().nextObject(UpdateAdminConsultantDTO.class);
@@ -331,6 +342,8 @@ public class ConsultantUpdateServiceTest {
   public void
       updateConsultant_Should_stopBeforeIdentityAndDatabaseUpdates_When_topicAgencyValidationFails() {
     Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    // EasyRandom fills random topics; these fixtures model a consultant without any.
+    consultant.setConsultantTopics(new HashSet<>());
     consultant.setTenantId(1L);
     when(this.consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
     UpdateAdminConsultantDTO updateConsultant =
@@ -339,8 +352,11 @@ public class ConsultantUpdateServiceTest {
     keepDisplayNameUnchanged(consultant, updateConsultant);
     doThrow(new BadRequestException("topic not covered"))
         .when(consultantTopicAgencyCompatibilityValidator)
-        .validateTopicUpdateAgainstAssignedAgencies(
-            eq(consultant.getId()), eq(List.of(99L)), eq(consultant.getTenantId()));
+        .resolveTopicUpdate(
+            eq(consultant.getId()),
+            eq(List.of(99L)),
+            eq(updateConsultant.getTopicsByAgency()),
+            eq(consultant.getTenantId()));
 
     assertThrows(
         BadRequestException.class,
@@ -350,6 +366,25 @@ public class ConsultantUpdateServiceTest {
         .updateProfile(anyString(), any(IdentityProfileUpdate.class));
     verify(this.consultantService, Mockito.never()).saveConsultant(any());
     verify(this.appointmentService, Mockito.never()).syncConsultantData(any());
+  }
+
+  @Test
+  public void updateConsultant_Should_refuseToRemoveTheLastTopic_When_theConsultantHasTopics() {
+    Consultant consultant = new EasyRandom().nextObject(Consultant.class);
+    consultant.setConsultantTopics(new HashSet<>());
+    consultant.setTenantId(1L);
+    consultant.replaceTopics(List.of(5L));
+    when(this.consultantService.getConsultant(any())).thenReturn(Optional.of(consultant));
+    UpdateAdminConsultantDTO updateConsultant =
+        new EasyRandom().nextObject(UpdateAdminConsultantDTO.class);
+    updateConsultant.setTopicIds(List.of());
+    keepDisplayNameUnchanged(consultant, updateConsultant);
+
+    assertThrows(
+        BadRequestException.class,
+        () -> this.consultantUpdateService.updateConsultant("", updateConsultant));
+
+    verify(this.consultantService, Mockito.never()).saveConsultant(any());
   }
 
   // ---------------------------------------------------------------------------

@@ -4,6 +4,8 @@ import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc
 
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 
 /** Definition for required input data used to create a new consultant. */
 interface ConsultantCreationInput {
@@ -107,6 +109,11 @@ interface ConsultantCreationInput {
   }
 
   default List<Long> getAgencyIds() {
+    return null;
+  }
+
+  /** Topics per selected centre (#1264); null when the flow selected no centre. */
+  default Map<Long, Set<Long>> getTopicIdsByAgencyId() {
     return null;
   }
 }

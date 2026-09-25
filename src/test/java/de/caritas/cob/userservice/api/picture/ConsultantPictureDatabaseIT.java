@@ -295,7 +295,7 @@ class ConsultantPictureDatabaseIT {
               return null;
             })
         .when(preDelete)
-        .performPreDeletionSteps(any(), eq(false));
+        .performPreDeletionSteps(any(), eq(false), any());
     try (var executor = Executors.newFixedThreadPool(2)) {
       var deleteResult = executor.submit(() -> deletion.markConsultantForDeletion(id, false));
       assertThat(deleting.await(5, TimeUnit.SECONDS)).isTrue();

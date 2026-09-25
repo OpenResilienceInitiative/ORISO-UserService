@@ -1941,6 +1941,48 @@ class CaseHandoverServiceTest {
   }
 
   @Test
+  void searchCandidates_usesTheTopicsOfTheSessionsCentreOnly() {
+    // #1264: topic 5 is stored for centre 10 only, so centre 20's topic-5 case is another
+    // department; a legacy row without a centre (topic 6) still counts for every centre.
+    givenTwoRequesterCentres();
+    requester.setConsultantTopics(
+        Set.of(requesterTopic(10L, 5L), requesterTopic(null, 6L), requesterTopic(20L, 7L)));
+    when(sessionRepository.findByAgencyIdInAndConsultantNotAndStatusInOrderByUpdateDateDesc(
+            any(), eq(requester), eq(List.of(SessionStatus.IN_PROGRESS, SessionStatus.DONE))))
+        .thenReturn(
+            List.of(
+                candidateSession(221L, 10L, 5L, false),
+                candidateSession(222L, 20L, 5L, false),
+                candidateSession(223L, 20L, 6L, false),
+                candidateSession(224L, 20L, 7L, false),
+                candidateSession(225L, 10L, 7L, false)));
+
+    var response = caseHandoverService.searchCandidates("asker", 0, 15, false);
+
+    assertEquals(
+        List.of(221L, 223L, 224L),
+        response.getSessions().stream().map(dto -> dto.getSession().getId()).toList());
+  }
+
+  private void givenTwoRequesterCentres() {
+    ConsultantAgency firstAgency = requester.getConsultantAgencies().iterator().next();
+    firstAgency.setId(1L);
+    ConsultantAgency secondAgency = new ConsultantAgency();
+    secondAgency.setId(2L);
+    secondAgency.setAgencyId(20L);
+    secondAgency.setConsultant(requester);
+    requester.setConsultantAgencies(Set.of(firstAgency, secondAgency));
+  }
+
+  private ConsultantTopic requesterTopic(Long agencyId, long topicId) {
+    ConsultantTopic topic = new ConsultantTopic();
+    topic.setConsultant(requester);
+    topic.setAgencyId(agencyId);
+    topic.setTopicId(topicId);
+    return topic;
+  }
+
+  @Test
   void requestAccess_forbidsASessionOutsideTheRequesterDepartment() {
     givenRequesterTopics(5L);
     session.setMainTopicId(99L);

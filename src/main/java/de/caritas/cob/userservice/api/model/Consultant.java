@@ -22,6 +22,7 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -34,9 +35,7 @@ import lombok.Setter;
 import org.apache.lucene.analysis.core.LowerCaseFilterFactory;
 import org.apache.lucene.analysis.standard.ClassicTokenizerFactory;
 import org.hibernate.annotations.Filter;
-import org.hibernate.annotations.FilterDef;
 import org.hibernate.annotations.JdbcTypeCode;
-import org.hibernate.annotations.ParamDef;
 import org.hibernate.annotations.SQLRestriction;
 import org.hibernate.search.annotations.Analyzer;
 import org.hibernate.search.annotations.AnalyzerDef;
@@ -71,10 +70,7 @@ import org.springframework.lang.Nullable;
     filters = {
       @TokenFilterDef(factory = LowerCaseFilterFactory.class),
     })
-@FilterDef(
-    name = "tenantFilter",
-    parameters = {@ParamDef(name = "tenantId", type = Long.class)})
-@Filter(name = "tenantFilter", condition = "tenant_id = :tenantId")
+@Filter(name = TenantFilter.NAME, condition = TenantFilter.CONDITION)
 public class Consultant implements TenantAware, NotificationsAware {
 
   protected static final String EMAIL_ANALYZER = "emailAnalyzer";
@@ -288,6 +284,16 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Builder.Default
   private Boolean twoFactorRequired = false;
 
+  /** Column default CREATE keeps the old behaviour for every existing counsellor. */
+  @Enumerated(EnumType.STRING)
+  @Column(
+      name = "topic_permission",
+      nullable = false,
+      length = 32,
+      columnDefinition = "varchar(32) default 'CREATE'")
+  @Builder.Default
+  private TopicPermission topicPermission = TopicPermission.CREATE;
+
   /**
    * Whether this counsellor must replace their password before using the account. Set for logins
    * provisioned through the admin API, where the password is shared with at least one other person.
@@ -451,6 +457,83 @@ public class Consultant implements TenantAware, NotificationsAware {
                         .createDate(now)
                         .updateDate(now)
                         .build()));
+  }
+
+  /**
+   * Replaces the full set of topics per counselling centre (#1264). Rows that stay are left
+   * untouched for the same unique-key reason as {@link #replaceTopics}; legacy rows without a
+   * centre are dropped. A {@code null} argument leaves the current set untouched.
+   */
+  @JsonIgnore
+  public void replaceTopicsPerAgency(Map<Long, ? extends Collection<Long>> topicIdsByAgencyId) {
+    if (isNull(topicIdsByAgencyId)) {
+      return;
+    }
+    if (isNull(this.consultantTopics)) {
+      this.consultantTopics = new HashSet<>();
+    }
+    var now = LocalDateTime.now();
+    var target = new HashSet<ConsultantTopic>();
+    topicIdsByAgencyId.forEach(
+        (agencyId, topicIds) ->
+            topicIds.stream()
+                .filter(Objects::nonNull)
+                .forEach(
+                    topicId ->
+                        target.add(
+                            ConsultantTopic.builder()
+                                .consultant(this)
+                                .agencyId(agencyId)
+                                .topicId(topicId)
+                                .createDate(now)
+                                .updateDate(now)
+                                .build())));
+    this.consultantTopics.removeIf(ct -> !target.contains(ct));
+    target.removeAll(this.consultantTopics);
+    this.consultantTopics.addAll(target);
+  }
+
+  /**
+   * Adds topics for one counselling centre (#1264) and keeps every existing row, also the same
+   * topic at other centres. A {@code null} or empty collection adds nothing.
+   */
+  @JsonIgnore
+  public void addTopicsForAgency(Long agencyId, Collection<Long> topicIds) {
+    if (isNull(topicIds) || topicIds.isEmpty()) {
+      return;
+    }
+    if (isNull(this.consultantTopics)) {
+      this.consultantTopics = new HashSet<>();
+    }
+    var now = LocalDateTime.now();
+    topicIds.stream()
+        .filter(Objects::nonNull)
+        .distinct()
+        .map(
+            topicId ->
+                ConsultantTopic.builder()
+                    .consultant(this)
+                    .agencyId(agencyId)
+                    .topicId(topicId)
+                    .createDate(now)
+                    .updateDate(now)
+                    .build())
+        .filter(row -> !this.consultantTopics.contains(row))
+        .forEach(this.consultantTopics::add);
+  }
+
+  /**
+   * Create paths (#1264): stores the topics per centre when the flow selected centres, otherwise
+   * keeps the legacy rows without a centre.
+   */
+  @JsonIgnore
+  public void assignInitialTopics(
+      Collection<Long> topicIds, Map<Long, ? extends Collection<Long>> topicIdsByAgencyId) {
+    if (topicIdsByAgencyId != null && !topicIdsByAgencyId.isEmpty()) {
+      replaceTopicsPerAgency(topicIdsByAgencyId);
+    } else {
+      replaceTopics(topicIds);
+    }
   }
 
   @JsonIgnore

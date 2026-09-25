@@ -11,6 +11,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDT
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantResponseDTOBuilder;
 import de.caritas.cob.userservice.api.admin.service.consultant.TransactionalStep;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
@@ -32,6 +34,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -72,6 +75,7 @@ public class GrantConsultantIdentityService {
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
+  private final @NonNull AdminScope adminScope;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
@@ -87,12 +91,16 @@ public class GrantConsultantIdentityService {
   public ConsultantAdminResponseDTO grantConsultantIdentityToAdmin(
       String adminId, GrantConsultantIdentityDTO dto) {
 
+    // Looked up across tenants on purpose: an admin of another Träger must be refused (403) by the
+    // scope check below, not reported as unknown.
     var admin =
-        adminRepository
-            .findById(adminId)
+        TenantContext.supplyAcrossTenants(() -> adminRepository.findById(adminId))
             .orElseThrow(
                 () ->
                     new BadRequestException(String.format("Admin with id %s not found", adminId)));
+
+    adminScope.assertMay(Target.admin(admin.getId()));
+    adminScope.assertMay(Target.agencies(dto.getAgencyIds()));
 
     if (consultantRepository.findByIdAndDeleteDateIsNull(adminId).isPresent()) {
       throw new CustomValidationHttpStatusException(
@@ -105,8 +113,9 @@ public class GrantConsultantIdentityService {
           HttpStatusExceptionReason.CONSULTANT_IDENTITY_ALREADY_GRANTED, HttpStatus.CONFLICT);
     }
 
-    consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
-        dto.getTopicIds(), dto.getAgencyIds(), admin.getTenantId());
+    var topicIdsByAgencyId =
+        consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+            dto.getTopicIds(), dto.getAgencyIds(), admin.getTenantId());
 
     var snapshot = chatRecoveryEnrollmentPolicyService.forNewConsultant(admin.getTenantId());
     assignKeycloakRoles(adminId, dto);
@@ -114,6 +123,7 @@ public class GrantConsultantIdentityService {
     String matrixUserId = createMatrixAccount(admin);
 
     var consultant = buildConsultant(admin, encodedUsername, dto, matrixUserId);
+    consultant.assignInitialTopics(dto.getTopicIds(), topicIdsByAgencyId);
     consultant.setChatRecoveryMode(snapshot.mode());
     consultant.setChatRecoveryPolicyRevision(snapshot.revision());
     saveConsultantOrRollback(adminId, dto, consultant);
@@ -216,7 +226,6 @@ public class GrantConsultantIdentityService {
             .notificationsSettings(serializeToJsonString(allActiveNotifications()))
             .build();
 
-    consultant.replaceTopics(dto.getTopicIds());
     return consultant;
   }
 

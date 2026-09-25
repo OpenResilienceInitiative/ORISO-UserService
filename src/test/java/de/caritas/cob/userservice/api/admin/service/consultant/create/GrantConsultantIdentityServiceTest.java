@@ -15,15 +15,19 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.DistributedTransactionException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.MatrixRealNameGuard;
 import de.caritas.cob.userservice.api.helper.UserHelper;
@@ -83,6 +87,8 @@ class GrantConsultantIdentityServiceTest {
   @Mock private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
   @Mock private UserHelper userHelper;
 
+  @Mock private AdminScope adminScope;
+
   @Mock
   private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
 
@@ -128,6 +134,38 @@ class GrantConsultantIdentityServiceTest {
 
     verify(identityRoleUpdater, never()).ensureRoles(anyString(), any());
     verify(consultantService, never()).saveConsultant(any());
+  }
+
+  @Test
+  void refuseBeforeConflictLookup_When_callerMayNotActOnAdmin() {
+    var admin = validAdmin();
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminScope)
+        .assertMay(Target.admin(ADMIN_ID));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
+
+    verifyNoInteractions(
+        consultantRepository, identityRoleUpdater, consultantService, matrixSynapseService);
+  }
+
+  @Test
+  void refuseBeforeConflictLookup_When_callerMayNotUseAgencies() {
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    org.mockito.Mockito.lenient()
+        .doThrow(new ForbiddenException("out of scope"))
+        .when(adminScope)
+        .assertMay(Target.agencies(dto.getAgencyIds()));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto));
+
+    verifyNoInteractions(
+        consultantRepository, identityRoleUpdater, consultantService, matrixSynapseService);
   }
 
   @Test
@@ -198,6 +236,31 @@ class GrantConsultantIdentityServiceTest {
     assertThat(response.getEmbedded().getId(), is(ADMIN_ID));
     verify(chatRecoveryEnrollmentPolicyService).forNewConsultant(1L);
     verify(chatRecoveryEnrollmentPolicyService, never()).forExistingIdentity(anyString());
+  }
+
+  @Test
+  void storeTopicsPerSelectedCentre_When_validatorDistributesThem() throws Exception {
+    when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
+    when(consultantRepository.findByIdAndDeleteDateIsNull(ADMIN_ID)).thenReturn(Optional.empty());
+    when(consultantRepository.findByUsernameAndDeleteDateIsNull(anyString()))
+        .thenReturn(Optional.empty());
+    stubHappyMatrix();
+    when(consultantService.saveConsultant(any(Consultant.class)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    dto.setTopicIds(List.of(7L));
+    when(consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+            any(), any(), any()))
+        .thenReturn(java.util.Map.of(1L, Set.of(7L), 2L, Set.of(7L)));
+
+    grantConsultantIdentityService.grantConsultantIdentityToAdmin(ADMIN_ID, dto);
+
+    ArgumentCaptor<Consultant> consultantCaptor = ArgumentCaptor.forClass(Consultant.class);
+    verify(consultantService).saveConsultant(consultantCaptor.capture());
+    assertThat(
+        consultantCaptor.getValue().getConsultantTopics().stream()
+            .map(ct -> ct.getAgencyId() + ":" + ct.getTopicId())
+            .collect(java.util.stream.Collectors.toSet()),
+        is(Set.of("1:7", "2:7")));
   }
 
   @Test

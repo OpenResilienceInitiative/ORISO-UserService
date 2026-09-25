@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
@@ -49,7 +50,6 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
@@ -68,6 +68,7 @@ class AccountInviteServiceTest {
   @Mock private TenantService tenantService;
   @Mock private TenantIdAllocationClient tenantIdAllocationClient;
   @Mock private AgencyIdAllocationClient agencyIdAllocationClient;
+  @Mock private AgencyFacts agencyFacts;
   @Mock private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @Mock private InviteMailDispatchService inviteMailDispatchService;
   @Mock private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
@@ -82,10 +83,39 @@ class AccountInviteServiceTest {
    */
   @Mock private AccountInviteAccessPolicy accessPolicy;
 
-  @InjectMocks private AccountInviteService service;
+  private AccountInviteService service;
 
   @BeforeEach
   void letTheAccessPolicyPassEverythingThrough() {
+    var ledger =
+        new ReservationLedger(
+            tenantService,
+            tenantIdAllocationClient,
+            agencyIdAllocationClient,
+            accountInviteRepository,
+            reservationReleaseTaskRepository,
+            reservationReleaseProcessor);
+    var delivery =
+        new InviteDelivery(
+            inviteAcceptUrlBuilder,
+            inviteMailDispatchService,
+            deliveryFailureRecorder,
+            deliveryRepository,
+            transactionManager);
+    service =
+        new AccountInviteService(
+            accountInviteRepository,
+            templateRepository,
+            authenticatedUser,
+            identityEmailOwnerLookup,
+            transactionManager,
+            accessPolicy,
+            agencyFacts,
+            new InviteTargetResolver(ledger),
+            ledger,
+            new UnitQueue(
+                accountInviteRepository, templateRepository, ledger, delivery, transactionManager),
+            delivery);
     lenient().when(accessPolicy.authorizeCreate(any())).thenAnswer(call -> call.getArgument(0));
     lenient()
         .when(accessPolicy.scopeForListing(any(), any()))
@@ -408,7 +438,7 @@ class AccountInviteServiceTest {
                 "New",
                 "Counsellor",
                 null,
-                null,
+                11L,
                 30L));
 
     assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
@@ -534,7 +564,7 @@ class AccountInviteServiceTest {
                 "A",
                 "B",
                 null,
-                null,
+                11L,
                 null));
 
     assertThat(invite.getRecipientEmail()).isEqualTo("free@example.org");
@@ -646,7 +676,7 @@ class AccountInviteServiceTest {
                 "A",
                 "B",
                 null,
-                null,
+                11L,
                 null));
 
     assertThat(invite.getRecipientEmail()).isEqualTo("reusable@example.org");
@@ -654,10 +684,15 @@ class AccountInviteServiceTest {
     // already covered by the identity probe, and a revoked, expired or superseded one must leave
     // the address free — otherwise a mistyped or withdrawn invite would strand the admin with no
     // way to invite that person again.
+    // WAITING_FOR_UNIT holds the address too: the invite is promised.
     verify(accountInviteRepository)
         .countNonTerminalInvitesForRecipientEmail(
             eq("reusable@example.org"),
-            eq(List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT)),
+            eq(
+                List.of(
+                    AccountInviteStatus.WAITING_FOR_UNIT,
+                    AccountInviteStatus.DRAFT,
+                    AccountInviteStatus.EMAIL_SENT)),
             any());
   }
 
@@ -1644,7 +1679,7 @@ class AccountInviteServiceTest {
             "New",
             "Counsellor",
             null,
-            null,
+            11L,
             30L);
 
     AccountInvite invite = service.createInvite(command);
@@ -1997,7 +2032,7 @@ class AccountInviteServiceTest {
             null,
             null,
             3L,
-            null,
+            11L,
             null,
             null,
             null));
@@ -2035,5 +2070,39 @@ class AccountInviteServiceTest {
 
     assertThat(result.invite().getTenantIdReservationToken()).isEqualTo("res-token-21");
     assertThat(result.invite().getTenantId()).isEqualTo(21L);
+  }
+
+  @Test
+  void resendInvite_Should_KeepTheTopicPermissionOnTheReplacementInvite() {
+    // The replacement invite is the one the counsellor accepts.
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(11L)
+            .tenantId(21L)
+            .agencyId(7L)
+            .departmentId(3L)
+            .recipientEmail("counsellor@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .topicPermission(TopicPermission.SELECT_EXISTING)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(21L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("Again")
+            .body("Use {{inviteLink}}")
+            .active(true)
+            .build();
+    when(accountInviteRepository.findById(11L)).thenReturn(Optional.of(oldInvite));
+    when(templateRepository.findById(21L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    givenSuccessfulDispatch();
+    var result = service.resendInvite(new SendInviteCommand(11L, 21L));
+
+    assertThat(result.invite()).isNotSameAs(oldInvite);
+    assertThat(result.invite().getTopicPermission()).isEqualTo(TopicPermission.SELECT_EXISTING);
   }
 }

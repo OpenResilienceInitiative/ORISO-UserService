@@ -290,6 +290,28 @@ class CreateConsultantSagaTest {
   }
 
   @Test
+  void createNewConsultant_Should_StoreTopicsPerSelectedCentre() throws Exception {
+    stubHappyPath();
+    CreateConsultantDTO dto = validCreateConsultantDto();
+    dto.setTopicIds(List.of(7L, 8L));
+    dto.setAgencyIds(List.of(5L, 9L));
+    when(consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+            any(), any(), any()))
+        .thenReturn(java.util.Map.of(5L, java.util.Set.of(7L, 8L), 9L, java.util.Set.of(7L)));
+
+    createConsultantSaga.createNewConsultant(dto);
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(
+        captured.getValue().getConsultantTopics().stream()
+            .map(ct -> ct.getAgencyId() + ":" + ct.getTopicId())
+            .collect(java.util.stream.Collectors.toSet()),
+        is(java.util.Set.of("5:7", "5:8", "9:7")));
+  }
+
+  @Test
   void createNewConsultant_Should_PreserveLegacyTopicOnlyRequestsWithoutAgencyIds()
       throws Exception {
     stubHappyPath();

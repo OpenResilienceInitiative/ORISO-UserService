@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.model.ConsultantAvatars;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
@@ -28,6 +29,7 @@ import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -85,8 +87,13 @@ public class ConsultantUpdateService {
                     new BadRequestException(
                         String.format("Consultant with id %s does not exist", consultantId)));
 
-    consultantTopicAgencyCompatibilityValidator.validateTopicUpdateAgainstAssignedAgencies(
-        consultant.getId(), updateConsultantDTO.getTopicIds(), consultant.getTenantId());
+    var topicIdsByAgencyId =
+        consultantTopicAgencyCompatibilityValidator.resolveTopicUpdate(
+            consultant.getId(),
+            updateConsultantDTO.getTopicIds(),
+            updateConsultantDTO.getTopicsByAgency(),
+            consultant.getTenantId());
+    rejectRemovingTheLastTopic(consultant, topicIdsByAgencyId);
 
     boolean identityDataChanged = identityDataChanged(consultant, updateConsultantDTO);
     boolean appointmentDataChanged =
@@ -118,6 +125,7 @@ public class ConsultantUpdateService {
     String previousPublishedName =
         consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
 
+    consultant.replaceTopicsPerAgency(topicIdsByAgencyId);
     var updatedConsultant = updateDatabaseConsultant(updateConsultantDTO, consultant, adminEdit);
     // updateDatabaseConsultant mutates this very entity, so it already carries the new values.
     scheduleMatrixDisplayNameUpdate(consultant, identityDataChanged, previousPublishedName);
@@ -223,7 +231,7 @@ public class ConsultantUpdateService {
     consultant.setAbsent(updateConsultantDTO.getAbsent());
     consultant.setAbsenceMessage(updateConsultantDTO.getAbsenceMessage());
     applyPersonalInfo(updateConsultantDTO, consultant);
-    consultant.replaceTopics(updateConsultantDTO.getTopicIds());
+    applyTopicPermission(updateConsultantDTO, consultant);
     // Always update supervisor field if provided (even if false)
     if (updateConsultantDTO.getIsSupervisor() != null) {
       consultant.setSupervisor(updateConsultantDTO.getIsSupervisor());
@@ -249,6 +257,28 @@ public class ConsultantUpdateService {
     }
 
     return this.consultantService.saveConsultant(consultant);
+  }
+
+  /**
+   * Runs on the resolved update, so a request with only {@code topicsByAgency} is not read as the
+   * DTO's default empty {@code topicIds}. Older accounts without any topic stay editable.
+   */
+  private static void rejectRemovingTheLastTopic(
+      Consultant consultant, Map<Long, Set<Long>> topicIdsByAgencyId) {
+    if (topicIdsByAgencyId == null
+        || topicIdsByAgencyId.values().stream().anyMatch(topics -> !topics.isEmpty())) {
+      return;
+    }
+    if (consultant.getConsultantTopics() != null && !consultant.getConsultantTopics().isEmpty()) {
+      throw new BadRequestException("At least one topic is required");
+    }
+  }
+
+  /** Null leaves it untouched. The invite table reads this value; it is stored only here. */
+  private void applyTopicPermission(UpdateAdminConsultantDTO dto, Consultant consultant) {
+    if (dto.getTopicPermission() != null) {
+      consultant.setTopicPermission(TopicPermission.valueOf(dto.getTopicPermission().getValue()));
+    }
   }
 
   /**
