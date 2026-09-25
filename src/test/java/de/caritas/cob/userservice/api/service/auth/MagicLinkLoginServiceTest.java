@@ -5,7 +5,6 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -15,15 +14,15 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
 import de.caritas.cob.userservice.api.port.out.IdentitySessionExchange;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.MagicLinkMailSender;
 import de.caritas.cob.userservice.api.service.auth.MagicLinkLoginService.MagicLinkRequestResult;
-import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.user.UserService;
-import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.time.Instant;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -34,7 +33,6 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -42,21 +40,37 @@ class MagicLinkLoginServiceTest {
 
   @Mock private UserService userService;
   @Mock private ConsultantService consultantService;
-  @Mock private RestTemplate restTemplate;
   @Mock private IdentitySessionExchange identitySessionExchange;
   @Mock private OneTimeTokenStore oneTimeTokenStore;
-  @Mock private ApplicationSettingsService applicationSettingsService;
   @Mock private OrisoEmailRenderer emailRenderer;
   @Mock private OrisoEmailBrand emailBrand;
+  @Mock private PlatformSmtpSettingsProvider platformSmtpSettings;
 
   @InjectMocks private MagicLinkLoginService magicLinkLoginService;
+  private final List<SentMail> sentMails = new ArrayList<>();
+
+  private record SentMail(String recipient, String url, String host, String from) {}
 
   @BeforeEach
   void setUp() {
     ReflectionTestUtils.setField(magicLinkLoginService, "emailDummySuffix", "@beratungcaritas.de");
-    ReflectionTestUtils.setField(magicLinkLoginService, "consultingTypeServiceApiUrl", "");
+    when(platformSmtpSettings.requireConfigured())
+        .thenReturn(
+            new PlatformSmtpSettingsProvider.Settings(
+                "deployment-smtp.example.org",
+                587,
+                false,
+                "deployment-user",
+                "deployment-pass",
+                "noreply@example.org"));
     ReflectionTestUtils.setField(
         magicLinkLoginService, "magicLinkFrontendBaseUrl", "https://app.oriso.org");
+    ReflectionTestUtils.setField(
+        magicLinkLoginService,
+        "mailSender",
+        (MagicLinkMailSender)
+            (recipient, url, settings) ->
+                sentMails.add(new SentMail(recipient, url, settings.host(), settings.from())));
     when(oneTimeTokenStore.claim(anyString(), anyString())).thenReturn(Optional.empty());
   }
 
@@ -131,6 +145,38 @@ class MagicLinkLoginServiceTest {
     assertThat(result).isEqualTo(MagicLinkRequestResult.NOT_ENABLED);
   }
 
+  @Test
+  void requestMagicLink_Should_SendThroughDeploymentSmtp() {
+    when(userService.findUserByUsername("testuser"))
+        .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
+
+    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+
+    assertThat(sentMails).hasSize(1);
+    SentMail mail = sentMails.get(0);
+    assertThat(mail.recipient()).isEqualTo("real@example.com");
+    assertThat(mail.host()).isEqualTo("deployment-smtp.example.org");
+    assertThat(mail.from()).isEqualTo("noreply@example.org");
+    assertThat(mail.url()).matches("https://app\\.oriso\\.org/login\\?magicToken=[0-9a-f]{64}");
+  }
+
+  @Test
+  void requestMagicLink_Should_NotIssueToken_When_DeploymentSmtpIsIncomplete() {
+    when(userService.findUserByUsername("testuser"))
+        .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
+    when(platformSmtpSettings.requireConfigured())
+        .thenThrow(
+            new IllegalStateException("Platform SMTP is not configured: smtp.host (SMTP_HOST)"));
+
+    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+
+    assertThat(sentMails).isEmpty();
+    verify(oneTimeTokenStore, never())
+        .store(anyString(), anyString(), anyString(), any(Instant.class), anyBoolean());
+  }
+
   // --- consumeMagicLink ---
 
   @Test
@@ -188,62 +234,6 @@ class MagicLinkLoginServiceTest {
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
 
     MagicLinkRequestResult result = magicLinkLoginService.requestMagicLink("testuser");
-
-    assertThat(result).isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
-  @Test
-  void requestMagicLink_Should_ReturnAccepted_When_SmtpNotConfigured() {
-    User user = new User();
-    user.setUserId("u-1");
-    user.setUsername("testuser");
-    user.setEmail("real@example.com");
-    user.setMagicLinkLoginEnabled(Boolean.TRUE);
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-
-    // consultingTypeServiceApiUrl is blank (set in @BeforeEach) → SMTP not available → ACCEPTED
-    MagicLinkRequestResult result = magicLinkLoginService.requestMagicLink("testuser");
-
-    assertThat(result).isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
-  // ── resolveGlobalSmtpSettings paths ──────────────────────────────────────
-
-  @Test
-  void requestMagicLink_Should_ReturnAccepted_When_SmtpSettingsUrlSetButResponseIsNull() {
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://consulting-type-service");
-    User user = new User();
-    user.setUserId("u-1");
-    user.setUsername("user1");
-    user.setEmail("user@example.com");
-    user.setMagicLinkLoginEnabled(Boolean.TRUE);
-    when(userService.findUserByUsername("user1")).thenReturn(Optional.of(user));
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(null);
-
-    MagicLinkRequestResult result = magicLinkLoginService.requestMagicLink("user1");
-
-    assertThat(result).isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
-  @Test
-  @SuppressWarnings("unchecked")
-  void requestMagicLink_Should_ReturnAccepted_When_SmtpDisabledInSettings() {
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://consulting-type-service");
-    User user = new User();
-    user.setUserId("u-1");
-    user.setUsername("user1");
-    user.setEmail("user@example.com");
-    user.setMagicLinkLoginEnabled(Boolean.TRUE);
-    when(userService.findUserByUsername("user1")).thenReturn(Optional.of(user));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenReturn(
-            Map.of(
-                "globalFeatureSystemNotificationEmailsEnabled", true,
-                "globalSmtpEnabled", false));
-
-    MagicLinkRequestResult result = magicLinkLoginService.requestMagicLink("user1");
 
     assertThat(result).isEqualTo(MagicLinkRequestResult.ACCEPTED);
   }
@@ -317,113 +307,6 @@ class MagicLinkLoginServiceTest {
     verify(oneTimeTokenStore).restore("magic-login", "retry-token", claim, false);
   }
 
-  // ── resolveGlobalSmtpSettings — missing required fields ──────────────────
-
-  @Test
-  @SuppressWarnings("unchecked")
-  void requestMagicLink_Should_ReturnAccepted_When_SmtpHostIsBlank() {
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    User user = validUserWithMagicLinkEnabled();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenReturn(
-            Map.of(
-                "globalFeatureSystemNotificationEmailsEnabled", true,
-                "globalSmtpEnabled", true,
-                "globalSmtpHost", "   ",
-                "globalSmtpPort", 587,
-                "globalSmtpUsername", "user",
-                "globalSmtpPassword", "pass",
-                "globalSmtpFrom", "no-reply@oriso.org"));
-
-    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
-        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
-  @Test
-  @SuppressWarnings("unchecked")
-  void requestMagicLink_Should_ReturnAccepted_When_SmtpFromIsBlank() {
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    User user = validUserWithMagicLinkEnabled();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenReturn(
-            Map.of(
-                "globalFeatureSystemNotificationEmailsEnabled", true,
-                "globalSmtpEnabled", true,
-                "globalSmtpHost", "smtp.example.com",
-                "globalSmtpPort", 587,
-                "globalSmtpUsername", "user",
-                "globalSmtpPassword", "pass",
-                "globalSmtpFrom", ""));
-
-    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
-        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
-  // ── resolveGlobalSmtpSettings — nested value map unwrapping ──────────────
-
-  @Test
-  @SuppressWarnings("unchecked")
-  void requestMagicLink_Should_ReturnAccepted_When_SmtpSettingsAreNestedUnderValueKey() {
-    // Some API responses wrap values as {"value": actual_value} — unwrapSettingValue handles this.
-    // With nested map format and smtpEnabled = false → should return ACCEPTED (no email sent).
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    User user = validUserWithMagicLinkEnabled();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-
-    Map<String, Object> nestedSettings = new HashMap<>();
-    nestedSettings.put("globalFeatureSystemNotificationEmailsEnabled", Map.of("value", true));
-    nestedSettings.put("globalSmtpEnabled", Map.of("value", false));
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(nestedSettings);
-
-    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
-        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
-  @Test
-  @SuppressWarnings("unchecked")
-  void requestMagicLink_Should_ParsePortAsString_When_PortIsStringInSettings() {
-    // asIntSettingValue handles String "587" → Integer 587
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    User user = validUserWithMagicLinkEnabled();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenReturn(
-            Map.of(
-                "globalFeatureSystemNotificationEmailsEnabled", true,
-                "globalSmtpEnabled", true,
-                "globalSmtpHost", "smtp.example.com",
-                "globalSmtpPort", "not-a-number",
-                "globalSmtpUsername", "user",
-                "globalSmtpPassword", "pass",
-                "globalSmtpFrom", "noreply@example.com"));
-
-    // Invalid port string → asIntSettingValue returns null → missing required field → ACCEPTED
-    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
-        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
-  // ── normalizeBaseUrl — trailing slash stripped ────────────────────────────
-
-  @Test
-  void requestMagicLink_Should_ReturnAccepted_When_ConsultingTypeUrlHasTrailingSlash() {
-    // normalizeBaseUrl strips trailing slash — "http://cts/" + "/settings" must not produce
-    // "http://cts//settings". With null response the result is still ACCEPTED.
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts/");
-    User user = validUserWithMagicLinkEnabled();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(null);
-
-    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
-        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
   // ── Redis failure boundary ────────────────────────────────────────────────
 
   @Test
@@ -474,81 +357,6 @@ class MagicLinkLoginServiceTest {
         .isEqualTo(MagicLinkRequestResult.NOT_ENABLED);
   }
 
-  // ── asBooleanSettingValue — string "true" ────────────────────────────────
-
-  @Test
-  @SuppressWarnings("unchecked")
-  void requestMagicLink_Should_ReturnAccepted_When_SmtpEnabledIsStringTrue() {
-    // asBooleanSettingValue handles String "true" (case-insensitive) as well as Boolean true.
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    User user = validUserWithMagicLinkEnabled();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-    Map<String, Object> settings = new HashMap<>();
-    settings.put("globalFeatureSystemNotificationEmailsEnabled", "TRUE");
-    settings.put("globalSmtpEnabled", "false");
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(settings);
-
-    // smtpEnabled = "false" string → false → SMTP not available → ACCEPTED
-    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
-        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
-  // ── resolveGlobalSmtpSettings — CTS throws exception ────────────────────
-
-  @Test
-  void requestMagicLink_Should_ReturnAccepted_When_ConsultingTypeServiceThrows() {
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    User user = validUserWithMagicLinkEnabled();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenThrow(new RuntimeException("service unavailable"));
-
-    // Exception caught internally — returns ACCEPTED, does not propagate
-    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
-        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
-  // ── sendMagicLinkEmailSafely — happy path entered ────────────────────────
-
-  @Test
-  @SuppressWarnings("unchecked")
-  void requestMagicLink_Should_AttemptSmtpSend_When_ValidSmtpSettingsReturned() {
-    // resolveGlobalSmtpSettings returns present → sendMagicLinkEmailSafely entered,
-    // renders through the real anmeldelink/DE_FORMAL path, then Transport.send fails
-    // (smtp.invalid) but the exception is caught → no rethrow.
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    User user = validUserWithMagicLinkEnabled();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenReturn(
-            Map.of(
-                "globalFeatureSystemNotificationEmailsEnabled", true,
-                "globalSmtpEnabled", true,
-                "globalSmtpHost", "smtp.invalid",
-                "globalSmtpPort", 587,
-                "globalSmtpUsername", "user",
-                "globalSmtpPassword", "pass",
-                "globalSmtpFrom", "noreply@example.com"));
-    ApplicationSettingsSmtpCredentialsDTO credentials = new ApplicationSettingsSmtpCredentialsDTO();
-    credentials.setGlobalSmtpUsername("user");
-    credentials.setGlobalSmtpPassword("pass");
-    when(applicationSettingsService.getGlobalSmtpCredentials())
-        .thenReturn(Optional.of(credentials));
-    Map<String, String> brandValues = new HashMap<>();
-    brandValues.put("appUrl", "https://app.oriso.org");
-    when(emailBrand.values(eq("https://app.oriso.org"), any())).thenReturn(brandValues);
-    when(emailRenderer.render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
-        .thenReturn(new OrisoEmailRenderer.RenderedEmail("subject", "<html></html>", "text"));
-
-    assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
-        .doesNotThrowAnyException();
-
-    verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
-  }
-
   // ── consumeMagicLink — happy path returns provider-neutral session ────────
 
   @Test
@@ -582,32 +390,6 @@ class MagicLinkLoginServiceTest {
     verify(oneTimeTokenStore).restore("magic-login", "exchange-fail-token", claim, false);
   }
 
-  // ── asIntSettingValue — valid port string "587" ───────────────────────────
-
-  @Test
-  @SuppressWarnings("unchecked")
-  void requestMagicLink_Should_ParseValidPortString_When_PortIs587AsString() {
-    // asIntSettingValue("587") → Integer 587 (valid) → SMTP settings resolved
-    // Transport.send fails (caught) but no exception escapes
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    User user = validUserWithMagicLinkEnabled();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenReturn(
-            Map.of(
-                "globalFeatureSystemNotificationEmailsEnabled", true,
-                "globalSmtpEnabled", true,
-                "globalSmtpHost", "smtp.invalid",
-                "globalSmtpPort", "587",
-                "globalSmtpUsername", "user",
-                "globalSmtpPassword", "pass",
-                "globalSmtpFrom", "noreply@example.com"));
-
-    assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
-        .doesNotThrowAnyException();
-  }
-
   // ── resolveAccount — decoded username fallback (lines 128-130) ───────────
 
   @Test
@@ -630,106 +412,6 @@ class MagicLinkLoginServiceTest {
 
     assertThat(magicLinkLoginService.requestMagicLink(encoded))
         .isEqualTo(MagicLinkRequestResult.NOT_ENABLED);
-  }
-
-  // ── SMTP blank username guard ─────────────────────────────────────────────
-
-  @Test
-  @SuppressWarnings("unchecked")
-  void requestMagicLink_Should_ReturnAccepted_When_SmtpUsernameIsBlank() {
-    // Line 337: isBlank(username) → returns Optional.empty()
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    User user = validUserWithMagicLinkEnabled();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-    Map<String, Object> settings = new HashMap<>();
-    settings.put("globalFeatureSystemNotificationEmailsEnabled", true);
-    settings.put("globalSmtpEnabled", true);
-    settings.put("globalSmtpHost", "smtp.example.com");
-    settings.put("globalSmtpPort", 587);
-    settings.put("globalSmtpUsername", "  ");
-    settings.put("globalSmtpPassword", "pass");
-    settings.put("globalSmtpFrom", "noreply@example.com");
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(settings);
-
-    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
-        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
-  @Test
-  @SuppressWarnings("unchecked")
-  void requestMagicLink_Should_ReturnAccepted_When_SmtpPasswordIsBlank() {
-    // Line 338: isBlank(password) → returns Optional.empty()
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    User user = validUserWithMagicLinkEnabled();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-    Map<String, Object> settings = new HashMap<>();
-    settings.put("globalFeatureSystemNotificationEmailsEnabled", true);
-    settings.put("globalSmtpEnabled", true);
-    settings.put("globalSmtpHost", "smtp.example.com");
-    settings.put("globalSmtpPort", 587);
-    settings.put("globalSmtpUsername", "user");
-    settings.put("globalSmtpPassword", "");
-    settings.put("globalSmtpFrom", "noreply@example.com");
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(settings);
-
-    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
-        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
-  }
-
-  // The public /settings payload deliberately omits globalSmtpUsername/globalSmtpPassword since the
-  // CTS-C01 credential-leak fix. Credentials must therefore come from the authenticated source.
-  @Test
-  @SuppressWarnings("unchecked")
-  void
-      requestMagicLink_Should_IssueToken_When_PublicSettingsOmitCredentialsButAuthenticatedSourceHasThem() {
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    when(userService.findUserByUsername("testuser"))
-        .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenReturn(publicSmtpSettingsWithoutCredentials());
-    when(applicationSettingsService.getGlobalSmtpCredentials())
-        .thenReturn(
-            Optional.of(
-                new ApplicationSettingsSmtpCredentialsDTO()
-                    .globalSmtpUsername("smtp-user")
-                    .globalSmtpPassword("smtp-pass")));
-
-    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
-        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
-    verify(oneTimeTokenStore)
-        .store(anyString(), anyString(), anyString(), any(Instant.class), anyBoolean());
-  }
-
-  @Test
-  @SuppressWarnings("unchecked")
-  void requestMagicLink_Should_NotIssueToken_When_AuthenticatedCredentialsAreUnavailable() {
-    ReflectionTestUtils.setField(
-        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
-    when(userService.findUserByUsername("testuser"))
-        .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenReturn(publicSmtpSettingsWithoutCredentials());
-    when(applicationSettingsService.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
-
-    // Unavailable SMTP must not be observable to the caller — the result stays ACCEPTED so the
-    // endpoint cannot be used to enumerate accounts; only the token issue is skipped.
-    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
-        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
-    verify(oneTimeTokenStore, never())
-        .store(anyString(), anyString(), anyString(), any(Instant.class), anyBoolean());
-  }
-
-  private Map<String, Object> publicSmtpSettingsWithoutCredentials() {
-    Map<String, Object> settings = new HashMap<>();
-    settings.put("globalFeatureSystemNotificationEmailsEnabled", true);
-    settings.put("globalSmtpEnabled", true);
-    settings.put("globalSmtpHost", "smtp.example.com");
-    settings.put("globalSmtpPort", 587);
-    settings.put("globalSmtpFrom", "noreply@example.com");
-    return settings;
   }
 
   private OneTimeTokenStore.TokenClaim validClaim(String subjectId) {
