@@ -34,6 +34,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
@@ -328,12 +329,28 @@ public class AccountInviteService {
       String query,
       int page,
       int size) {
-    String search = normalizeSearch(query);
     PageRequest pageRequest = PageRequest.of(Math.max(page, 0), clampSize(size));
+    return findInScope(targetRole, status, tenantId, query, pageRequest);
+  }
+
+  /** Every invite in the caller's scope that matches, unpaged, newest first; for the tiles. */
+  @Transactional(readOnly = true)
+  public List<AccountInvite> listAllInvites(
+      AccountInviteTargetRole targetRole, Long tenantId, String query) {
+    return findInScope(targetRole, null, tenantId, query, Pageable.unpaged()).getContent();
+  }
+
+  private Page<AccountInvite> findInScope(
+      AccountInviteTargetRole targetRole,
+      AccountInviteStatus status,
+      Long tenantId,
+      String query,
+      Pageable pageable) {
+    String search = normalizeSearch(query);
     // Cross-Träger guard: an absent tenant_id would otherwise list the invites of every Träger.
     InviteListScope scope = accessPolicy.scopeForListing(tenantId, targetRole);
     if (scope.empty()) {
-      return Page.empty(pageRequest);
+      return pageable.isPaged() ? Page.empty(pageable) : Page.empty();
     }
     if (scope.restrictedToAgencies()) {
       return accountInviteRepository.findAllByFiltersWithinAgencies(
@@ -343,15 +360,10 @@ public class AccountInviteService {
           search,
           parseNumericSearch(search),
           scope.agencyIds(),
-          pageRequest);
+          pageable);
     }
     return accountInviteRepository.findAllByFilters(
-        scope.tenantId(),
-        scope.targetRole(),
-        status,
-        search,
-        parseNumericSearch(search),
-        pageRequest);
+        scope.tenantId(), scope.targetRole(), status, search, parseNumericSearch(search), pageable);
   }
 
   /**
@@ -466,6 +478,7 @@ public class AccountInviteService {
                       .agencyIdAllocationMode(oldInvite.getAgencyIdAllocationMode())
                       .alsoCounsellor(oldInvite.getAlsoCounsellor())
                       .topicPermission(oldInvite.getTopicPermission())
+                      .unitCreatedAt(oldInvite.getUnitCreatedAt())
                       .tokenHash(prepared.tokenHash())
                       .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
                       .status(AccountInviteStatus.EMAIL_SENT)
@@ -755,6 +768,9 @@ public class AccountInviteService {
     invites.forEach(
         invite -> {
           invite.setTwoFactorStatus(to);
+          if (to == TwoFactorGateStatus.ACTIVE) {
+            invite.setTwoFactorActivatedAt(now);
+          }
           invite.setUpdateDate(now);
         });
     accountInviteRepository.saveAll(invites);

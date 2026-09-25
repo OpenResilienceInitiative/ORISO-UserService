@@ -25,5 +25,15 @@ public enum HttpStatusExceptionReason {
   /** An invite into a not-yet-created unit needs a pending admin invite for that unit. */
   NO_PENDING_UNIT_ADMIN,
   /** A waiting invite cannot be sent before its unit exists. */
-  UNIT_NOT_CREATED
+  UNIT_NOT_CREATED,
+  /** The invite's account exists; its roles change in the Users area or by adding a role. */
+  INVITE_ALREADY_ACCEPTED,
+  /** The invite was revoked, replaced or has expired. */
+  INVITE_NOT_PENDING,
+  /** Träger-level and agency-level invites differ in placement and link: revoke, invite anew. */
+  ROLE_CHANGE_NEEDS_NEW_INVITE,
+  /** The change would leave a new unit without any pending admin invite. */
+  ONLY_UNIT_ADMIN,
+  /** The account already holds that role, or a higher admin role. */
+  ROLE_ALREADY_GRANTED
 }

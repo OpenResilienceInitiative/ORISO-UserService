@@ -177,8 +177,16 @@ public class AccountInvite {
   @Column(name = "dpa_signed_at", columnDefinition = "datetime")
   private LocalDateTime dpaSignedAt;
 
+  /** When the unit a WAITING_FOR_UNIT invite needed was created, i.e. the invite was released. */
+  @Column(name = "unit_created_at", columnDefinition = "datetime")
+  private LocalDateTime unitCreatedAt;
+
   @Column(name = "accepted_at", columnDefinition = "datetime")
   private LocalDateTime acceptedAt;
+
+  /** Latest 2FA activation of the invitee; with the gate status it dates the "completed" step. */
+  @Column(name = "two_factor_activated_at", columnDefinition = "datetime")
+  private LocalDateTime twoFactorActivatedAt;
 
   @Column(name = "accepted_by_user_id", length = 36)
   private String acceptedByUserId;

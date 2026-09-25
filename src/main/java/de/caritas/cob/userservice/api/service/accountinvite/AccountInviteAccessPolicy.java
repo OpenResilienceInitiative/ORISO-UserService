@@ -96,6 +96,19 @@ public class AccountInviteAccessPolicy {
     adminScope.assertMay(Target.placedIn(invite.getTenantId(), invite.getAgencyId()));
   }
 
+  /** "Higher invites lower": may the caller give anybody this role, by invite or to an account? */
+  public void assertMayInvite(AccountInviteTargetRole role) {
+    boolean allowed =
+        switch (adminScope.current()) {
+          case AdminScope.Platform platform -> true;
+          case AdminScope.Tenant tenant -> invitableByTenantReach().contains(role);
+          case AdminScope.Agencies agencies -> role == AccountInviteTargetRole.COUNSELLOR;
+        };
+    if (!allowed) {
+      throw deny("give the role " + role);
+    }
+  }
+
   /** May the caller add their own account as counsellor of this agency ("higher assigns lower")? */
   public void authorizeSelfAssignment(long agencyId, Long agencyTenantId) {
     switch (adminScope.current()) {
@@ -135,11 +148,7 @@ public class AccountInviteAccessPolicy {
       CreateAccountInviteCommand command,
       Long callerTenantId,
       Supplier<Optional<AgencyFacts.Agency>> agency) {
-    Set<AccountInviteTargetRole> invitable =
-        authenticatedUser.hasTenantLevelAdminRole()
-            ? TENANT_ADMIN_INVITABLE_ROLES
-            : USER_ADMIN_INVITABLE_ROLES;
-    if (!invitable.contains(command.targetRole())) {
+    if (!invitableByTenantReach().contains(command.targetRole())) {
       throw deny("invite a " + command.targetRole());
     }
     if (command.tenantIdAllocationMode() != null
@@ -155,6 +164,12 @@ public class AccountInviteAccessPolicy {
       throw deny("invite into agency " + command.agencyId());
     }
     return withCallerTenant(command, callerTenantId);
+  }
+
+  private Set<AccountInviteTargetRole> invitableByTenantReach() {
+    return authenticatedUser.hasTenantLevelAdminRole()
+        ? TENANT_ADMIN_INVITABLE_ROLES
+        : USER_ADMIN_INVITABLE_ROLES;
   }
 
   /** A named tenant is stored on the invite, so it must be the caller's own. */

@@ -29,11 +29,13 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPe
 import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteBoard;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteQueueProblem;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteRoleChange;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.UnitQueue;
@@ -48,9 +50,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 
@@ -80,7 +79,9 @@ class AccountInviteControllerTest {
                 mock(ConsultantRepository.class),
                 mock(AccountInviteAccessPolicy.class),
                 mock(AgencyFacts.class)),
-            unitQueue);
+            unitQueue,
+            new InviteBoard(accountInviteService, deliveryRepository, unitQueue),
+            mock(InviteRoleChange.class));
   }
 
   @Test
@@ -370,30 +371,27 @@ class AccountInviteControllerTest {
 
   @Test
   void listInvites_Should_delegateWithDefaults_When_paramsNull() {
-    Page<AccountInvite> page = new PageImpl<>(List.of(sampleInvite()), PageRequest.of(0, 20), 1);
-    when(accountInviteService.listInvites(null, null, null, null, 0, 20)).thenReturn(page);
+    when(accountInviteService.listAllInvites(null, null, null)).thenReturn(List.of(sampleInvite()));
     when(accountInviteService.calculateAccessGate(any())).thenReturn(AccountAccessGateStatus.READY);
-    when(deliveryRepository.findFirstByAccountInviteIdOrderByCreateDateDesc(10L))
-        .thenReturn(Optional.empty());
 
-    var response = controller.listInvites(null, null, null, null, null, null);
+    var response = controller.listInvites(null, null, null, null, null, null, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(1, response.getBody().totalElements);
     assertEquals(1, response.getBody().content.size());
+    assertEquals(20, response.getBody().size);
   }
 
   @Test
   void listInvites_Should_parseEnumsAndPagination() {
-    Page<AccountInvite> page = new PageImpl<>(List.of(), PageRequest.of(1, 5), 0);
-    when(accountInviteService.listInvites(
-            AccountInviteTargetRole.COUNSELLOR, AccountInviteStatus.DRAFT, 7L, null, 1, 5))
-        .thenReturn(page);
+    when(accountInviteService.listAllInvites(AccountInviteTargetRole.COUNSELLOR, 7L, null))
+        .thenReturn(List.of());
 
     var response =
         controller.listInvites(
             AccountInviteTargetRole.COUNSELLOR.name(),
             AccountInviteStatus.DRAFT.name(),
+            "NEEDS_ACTION",
             7L,
             null,
             1,
@@ -401,24 +399,28 @@ class AccountInviteControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(0, response.getBody().content.size());
+    assertEquals(1, response.getBody().page);
+    assertEquals(5, response.getBody().size);
   }
 
   @Test
   void listInvites_Should_passSearchQueryThrough() {
-    Page<AccountInvite> page = new PageImpl<>(List.of(), PageRequest.of(0, 20), 0);
-    when(accountInviteService.listInvites(null, null, null, "Jane", 0, 20)).thenReturn(page);
+    when(accountInviteService.listAllInvites(null, null, "Jane")).thenReturn(List.of());
 
-    var response = controller.listInvites(null, null, null, "Jane", null, null);
+    var response = controller.listInvites(null, null, null, null, "Jane", null, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(accountInviteService).listInvites(null, null, null, "Jane", 0, 20);
+    verify(accountInviteService).listAllInvites(null, null, "Jane");
   }
 
   @Test
   void listInvites_Should_throwBadRequest_When_unknownEnum() {
     assertThrows(
         BadRequestException.class,
-        () -> controller.listInvites("BOGUS", null, null, null, null, null));
+        () -> controller.listInvites("BOGUS", null, null, null, null, null, null));
+    assertThrows(
+        BadRequestException.class,
+        () -> controller.listInvites(null, null, "SOMEWHERE", null, null, null, null));
   }
 
   @Test
@@ -578,6 +580,7 @@ class AccountInviteControllerTest {
         "listInvites",
         String.class,
         String.class,
+        String.class,
         Long.class,
         String.class,
         Integer.class,
@@ -587,6 +590,8 @@ class AccountInviteControllerTest {
     assertHasPreAuthorize(
         "resendInvite", Long.class, AccountInviteController.SendInviteRequestDTO.class);
     assertHasPreAuthorize("revokeInvite", Long.class);
+    assertHasPreAuthorize(
+        "changeRole", Long.class, AccountInviteController.ChangeRoleRequestDTO.class);
     assertHasPreAuthorize("createTemplate", AccountInviteController.TemplateRequestDTO.class);
     assertHasPreAuthorize(
         "updateTemplate", Long.class, AccountInviteController.TemplateRequestDTO.class);

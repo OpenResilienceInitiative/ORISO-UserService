@@ -1196,6 +1196,11 @@ paths:
           in: query
           schema:
             $ref: '#/components/schemas/AccountInviteStatus'
+        - name: progress_phase
+          in: query
+          description: One status tile; phaseCounts in the answer ignore this and status.
+          schema:
+            $ref: '#/components/schemas/AccountInviteProgressPhase'
         - name: tenant_id
           in: query
           schema:
@@ -1345,6 +1350,117 @@ paths:
           description: FORBIDDEN - invite outside the caller's scope
         404:
           description: NOT FOUND - invite unknown
+      security:
+        - Bearer: [ ]
+  /useradmin/account-invites/{inviteId}/role:
+    put:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: 'Changes the role of an invite nobody has accepted yet [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      description: >-
+        WAITING_FOR_UNIT, DRAFT and EMAIL_SENT invites only. COUNSELLOR and AGENCY_ADMIN swap
+        (both use the same onboarding link, so a sent link stays valid); the caller may only set
+        a role they could invite ("higher invites lower"). A promoted counsellor gets
+        alsoCounsellor true unless the request says false; a demoted admin loses it. An invite
+        that now has to wait for its new agency moves to WAITING_FOR_UNIT (its sent link stops
+        working and the last template goes out on release); a waiting counsellor who becomes an
+        admin of the new agency leaves the queue as a DRAFT sharing that agency's reservation.
+        An accepted invite is not changed here: use POST /useradmin/consultants/{consultantId}/roles.
+      operationId: changeAccountInviteRole
+      parameters:
+        - $ref: '#/components/parameters/InviteId'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [targetRole]
+              properties:
+                targetRole:
+                  $ref: '#/components/schemas/AccountInviteTargetRole'
+                alsoCounsellor:
+                  type: boolean
+                  description: AGENCY_ADMIN only (400 otherwise); omitted keeps it, or true on promotion.
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountInvite'
+        400:
+          description: BAD REQUEST - missing or unknown role, alsoCounsellor for a non-admin role, or no topic left to pick
+        403:
+          description: FORBIDDEN - invite outside the caller's scope (other Träger or agency), or a role the caller could not invite
+        404:
+          description: NOT FOUND - invite unknown
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
+      security:
+        - Bearer: [ ]
+  /useradmin/consultants/{consultantId}/roles:
+    post:
+      x-internal: true
+      tags:
+        - consultant-role-controller
+      summary: 'Adds a role to an existing counsellor account; only AGENCY_ADMIN [Authorization: tenant-admin, user-admin]'
+      description: >-
+        Makes the counsellor Beratungsstellen-Admin of one agency they counsel in: the admin row,
+        its admin_agency relation and the Keycloak roles restricted-agency-admin and user-admin,
+        in that order inside one transaction (a refused Keycloak role leaves no rows). Removing a
+        role stays in the Users area.
+      operationId: addConsultantRole
+      parameters:
+        - name: consultantId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [role]
+              properties:
+                role:
+                  type: string
+                  enum: [AGENCY_ADMIN]
+                agencyId:
+                  type: integer
+                  format: int64
+                  description: Omitted = the counsellor's only agency.
+      responses:
+        200:
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                x-internal: true
+                properties:
+                  consultantId:
+                    type: string
+                  role:
+                    type: string
+                    enum: [AGENCY_ADMIN]
+                  agencyIds:
+                    type: array
+                    description: Every agency the account administers now.
+                    items:
+                      type: integer
+                      format: int64
+        400:
+          description: BAD REQUEST - missing or other role, or an agency the counsellor does not counsel in
+        403:
+          description: FORBIDDEN - counsellor outside the caller's scope (other Träger), or a caller who may not invite agency admins (Beratungsstellen-Admins)
+        404:
+          description: NOT FOUND - counsellor unknown or marked for deletion
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
       security:
         - Bearer: [ ]
   /useradmin/account-invites/{inviteId}/waive-two-factor:
@@ -2590,6 +2706,26 @@ components:
         phase:
           type: string
           description: Public accept endpoint only.
+        progressPhase:
+          $ref: '#/components/schemas/AccountInviteProgressPhase'
+        unitCreatedAt:
+          type: string
+          format: date-time
+          description: When the unit a WAITING_FOR_UNIT invite needed was created (its release); set once.
+        sentAt:
+          type: string
+          format: date-time
+          description: When the latest invite mail was sent.
+        accountCreatedAt:
+          type: string
+          format: date-time
+          description: When the account was created (same moment as acceptedAt).
+        completedAt:
+          type: string
+          format: date-time
+          description: >-
+            When the last gate passed (2FA activated or waived; for TENANT_ADMIN also the DPA
+            signature). Null while a gate is open, and for 2FA activations before this field.
     PagedAccountInvites:
       type: object
       x-internal: true
@@ -2607,6 +2743,22 @@ components:
           type: integer
         size:
           type: integer
+        phaseCounts:
+          type: object
+          description: Invites per progress phase over all pages; ignores the status and progress_phase filters.
+          additionalProperties:
+            type: integer
+            format: int64
+    AccountInviteProgressPhase:
+      type: string
+      x-internal: true
+      enum: [PREPARED, INVITED, ACCOUNT_CREATED, DONE, NEEDS_ACTION, CLOSED]
+      description: >-
+        The Admin's status tiles, derived in one place (InviteProgress). PREPARED = draft or
+        waiting (Vorbereitet); INVITED = mail sent, link valid (Eingeladen); ACCOUNT_CREATED = a
+        gate is open (Konto angelegt); DONE = all gates passed (Fertig); NEEDS_ACTION = bounced,
+        expired, provisioning failed or no admin for its new unit (Braucht Aktion); CLOSED =
+        revoked or replaced, no tile.
     AccountInviteTargetRole:
       type: string
       x-internal: true
@@ -2686,12 +2838,25 @@ components:
               - UNIT_NOT_CREATED
               - SELF_ASSIGNMENT_ALREADY_EXISTS
               - CONSULTANT_IDENTITY_ALREADY_GRANTED
+              - INVITE_ALREADY_ACCEPTED
+              - INVITE_NOT_PENDING
+              - ROLE_CHANGE_NEEDS_NEW_INVITE
+              - ONLY_UNIT_ADMIN
+              - ROLE_ALREADY_GRANTED
           description: >-
             EMAIL_NOT_AVAILABLE - the address has an account or an open invite;
             NO_PENDING_UNIT_ADMIN - a waiting invite needs a pending admin invite for its new unit;
             UNIT_NOT_CREATED - a waiting invite cannot be sent before its unit exists;
             SELF_ASSIGNMENT_ALREADY_EXISTS / CONSULTANT_IDENTITY_ALREADY_GRANTED - the admin
-            already counsels in that agency.
+            already counsels in that agency;
+            INVITE_ALREADY_ACCEPTED - the account exists, add a role to the account instead;
+            INVITE_NOT_PENDING - the invite was revoked, replaced or has expired;
+            ROLE_CHANGE_NEEDS_NEW_INVITE - a TENANT_ADMIN (or other non-agency) role cannot be
+            swapped in, it has another placement and link: revoke and invite anew;
+            ONLY_UNIT_ADMIN - the invite is the only pending admin of its new agency, so
+            counsellors would wait for nobody: invite another admin first;
+            ROLE_ALREADY_GRANTED - the account already administers that agency, or is a Träger
+            or platform admin.
 
   securitySchemes:
     Bearer:

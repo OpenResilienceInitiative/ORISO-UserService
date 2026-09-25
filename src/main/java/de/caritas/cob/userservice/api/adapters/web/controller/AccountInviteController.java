@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPermissionService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteBoard;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService.InviteEmailPreview;
@@ -25,11 +26,15 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewSe
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService.TemplateCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteProgress;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteQueueProblem;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteRoleChange;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteRoleChange.ChangeRoleCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.UnitQueue;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import lombok.NonNull;
@@ -61,6 +66,8 @@ public class AccountInviteController {
   private final @NonNull InviteEmailPreviewService previewService;
   private final @NonNull AccountInviteTopicPermissionService topicPermissionService;
   private final @NonNull UnitQueue unitQueue;
+  private final @NonNull InviteBoard inviteBoard;
+  private final @NonNull InviteRoleChange roleChange;
 
   @PreAuthorize(ADMIN_AUTH)
   @PostMapping("/useradmin/account-invites")
@@ -107,30 +114,34 @@ public class AccountInviteController {
   public ResponseEntity<PagedAccountInviteResponseDTO> listInvites(
       @RequestParam(value = "target_role", required = false) String targetRole,
       @RequestParam(value = "status", required = false) String status,
+      @RequestParam(value = "progress_phase", required = false) String progressPhase,
       @RequestParam(value = "tenant_id", required = false) Long tenantId,
       @RequestParam(value = "query", required = false) String query,
       @RequestParam(value = "page", required = false) Integer page,
       @RequestParam(value = "size", required = false) Integer size) {
-    Page<AccountInvite> result =
-        accountInviteService.listInvites(
+    InviteBoard.Listing listing =
+        inviteBoard.list(
             parseOptionalEnum(AccountInviteTargetRole.class, targetRole, "target_role"),
             parseOptionalEnum(AccountInviteStatus.class, status, "status"),
+            parseOptionalEnum(InviteProgress.Phase.class, progressPhase, "progress_phase"),
             tenantId,
             query,
             page == null ? 0 : page,
             size == null ? 20 : size);
-    Map<Long, TopicPermission> permissions =
-        topicPermissionService.currentPermissions(result.getContent());
+    Page<InviteBoard.Row> result = listing.rows();
+    List<AccountInvite> invites =
+        result.getContent().stream().map(InviteBoard.Row::invite).toList();
+    Map<Long, TopicPermission> permissions = topicPermissionService.currentPermissions(invites);
     List<AccountInviteResponseDTO> content =
         result.getContent().stream()
             .map(
-                invite ->
+                row ->
                     withDerivedState(
                         AccountInviteResponseDTO.from(
-                            invite,
-                            latestDeliveryStatus(invite),
-                            accountInviteService.calculateAccessGate(invite)),
-                        invite,
+                            row.invite(),
+                            row.latestDelivery() == null ? null : row.latestDelivery().getStatus(),
+                            accountInviteService.calculateAccessGate(row.invite())),
+                        row,
                         permissions))
             .toList();
     PagedAccountInviteResponseDTO response = new PagedAccountInviteResponseDTO();
@@ -139,7 +150,34 @@ public class AccountInviteController {
     response.totalPages = result.getTotalPages();
     response.page = result.getNumber();
     response.size = result.getSize();
+    response.phaseCounts = new LinkedHashMap<>();
+    listing.phaseCounts().forEach((phase, count) -> response.phaseCounts.put(phase.name(), count));
     return ResponseEntity.ok(response);
+  }
+
+  /**
+   * Before acceptance only; COUNSELLOR and AGENCY_ADMIN swap, a Träger-level role needs a new
+   * invite. An existing account gains a role through {@code POST
+   * /useradmin/consultants/{id}/roles}.
+   */
+  @PreAuthorize(ADMIN_AUTH)
+  @PutMapping("/useradmin/account-invites/{inviteId}/role")
+  public ResponseEntity<AccountInviteResponseDTO> changeRole(
+      @PathVariable Long inviteId, @RequestBody(required = false) ChangeRoleRequestDTO request) {
+    ChangeRoleRequestDTO safe = request == null ? new ChangeRoleRequestDTO() : request;
+    AccountInvite invite =
+        roleChange.change(
+            inviteId,
+            new ChangeRoleCommand(
+                parseEnum(AccountInviteTargetRole.class, safe.targetRole, "targetRole"),
+                safe.alsoCounsellor));
+    return ResponseEntity.ok(
+        withDerivedState(
+            AccountInviteResponseDTO.from(
+                invite,
+                latestDeliveryStatus(invite),
+                accountInviteService.calculateAccessGate(invite)),
+            invite));
   }
 
   @PreAuthorize(ADMIN_AUTH)
@@ -327,15 +365,23 @@ public class AccountInviteController {
   private AccountInviteResponseDTO withDerivedState(
       AccountInviteResponseDTO dto, AccountInvite invite) {
     return withDerivedState(
-        dto, invite, topicPermissionService.currentPermissions(List.of(invite)));
+        dto, inviteBoard.rowOf(invite), topicPermissionService.currentPermissions(List.of(invite)));
   }
 
-  /** Derived on read: the queue problem, and the counsellor's own permission once onboarded. */
+  /**
+   * Derived on read: queue problem, progress, and the counsellor's own permission once onboarded.
+   */
   private AccountInviteResponseDTO withDerivedState(
-      AccountInviteResponseDTO dto, AccountInvite invite, Map<Long, TopicPermission> permissions) {
-    InviteQueueProblem problem = unitQueue.problemOf(invite);
+      AccountInviteResponseDTO dto, InviteBoard.Row row, Map<Long, TopicPermission> permissions) {
+    InviteQueueProblem problem = row.queueProblem();
     dto.queueProblem = problem == null ? null : problem.name();
-    TopicPermission permission = permissions.get(invite.getId());
+    InviteProgress progress = row.progress();
+    dto.progressPhase = progress.phase().name();
+    dto.unitCreatedAt = progress.unitCreatedAt();
+    dto.sentAt = progress.sentAt();
+    dto.accountCreatedAt = progress.accountCreatedAt();
+    dto.completedAt = progress.completedAt();
+    TopicPermission permission = permissions.get(row.invite().getId());
     if (permission != null) {
       dto.topicPermission = permission.name();
     }
@@ -424,6 +470,13 @@ public class AccountInviteController {
 
   public static class TopicPermissionRequestDTO {
     public Object topicPermission;
+  }
+
+  public static class ChangeRoleRequestDTO {
+    public String targetRole;
+
+    /** AGENCY_ADMIN only; omitted keeps it, or is true when a counsellor invite is promoted. */
+    public Boolean alsoCounsellor;
   }
 
   public static class SendInviteRequestDTO {
@@ -556,6 +609,17 @@ public class AccountInviteController {
     public String topicPermission;
 
     /**
+     * Admin tracker (#1026): PREPARED, INVITED, ACCOUNT_CREATED, DONE, NEEDS_ACTION or CLOSED,
+     * derived in {@code InviteProgress}; the dates below belong to its steps, null until reached.
+     */
+    public String progressPhase;
+
+    public LocalDateTime unitCreatedAt;
+    public LocalDateTime sentAt;
+    public LocalDateTime accountCreatedAt;
+    public LocalDateTime completedAt;
+
+    /**
      * Only set by the public accept endpoint (ORISO-Admin#569 resume contract): {@code
      * PENDING_2FA_ACTIVATION} while the mandatory 2FA activation is open (link resumable), {@code
      * COMPLETED} once every account gate is satisfied. {@code null} on admin-facing endpoints.
@@ -660,7 +724,17 @@ public class AccountInviteController {
    * does not even advertise that vocabulary (ORISO-Admin#896). Admin endpoints keep the full shape
    * with {@code dpaSignedAt} present-as-null until signed.
    */
-  @JsonIgnoreProperties({"dpaForwardedAt", "dpaForwardCount", "dpaSignedAt", "queueProblem"})
+  @JsonIgnoreProperties({
+    "dpaForwardedAt",
+    "dpaForwardCount",
+    "dpaSignedAt",
+    "queueProblem",
+    "progressPhase",
+    "unitCreatedAt",
+    "sentAt",
+    "accountCreatedAt",
+    "completedAt"
+  })
   public static class PublicAccountInviteResponseDTO extends AccountInviteResponseDTO {}
 
   public static class PagedAccountInviteResponseDTO {
@@ -669,6 +743,9 @@ public class AccountInviteController {
     public int totalPages;
     public int page;
     public int size;
+
+    /** Every progress phase with its count over all pages; status and phase filters ignored. */
+    public Map<String, Long> phaseCounts;
   }
 
   public static class InviteEmailTemplateResponseDTO {
