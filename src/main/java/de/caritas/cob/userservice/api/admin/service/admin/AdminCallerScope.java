@@ -251,12 +251,16 @@ public class AdminCallerScope {
         .collect(Collectors.toCollection(HashSet::new));
   }
 
-  /** Deleting a counsellor soft-deletes its agency relations, so those count for a deleted one. */
+  /**
+   * A deleted counsellor counts with the relations its deletion removed, which carry its own delete
+   * date; agencies it had left before stay out of reach.
+   */
   private Set<Long> agencyIdsOfConsultant(Consultant consultant) {
     if (consultant.getDeleteDate() == null) {
       return agencyIdsOfConsultant(consultant.getId());
     }
     return consultantAgencyRepository.findByConsultantId(consultant.getId()).stream()
+        .filter(relation -> consultant.getDeleteDate().equals(relation.getDeleteDate()))
         .map(ConsultantAgency::getAgencyId)
         .filter(Objects::nonNull)
         .collect(Collectors.toCollection(HashSet::new));
