@@ -40,5 +40,14 @@ class AccountInviteRevokeAcceptRaceMariaDbIT extends RevokeAcceptRaceContract {
     // The testing profile seeds H2 by script after Hibernate; Liquibase owns this schema.
     registry.add("spring.jpa.defer-datasource-initialization", () -> "false");
     registry.add("spring.sql.init.mode", () -> "never");
+    // Longer than every intended wait in the contract, shorter than its "held too long" case.
+    registry.add(
+        "spring.datasource.hikari.connection-init-sql",
+        () -> "SET SESSION innodb_lock_wait_timeout = 3");
+  }
+
+  @Override
+  String lockWaitersQuery() {
+    return "SELECT COUNT(*) FROM information_schema.INNODB_TRX WHERE trx_state = 'LOCK WAIT'";
   }
 }

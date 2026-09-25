@@ -76,6 +76,11 @@ class AccountInviteServiceTest {
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @Mock private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
   @Mock private IdReservationReleaseProcessor reservationReleaseProcessor;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.IdReservationLockRepository
+      reservationLockRepository;
+
   @Mock private PlatformTransactionManager transactionManager;
 
   /**
@@ -95,7 +100,9 @@ class AccountInviteServiceTest {
             agencyIdAllocationClient,
             accountInviteRepository,
             reservationReleaseTaskRepository,
-            reservationReleaseProcessor);
+            reservationReleaseProcessor,
+            reservationLockRepository,
+            transactionManager);
     var delivery =
         new InviteDelivery(
             inviteAcceptUrlBuilder,
@@ -120,6 +127,10 @@ class AccountInviteServiceTest {
     lenient().when(accessPolicy.authorizeCreate(any())).thenAnswer(call -> call.getArgument(0));
     // No racing revoke in these tests: the locked read sees what the plain one sees.
     lenient().when(accountInviteRepository.holdInStatus(any(), any(), any())).thenReturn(1);
+    // The SENT audit row is stored by InviteDelivery#deliver; the tests capture it via save.
+    lenient()
+        .when(deliveryRepository.saveAndFlush(any()))
+        .thenAnswer(call -> deliveryRepository.save(call.getArgument(0)));
     lenient()
         .when(accountInviteRepository.findByIdForUpdate(any()))
         .thenAnswer(call -> accountInviteRepository.findById(call.getArgument(0)));
@@ -164,7 +175,9 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
 
@@ -280,7 +293,7 @@ class AccountInviteServiceTest {
   }
 
   @Test
-  void sendInvite_Should_DispatchBeforePersistingAnything() {
+  void sendInvite_Should_CommitTheLinkBeforeDispatch_SoNoRowLockIsHeldAcrossSmtp() {
     AccountInvite invite =
         AccountInvite.builder()
             .id(10L)
@@ -292,7 +305,6 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
 
@@ -300,11 +312,11 @@ class AccountInviteServiceTest {
 
     var inOrder =
         org.mockito.Mockito.inOrder(
-            inviteMailDispatchService, accountInviteRepository, deliveryRepository);
+            accountInviteRepository, inviteMailDispatchService, deliveryRepository);
+    inOrder.verify(accountInviteRepository).saveAndFlush(invite);
     inOrder
         .verify(inviteMailDispatchService)
         .send(eq("owner@example.org"), any(), any(), any(), any(), any());
-    inOrder.verify(accountInviteRepository).save(invite);
     inOrder.verify(deliveryRepository).save(any());
   }
 
@@ -321,7 +333,9 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject("s").body("b").build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
 
@@ -456,7 +470,9 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
     service.sendInvite(new SendInviteCommand(10L, 20L));
@@ -475,6 +491,7 @@ class AccountInviteServiceTest {
   void calculateAccessGate_Should_BlockRequiredTwoFactorUntilWaived() {
     AccountInvite invite =
         AccountInvite.builder()
+            .id(1L)
             .status(AccountInviteStatus.ACCEPTED)
             .emailVerificationStatus(EmailVerificationStatus.VERIFIED)
             .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
@@ -483,6 +500,7 @@ class AccountInviteServiceTest {
     assertThat(service.calculateAccessGate(invite))
         .isEqualTo(AccountAccessGateStatus.BLOCKED_TWO_FACTOR);
 
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
     when(authenticatedUser.getUserId()).thenReturn("admin-1");
     service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("Temporary migration waiver"));
 
@@ -1003,7 +1021,7 @@ class AccountInviteServiceTest {
             .expiresAt(LocalDateTime.now().minusDays(1))
             .build();
     when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(accountInviteRepository.expireWhileStatusIn(eq(1L), any(), any())).thenReturn(1);
 
     assertThatThrownBy(() -> service.acceptInvite("raw-token", "user-1"))
         .isInstanceOf(AccountInviteLinkException.class)
@@ -1317,7 +1335,9 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject("s").body("b").build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
     service.sendInvite(new SendInviteCommand(1L, 20L));
@@ -1475,7 +1495,8 @@ class AccountInviteServiceTest {
   @Test
   void waiveTwoFactor_Should_persistWaivedInvite() {
     AccountInvite invite =
-        AccountInvite.builder().twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP).build();
+        AccountInvite.builder().id(1L).twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP).build();
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
     when(authenticatedUser.getUserId()).thenReturn("admin-1");
 
     service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("four-eyes onboarding"));
@@ -1530,7 +1551,9 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
     givenSuccessfulDispatch();
@@ -1566,7 +1589,9 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
 
@@ -1592,7 +1617,9 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
 
@@ -1617,7 +1644,9 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(eq(AccountInviteTargetRole.TENANT_ADMIN), any()))
         .thenAnswer(
@@ -1678,7 +1707,9 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject(null).body(null).build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
     givenSuccessfulDispatch();

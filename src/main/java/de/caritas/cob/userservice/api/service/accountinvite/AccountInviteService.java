@@ -25,6 +25,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
 import java.util.regex.Pattern;
@@ -284,8 +285,7 @@ public class AccountInviteService {
   }
 
   private boolean stillSent(Long inviteId) {
-    return accountInviteRepository
-        .findByIdForUpdate(inviteId)
+    return InviteRowHold.lock(accountInviteRepository, inviteId)
         .filter(invite -> invite.getStatus() == AccountInviteStatus.EMAIL_SENT)
         .isPresent();
   }
@@ -411,15 +411,30 @@ public class AccountInviteService {
   }
 
   /**
-   * A waiting invite can be sent by hand only once its unit exists (409 before). An SMTP failure
-   * leaves at most a FAILED audit row behind.
+   * A waiting invite can be sent by hand only once its unit exists (409 before). Shaped like
+   * resend: the new link is committed first and SMTP runs outside any transaction, so the FAILED
+   * audit row never waits for our own row lock; any SMTP failure restores the old link.
    */
-  @Transactional(noRollbackFor = SmtpSendException.class)
   public InviteSendResult sendInvite(SendInviteCommand command) {
-    AccountInvite invite = findAuthorizedInvite(command.inviteId());
+    SendClaim claim = requiresNewTransaction().execute(transaction -> claimForSend(command));
+    if (claim.prepared() == null) {
+      return unitQueue.sendByHand(claim.waiting(), claim.template());
+    }
+    try {
+      return delivery.deliver(
+          claim.prepared(), claim.prepared().invite().getId(), true, confirmedNotSent -> {});
+    } catch (SmtpSendException sendFailure) {
+      // #890: a failed send leaves no link behind that the invitee might not have received.
+      restoreUnsentLink(claim, sendFailure);
+      throw sendFailure;
+    }
+  }
+
+  private SendClaim claimForSend(SendInviteCommand command) {
+    AccountInvite invite = findAuthorizedInviteForUpdate(command.inviteId());
     InviteEmailTemplate template = findTemplate(command.templateId());
     if (invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
-      return unitQueue.sendByHand(invite, template);
+      return new SendClaim(invite, template, null, null);
     }
     if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
       throw new BadRequestException("Accepted invites cannot be sent");
@@ -429,22 +444,41 @@ public class AccountInviteService {
       throw new BadRequestException("Inactive invites cannot be sent");
     }
     LocalDateTime now = LocalDateTime.now();
-    InviteRowHold.hold(accountInviteRepository, invite, now);
+    LinkState before = LinkState.from(invite);
     Prepared prepared = delivery.prepare(invite, template, now);
-    InviteEmailDelivery sent =
-        delivery.sendNow(
-            prepared,
-            invite.getId(),
-            () -> {
-              invite.setTokenHash(prepared.tokenHash());
-              if (invite.getExpiresAt() == null || invite.getExpiresAt().isBefore(now)) {
-                invite.setExpiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS));
-              }
-              invite.setStatus(AccountInviteStatus.EMAIL_SENT);
-              invite.setUpdateDate(now);
-              accountInviteRepository.save(invite);
-            });
-    return new InviteSendResult(invite, sent, prepared.rawToken(), prepared.acceptUrl());
+    invite.setTokenHash(prepared.tokenHash());
+    if (invite.getExpiresAt() == null || invite.getExpiresAt().isBefore(now)) {
+      invite.setExpiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS));
+    }
+    invite.setStatus(AccountInviteStatus.EMAIL_SENT);
+    invite.setUpdateDate(now);
+    accountInviteRepository.saveAndFlush(invite);
+    return new SendClaim(null, template, prepared.withInvite(invite), before);
+  }
+
+  /** Only our own unsent link goes back; a revoke or a newer send that landed meanwhile stays. */
+  private void restoreUnsentLink(SendClaim claim, SmtpSendException sendFailure) {
+    try {
+      requiresNewTransaction()
+          .executeWithoutResult(
+              transaction ->
+                  InviteRowHold.lock(accountInviteRepository, claim.prepared().invite().getId())
+                      .filter(invite -> invite.getStatus() == AccountInviteStatus.EMAIL_SENT)
+                      .filter(
+                          invite ->
+                              Objects.equals(invite.getTokenHash(), claim.prepared().tokenHash()))
+                      .ifPresent(
+                          invite -> {
+                            claim.before().restore(invite);
+                            accountInviteRepository.saveAndFlush(invite);
+                          }));
+    } catch (RuntimeException compensationFailure) {
+      log.error(
+          "Invite {} failed before dispatch and its previous link could not be restored",
+          claim.prepared().invite().getId(),
+          compensationFailure);
+      sendFailure.addSuppressed(compensationFailure);
+    }
   }
 
   public InviteSendResult resendInvite(SendInviteCommand command) {
@@ -466,7 +500,7 @@ public class AccountInviteService {
     return requiresNewTransaction()
         .execute(
             transaction -> {
-              AccountInvite initialOldInvite = findAuthorizedInvite(command.inviteId());
+              AccountInvite initialOldInvite = findAuthorizedInviteForUpdate(command.inviteId());
               if (initialOldInvite.getStatus() == AccountInviteStatus.ACCEPTED) {
                 throw new BadRequestException("Accepted invites cannot be resent");
               }
@@ -475,7 +509,6 @@ public class AccountInviteService {
               }
 
               LocalDateTime now = LocalDateTime.now();
-              InviteRowHold.hold(accountInviteRepository, initialOldInvite, now);
               verifyRecipientEmailAvailableExcluding(
                   initialOldInvite.getRecipientEmail(), initialOldInvite.getId(), now);
               // The expiry cleanup is a clearing bulk update, so reload the old row before the
@@ -541,18 +574,23 @@ public class AccountInviteService {
           .executeWithoutResult(
               transaction -> {
                 Long replacementId = resend.prepared().invite().getId();
-                // A revoke that landed while SMTP was failing wins: the old link stays dead.
-                if (!stillSent(replacementId)
-                    || accountInviteRepository.holdInStatus(
-                            resend.oldInviteId(),
-                            AccountInviteStatus.SUPERSEDED,
-                            LocalDateTime.now())
-                        != 1) {
+                AccountInvite replacement =
+                    InviteRowHold.lock(accountInviteRepository, replacementId)
+                        .filter(invite -> invite.getStatus() == AccountInviteStatus.EMAIL_SENT)
+                        .orElse(null);
+                if (replacement == null) {
+                  // The replacement was revoked meanwhile; that revoke already did the cleanup.
                   return;
                 }
+                AccountInvite oldInvite =
+                    InviteRowHold.lock(accountInviteRepository, resend.oldInviteId()).orElse(null);
                 accountInviteRepository.deleteById(replacementId);
                 accountInviteRepository.flush();
-                AccountInvite oldInvite = findInvite(resend.oldInviteId());
+                if (oldInvite == null || oldInvite.getStatus() != AccountInviteStatus.SUPERSEDED) {
+                  // The replaced invite was revoked meanwhile: give back what only it still held.
+                  ledger.releaseUnneeded(replacement, LocalDateTime.now());
+                  return;
+                }
                 resend.oldState().restore(oldInvite);
                 accountInviteRepository.saveAndFlush(oldInvite);
               });
@@ -571,19 +609,37 @@ public class AccountInviteService {
    *
    * @return how many invites were expired
    */
-  @Transactional
   public int expireElapsedInvites() {
     LocalDateTime now = LocalDateTime.now();
-    List<AccountInvite> elapsed =
-        accountInviteRepository.findElapsedHoldingANumber(
-            EXPIRABLE_STATUSES,
-            ReservationLedger.RESERVING_MODES,
-            now,
-            PageRequest.of(0, EXPIRY_SWEEP_BATCH));
-    for (AccountInvite invite : elapsed) {
-      expireAndReleaseNumbers(invite, now);
+    List<Long> elapsed =
+        requiresNewTransaction()
+            .execute(
+                transaction ->
+                    accountInviteRepository
+                        .findElapsedHoldingANumber(
+                            EXPIRABLE_STATUSES,
+                            ReservationLedger.RESERVING_MODES,
+                            now,
+                            PageRequest.of(0, EXPIRY_SWEEP_BATCH))
+                        .stream()
+                        .map(AccountInvite::getId)
+                        .toList());
+    int expired = 0;
+    // One transaction per invite: the sweep never holds one invite's locks while taking another's.
+    for (Long inviteId : elapsed == null ? List.<Long>of() : elapsed) {
+      Boolean done =
+          requiresNewTransaction()
+              .execute(
+                  transaction ->
+                      accountInviteRepository
+                          .findById(inviteId)
+                          .map(invite -> expireAndReleaseNumbers(invite, now))
+                          .orElse(false));
+      if (Boolean.TRUE.equals(done)) {
+        expired++;
+      }
     }
-    return elapsed.size();
+    return expired;
   }
 
   /**
@@ -619,12 +675,20 @@ public class AccountInviteService {
         HttpStatusExceptionReason.INVITE_ALREADY_ACCEPTED, HttpStatus.CONFLICT);
   }
 
-  private void expireAndReleaseNumbers(AccountInvite invite, LocalDateTime now) {
+  /** Conditional, so an accept or revoke that landed after the read is never written over. */
+  private boolean expireAndReleaseNumbers(AccountInvite invite, LocalDateTime now) {
+    if (InviteRowHold.orBusy(
+            () ->
+                accountInviteRepository.expireWhileStatusIn(
+                    invite.getId(), ReservationLedger.PENDING_STATUSES, now))
+        != 1) {
+      return false;
+    }
     invite.setStatus(AccountInviteStatus.EXPIRED);
     invite.setActiveRecipientKey(null);
     invite.setUpdateDate(now);
-    accountInviteRepository.save(invite);
     ledger.releaseUnneeded(invite, now);
+    return true;
   }
 
   @Transactional(noRollbackFor = AccountInviteLinkException.class)
@@ -633,8 +697,7 @@ public class AccountInviteService {
       throw new BadRequestException("Invite token is required");
     }
     AccountInvite invite =
-        accountInviteRepository
-            .findByTokenHash(hash(rawToken))
+        InviteRowHold.lockByToken(accountInviteRepository, hash(rawToken))
             .orElseThrow(() -> new NotFoundException("Account invite not found"));
 
     LocalDateTime now = LocalDateTime.now();
@@ -737,8 +800,7 @@ public class AccountInviteService {
     if (isBlank(rawToken)) {
       throw new BadRequestException("Invite token is required");
     }
-    return accountInviteRepository
-        .findByTokenHash(hash(rawToken))
+    return InviteRowHold.lockByToken(accountInviteRepository, hash(rawToken))
         .orElseThrow(() -> new NotFoundException("Account invite not found"));
   }
 
@@ -768,16 +830,24 @@ public class AccountInviteService {
     return AccountAccessGateStatus.READY;
   }
 
+  @Transactional
   public AccountInvite waiveTwoFactor(Long inviteId, WaiveTwoFactorCommand command) {
-    return waiveTwoFactor(findAuthorizedInvite(inviteId), command);
+    return waive(findAuthorizedInviteForUpdate(inviteId), command);
   }
 
-  /** Waives the 2FA gate; applies the cross-Träger guard itself, whichever overload is used. */
+  /**
+   * Waives the 2FA gate; applies the cross-Träger guard itself, whichever overload is used. Writes
+   * the row it locked, never the caller's copy, so a racing accept or revoke is kept.
+   */
+  @Transactional
   public AccountInvite waiveTwoFactor(AccountInvite invite, WaiveTwoFactorCommand command) {
     if (invite == null) {
       throw new BadRequestException("Invite is required");
     }
-    accessPolicy.authorizeAccess(invite);
+    return waive(findAuthorizedInviteForUpdate(invite.getId()), command);
+  }
+
+  private AccountInvite waive(AccountInvite invite, WaiveTwoFactorCommand command) {
     if (command == null || isBlank(command.reason())) {
       throw new BadRequestException("Waiver reason is required");
     }
@@ -842,7 +912,7 @@ public class AccountInviteService {
     if (inviteId == null) {
       throw new BadRequestException("inviteId is required");
     }
-    Optional<AccountInvite> invite = accountInviteRepository.findByIdForUpdate(inviteId);
+    Optional<AccountInvite> invite = InviteRowHold.lock(accountInviteRepository, inviteId);
     if (invite.isEmpty()) {
       accessPolicy.authorizeMissing(inviteId);
       throw new NotFoundException("Account invite not found");
@@ -1164,6 +1234,29 @@ public class AccountInviteService {
       AccountInvite invite, InviteEmailDelivery delivery, String rawToken, String acceptUrl) {}
 
   private record ResendDispatch(Prepared prepared, Long oldInviteId, ResendState oldState) {}
+
+  /** A waiting invite goes to the unit queue; any other is claimed with its new link. */
+  private record SendClaim(
+      AccountInvite waiting, InviteEmailTemplate template, Prepared prepared, LinkState before) {}
+
+  private record LinkState(
+      String tokenHash,
+      AccountInviteStatus status,
+      LocalDateTime expiresAt,
+      LocalDateTime updateDate) {
+
+    private static LinkState from(AccountInvite invite) {
+      return new LinkState(
+          invite.getTokenHash(), invite.getStatus(), invite.getExpiresAt(), invite.getUpdateDate());
+    }
+
+    private void restore(AccountInvite invite) {
+      invite.setTokenHash(tokenHash);
+      invite.setStatus(status);
+      invite.setExpiresAt(expiresAt);
+      invite.setUpdateDate(updateDate);
+    }
+  }
 
   private record ResendState(
       AccountInviteStatus status,

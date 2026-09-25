@@ -39,14 +39,15 @@ public class CounsellorInviteProvisioningService {
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
-    return acceptInvite(rawToken, command, () -> {});
+    return acceptInvite(rawToken, command, WizardAccept.NONE);
   }
 
-  /** {@code createUnit}: the founding wizard's Beratungsstelle, created while the row is held. */
+  /** The wizard's routing is re-checked and its Beratungsstelle created while the row is held. */
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(
-      String rawToken, ProvisionCounsellorCommand command, Runnable createUnit) {
+      String rawToken, ProvisionCounsellorCommand command, WizardAccept wizard) {
     AccountInvite invite = accountInviteService.findInviteByToken(rawToken);
+    wizard.requireUnchanged(invite);
     // A counselling agency admin comes here only via the wizard, which asks for the admin grant.
     boolean agencyAdminAlsoCounselling =
         invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN
@@ -70,7 +71,7 @@ public class CounsellorInviteProvisioningService {
     }
     validate(command, invite);
     InviteRowHold.hold(accountInviteRepository, invite, LocalDateTime.now());
-    createUnit.run();
+    wizard.createUnit().run();
 
     invite.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
     invite.setProvisioningFailureReason(null);

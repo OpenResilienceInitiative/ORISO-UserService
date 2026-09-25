@@ -78,7 +78,8 @@ class AccountInviteApiContractTest {
             "INVITE_NOT_PENDING",
             "ROLE_CHANGE_NEEDS_NEW_INVITE",
             "ONLY_UNIT_ADMIN",
-            "ROLE_ALREADY_GRANTED")
+            "ROLE_ALREADY_GRANTED",
+            "INVITE_BUSY")
         .allMatch(known::contains);
   }
 

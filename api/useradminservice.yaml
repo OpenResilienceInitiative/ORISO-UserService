@@ -2876,6 +2876,7 @@ components:
               - ROLE_CHANGE_NEEDS_NEW_INVITE
               - ONLY_UNIT_ADMIN
               - ROLE_ALREADY_GRANTED
+              - INVITE_BUSY
           description: >-
             EMAIL_NOT_AVAILABLE - the address has an account or an open invite;
             NO_PENDING_UNIT_ADMIN - a waiting invite needs a pending admin invite for its new unit;
@@ -2889,7 +2890,9 @@ components:
             ONLY_UNIT_ADMIN - the invite is the only pending admin of its new agency, so
             counsellors would wait for nobody: invite another admin first;
             ROLE_ALREADY_GRANTED - the account already administers that agency, or is a Träger
-            or platform admin.
+            or platform admin;
+            INVITE_BUSY - another request (for example the invitee finishing onboarding) is
+            changing this invite right now; try again in a moment.
 
   securitySchemes:
     Bearer:

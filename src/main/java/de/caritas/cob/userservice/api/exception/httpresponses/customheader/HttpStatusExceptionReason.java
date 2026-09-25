@@ -35,5 +35,9 @@ public enum HttpStatusExceptionReason {
   /** The change would leave a new unit without any pending admin invite. */
   ONLY_UNIT_ADMIN,
   /** The account already holds that role, or a higher admin role. */
-  ROLE_ALREADY_GRANTED
+  ROLE_ALREADY_GRANTED,
+  /** Another request is changing this invite right now; try again. */
+  INVITE_BUSY,
+  /** The invite changed while the invitee filled in the wizard; reload the link. */
+  INVITE_CHANGED
 }

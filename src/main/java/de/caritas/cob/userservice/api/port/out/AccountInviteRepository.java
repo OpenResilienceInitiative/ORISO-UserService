@@ -98,6 +98,20 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("expected") AccountInviteStatus expected,
       @Param("now") LocalDateTime now);
 
+  /** Expires only a still open invite; 0 when an accept or a revoke settled it first. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i"
+          + " SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.EXPIRED,"
+          + " i.activeRecipientKey = NULL,"
+          + " i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status IN :open")
+  int expireWhileStatusIn(
+      @Param("id") Long id,
+      @Param("open") Collection<AccountInviteStatus> open,
+      @Param("now") LocalDateTime now);
+
   boolean existsByTenantIdAndTargetRoleAndStatusIn(
       Long tenantId, AccountInviteTargetRole targetRole, Collection<AccountInviteStatus> statuses);
 

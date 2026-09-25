@@ -208,4 +208,5 @@
   <include file="db/changelog/changeset/20260921_topic_permission_1026/changeSet.xml"/>
   <include file="db/changelog/changeset/20260924_account_invite_drop_import_batch/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_account_invite_timeline/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260925_id_reservation_lock/changeSet.xml"/>
 </databaseChangeLog>

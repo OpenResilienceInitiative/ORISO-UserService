@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProv
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TopicPermissionPolicy;
+import de.caritas.cob.userservice.api.service.accountinvite.WizardAccept;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -177,15 +178,17 @@ public class CounsellorOnboardingService {
       throw new BadRequestException("agency.name is required for an invite without an agency");
     }
     RegisterCounsellorCommand named = command;
-    Runnable createUnit = agencyCreated ? () -> createReservedAgency(invite, named) : () -> {};
+    WizardAccept routed =
+        WizardAccept.decidedFrom(
+            invite, agencyCreated ? () -> createReservedAgency(invite, named) : () -> {});
 
     // A counsellor gets admin rights only on the agency they just created.
     AccountInvite accepted =
         counsels
             ? counsellorInviteProvisioningService.acceptInvite(
-                rawToken, toProvisionCommand(command, agencyCreated || agencyAdmin), createUnit)
+                rawToken, toProvisionCommand(command, agencyCreated || agencyAdmin), routed)
             : agencyAdminInviteProvisioningService.acceptAsAgencyAdmin(
-                rawToken, command.username(), command.password(), createUnit);
+                rawToken, command.username(), command.password(), routed);
 
     if (agencyAdmin || agencyCreated) {
       // The agency now has its admin: release its waiting invites (idempotent for further admins).
@@ -564,10 +567,17 @@ public class CounsellorOnboardingService {
    */
   private AccountInviteLinkException expireIfPastExpiry(AccountInvite invite, LocalDateTime now) {
     if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
-      invite.setStatus(AccountInviteStatus.EXPIRED);
-      invite.setActiveRecipientKey(null);
-      invite.setUpdateDate(now);
-      accountInviteRepository.save(invite);
+      // Conditional: this read may be unlocked, and a revoke or accept may have landed since.
+      int expired =
+          inTransaction(
+              () ->
+                  accountInviteRepository.expireWhileStatusIn(
+                      invite.getId(), List.of(AccountInviteStatus.EMAIL_SENT), now));
+      if (expired == 1) {
+        invite.setStatus(AccountInviteStatus.EXPIRED);
+        invite.setActiveRecipientKey(null);
+        invite.setUpdateDate(now);
+      }
       return new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
     return null;

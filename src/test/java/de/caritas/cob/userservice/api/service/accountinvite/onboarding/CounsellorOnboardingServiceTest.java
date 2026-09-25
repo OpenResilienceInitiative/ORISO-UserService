@@ -204,6 +204,7 @@ class CounsellorOnboardingServiceTest {
     AccountInvite expired = invite();
     expired.setExpiresAt(LocalDateTime.now().minusMinutes(1));
     inviteResolves(expired);
+    when(accountInviteRepository.expireWhileStatusIn(any(), any(), any())).thenReturn(1);
 
     var exception =
         assertThrows(
@@ -211,7 +212,9 @@ class CounsellorOnboardingServiceTest {
 
     assertEquals(AccountInviteLinkException.Reason.EXPIRED, exception.getReason());
     assertEquals(AccountInviteStatus.EXPIRED, expired.getStatus());
-    verify(accountInviteRepository).save(expired);
+    // Conditional, so a revoke or accept that landed meanwhile is never written over.
+    verify(accountInviteRepository)
+        .expireWhileStatusIn(any(), eq(List.of(AccountInviteStatus.EMAIL_SENT)), any());
   }
 
   @Test
@@ -359,7 +362,9 @@ class CounsellorOnboardingServiceTest {
     when(counsellorInviteProvisioningService.acceptInvite(eq(RAW_TOKEN), any(), any()))
         .thenAnswer(
             call -> {
-              call.<Runnable>getArgument(2).run();
+              call.<de.caritas.cob.userservice.api.service.accountinvite.WizardAccept>getArgument(2)
+                  .createUnit()
+                  .run();
               return accepted;
             });
 

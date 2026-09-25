@@ -60,8 +60,7 @@ public class InviteRoleChange {
       throw new BadRequestException("targetRole is required");
     }
     AccountInvite invite =
-        accountInviteRepository
-            .findByIdForUpdate(inviteId)
+        InviteRowHold.lock(accountInviteRepository, inviteId)
             .orElseThrow(() -> new NotFoundException("Account invite not found"));
     accessPolicy.authorizeAccess(invite);
     LocalDateTime now = LocalDateTime.now();

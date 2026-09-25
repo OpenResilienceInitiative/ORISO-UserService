@@ -4,8 +4,10 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.IdReservationLock;
 import de.caritas.cob.userservice.api.model.IdReservationReleaseTask;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.IdReservationLockRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
@@ -23,10 +25,14 @@ import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.support.TransactionSynchronization;
 import org.springframework.transaction.support.TransactionSynchronizationManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.web.client.HttpClientErrorException;
 
 /**
@@ -57,6 +63,8 @@ public class ReservationLedger {
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull IdReservationReleaseTaskRepository releaseTaskRepository;
   private final @NonNull IdReservationReleaseProcessor releaseProcessor;
+  private final @NonNull IdReservationLockRepository lockRepository;
+  private final @NonNull PlatformTransactionManager transactionManager;
 
   /** The IDs one new invite holds; {@link #undo} gives back only what this call reserved. */
   public static final class Held {
@@ -188,31 +196,81 @@ public class ReservationLedger {
   /**
    * Gives back numbers no other pending invite needs, only while still reserved and only if one of
    * our invites reserved them. Durable tasks, run after commit and retried by the scheduler.
+   *
+   * <p>Two revokes of invites sharing a number would each see the other as pending and keep it
+   * forever, so the decision is serialized on the number's lock row and taken in a new transaction,
+   * which sees what the previous holder of that lock committed.
    */
   public void releaseUnneeded(AccountInvite invite, LocalDateTime now) {
-    List<Long> taskIds = new ArrayList<>();
     Long tenantId = invite.getTenantId();
-    if (tenantId != null
-        && holdsOrWaitsForTenantReservation(invite)
-        && !accountInviteRepository.existsPendingInviteOnTenantNumber(
-            tenantId, invite.getId(), PENDING_STATUSES, now)
-        && !releaseTaskRepository.existsByAllocationTypeAndReservedId(
-            IdReservationReleaseType.TENANT, tenantId)
+    Long agencyId = invite.getAgencyId();
+    boolean tenantCandidate = tenantId != null && holdsOrWaitsForTenantReservation(invite);
+    boolean agencyCandidate =
+        agencyId != null && IdAllocationMode.reservesAnId(invite.getAgencyIdAllocationMode());
+    // Always tenant before agency, so two releasers cannot wait for each other.
+    if (tenantCandidate) {
+      lockNumber(IdReservationReleaseType.TENANT, tenantId);
+    }
+    if (agencyCandidate) {
+      lockNumber(IdReservationReleaseType.AGENCY, agencyId);
+    }
+    boolean[] unneeded =
+        newTransaction()
+            .execute(
+                transaction ->
+                    new boolean[] {
+                      tenantCandidate && tenantUnneeded(tenantId, invite.getId(), now),
+                      agencyCandidate && agencyUnneeded(agencyId, invite.getId(), now)
+                    });
+    List<Long> taskIds = new ArrayList<>();
+    if (unneeded != null
+        && unneeded[0]
         && stillReserved("tenant", () -> tenantIdAllocationClient.getAvailability(tenantId))) {
       taskIds.add(saveReleaseTask(IdReservationReleaseType.TENANT, tenantId, tenantId, now));
     }
-    Long agencyId = invite.getAgencyId();
-    if (agencyId != null
-        && IdAllocationMode.reservesAnId(invite.getAgencyIdAllocationMode())
-        && accountInviteRepository.existsReservationHolderForAgency(agencyId, RESERVING_MODES)
-        && !accountInviteRepository.existsPendingInviteOnAgencyNumber(
-            agencyId, invite.getId(), RESERVING_MODES, PENDING_STATUSES, now)
-        && !releaseTaskRepository.existsByAllocationTypeAndReservedId(
-            IdReservationReleaseType.AGENCY, agencyId)
+    if (unneeded != null
+        && unneeded[1]
         && stillReserved("agency", () -> agencyIdAllocationClient.getAvailability(agencyId))) {
       taskIds.add(saveReleaseTask(IdReservationReleaseType.AGENCY, agencyId, tenantId, now));
     }
     processAfterCommit(taskIds);
+  }
+
+  private boolean tenantUnneeded(Long tenantId, Long releasingInviteId, LocalDateTime now) {
+    return !accountInviteRepository.existsPendingInviteOnTenantNumber(
+            tenantId, releasingInviteId, PENDING_STATUSES, now)
+        && !releaseTaskRepository.existsByAllocationTypeAndReservedId(
+            IdReservationReleaseType.TENANT, tenantId);
+  }
+
+  private boolean agencyUnneeded(Long agencyId, Long releasingInviteId, LocalDateTime now) {
+    return accountInviteRepository.existsReservationHolderForAgency(agencyId, RESERVING_MODES)
+        && !accountInviteRepository.existsPendingInviteOnAgencyNumber(
+            agencyId, releasingInviteId, RESERVING_MODES, PENDING_STATUSES, now)
+        && !releaseTaskRepository.existsByAllocationTypeAndReservedId(
+            IdReservationReleaseType.AGENCY, agencyId);
+  }
+
+  /** Held until commit. The row is created first, in its own transaction, never locked absent. */
+  private void lockNumber(IdReservationReleaseType type, Long reservedId) {
+    try {
+      newTransaction()
+          .executeWithoutResult(
+              transaction -> {
+                if (!lockRepository.existsById(new IdReservationLock.Key(type, reservedId))) {
+                  lockRepository.saveAndFlush(new IdReservationLock(type, reservedId));
+                }
+              });
+    } catch (DataIntegrityViolationException createdMeanwhile) {
+      // Another releaser created the same row a moment ago; locking it below is all we need.
+    }
+    InviteRowHold.orBusy(() -> lockRepository.findForUpdate(type, reservedId));
+  }
+
+  private TransactionTemplate newTransaction() {
+    TransactionTemplate transaction = new TransactionTemplate(transactionManager);
+    transaction.setPropagationBehavior(TransactionDefinition.PROPAGATION_REQUIRES_NEW);
+    return transaction;
   }
 
   /**
