@@ -8,6 +8,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.notification.GlobalSmtpTestEmailService;
 import jakarta.mail.AuthenticationFailedException;
 import jakarta.validation.Valid;
@@ -26,6 +27,7 @@ import org.springframework.security.access.prepost.PreAuthorize;
 class GlobalSmtpTestEmailControllerTest {
 
   @Mock private GlobalSmtpTestEmailService globalSmtpTestEmailService;
+  @Mock private PlatformSmtpSettingsProvider platformSmtpSettingsProvider;
 
   @InjectMocks private GlobalSmtpTestEmailController controller;
 

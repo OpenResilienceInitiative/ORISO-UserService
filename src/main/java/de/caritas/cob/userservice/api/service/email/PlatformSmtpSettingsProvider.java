@@ -82,6 +82,37 @@ public class PlatformSmtpSettingsProvider {
         from.trim());
   }
 
+  /** Safe, deployment-derived display values for a platform administrator. */
+  public Summary summary() {
+    boolean configured;
+    try {
+      requireConfigured();
+      configured = true;
+    } catch (IllegalStateException exception) {
+      configured = false;
+    }
+    Integer displayPort = null;
+    try {
+      int value = Integer.parseInt(port == null ? "" : port.trim());
+      if (value >= 1 && value <= 65535) displayPort = value;
+    } catch (NumberFormatException ignored) {
+      // The summary remains readable while an optional local installation is incomplete.
+    }
+    Boolean displaySecure = null;
+    if ("true".equalsIgnoreCase(secure == null ? "" : secure.trim())) {
+      displaySecure = true;
+    } else if ("false".equalsIgnoreCase(secure == null ? "" : secure.trim())) {
+      displaySecure = false;
+    }
+    return new Summary(
+        blank(host) ? null : host.trim(),
+        displayPort,
+        displaySecure,
+        blank(from) ? null : from.trim(),
+        configured,
+        !blank(username) && !blank(password));
+  }
+
   private static boolean blank(String value) {
     return value == null || value.isBlank();
   }
@@ -93,4 +124,12 @@ public class PlatformSmtpSettingsProvider {
       return "PlatformSmtpSettings[host=" + host + ", port=" + port + ", secure=" + secure + "]";
     }
   }
+
+  public record Summary(
+      String host,
+      Integer port,
+      Boolean secure,
+      String from,
+      boolean configured,
+      boolean credentialsPresent) {}
 }

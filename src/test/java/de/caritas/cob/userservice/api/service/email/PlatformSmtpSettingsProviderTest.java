@@ -68,4 +68,28 @@ class PlatformSmtpSettingsProviderTest {
     provider.validateAtStartup();
     assertThatThrownBy(provider::requireConfigured).hasMessageContaining("SMTP_HOST");
   }
+
+  @Test
+  void publicSummaryDescribesEffectiveDeploymentWithoutCredentials() throws Exception {
+    var provider =
+        new PlatformSmtpSettingsProvider(
+            "smtp.example.org", "587", "false", "sender", "secret", "mail@example.org", true);
+
+    String json =
+        new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(provider.summary());
+
+    assertThat(json)
+        .contains("smtp.example.org", "mail@example.org", "\"configured\":true")
+        .doesNotContain("sender", "secret", "username", "password");
+  }
+
+  @Test
+  void incompleteOptionalDeploymentHasNoConfiguredSummary() {
+    var provider = new PlatformSmtpSettingsProvider("", "", "", "", "", "", false);
+
+    var summary = provider.summary();
+
+    assertThat(summary.configured()).isFalse();
+    assertThat(summary.credentialsPresent()).isFalse();
+  }
 }

@@ -316,6 +316,8 @@ public class SecurityConfig {
                     TENANT_ADMIN,
                     RESTRICTED_AGENCY_ADMIN)
                 // Uses the platform SMTP credentials: platform admin only.
+                .requestMatchers("/users/system-notification-emails/platform-settings")
+                .access(this::isPlatformAdmin)
                 .requestMatchers("/users/system-notification-emails/test")
                 .access(this::isPlatformAdmin)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/verify")

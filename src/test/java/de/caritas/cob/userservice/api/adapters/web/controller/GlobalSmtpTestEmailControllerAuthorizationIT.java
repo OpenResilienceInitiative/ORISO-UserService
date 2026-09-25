@@ -4,11 +4,15 @@ import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValu
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.TECHNICAL_DEFAULT;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.TENANT_ADMIN;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.USER_ADMIN;
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.service.notification.GlobalSmtpTestEmailService;
@@ -79,6 +83,27 @@ class GlobalSmtpTestEmailControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoInteractions(globalSmtpTestEmailService);
+  }
+
+  @Test
+  void onlyPlatformAdminCanReadRedactedDeploymentSettings() throws Exception {
+    mvc.perform(
+            get("/users/system-notification-emails/platform-settings")
+                .with(adminToken(0, TENANT_ADMIN)))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Cache-Control", containsString("no-store")))
+        .andExpect(jsonPath("$.configured").exists())
+        .andExpect(jsonPath("$.username").doesNotExist())
+        .andExpect(jsonPath("$.password").doesNotExist());
+
+    mvc.perform(
+            get("/users/system-notification-emails/platform-settings")
+                .with(adminToken(1, TENANT_ADMIN)))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            get("/users/system-notification-emails/platform-settings")
+                .with(jwt().authorities(new SimpleGrantedAuthority(TECHNICAL_DEFAULT))))
+        .andExpect(status().isForbidden());
   }
 
   private static MockHttpServletRequestBuilder request() {
