@@ -143,14 +143,34 @@ public class AdminScope {
     if (!multitenancyEnabled) {
       return agencyAdmin ? new Agencies(null, ownAgencyIds()) : new Platform();
     }
-    if (!agencyAdmin && (authenticatedUser.isPlatformAdmin() || isTechnicalUser())) {
-      return new Platform();
+    if (!agencyAdmin) {
+      return tenantReach().orElseThrow(() -> deny("act without a tenant of their own"));
     }
-    Long tenantId = authenticatedUser.getTenantId();
-    if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
+    Long tenantId = ownTenantId();
+    if (tenantId == null) {
       throw deny("act without a tenant of their own");
     }
-    return agencyAdmin ? new Agencies(tenantId, ownAgencyIds()) : new Tenant(tenantId);
+    return new Agencies(tenantId, ownAgencyIds());
+  }
+
+  /**
+   * The tenant-0 rule for a caller who is no agency admin: tenant 0 is nobody's Träger, so from it
+   * only the platform admin or the technical user reaches across Träger.
+   *
+   * @return {@link Platform}, the caller's own {@link Tenant}, or empty for tenant 0 or no tenant
+   *     without those roles
+   */
+  public Optional<Reach> tenantReach() {
+    if (authenticatedUser.isPlatformAdmin() || isTechnicalUser()) {
+      return Optional.of(new Platform());
+    }
+    return Optional.ofNullable(ownTenantId()).map(Tenant::new);
+  }
+
+  /** The caller's own Träger; {@code null} for tenant 0, which is nobody's, and for none. */
+  public Long ownTenantId() {
+    Long tenantId = authenticatedUser.getTenantId();
+    return TenantContext.TECHNICAL_TENANT_ID.equals(tenantId) ? null : tenantId;
   }
 
   /**

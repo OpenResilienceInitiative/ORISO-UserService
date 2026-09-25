@@ -2,12 +2,10 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
-import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -116,12 +114,12 @@ public class AccountInviteAccessPolicy {
    * Träger A would write a text Träger B sees in its list and sends to its own people.
    */
   public Long templateOwnerTenantId() {
-    return templateScope().tenantId();
+    return templateReach().tenantId();
   }
 
   /** Whether the caller sees every Träger's templates, not just their own and the platform's. */
   public boolean seesEveryTemplate() {
-    return templateScope().kind() == Kind.UNRESTRICTED;
+    return templateReach() instanceof AdminScope.Platform;
   }
 
   /**
@@ -129,10 +127,10 @@ public class AccountInviteAccessPolicy {
    * may use a platform template ({@code null}); a Träger's own template is theirs alone.
    */
   public boolean canUseTemplate(Long templateTenantId) {
-    Scope scope = templateScope();
-    return scope.kind() == Kind.UNRESTRICTED
+    var reach = templateReach();
+    return reach instanceof AdminScope.Platform
         || templateTenantId == null
-        || templateTenantId.equals(scope.tenantId());
+        || templateTenantId.equals(reach.tenantId());
   }
 
   /**
@@ -170,9 +168,9 @@ public class AccountInviteAccessPolicy {
    * hiding them (house rule "disable, don't hide").
    */
   public boolean canChangeTemplate(Long templateTenantId) {
-    Scope scope = templateScope();
-    return scope.kind() == Kind.UNRESTRICTED
-        || (templateTenantId != null && templateTenantId.equals(scope.tenantId()));
+    var reach = templateReach();
+    return reach instanceof AdminScope.Platform
+        || (templateTenantId != null && templateTenantId.equals(reach.tenantId()));
   }
 
   private CreateAccountInviteCommand authorizeAgencyAdminCreate(
@@ -235,35 +233,23 @@ public class AccountInviteAccessPolicy {
         command.agencyIdAllocationMode());
   }
 
-  /** The caller's kind and Träger for templates, which never need the agency ids. */
-  private Scope templateScope() {
-    Long callerTenantId = boundTenantId();
+  /**
+   * The caller's kind and Träger for templates, which never need the agency ids. Unlike {@link
+   * AdminScope#current()}, a missing tenant reads as a single-tenant deployment.
+   */
+  private AdminScope.Reach templateReach() {
     if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
-      return new Scope(Kind.AGENCY, callerTenantId, Set.of());
+      return new AdminScope.Agencies(adminScope.ownTenantId(), Set.of());
     }
-    if (authenticatedUser.isPlatformAdmin()
-        || isTechnicalUser()
-        || authenticatedUser.getTenantId() == null) {
-      return new Scope(Kind.UNRESTRICTED, null, null);
+    if (authenticatedUser.getTenantId() == null) {
+      return new AdminScope.Platform();
     }
-    // Tenant 0 is nobody's Träger: without the platform-admin roles it reaches no template.
-    if (callerTenantId == null) {
-      throw denyTemplate("use invite e-mail templates from tenant 0 without platform-admin roles");
-    }
-    return new Scope(Kind.TENANT, callerTenantId, null);
-  }
-
-  private boolean isTechnicalUser() {
-    var roles = authenticatedUser.getRoles();
-    return roles != null && roles.contains(UserRole.TECHNICAL.getValue());
-  }
-
-  private Long boundTenantId() {
-    Long tenantId = authenticatedUser.getTenantId();
-    if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
-      return null;
-    }
-    return tenantId;
+    return adminScope
+        .tenantReach()
+        .orElseThrow(
+            () ->
+                denyTemplate(
+                    "use invite e-mail templates from tenant 0 without platform-admin roles"));
   }
 
   private ForbiddenException denyTemplate(String attempt) {
@@ -283,12 +269,4 @@ public class AccountInviteAccessPolicy {
         attempt);
     return new ForbiddenException(OUT_OF_SCOPE_MESSAGE);
   }
-
-  private enum Kind {
-    UNRESTRICTED,
-    TENANT,
-    AGENCY
-  }
-
-  private record Scope(Kind kind, Long tenantId, Set<Long> agencyIds) {}
 }
