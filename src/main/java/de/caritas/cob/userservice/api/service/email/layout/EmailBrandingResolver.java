@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSuppli
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
+import java.net.URI;
 import java.util.Locale;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
@@ -52,7 +53,7 @@ public class EmailBrandingResolver {
       @NonNull TenantTemplateSupplier tenantTemplateSupplier,
       @Value("${email.branding.name:ORISO}") String platformName,
       @Value("${email.branding.logo-url:}") String platformLogoUrl,
-      @Value("${app.base.url:}") String applicationBaseUrl) {
+      @Value("${app.base.url}") String applicationBaseUrl) {
     this.tenantService = tenantService;
     this.tenantTemplateSupplier = tenantTemplateSupplier;
     this.platformName = platformName;
@@ -87,25 +88,27 @@ public class EmailBrandingResolver {
         return tenantLogo;
       }
       if (!isBlank(theming.getLogo()) || !isBlank(theming.getAssociationLogo())) {
-        String baseUrl = resolveBrandingAssetBaseUrl(tenant);
-        if (!isBlank(baseUrl)) {
-          return baseUrl + "/service/tenant/public/branding/logo";
+        String tenantPinnedLogo = tenantPinnedLogoUrl(tenant);
+        if (tenantPinnedLogo != null) {
+          return tenantPinnedLogo;
         }
       }
     }
     return firstAbsoluteUrl(platformLogoUrl);
   }
 
-  private String resolveBrandingAssetBaseUrl(RestrictedTenantDTO tenant) {
-    if (tenant != null
-        && tenant.getId() != null
-        && !TenantContext.TECHNICAL_TENANT_ID.equals(tenant.getId())) {
-      String tenantBaseUrl = normalizeBaseUrl(tenantTemplateSupplier.getTenantBaseUrl(tenant));
-      if (!isBlank(tenantBaseUrl) && firstAbsoluteUrl(tenantBaseUrl) != null) {
-        return tenantBaseUrl;
-      }
+  /**
+   * A stored logo is served by TenantService's tenant-pinned public route on the application
+   * origin. The id in the path selects the tenant, so neither a tenant subdomain (empty on
+   * single-domain installations, and dependent on DNS where set) nor the host-based tenant
+   * resolution of {@code /tenant/public/branding/logo} can hand out another tenant's image.
+   */
+  private String tenantPinnedLogoUrl(RestrictedTenantDTO tenant) {
+    String baseUrl = firstAbsoluteUrl(applicationBaseUrl);
+    if (baseUrl == null || tenant == null || tenant.getId() == null) {
+      return null;
     }
-    return firstAbsoluteUrl(applicationBaseUrl);
+    return baseUrl + "/service/tenant/public/branding/" + tenant.getId() + "/logo";
   }
 
   /**
@@ -185,7 +188,11 @@ public class EmailBrandingResolver {
     }
   }
 
-  /** Returns the first candidate that is an absolute http(s) URL, else {@code null}. */
+  /**
+   * Returns the first candidate that is an absolute http(s) URL with a real host, else {@code
+   * null}. A scheme prefix alone is not enough: a tenant with an empty subdomain yields {@code
+   * https://.<host>}, which {@link URI} parses without a host.
+   */
   static String firstAbsoluteUrl(String... candidates) {
     if (candidates == null) {
       return null;
@@ -198,11 +205,20 @@ public class EmailBrandingResolver {
       String lower = trimmed.toLowerCase(Locale.ROOT);
       if ((lower.startsWith("http://") || lower.startsWith("https://"))
           && trimmed.indexOf(' ') < 0
-          && trimmed.indexOf('"') < 0) {
+          && trimmed.indexOf('"') < 0
+          && hasHost(trimmed)) {
         return trimmed;
       }
     }
     return null;
+  }
+
+  private static boolean hasHost(String url) {
+    try {
+      return URI.create(url).getHost() != null;
+    } catch (IllegalArgumentException malformed) {
+      return false;
+    }
   }
 
   private static String normalizeBaseUrl(String value) {

@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationD
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.EmailNotificationException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -170,6 +171,45 @@ class EmailNotificationFacadeTest {
           .languageCode(LanguageCode.de)
           .notificationsEnabled(false)
           .build();
+  // ADR-002 §2 / #1201: the counsellor's real name must never reach the advice seeker's mailbox.
+  // These fixtures carry a real name that is distinctive enough for an absence assertion to mean
+  // something, and differ only in which public name is available.
+  private static final String REAL_FIRST_NAME = "Angela";
+  private static final String REAL_LAST_NAME = "Musterfrau";
+
+  private final Consultant CONSULTANT_WITH_PSEUDONYM =
+      Consultant.builder()
+          .id(CONSULTANT_ID)
+          .username("beraterin1")
+          .firstName(REAL_FIRST_NAME)
+          .lastName(REAL_LAST_NAME)
+          .displayName("Frau M.")
+          .email("consultant@domain.de")
+          .languageCode(LanguageCode.de)
+          .build();
+
+  private final Consultant CONSULTANT_WITHOUT_PSEUDONYM =
+      Consultant.builder()
+          .id(CONSULTANT_ID)
+          .username("beraterin1")
+          .firstName(REAL_FIRST_NAME)
+          .lastName(REAL_LAST_NAME)
+          .displayName(null)
+          .email("consultant@domain.de")
+          .languageCode(LanguageCode.de)
+          .build();
+
+  private final Consultant CONSULTANT_WITHOUT_ANY_PUBLIC_NAME =
+      Consultant.builder()
+          .id(CONSULTANT_ID)
+          .username("")
+          .firstName(REAL_FIRST_NAME)
+          .lastName(REAL_LAST_NAME)
+          .displayName(null)
+          .email("consultant@domain.de")
+          .languageCode(LanguageCode.de)
+          .build();
+
   private final User USER = new User(USER_ID, null, USERNAME_ENCODED, "email@email.de", false);
   private final User USER_NO_EMAIL = new User(USER_ID, null, "username", "", false);
   private final ConsultantAgency CONSULTANT_AGENCY =
@@ -298,6 +338,13 @@ class EmailNotificationFacadeTest {
   private NewDirectEnquiryEmailSupplier newDirectEnquiryEmailSupplier;
 
   @Spy private AssignEnquiryEmailSupplier assignEnquiryEmailSupplier;
+
+  // The real rule, not a mock: ConsultantDisplayNameResolver is the single place that decides
+  // which counsellor name may be published (ADR-002 §2).
+  @Spy
+  private ConsultantDisplayNameResolver consultantDisplayNameResolver =
+      new ConsultantDisplayNameResolver();
+
   @Mock private MailService mailService;
 
   @Mock SessionService sessionService;
@@ -622,14 +669,50 @@ class EmailNotificationFacadeTest {
     org.assertj.core.api.Assertions.assertThat(text).contains("Ihre Beraterin/Ihr Berater");
   }
 
-  @Test
-  void sendInquiryAcceptedNotification_Should_UseConsultantFullName_When_ConsultantProvided() {
-    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1201: the inquiry-accepted mail goes to the advice seeker, so the counsellor's
+  // real name has no place in it. The predecessor of these three tests asserted the opposite --
+  // it required getFullName() in the body and so locked the leak in.
+  // ---------------------------------------------------------------------------
 
+  @Test
+  void sendInquiryAcceptedNotification_Should_UseThePublicDisplayName_And_NeverTheRealName() {
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT_WITH_PSEUDONYM, null);
+
+    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
+        .contains("Frau M.")
+        .doesNotContain(REAL_FIRST_NAME)
+        .doesNotContain(REAL_LAST_NAME);
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_NotFallBackToTheRealName_When_NoDisplayNameIsSet() {
+    // The exact condition the sibling fix exists for: with no pseudonym stored, the fallback must
+    // be the name the advice seeker already sees, never the real name.
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT_WITHOUT_PSEUDONYM, null);
+
+    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
+        .contains("beraterin1")
+        .doesNotContain(REAL_FIRST_NAME)
+        .doesNotContain(REAL_LAST_NAME);
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_UseTheNeutralFallback_When_NoPublicNameExists() {
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT_WITHOUT_ANY_PUBLIC_NAME, null);
+
+    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
+        .contains("Ihre Beraterin/Ihr Berater")
+        .doesNotContain(REAL_FIRST_NAME)
+        .doesNotContain(REAL_LAST_NAME);
+  }
+
+  private String capturedInquiryAcceptedText() {
     var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(captor.capture());
-    var text = captor.getValue().getMails().get(0).getTemplateData().get(1).getValue();
-    org.assertj.core.api.Assertions.assertThat(text).contains(CONSULTANT.getFullName());
+    return captor.getValue().getMails().get(0).getTemplateData().get(1).getValue();
   }
 
   @Test

@@ -20,11 +20,15 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService;
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService.DpaForwardEmailCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.MultilingualTenantDTO;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.OnboardingDpaAcceptanceDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO;
+import jakarta.validation.Validation;
+import jakarta.validation.Validator;
+import jakarta.validation.constraints.Email;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.function.Supplier;
@@ -54,6 +58,11 @@ import org.springframework.transaction.support.TransactionTemplate;
 public class TenantAdminOnboardingService {
 
   private static final int MIN_PASSWORD_LENGTH = 8;
+
+  /* TenantService's tenant.legal_name / contact_email / contact_phone column limits. */
+  private static final int LEGAL_NAME_MAX_LENGTH = 255;
+  private static final int CONTACT_EMAIL_MAX_LENGTH = 255;
+  private static final int CONTACT_PHONE_MAX_LENGTH = 64;
 
   /**
    * Provisional consultant allowance stamped on every tenant this flow creates. It is NOT a
@@ -117,10 +126,10 @@ public class TenantAdminOnboardingService {
     resolved.rethrowLinkDeath();
 
     if (resolved.pendingTwoFactorResume()) {
-      return new OnboardingInviteState(resolved.invite(), true, null);
+      return new OnboardingInviteState(resolved.invite(), true, null, null);
     }
-    return new OnboardingInviteState(
-        resolved.invite(), false, operatorDpaContentClient.fetchPublishedDpaContent());
+    var lookup = operatorDpaContentClient.lookupPublishedDpa();
+    return new OnboardingInviteState(resolved.invite(), false, lookup.content(), lookup.reason());
   }
 
   /** The database-only part of {@link #resolveOnboardingInvite}: locked load and classification. */
@@ -669,6 +678,37 @@ public class TenantAdminOnboardingService {
     }
     // dpaAccepted is validated against the invite's forward state in registerTenantAdmin: a
     // missing acceptance is only acceptable when the DPA was forwarded to an authorised signer.
+    validateSenderBlock(command);
+  }
+
+  /**
+   * The Träger's optional sender block, checked against TenantService's limits before anything is
+   * created: a value TenantService refuses would otherwise fail the registration half-way, after
+   * the admin account already exists.
+   */
+  private static void validateSenderBlock(RegisterTenantAdminCommand command) {
+    requireAtMost(command.legalName(), LEGAL_NAME_MAX_LENGTH, "organisation.legalName");
+    requireAtMost(command.contactEmail(), CONTACT_EMAIL_MAX_LENGTH, "organisation.contactEmail");
+    requireAtMost(command.contactPhone(), CONTACT_PHONE_MAX_LENGTH, "organisation.contactPhone");
+    if (!isBlank(command.contactEmail())
+        && !EMAIL_VALIDATOR
+            .validateValue(ContactEmail.class, "value", command.contactEmail().trim())
+            .isEmpty()) {
+      throw new BadRequestException("organisation.contactEmail is not a valid e-mail address");
+    }
+  }
+
+  /* The same @Email check TenantService applies to contactEmail — commons-validator would also
+  reject domains outside its TLD list, which TenantService accepts. */
+  private static final Validator EMAIL_VALIDATOR =
+      Validation.buildDefaultValidatorFactory().getValidator();
+
+  private record ContactEmail(@Email String value) {}
+
+  private static void requireAtMost(String value, int maxLength, String field) {
+    if (!isBlank(value) && value.trim().length() > maxLength) {
+      throw new BadRequestException(field + " must be at most " + maxLength + " characters long");
+    }
   }
 
   private CreateAdminDTO buildAdminDto(AccountInvite invite, RegisterTenantAdminCommand command) {
@@ -701,6 +741,9 @@ public class TenantAdminOnboardingService {
         .name(command.organisationName().trim())
         .subdomain(trimToNull(command.subdomain()))
         .address(trimToNull(command.address()))
+        .legalName(trimToNull(command.legalName()))
+        .contactEmail(trimToNull(command.contactEmail()))
+        .contactPhone(trimToNull(command.contactPhone()))
         .adminEmails(List.of(invite.getRecipientEmail()))
         .tenantIdReservationToken(invite.getTenantIdReservationToken())
         // Licensing.allowedNumberOfUsers is required by the TenantService creation contract and
@@ -743,13 +786,26 @@ public class TenantAdminOnboardingService {
   /**
    * Resolved onboarding state: the invite, whether the flow re-enters at the 2FA step (#569 resume
    * contract) instead of the registration step, and the operator's published DPA/AVV text (stored
-   * language -&gt; HTML JSON map) the DPA step renders read-only; {@code null} when nothing is
-   * published or the lookup is unavailable.
+   * language -&gt; HTML JSON map) the DPA step renders read-only.
+   *
+   * <p>{@code dpaContent} is {@code null} when no contract could be shown; {@code
+   * dpaUnavailableReason} then tells the invitee's client which of the two very different causes it
+   * was — nothing published yet, or the upstream read failed. Both are {@code null} on the resume
+   * path, which re-enters at the 2FA step and shows no contract at all.
    */
   public record OnboardingInviteState(
-      AccountInvite invite, boolean pendingTwoFactorResume, String dpaContent) {}
+      AccountInvite invite,
+      boolean pendingTwoFactorResume,
+      String dpaContent,
+      DpaUnavailableReason dpaUnavailableReason) {}
 
-  /** Input for the reservation-consuming registration; mirrors the Admin panel request shape. */
+  /**
+   * Input for the reservation-consuming registration; mirrors the Admin panel request shape.
+   *
+   * @param legalName optional full legal name of the Träger — the mail footer's sender name
+   * @param contactEmail optional contact e-mail for the mail footer
+   * @param contactPhone optional contact phone for the mail footer
+   */
   public record RegisterTenantAdminCommand(
       String organisationName,
       String subdomain,
@@ -761,7 +817,41 @@ public class TenantAdminOnboardingService {
       String dpaSignerOrganisation,
       String password,
       Long reservedTenantId,
-      String tenantIdReservationToken) {}
+      String tenantIdReservationToken,
+      String legalName,
+      String contactEmail,
+      String contactPhone) {
+
+    /** A registration without the optional sender block. */
+    public RegisterTenantAdminCommand(
+        String organisationName,
+        String subdomain,
+        String address,
+        boolean dpaAccepted,
+        String dpaSignerName,
+        String dpaSignerPosition,
+        String dpaSignerEmail,
+        String dpaSignerOrganisation,
+        String password,
+        Long reservedTenantId,
+        String tenantIdReservationToken) {
+      this(
+          organisationName,
+          subdomain,
+          address,
+          dpaAccepted,
+          dpaSignerName,
+          dpaSignerPosition,
+          dpaSignerEmail,
+          dpaSignerOrganisation,
+          password,
+          reservedTenantId,
+          tenantIdReservationToken,
+          null,
+          null,
+          null);
+    }
+  }
 
   /** The created (inactive) tenant plus the TOTP setup material for the 2FA step. */
   public record TenantAdminRegistrationResult(
