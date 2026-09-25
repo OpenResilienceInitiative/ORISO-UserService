@@ -2,9 +2,12 @@ package de.caritas.cob.userservice.api.service.email;
 
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisation;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
+import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
@@ -13,13 +16,12 @@ import org.springframework.stereotype.Component;
  * Fills the brand placeholders every ORISO mail carries.
  *
  * <p>The target contract is ADR-021: seven brand values plus a sender identity, stored per Träger
- * in TenantService. TenantService does not have those fields yet, so this class supplies the
- * fallbacks the ADR specifies and takes the one value that does exist today — {@code
- * emailThemeColor} on the tenant SMTP settings — as the primary colour.
+ * in TenantService. The sender identity (organisation, address, contact line) is the platform
+ * owner's master data from the Admin panel, see {@link SenderOrganisationResolver}; the colour is
+ * the one value per tenant that exists today — {@code emailThemeColor} on the tenant SMTP settings.
  *
- * <p>Every fallback is a working value. There is no state in which a mail goes out with an empty
- * organisation line, because a mail with a blank sender block is the kind that gets reported as
- * phishing.
+ * <p>The sender block is never invented: what the platform owner has not entered stays out of the
+ * mail (Frank, 2026-09-23). Filling the Dokument-Stammdaten is what puts a sender in the footer.
  */
 @Slf4j
 @Component
@@ -39,17 +41,14 @@ public class OrisoEmailBrand {
   @Value("${email.brand.platform-name:Online-Beratung}")
   private String platformName;
 
-  @Value("${email.brand.org-name:ORISO}")
-  private String orgName;
-
-  @Value("${email.brand.org-address:}")
-  private String orgAddress;
-
-  @Value("${email.brand.contact-line:}")
-  private String contactLine;
-
   @Value("${email.brand.logo-url:}")
   private String logoUrl;
+
+  private final SenderOrganisationResolver senderOrganisations;
+
+  public OrisoEmailBrand(@NonNull SenderOrganisationResolver senderOrganisations) {
+    this.senderOrganisations = senderOrganisations;
+  }
 
   /**
    * @param appUrl absolute base URL of the app this mail links into
@@ -67,9 +66,13 @@ public class OrisoEmailBrand {
     Map<String, String> values = new LinkedHashMap<>();
 
     values.put("platformName", platformName);
-    values.put("orgName", orgName);
-    values.put("orgAddress", orgAddress);
-    values.put("contactLine", contactLine);
+    // The offered-by line describes the platform; unlike platformName, no sender brands it.
+    values.put("offeringName", platformName);
+    SenderOrganisation operator = senderOrganisations.platform();
+    putSender(values, operator);
+    // Y in "X ist ein Angebot von Y": always the platform operator, never a Träger that overlays
+    // the sender block (Frank, 2026-09-23). Blank when not entered, so the line is dropped.
+    values.put("operatorName", orBlank(operator.name()));
     values.put("logoUrl", logoUrl);
     values.put("primaryColor", readablePrimary(tenantThemeColor));
     values.put("accentColor", DEFAULT_ACCENT);
@@ -84,13 +87,27 @@ public class OrisoEmailBrand {
   }
 
   /**
+   * The footer's sender block. A value nobody entered in the Admin panel goes in blank, and the
+   * renderer then drops its line — there is no sample organisation to fall back on.
+   */
+  static void putSender(Map<String, String> values, SenderOrganisation sender) {
+    values.put("orgName", orBlank(sender.name()));
+    values.put("orgAddress", orBlank(sender.address()));
+    values.put("contactLine", orBlank(sender.contactLine()));
+  }
+
+  private static String orBlank(String value) {
+    return value == null ? "" : value;
+  }
+
+  /**
    * The tenant colour if white text stays readable on it, the ORISO default otherwise.
    *
    * <p>ADR-021 puts the same check in the Admin colour field, where a Träger can see the measured
    * ratio and pick a different shade. This is the guard behind it: a colour that slipped through
    * still must not produce a button nobody can read.
    */
-  String readablePrimary(String tenantThemeColor) {
+  public String readablePrimary(String tenantThemeColor) {
     if (!isNotBlank(tenantThemeColor) || !HEX.matcher(tenantThemeColor.trim()).matches()) {
       return DEFAULT_PRIMARY;
     }

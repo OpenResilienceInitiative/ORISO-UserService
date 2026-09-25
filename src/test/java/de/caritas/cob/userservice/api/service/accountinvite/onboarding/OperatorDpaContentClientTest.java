@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.tenantadminservice.generated.ApiClient;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.TenantControllerApi;
@@ -165,6 +166,141 @@ class OperatorDpaContentClientTest {
 
     verifyNoInteractions(controllerFactory);
     verifyNoInteractions(identityAuthentication);
+  }
+
+  @Test
+  void lookupPublishedDpaReportsNoReasonWhenTheOperatorDpaIsPublished() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenReturn(
+            List.of(new DpaVersionDTO().activationDate("2026-07-20T10:00").content(DPA_JSON)));
+
+    var lookup = clientFor(OPERATOR_TENANT_ID).lookupPublishedDpa();
+
+    assertEquals(DPA_JSON, lookup.content());
+    assertEquals("2026-07-20T10:00", lookup.dpa().version());
+    assertNull(lookup.reason());
+  }
+
+  @Test
+  void lookupPublishedDpaReportsNotPublishedWhenTheOperatorTenantServesNoVersions() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenReturn(List.of());
+
+    var lookup = clientFor(OPERATOR_TENANT_ID).lookupPublishedDpa();
+
+    assertNull(lookup.dpa());
+    assertNull(lookup.content());
+    assertEquals(DpaUnavailableReason.NOT_PUBLISHED, lookup.reason());
+  }
+
+  /** All versions blank is still a content problem, not a platform problem. */
+  @Test
+  void lookupPublishedDpaReportsNotPublishedWhenEveryServedVersionIsBlank() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenReturn(
+            List.of(
+                new DpaVersionDTO().activationDate("2026-07-20T10:00").content("   "),
+                new DpaVersionDTO().activationDate("2026-01-02T10:00").content(null)));
+
+    var lookup = clientFor(OPERATOR_TENANT_ID).lookupPublishedDpa();
+
+    assertNull(lookup.dpa());
+    assertEquals(DpaUnavailableReason.NOT_PUBLISHED, lookup.reason());
+  }
+
+  @Test
+  void lookupPublishedDpaReportsNotPublishedWhenTheLookupIsDisabled() {
+    var lookup = clientFor(0L).lookupPublishedDpa();
+
+    assertNull(lookup.dpa());
+    assertEquals(DpaUnavailableReason.NOT_PUBLISHED, lookup.reason());
+    verifyNoInteractions(controllerFactory);
+    verifyNoInteractions(identityAuthentication);
+  }
+
+  /**
+   * A rejected technical user is a platform misconfiguration — reporting it as "nothing published"
+   * sends the invitee (and the operator) after the wrong problem.
+   */
+  @Test
+  void lookupPublishedDpaReportsUpstreamErrorWhenUpstreamRejectsTheTechnicalUser() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenThrow(
+            HttpClientErrorException.create(
+                HttpStatus.FORBIDDEN, "forbidden", new HttpHeaders(), new byte[0], null));
+
+    var lookup = clientFor(OPERATOR_TENANT_ID).lookupPublishedDpa();
+
+    assertNull(lookup.dpa());
+    assertNull(lookup.content());
+    assertEquals(DpaUnavailableReason.UPSTREAM_ERROR, lookup.reason());
+  }
+
+  @Test
+  void lookupPublishedDpaReportsUpstreamErrorWhenUpstreamIsUnreachable() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenThrow(new ResourceAccessException("connection refused"));
+
+    var lookup = clientFor(OPERATOR_TENANT_ID).lookupPublishedDpa();
+
+    assertNull(lookup.dpa());
+    assertEquals(DpaUnavailableReason.UPSTREAM_ERROR, lookup.reason());
+  }
+
+  /**
+   * The technical-user login runs before the HTTP call and throws its own unchecked types; it must
+   * degrade exactly like a failed read, never escape into a 500 on the public resolve endpoint.
+   */
+  @Test
+  void lookupPublishedDpaReportsUpstreamErrorWhenTheTechnicalUserLoginFails() {
+    when(identityAuthentication.login(anyString(), anyString()))
+        .thenThrow(new IllegalStateException("technical user login failed"));
+
+    var lookup = clientFor(OPERATOR_TENANT_ID).lookupPublishedDpa();
+
+    assertNull(lookup.dpa());
+    assertEquals(DpaUnavailableReason.UPSTREAM_ERROR, lookup.reason());
+  }
+
+  @Test
+  void fetchPublishedDpaDoesNotThrowWhenTheTechnicalUserLoginFails() {
+    when(identityAuthentication.login(anyString(), anyString()))
+        .thenThrow(new IllegalStateException("technical user login failed"));
+
+    assertNull(clientFor(OPERATOR_TENANT_ID).fetchPublishedDpa());
+    assertNull(clientFor(OPERATOR_TENANT_ID).fetchPublishedDpaContent());
+  }
+
+  /**
+   * An upstream error must not be cached either — a repaired platform recovers on the next read.
+   */
+  @Test
+  void lookupPublishedDpaRetriesUpstreamAfterAnUpstreamError() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenThrow(new ResourceAccessException("connection refused"))
+        .thenReturn(
+            List.of(new DpaVersionDTO().activationDate("2026-07-20T10:00").content(DPA_JSON)));
+    OperatorDpaContentClient client = clientFor(OPERATOR_TENANT_ID);
+
+    assertEquals(DpaUnavailableReason.UPSTREAM_ERROR, client.lookupPublishedDpa().reason());
+    var recovered = client.lookupPublishedDpa();
+
+    assertEquals(DPA_JSON, recovered.content());
+    assertNull(recovered.reason());
+    verify(tenantControllerApi, times(2)).getDataProcessingAgreementVersions(OPERATOR_TENANT_ID);
+  }
+
+  @Test
+  void lookupPublishedDpaServesTheCachedTextInsteadOfCallingUpstreamAgain() {
+    when(tenantControllerApi.getDataProcessingAgreementVersions(OPERATOR_TENANT_ID))
+        .thenReturn(
+            List.of(new DpaVersionDTO().activationDate("2026-07-20T10:00").content(DPA_JSON)));
+    OperatorDpaContentClient client = clientFor(OPERATOR_TENANT_ID);
+
+    assertNull(client.lookupPublishedDpa().reason());
+    assertNull(client.lookupPublishedDpa().reason());
+
+    verify(tenantControllerApi, times(1)).getDataProcessingAgreementVersions(OPERATOR_TENANT_ID);
   }
 
   @Test

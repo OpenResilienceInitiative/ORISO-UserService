@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.nio.charset.StandardCharsets;
@@ -68,9 +69,14 @@ class AccountInviteCounsellorProvisioningIT {
   @BeforeEach
   void configureConsultantProvisioning() {
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
-        .thenReturn(
-            new ConsultantAdminResponseDTO()
-                .embedded(new ConsultantDTO().id("provisioned-counsellor-id")));
+        .thenAnswer(
+            invocation -> {
+              // Remote provisioning calls run with the service token (KeycloakTestConfig), and
+              // only those (ORISO-Helm#367).
+              assertThat(TechnicalAccessTokenContext.get()).contains("synthetic-service-token");
+              return new ConsultantAdminResponseDTO()
+                  .embedded(new ConsultantDTO().id("provisioned-counsellor-id"));
+            });
   }
 
   @Test
@@ -127,6 +133,7 @@ class AccountInviteCounsellorProvisioningIT {
         .createNewConsultantAgency(eq("provisioned-counsellor-id"), agencyCaptor.capture());
     assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(275L);
     assertThat(agencyCaptor.getValue().getRoleSetKey()).isEqualTo("CONSULTANT_DEFAULT");
+    assertThat(TechnicalAccessTokenContext.get()).isEmpty();
   }
 
   private static String sha256(String value) throws Exception {
