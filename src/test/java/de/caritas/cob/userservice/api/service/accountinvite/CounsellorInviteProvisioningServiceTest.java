@@ -62,11 +62,9 @@ class CounsellorInviteProvisioningServiceTest {
             consultantAdminFacade,
             consultantRepository,
             createConsultantSaga,
-            identityAuthentication,
-            identityClientConfig,
             counsellorAgencyAdminGrantService,
             consultantAgencyRelationCreatorService,
-            agencyFacts);
+            new AcceptTimeAgencyCheck(agencyFacts, identityAuthentication, identityClientConfig));
     when(agencyFacts.find(275L))
         .thenReturn(Optional.of(new AgencyFacts.Agency(275L, 79L, false, List.of())));
     var technicalUser = new TechnicalUserConfig();

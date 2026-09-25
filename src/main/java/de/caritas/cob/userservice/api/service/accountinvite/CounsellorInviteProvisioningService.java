@@ -7,14 +7,10 @@ import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateCons
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
-import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -36,12 +32,10 @@ public class CounsellorInviteProvisioningService {
   private final @NonNull ConsultantAdminFacade consultantAdminFacade;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull CreateConsultantSaga createConsultantSaga;
-  private final @NonNull IdentityAuthentication identityAuthentication;
-  private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
-  private final @NonNull AgencyFacts agencyFacts;
+  private final @NonNull AcceptTimeAgencyCheck acceptTimeAgencyCheck;
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
@@ -81,9 +75,8 @@ public class CounsellorInviteProvisioningService {
     try {
       // Inside the try: a failed service login must mark the invite FAILED (retryable) instead of
       // leaving it IN_PROGRESS, which would answer every retry with 409.
-      technicalAccessToken = loginTechnicalUser();
-      // The agency may have been deleted since the invite was written (ORISO-Admin#1026 P2-3).
-      TechnicalAccessTokenContext.runWith(technicalAccessToken, () -> requireLiveAgency(invite));
+      technicalAccessToken = acceptTimeAgencyCheck.serviceToken();
+      acceptTimeAgencyCheck.requireLiveAgency(invite, technicalAccessToken);
       // The service identity is ambient ONLY around the remote calls that need it: consultant
       // creation and agency assignment reach TenantService/AgencyService/ConsultingTypeService
       // through the shared admin services, which read the bearer from the header supplier.
@@ -138,33 +131,6 @@ public class CounsellorInviteProvisioningService {
     } finally {
       restoreTenantContext(requestTenant);
     }
-  }
-
-  /** The service token bypasses AgencyService's tenant filter, so the tenant is checked here. */
-  private void requireLiveAgency(AccountInvite invite) {
-    agencyFacts
-        .find(invite.getAgencyId())
-        .filter(agency -> !agency.deleted())
-        .filter(
-            agency -> agency.tenantId() == null || agency.tenantId().equals(invite.getTenantId()))
-        .orElseThrow(
-            () -> new NotFoundException("agencyId " + invite.getAgencyId() + " does not exist"));
-  }
-
-  private String loginTechnicalUser() {
-    var technicalUser = identityClientConfig.getTechnicalUser();
-    IdentityLogin login;
-    try {
-      login =
-          identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
-    } catch (RuntimeException exception) {
-      // The failure reason is persisted on the invite; keep identity-provider text out of it.
-      throw new IllegalStateException("Service authentication unavailable", exception);
-    }
-    if (login == null || login.accessToken() == null || login.accessToken().isBlank()) {
-      throw new IllegalStateException("Service authentication unavailable");
-    }
-    return login.accessToken();
   }
 
   private static TenantData snapshotTenantContext() {
