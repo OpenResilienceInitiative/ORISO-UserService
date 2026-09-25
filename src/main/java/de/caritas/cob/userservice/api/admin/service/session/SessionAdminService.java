@@ -43,7 +43,9 @@ public class SessionAdminService {
     Pageable pageable = PageRequest.of(Math.max(page - 1, 0), Math.max(perPage, 1));
     SessionPageProvider sessionPageProvider =
         new AgencyScopedSessionPageProvider(
-            this.sessionRepository, sessionFilter, agencyRestriction.get());
+            this.sessionRepository,
+            sessionFilter != null ? sessionFilter : new SessionFilter(),
+            agencyRestriction.get());
     return SessionAdminResultDTOBuilder.getInstance()
         .withPage(page)
         .withPerPage(perPage)

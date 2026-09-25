@@ -5,7 +5,10 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
@@ -14,6 +17,8 @@ import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import java.util.Collections;
+import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -155,6 +160,54 @@ class SessionAdminServiceTest {
 
     assertThat(result.getTotal()).isEqualTo(0);
     assertThat(result.getEmbedded()).isEmpty();
+  }
+
+  // ---------------------------------------------------------------------------
+  // findSessionsInCallerScope — the caller's reach
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void findSessionsInCallerScope_Should_ListOnlyOwnAgencies_When_CallerIsRestricted() {
+    when(adminCallerScope.agencyRestriction()).thenReturn(Optional.of(Set.of(7L)));
+    when(sessionRepository.findByAgencyIdIn(eq(Set.of(7L)), any(Pageable.class)))
+        .thenReturn(emptyPage(0));
+
+    sessionAdminService.findSessionsInCallerScope(1, 10, new SessionFilter());
+
+    verify(sessionRepository).findByAgencyIdIn(eq(Set.of(7L)), any(Pageable.class));
+    verify(sessionRepository, never()).findAll(any(Pageable.class));
+  }
+
+  @Test
+  void findSessionsInCallerScope_Should_ListNothing_When_CallerAdministersNoAgency() {
+    when(adminCallerScope.agencyRestriction()).thenReturn(Optional.of(Set.of()));
+
+    SessionAdminResultDTO result =
+        sessionAdminService.findSessionsInCallerScope(1, 10, new SessionFilter());
+
+    assertThat(result.getEmbedded()).isEmpty();
+    verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
+  void findSessionsInCallerScope_Should_ListEverySession_When_CallerIsUnrestricted() {
+    when(adminCallerScope.agencyRestriction()).thenReturn(Optional.empty());
+    when(sessionRepository.findAll(any(Pageable.class))).thenReturn(emptyPage(0));
+
+    sessionAdminService.findSessionsInCallerScope(1, 10, new SessionFilter());
+
+    verify(sessionRepository).findAll(any(Pageable.class));
+  }
+
+  @Test
+  void findSessionsInCallerScope_Should_ListOwnAgencies_When_RestrictedCallerSendsNoFilter() {
+    when(adminCallerScope.agencyRestriction()).thenReturn(Optional.of(Set.of(7L)));
+    when(sessionRepository.findByAgencyIdIn(eq(Set.of(7L)), any(Pageable.class)))
+        .thenReturn(emptyPage(0));
+
+    sessionAdminService.findSessionsInCallerScope(1, 10, null);
+
+    verify(sessionRepository).findByAgencyIdIn(eq(Set.of(7L)), any(Pageable.class));
   }
 
   private Page<Session> emptyPage(int totalElements) {
