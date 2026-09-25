@@ -15,8 +15,8 @@ import lombok.Setter;
 import lombok.ToString;
 
 /**
- * Outside the tenant filter on purpose: a link is redeemed on a public route that has no tenant yet,
- * so the admin reads name the caller's tenant in their queries instead.
+ * Outside the tenant filter on purpose: a link is redeemed on a public route that has no tenant
+ * yet, so the admin reads name the caller's tenant in their queries instead.
  */
 @Entity
 @Table(name = "agency_invite_link")
