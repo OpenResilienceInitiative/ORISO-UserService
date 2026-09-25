@@ -3,8 +3,14 @@ package de.caritas.cob.userservice.api.admin.service.admin;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Agencies;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Platform;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
@@ -30,6 +36,7 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -162,6 +169,32 @@ class AdminScopeTest {
   }
 
   @Test
+  @SuppressWarnings("unchecked")
+  void assertMay_Should_ResolveAllAgenciesInOneCall_When_TraegerAdmin() {
+    actAs(4L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenAgencies(agency(10L, 4L), agency(11L, 4L));
+
+    assertThatCode(() -> adminScope.assertMay(Target.agencies(List.of(10L, 11L))))
+        .doesNotThrowAnyException();
+
+    ArgumentCaptor<List<Long>> ids = ArgumentCaptor.forClass(List.class);
+    verify(agencyService, times(1)).getAgenciesWithoutCaching(ids.capture());
+    assertThat(ids.getValue()).containsExactlyInAnyOrder(10L, 11L);
+    verify(agencyService, never()).getAgencyWithoutCaching(any());
+  }
+
+  @Test
+  void assertMay_Should_DenyAgencies_When_OneBelongsToAnotherTenantOrIsUnknown() {
+    actAs(4L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenAgencies(agency(10L, 4L), agency(20L, 5L));
+
+    assertThatThrownBy(() -> adminScope.assertMay(Target.agencies(List.of(10L, 20L))))
+        .isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> adminScope.assertMay(Target.agencies(List.of(10L, 99L))))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
   void assertMay_Should_DenyAdminOfAnotherTenant_And_PassUnknownAdmin() {
     actAs(4L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
     when(adminRepository.findById("foreign"))
@@ -194,6 +227,22 @@ class AdminScopeTest {
   private void actAs(Long tenantId, UserRole... roles) {
     caller.setTenantId(tenantId);
     caller.setRoles(Arrays.stream(roles).map(UserRole::getValue).collect(Collectors.toSet()));
+  }
+
+  private void givenAgencies(AgencyDTO... agencies) {
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            call ->
+                Arrays.stream(agencies)
+                    .filter(agency -> ((List<?>) call.getArgument(0)).contains(agency.getId()))
+                    .toList());
+    for (AgencyDTO agency : agencies) {
+      when(agencyService.getAgencyWithoutCaching(agency.getId())).thenReturn(agency);
+    }
+  }
+
+  private static AgencyDTO agency(long id, long tenantId) {
+    return new AgencyDTO().id(id).tenantId(tenantId);
   }
 
   private void givenOwnAgencies(Long... agencyIds) {
