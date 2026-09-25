@@ -141,11 +141,19 @@ class AdminScopeTest {
     actAs(4L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
 
     assertThatCode(() -> adminScope.assertMay(Target.tenant(4L))).doesNotThrowAnyException();
-    assertThatCode(() -> adminScope.assertMay(Target.tenant(null))).doesNotThrowAnyException();
+    assertThatThrownBy(() -> adminScope.assertMay(Target.tenant(null)))
+        .isInstanceOf(ForbiddenException.class);
     assertThatThrownBy(() -> adminScope.assertMay(Target.tenant(5L)))
         .isInstanceOf(ForbiddenException.class);
     assertThatThrownBy(() -> adminScope.assertMay(Target.tenant(0L)))
         .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMay_Should_AllowUnnamedTenant_OnlyForThePlatform() {
+    actAs(0L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
+
+    assertThatCode(() -> adminScope.assertMay(Target.tenant(null))).doesNotThrowAnyException();
   }
 
   @Test

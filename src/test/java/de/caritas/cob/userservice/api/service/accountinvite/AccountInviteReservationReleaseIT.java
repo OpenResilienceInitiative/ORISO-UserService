@@ -8,6 +8,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -109,6 +110,8 @@ class AccountInviteReservationReleaseIT {
     when(agencyIdAllocationClient.release(anyLong())).thenReturn(true);
     when(agencyIdAllocationClient.getAvailability(EXISTING_AGENCY))
         .thenReturn(IdAllocationStatus.ASSIGNED);
+    when(agencyService.getAgenciesWithoutCaching(java.util.List.of(EXISTING_AGENCY)))
+        .thenReturn(java.util.List.of(new AgencyDTO().id(EXISTING_AGENCY).tenantId(OWN_TENANT)));
     when(agencyFacts.find(EXISTING_AGENCY))
         .thenReturn(
             Optional.of(

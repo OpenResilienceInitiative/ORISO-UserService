@@ -117,7 +117,7 @@ class AccountInviteServiceTest {
                 accountInviteRepository, templateRepository, ledger, delivery, transactionManager),
             delivery);
     lenient()
-        .when(accessPolicy.authorizeCreate(any(), any()))
+        .when(accessPolicy.authorizeCreate(any()))
         .thenAnswer(call -> call.getArgument(0));
     lenient()
         .when(accessPolicy.scopeForListing(any(), any()))

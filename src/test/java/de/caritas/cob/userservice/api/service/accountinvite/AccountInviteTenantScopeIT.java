@@ -262,6 +262,22 @@ class AccountInviteTenantScopeIT {
   }
 
   @Test
+  void revokeInvite_Should_AnswerAsForAForeignInvite_When_TenantAdminNamesAMissingInvite() {
+    actAsTenantAdmin();
+
+    assertThatThrownBy(() -> service.revokeInvite(987654L)).isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void revokeInvite_Should_AnswerNotFound_When_PlatformAdminNamesAMissingInvite() {
+    actAsPlatformAdmin();
+
+    assertThatThrownBy(() -> service.revokeInvite(987654L))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class);
+  }
+
+  @Test
   void waiveTwoFactor_Should_Refuse_When_TenantAdminTouchesAnotherTenantsInvite() {
     actAsTenantAdmin();
     Long foreignId = foreignTenantCounsellorInvite.getId();

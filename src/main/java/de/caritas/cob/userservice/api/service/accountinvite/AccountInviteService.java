@@ -91,7 +91,7 @@ public class AccountInviteService {
     }
     Supplier<Optional<AgencyFacts.Agency>> agency = oneLookupOf(requestedCommand);
     // Cross-Träger guard: the target tenant, agency and role come from the request body.
-    CreateAccountInviteCommand command = accessPolicy.authorizeCreate(requestedCommand, agency);
+    CreateAccountInviteCommand command = accessPolicy.authorizeCreate(requestedCommand);
     if (isBlank(command.recipientEmail())) {
       throw new BadRequestException("recipientEmail is required");
     }
@@ -708,7 +708,7 @@ public class AccountInviteService {
   }
 
   public AccountInvite waiveTwoFactor(Long inviteId, WaiveTwoFactorCommand command) {
-    return waiveTwoFactor(findInvite(inviteId), command);
+    return waiveTwoFactor(findAuthorizedInvite(inviteId), command);
   }
 
   /** Waives the 2FA gate; applies the cross-Träger guard itself, whichever overload is used. */
@@ -762,9 +762,16 @@ public class AccountInviteService {
 
   /** Loads an invite for an admin action and applies the cross-Träger guard. */
   private AccountInvite findAuthorizedInvite(Long inviteId) {
-    AccountInvite invite = findInvite(inviteId);
-    accessPolicy.authorizeAccess(invite);
-    return invite;
+    if (inviteId == null) {
+      throw new BadRequestException("inviteId is required");
+    }
+    Optional<AccountInvite> invite = accountInviteRepository.findById(inviteId);
+    if (invite.isEmpty()) {
+      accessPolicy.authorizeMissing(inviteId);
+      throw new NotFoundException("Account invite not found");
+    }
+    accessPolicy.authorizeAccess(invite.get());
+    return invite.get();
   }
 
   private AccountInvite findInvite(Long inviteId) {

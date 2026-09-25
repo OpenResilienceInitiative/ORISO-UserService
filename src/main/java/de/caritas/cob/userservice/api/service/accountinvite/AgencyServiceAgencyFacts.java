@@ -44,7 +44,7 @@ public class AgencyServiceAgencyFacts implements AgencyFacts {
               isDeleted(agency.getDeleteDate()),
               topicIds(agency),
               defaultPermission(agency)));
-    } catch (HttpClientErrorException.NotFound exception) {
+    } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden exception) {
       return Optional.empty();
     }
   }

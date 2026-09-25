@@ -82,6 +82,10 @@ class TenantIsolationWithoutTransactionIT {
   @Autowired
   private de.caritas.cob.userservice.api.port.out.AdminAgencyRepository adminAgencyRepository;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.ConsultantRepository consultantRepository;
+
+  @Autowired private org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
   @jakarta.persistence.PersistenceContext private jakarta.persistence.EntityManager entityManager;
   @Autowired private org.springframework.scheduling.TaskScheduler taskScheduler;
 
@@ -254,6 +258,45 @@ class TenantIsolationWithoutTransactionIT {
     } finally {
       Tenants.acrossAll(() -> sessionSupervisorRepository.delete(foreignSupervision));
     }
+  }
+
+  // --- rows without a tenant -------------------------------------------------------------------
+
+  @Test
+  void findById_Should_NotFindRowWithoutTenant_When_ListQueriesHideIt() {
+    var orphan = fixtures.consultant(OWN_TENANT);
+    jdbcTemplate.update(
+        "UPDATE consultant SET tenant_id = NULL WHERE consultant_id = ?", orphan.getId());
+
+    assertThat(
+            Tenants.in(
+                OWN_TENANT,
+                () -> consultantRepository.findById(orphan.getId()).map(Consultant::getId)))
+        .isEmpty();
+    assertThat(
+            Tenants.in(
+                FOREIGN_TENANT,
+                () -> consultantRepository.findById(orphan.getId()).map(Consultant::getId)))
+        .isEmpty();
+    assertThat(
+            Tenants.acrossAll(
+                () -> consultantRepository.findById(orphan.getId()).map(Consultant::getId)))
+        .contains(orphan.getId());
+  }
+
+  @Test
+  void findById_Should_GiveLegacyRowWithoutTenant_OnlyToTenantOne() {
+    jdbcTemplate.update("UPDATE session SET tenant_id = NULL WHERE id = ?", ownSession.getId());
+
+    assertThat(
+            Tenants.in(
+                1L, () -> sessionRepository.findById(ownSession.getId()).map(Session::getId)))
+        .contains(ownSession.getId());
+    assertThat(
+            Tenants.in(
+                FOREIGN_TENANT,
+                () -> sessionRepository.findById(ownSession.getId()).map(Session::getId)))
+        .isEmpty();
   }
 
   // --- threads without a tenant -----------------------------------------------------------------
