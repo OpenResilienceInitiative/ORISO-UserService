@@ -8,8 +8,7 @@ import jakarta.annotation.PostConstruct;
 import java.net.URI;
 import java.util.Map;
 import java.util.UUID;
-import lombok.NonNull;
-import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
@@ -21,12 +20,22 @@ import org.springframework.web.client.RestTemplate;
 
 /** Reads redacted tenant settings and delivers OWN mail without exposing its SMTP secret. */
 @Component
-@RequiredArgsConstructor
 public class TenantSystemEmailClient {
-  private final @NonNull RestTemplate restTemplate;
-  private final @NonNull IdentityAuthentication authentication;
-  private final @NonNull IdentityClientConfig identityConfig;
-  private final @NonNull SecurityHeaderSupplier headerSupplier;
+  private final RestTemplate restTemplate;
+  private final IdentityAuthentication authentication;
+  private final IdentityClientConfig identityConfig;
+  private final SecurityHeaderSupplier headerSupplier;
+
+  public TenantSystemEmailClient(
+      RestTemplate restTemplate,
+      IdentityAuthentication authentication,
+      IdentityClientConfig identityConfig,
+      @Qualifier("securityHeaderSupplier") SecurityHeaderSupplier headerSupplier) {
+    this.restTemplate = restTemplate;
+    this.authentication = authentication;
+    this.identityConfig = identityConfig;
+    this.headerSupplier = headerSupplier;
+  }
 
   @Value("${tenant.service.api.url:}")
   private String tenantServiceApiUrl;
