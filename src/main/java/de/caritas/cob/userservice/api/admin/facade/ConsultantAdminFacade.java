@@ -32,6 +32,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 import java.util.function.Predicate;
@@ -226,19 +227,23 @@ public class ConsultantAdminFacade {
         persistedAgencyIds.stream()
             .filter(persistedAgencyId -> !desiredAgencyIds.contains(persistedAgencyId))
             .collect(Collectors.toList());
-    adminScope.assertMay(Target.agencies(desiredAgencyIds));
-    adminScope.assertMay(Target.agencies(agencyIdsToDelete));
+    var agenciesToCreate =
+        agencyList.stream()
+            .filter(agency -> !persistedAgencyIds.contains(agency.getAgencyId()))
+            .toList();
+    // Only changed relations are checked: an agency admin keeps, untouched, the other agencies of
+    // a shared counsellor.
+    var changedAgencyIds = new HashSet<>(agencyIdsToDelete);
+    agenciesToCreate.forEach(agency -> changedAgencyIds.add(agency.getAgencyId()));
+    adminScope.assertMay(Target.agencies(changedAgencyIds));
     if (!agencyIdsToDelete.isEmpty()) {
       consultantAgencyAdminService.markConsultantAgenciesForDeletion(
           consultantId, agencyIdsToDelete);
     }
 
-    agencyList.stream()
-        .filter(agency -> !persistedAgencyIds.contains(agency.getAgencyId()))
-        .forEach(
-            agency ->
-                consultantAgencyRelationCreatorService.createNewConsultantAgency(
-                    consultantId, agency));
+    agenciesToCreate.forEach(
+        agency ->
+            consultantAgencyRelationCreatorService.createNewConsultantAgency(consultantId, agency));
   }
 
   /**
