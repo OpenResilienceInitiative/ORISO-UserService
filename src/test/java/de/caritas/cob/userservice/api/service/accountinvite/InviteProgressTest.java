@@ -81,6 +81,79 @@ class InviteProgressTest {
         .isEqualTo(Phase.NEEDS_ACTION);
   }
 
+  @Test
+  void traegerAdmin_Should_DateTheTwoFactorStep_When_ActivatedOrWaived() {
+    AccountInvite accepted = invite(AccountInviteStatus.ACCEPTED);
+    accepted.setTargetRole(AccountInviteTargetRole.TENANT_ADMIN);
+    accepted.setAcceptedAt(NOW.minusDays(4));
+    assertThat(InviteProgress.of(accepted, null, null, NOW).twoFactorDoneAt()).isNull();
+
+    accepted.setTwoFactorStatus(TwoFactorGateStatus.ACTIVE);
+    accepted.setTwoFactorActivatedAt(NOW.minusDays(3));
+    assertThat(InviteProgress.of(accepted, null, null, NOW).twoFactorDoneAt())
+        .isEqualTo(NOW.minusDays(3));
+
+    accepted.setTwoFactorStatus(TwoFactorGateStatus.WAIVED);
+    accepted.setTwoFactorWaivedAt(NOW.minusDays(2));
+    assertThat(InviteProgress.of(accepted, null, null, NOW).twoFactorDoneAt())
+        .isEqualTo(NOW.minusDays(2));
+  }
+
+  @Test
+  void detail_Should_NameWhyAnInviteNeedsAction_And_TheStatusOtherwise() {
+    AccountInvite sent = invite(AccountInviteStatus.EMAIL_SENT);
+    sent.setExpiresAt(NOW.minusMinutes(1));
+    AccountInvite failed = invite(AccountInviteStatus.ACCEPTED);
+    failed.setProvisioningStatus(AccountInviteProvisioningStatus.FAILED);
+
+    assertThat(InviteProgress.of(sent, null, null, NOW).detail()).isEqualTo("LINK_EXPIRED");
+    sent.setExpiresAt(NOW.plusDays(1));
+    assertThat(
+            InviteProgress.of(sent, delivery(InviteEmailDeliveryStatus.FAILED, null), null, NOW)
+                .detail())
+        .isEqualTo("DELIVERY_FAILED");
+    assertThat(InviteProgress.of(sent, null, null, NOW).detail()).isEqualTo("EMAIL_SENT");
+    assertThat(InviteProgress.of(failed, null, null, NOW).detail())
+        .isEqualTo("PROVISIONING_FAILED");
+    assertThat(
+            InviteProgress.of(
+                    invite(AccountInviteStatus.WAITING_FOR_UNIT),
+                    null,
+                    InviteQueueProblem.NO_UNIT_ADMIN,
+                    NOW)
+                .detail())
+        .isEqualTo("NO_UNIT_ADMIN");
+    assertThat(InviteProgress.of(invite(AccountInviteStatus.EXPIRED), null, null, NOW).detail())
+        .isEqualTo("EXPIRED");
+    assertThat(InviteProgress.of(invite(AccountInviteStatus.REVOKED), null, null, NOW).detail())
+        .isEqualTo("REVOKED");
+  }
+
+  @Test
+  void tally_Should_CountEveryPhase_And_BreakItDownByDetail() {
+    InviteProgress.Tally tally =
+        InviteProgress.tally(
+            java.util.List.of(
+                InviteProgress.of(invite(AccountInviteStatus.DRAFT), null, null, NOW),
+                InviteProgress.of(invite(AccountInviteStatus.DRAFT), null, null, NOW),
+                InviteProgress.of(invite(AccountInviteStatus.REVOKED), null, null, NOW),
+                InviteProgress.of(invite(AccountInviteStatus.SUPERSEDED), null, null, NOW),
+                InviteProgress.of(invite(AccountInviteStatus.EXPIRED), null, null, NOW)));
+
+    assertThat(tally.counts())
+        .containsEntry(Phase.PREPARED, 2L)
+        .containsEntry(Phase.CLOSED, 2L)
+        .containsEntry(Phase.NEEDS_ACTION, 1L)
+        .containsEntry(Phase.INVITED, 0L)
+        .containsEntry(Phase.DONE, 0L);
+    assertThat(tally.details().get(Phase.CLOSED))
+        .containsEntry("REVOKED", 1L)
+        .containsEntry("SUPERSEDED", 1L);
+    assertThat(tally.details().get(Phase.NEEDS_ACTION)).containsEntry("EXPIRED", 1L);
+    assertThat(tally.details().get(Phase.PREPARED)).containsEntry("DRAFT", 2L);
+    assertThat(tally.details().get(Phase.DONE)).isEmpty();
+  }
+
   private static AccountInvite invite(AccountInviteStatus status) {
     return AccountInvite.builder()
         .targetRole(AccountInviteTargetRole.COUNSELLOR)

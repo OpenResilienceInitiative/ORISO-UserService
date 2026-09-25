@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountAccessGateStatus;
@@ -29,6 +30,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPe
 import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteAccountRoles;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteBoard;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
@@ -81,6 +83,7 @@ class AccountInviteControllerTest {
                 mock(AgencyFacts.class)),
             unitQueue,
             new InviteBoard(accountInviteService, deliveryRepository, unitQueue),
+            new InviteAccountRoles(mock(ConsultantRepository.class), mock(AdminRepository.class)),
             mock(InviteRoleChange.class));
   }
 
@@ -374,7 +377,7 @@ class AccountInviteControllerTest {
     when(accountInviteService.listAllInvites(null, null, null)).thenReturn(List.of(sampleInvite()));
     when(accountInviteService.calculateAccessGate(any())).thenReturn(AccountAccessGateStatus.READY);
 
-    var response = controller.listInvites(null, null, null, null, null, null, null);
+    var response = controller.listInvites(null, null, null, null, null, null, null, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(1, response.getBody().totalElements);
@@ -389,6 +392,7 @@ class AccountInviteControllerTest {
 
     var response =
         controller.listInvites(
+            null,
             AccountInviteTargetRole.COUNSELLOR.name(),
             AccountInviteStatus.DRAFT.name(),
             "NEEDS_ACTION",
@@ -407,7 +411,7 @@ class AccountInviteControllerTest {
   void listInvites_Should_passSearchQueryThrough() {
     when(accountInviteService.listAllInvites(null, null, "Jane")).thenReturn(List.of());
 
-    var response = controller.listInvites(null, null, null, null, "Jane", null, null);
+    var response = controller.listInvites(null, null, null, null, null, "Jane", null, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     verify(accountInviteService).listAllInvites(null, null, "Jane");
@@ -417,10 +421,13 @@ class AccountInviteControllerTest {
   void listInvites_Should_throwBadRequest_When_unknownEnum() {
     assertThrows(
         BadRequestException.class,
-        () -> controller.listInvites("BOGUS", null, null, null, null, null, null));
+        () -> controller.listInvites(null, "BOGUS", null, null, null, null, null, null));
     assertThrows(
         BadRequestException.class,
-        () -> controller.listInvites(null, null, "SOMEWHERE", null, null, null, null));
+        () -> controller.listInvites(null, null, null, "SOMEWHERE", null, null, null, null));
+    assertThrows(
+        BadRequestException.class,
+        () -> controller.listInvites("NOWHERE", null, null, null, null, null, null, null));
   }
 
   @Test
@@ -578,6 +585,7 @@ class AccountInviteControllerTest {
         "createInvite", AccountInviteController.CreateAccountInviteRequestDTO.class);
     assertHasPreAuthorize(
         "listInvites",
+        String.class,
         String.class,
         String.class,
         String.class,

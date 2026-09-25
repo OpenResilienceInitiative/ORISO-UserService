@@ -306,6 +306,8 @@ public class TenantAdminOnboardingService {
       }
       Long tenantId =
           created != null && created.getId() != null ? created.getId() : invite.getTenantId();
+      // The Admin's Träger tab dates "Träger angelegt" from this, for co-founders too.
+      accountInviteRepository.stampTraegerCreated(invite.getTenantId(), now);
       publishTenantCreated(tenantId);
       return new TenantAdminRegistrationResult(tenantId, otpInfo.secret(), otpInfo.secretQrCode());
     } catch (RuntimeException exception) {

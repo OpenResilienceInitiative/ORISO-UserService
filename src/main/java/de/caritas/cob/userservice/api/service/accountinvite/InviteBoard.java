@@ -5,9 +5,8 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteProgress.Phase;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.time.LocalDateTime;
-import java.util.Collections;
-import java.util.EnumMap;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -43,11 +42,34 @@ public class InviteBoard {
       InviteQueueProblem queueProblem,
       InviteProgress progress) {}
 
-  /** {@code phaseCounts} ignore the status and phase filters, so the tiles stay put. */
-  public record Listing(Page<Row> rows, Map<Phase, Long> phaseCounts) {}
+  /** The Admin's two invite tabs. */
+  public enum Tab {
+    /** Invites whose Träger admin founds a new Träger. */
+    TENANT,
+    /** Everyone joining a unit: counsellors, agency admins, admins of an existing Träger. */
+    UNIT;
+
+    boolean lists(AccountInvite invite) {
+      AccountInviteTargetRole role = invite.getTargetRole();
+      boolean foundsTenant =
+          role == AccountInviteTargetRole.TENANT_ADMIN
+              && invite.getTenantIdAllocationMode() != IdAllocationMode.EXISTING;
+      if (this == TENANT) {
+        return foundsTenant;
+      }
+      return !foundsTenant
+          && (role == AccountInviteTargetRole.TENANT_ADMIN
+              || role == AccountInviteTargetRole.AGENCY_ADMIN
+              || role == AccountInviteTargetRole.COUNSELLOR);
+    }
+  }
+
+  /** The tally covers the tab and the caller's scope but not status or phase, so tiles stay put. */
+  public record Listing(Page<Row> rows, InviteProgress.Tally tally) {}
 
   @Transactional(readOnly = true)
   public Listing list(
+      Tab tab,
       AccountInviteTargetRole targetRole,
       AccountInviteStatus status,
       Phase phase,
@@ -56,12 +78,12 @@ public class InviteBoard {
       int page,
       int size) {
     PageRequest pageRequest = PageRequest.of(Math.max(page, 0), clampSize(size));
-    List<Row> rows = rowsOf(accountInviteService.listAllInvites(targetRole, tenantId, query));
-    Map<Phase, Long> counts = new EnumMap<>(Phase.class);
-    for (Phase each : Phase.values()) {
-      counts.put(each, 0L);
-    }
-    rows.forEach(row -> counts.merge(row.progress().phase(), 1L, Long::sum));
+    List<AccountInvite> inScope =
+        accountInviteService.listAllInvites(targetRole, tenantId, query).stream()
+            .filter(invite -> tab == null || tab.lists(invite))
+            .toList();
+    List<Row> rows = rowsOf(inScope);
+    InviteProgress.Tally tally = InviteProgress.tally(rows.stream().map(Row::progress).toList());
     List<Row> matching =
         rows.stream()
             .filter(row -> status == null || row.invite().getStatus() == status)
@@ -70,8 +92,7 @@ public class InviteBoard {
     int from = (int) Math.min(pageRequest.getOffset(), matching.size());
     int to = Math.min(from + pageRequest.getPageSize(), matching.size());
     return new Listing(
-        new PageImpl<>(matching.subList(from, to), pageRequest, matching.size()),
-        Collections.unmodifiableMap(counts));
+        new PageImpl<>(matching.subList(from, to), pageRequest, matching.size()), tally);
   }
 
   /** The same derivation for a single invite, e.g. in the answer to a change. */

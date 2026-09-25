@@ -245,6 +245,23 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("expiresAt") LocalDateTime expiresAt,
       @Param("now") LocalDateTime now);
 
+  /**
+   * Dates the new Träger on the invites of its admins: the one who created it and the co-founders
+   * still open. Written once.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.unitCreatedAt = :now"
+          + " WHERE i.tenantId = :tenantId AND i.unitCreatedAt IS NULL AND i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".TENANT_ADMIN AND (i.tenantIdAllocationMode IS NULL OR i.tenantIdAllocationMode <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode"
+          + ".EXISTING) AND i.status IN ("
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.DRAFT,"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.EMAIL_SENT,"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.ACCEPTED)")
+  int stampTraegerCreated(@Param("tenantId") Long tenantId, @Param("now") LocalDateTime now);
+
   /** The invites waiting for a tenant that is about to exist. */
   @Query(
       "SELECT i.id FROM AccountInvite i WHERE i.status = :status"

@@ -10,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -281,6 +282,35 @@ class AccountInviteRoleChangeIT {
   }
 
   @Test
+  void list_Should_CarryTheAccountsRoles_So_AnAddedRoleSurvivesAReload() throws Exception {
+    Consultant counsellor = fixtures.consultant(OWN_TENANT, AGENCY);
+    AccountInvite accepted = counsellorInvite(OWN_TENANT, AGENCY);
+    accepted.setStatus(AccountInviteStatus.ACCEPTED);
+    accepted.setActiveRecipientKey(null);
+    accepted.setAcceptedAt(LocalDateTime.now());
+    accepted.setAcceptedByUserId(counsellor.getId());
+    accepted.setProvisionedUserId(counsellor.getId());
+    seed(accepted);
+    AccountInvite pending = seed(counsellorInvite(OWN_TENANT, AGENCY));
+
+    listRow(accepted)
+        .andExpect(
+            jsonPath("$.content[?(@.id == " + accepted.getId() + ")].accountRoles[*]")
+                .value(org.hamcrest.Matchers.contains("COUNSELLOR")))
+        .andExpect(
+            jsonPath("$.content[?(@.id == " + pending.getId() + ")].accountRoles")
+                .value(org.hamcrest.Matchers.contains(org.hamcrest.Matchers.nullValue())));
+
+    addRole(counsellor, "{\"role\":\"AGENCY_ADMIN\",\"agencyId\":" + AGENCY + "}")
+        .andExpect(status().isOk());
+
+    listRow(accepted)
+        .andExpect(
+            jsonPath("$.content[?(@.id == " + accepted.getId() + ")].accountRoles[*]")
+                .value(org.hamcrest.Matchers.containsInAnyOrder("COUNSELLOR", "AGENCY_ADMIN")));
+  }
+
+  @Test
   void addRole_Should_Answer403_When_TheCounsellorBelongsToAnotherTraeger() throws Exception {
     Consultant counsellor = fixtures.consultant(OWN_TENANT, AGENCY);
     actAsTraegerAdmin(OTHER_TENANT);
@@ -349,6 +379,12 @@ class AccountInviteRoleChangeIT {
             .header(CSRF_HEADER, CSRF_VALUE)
             .contentType(MediaType.APPLICATION_JSON)
             .content(body));
+  }
+
+  private ResultActions listRow(AccountInvite invite) throws Exception {
+    return mvc.perform(get("/useradmin/account-invites?tab=UNIT&size=100").with(admin()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.content[?(@.id == " + invite.getId() + ")]").exists());
   }
 
   private ResultActions addRole(Consultant counsellor, String body) throws Exception {

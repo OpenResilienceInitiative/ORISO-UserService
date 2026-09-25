@@ -200,6 +200,29 @@ class QueuedInviteReleaseOnOnboardingIT {
   }
 
   @Test
+  void foundingTenantAdmin_Should_DateTheNewTraeger_OnItsOwnAndItsCoFoundersInvites()
+      throws Exception {
+    AccountInvite founder = newTenantAdminInvite("reservation-4242");
+    String founderToken = seedSentInvite(founder);
+    AccountInvite coFounder = newTenantAdminInvite("reservation-4242");
+    seedSentInvite(coFounder);
+    AccountInvite otherTraeger =
+        seed(
+            base(AccountInviteTargetRole.TENANT_ADMIN)
+                .tenantId(TENANT)
+                .tenantIdAllocationMode(IdAllocationMode.EXISTING)
+                .build());
+
+    registerNewTenant(founderToken, "reservation-4242").andExpect(status().isOk());
+
+    LocalDateTime traegerCreatedAt = reload(founder).getUnitCreatedAt();
+    assertThat(traegerCreatedAt).isNotNull();
+    assertThat(reload(founder).getAcceptedAt()).isEqualTo(traegerCreatedAt);
+    assertThat(reload(coFounder).getUnitCreatedAt()).isEqualTo(traegerCreatedAt);
+    assertThat(reload(otherTraeger).getUnitCreatedAt()).isNull();
+  }
+
+  @Test
   void secondTenantAdmin_Should_JoinTheTenantTheFirstOneCreated() throws Exception {
     AccountInvite first = newTenantAdminInvite("shared-token");
     first.setStatus(AccountInviteStatus.ACCEPTED);

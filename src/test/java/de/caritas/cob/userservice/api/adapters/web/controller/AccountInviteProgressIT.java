@@ -16,6 +16,8 @@ import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.Admin.AdminType;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
@@ -32,6 +34,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdA
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
@@ -50,6 +53,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.context.ApplicationEventPublisher;
+import org.springframework.context.annotation.Import;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -65,11 +69,13 @@ import org.springframework.test.web.servlet.MockMvc;
 @ActiveProfiles("testing")
 @TestPropertySource(properties = "multitenancy.enabled=true")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@Import(TenantFixtures.class)
 @WithTenant(AccountInviteProgressIT.OWN_TENANT)
 class AccountInviteProgressIT {
 
   static final long OWN_TENANT = 1L;
   private static final long NEW_AGENCY = 4601L;
+  private static final long OTHER_AGENCY = 2L;
 
   @MockitoBean private TenantResolverService tenantResolverService;
   @MockitoBean private TenantService tenantService;
@@ -85,6 +91,7 @@ class AccountInviteProgressIT {
   @Autowired private InviteEmailDeliveryRepository deliveryRepository;
   @Autowired private AccountInviteService accountInviteService;
   @Autowired private ApplicationEventPublisher events;
+  @Autowired private TenantFixtures fixtures;
 
   @BeforeEach
   void setUp() {
@@ -102,6 +109,7 @@ class AccountInviteProgressIT {
           deliveryRepository.deleteAll();
           accountInviteRepository.deleteAll();
         });
+    fixtures.removeAll();
   }
 
   @Test
@@ -177,6 +185,77 @@ class AccountInviteProgressIT {
         .andExpect(jsonPath("$.totalElements").value(2))
         .andExpect(jsonPath("$.content[*].progressPhase", everyNeedsAction()))
         .andExpect(jsonPath("$.phaseCounts.PREPARED").value(1));
+  }
+
+  @Test
+  void list_Should_CountEachTabOverAllItsPages_And_NotTheOtherTab() throws Exception {
+    for (int i = 0; i < 23; i++) {
+      seed(base(AccountInviteTargetRole.COUNSELLOR).build());
+    }
+    seed(base(AccountInviteTargetRole.COUNSELLOR).status(AccountInviteStatus.EXPIRED).build());
+    seed(base(AccountInviteTargetRole.COUNSELLOR).status(AccountInviteStatus.REVOKED).build());
+    seed(base(AccountInviteTargetRole.COUNSELLOR).status(AccountInviteStatus.SUPERSEDED).build());
+    seed(
+        base(AccountInviteTargetRole.TENANT_ADMIN)
+            .tenantIdAllocationMode(IdAllocationMode.EXISTING)
+            .build());
+    for (int i = 0; i < 3; i++) {
+      seed(foundingTraegerAdmin().build());
+    }
+    seed(foundingTraegerAdmin().status(AccountInviteStatus.REVOKED).build());
+
+    for (int page = 0; page < 2; page++) {
+      mvc.perform(get("/useradmin/account-invites?tab=UNIT&size=20&page=" + page).with(admin()))
+          .andExpect(status().isOk())
+          .andExpect(jsonPath("$.totalElements").value(27))
+          .andExpect(jsonPath("$.content.length()").value(page == 0 ? 20 : 7))
+          .andExpect(jsonPath("$.phaseCounts.PREPARED").value(24))
+          .andExpect(jsonPath("$.phaseCounts.NEEDS_ACTION").value(1))
+          .andExpect(jsonPath("$.phaseCounts.CLOSED").value(2))
+          .andExpect(jsonPath("$.phaseCounts.INVITED").value(0))
+          .andExpect(jsonPath("$.phaseDetailCounts.PREPARED.DRAFT").value(24))
+          .andExpect(jsonPath("$.phaseDetailCounts.NEEDS_ACTION.EXPIRED").value(1))
+          .andExpect(jsonPath("$.phaseDetailCounts.CLOSED.REVOKED").value(1))
+          .andExpect(jsonPath("$.phaseDetailCounts.CLOSED.SUPERSEDED").value(1));
+    }
+    mvc.perform(get("/useradmin/account-invites?tab=TENANT&size=20").with(admin()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.totalElements").value(4))
+        .andExpect(jsonPath("$.content[*].targetRole", everyItemIs("TENANT_ADMIN")))
+        .andExpect(jsonPath("$.phaseCounts.PREPARED").value(3))
+        .andExpect(jsonPath("$.phaseCounts.CLOSED").value(1))
+        .andExpect(jsonPath("$.phaseDetailCounts.CLOSED.REVOKED").value(1));
+  }
+
+  @Test
+  void list_Should_CountOnlyTheInvitesTheCallerMaySee_When_AnAgencyAdminLists() throws Exception {
+    for (int i = 0; i < 21; i++) {
+      seed(base(AccountInviteTargetRole.COUNSELLOR).build());
+    }
+    seed(base(AccountInviteTargetRole.COUNSELLOR).agencyId(OTHER_AGENCY).build());
+    seed(base(AccountInviteTargetRole.AGENCY_ADMIN).alsoCounsellor(false).build());
+    Admin agencyAdmin = fixtures.admin(OWN_TENANT, AdminType.AGENCY, 1L);
+    Tenants.actAs(
+        authenticatedUser,
+        agencyAdmin.getId(),
+        OWN_TENANT,
+        UserRole.RESTRICTED_AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
+
+    mvc.perform(get("/useradmin/account-invites?tab=UNIT&size=20").with(admin()))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.totalElements").value(21))
+        .andExpect(jsonPath("$.phaseCounts.PREPARED").value(21));
+  }
+
+  private static org.hamcrest.Matcher<Iterable<? extends String>> everyItemIs(String value) {
+    return org.hamcrest.Matchers.everyItem(org.hamcrest.Matchers.is(value));
+  }
+
+  private static AccountInvite.AccountInviteBuilder foundingTraegerAdmin() {
+    return base(AccountInviteTargetRole.TENANT_ADMIN)
+        .agencyId(null)
+        .tenantIdAllocationMode(IdAllocationMode.MANUAL);
   }
 
   private static org.hamcrest.Matcher<Iterable<? extends String>> everyNeedsAction() {

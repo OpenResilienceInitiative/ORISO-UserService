@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPermissionService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteAccountRoles;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteBoard;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
@@ -67,6 +68,7 @@ public class AccountInviteController {
   private final @NonNull AccountInviteTopicPermissionService topicPermissionService;
   private final @NonNull UnitQueue unitQueue;
   private final @NonNull InviteBoard inviteBoard;
+  private final @NonNull InviteAccountRoles inviteAccountRoles;
   private final @NonNull InviteRoleChange roleChange;
 
   @PreAuthorize(ADMIN_AUTH)
@@ -112,6 +114,7 @@ public class AccountInviteController {
   @PreAuthorize(ADMIN_AUTH)
   @GetMapping("/useradmin/account-invites")
   public ResponseEntity<PagedAccountInviteResponseDTO> listInvites(
+      @RequestParam(value = "tab", required = false) String tab,
       @RequestParam(value = "target_role", required = false) String targetRole,
       @RequestParam(value = "status", required = false) String status,
       @RequestParam(value = "progress_phase", required = false) String progressPhase,
@@ -121,6 +124,7 @@ public class AccountInviteController {
       @RequestParam(value = "size", required = false) Integer size) {
     InviteBoard.Listing listing =
         inviteBoard.list(
+            parseOptionalEnum(InviteBoard.Tab.class, tab, "tab"),
             parseOptionalEnum(AccountInviteTargetRole.class, targetRole, "target_role"),
             parseOptionalEnum(AccountInviteStatus.class, status, "status"),
             parseOptionalEnum(InviteProgress.Phase.class, progressPhase, "progress_phase"),
@@ -132,6 +136,7 @@ public class AccountInviteController {
     List<AccountInvite> invites =
         result.getContent().stream().map(InviteBoard.Row::invite).toList();
     Map<Long, TopicPermission> permissions = topicPermissionService.currentPermissions(invites);
+    Map<Long, List<AccountInviteTargetRole>> accountRoles = inviteAccountRoles.of(invites);
     List<AccountInviteResponseDTO> content =
         result.getContent().stream()
             .map(
@@ -142,7 +147,8 @@ public class AccountInviteController {
                             row.latestDelivery() == null ? null : row.latestDelivery().getStatus(),
                             accountInviteService.calculateAccessGate(row.invite())),
                         row,
-                        permissions))
+                        permissions,
+                        accountRoles))
             .toList();
     PagedAccountInviteResponseDTO response = new PagedAccountInviteResponseDTO();
     response.content = content;
@@ -151,7 +157,15 @@ public class AccountInviteController {
     response.page = result.getNumber();
     response.size = result.getSize();
     response.phaseCounts = new LinkedHashMap<>();
-    listing.phaseCounts().forEach((phase, count) -> response.phaseCounts.put(phase.name(), count));
+    response.phaseDetailCounts = new LinkedHashMap<>();
+    listing
+        .tally()
+        .counts()
+        .forEach((phase, count) -> response.phaseCounts.put(phase.name(), count));
+    listing
+        .tally()
+        .details()
+        .forEach((phase, details) -> response.phaseDetailCounts.put(phase.name(), details));
     return ResponseEntity.ok(response);
   }
 
@@ -365,14 +379,20 @@ public class AccountInviteController {
   private AccountInviteResponseDTO withDerivedState(
       AccountInviteResponseDTO dto, AccountInvite invite) {
     return withDerivedState(
-        dto, inviteBoard.rowOf(invite), topicPermissionService.currentPermissions(List.of(invite)));
+        dto,
+        inviteBoard.rowOf(invite),
+        topicPermissionService.currentPermissions(List.of(invite)),
+        inviteAccountRoles.of(List.of(invite)));
   }
 
   /**
    * Derived on read: queue problem, progress, and the counsellor's own permission once onboarded.
    */
   private AccountInviteResponseDTO withDerivedState(
-      AccountInviteResponseDTO dto, InviteBoard.Row row, Map<Long, TopicPermission> permissions) {
+      AccountInviteResponseDTO dto,
+      InviteBoard.Row row,
+      Map<Long, TopicPermission> permissions,
+      Map<Long, List<AccountInviteTargetRole>> accountRoles) {
     InviteQueueProblem problem = row.queueProblem();
     dto.queueProblem = problem == null ? null : problem.name();
     InviteProgress progress = row.progress();
@@ -380,7 +400,10 @@ public class AccountInviteController {
     dto.unitCreatedAt = progress.unitCreatedAt();
     dto.sentAt = progress.sentAt();
     dto.accountCreatedAt = progress.accountCreatedAt();
+    dto.twoFactorDoneAt = progress.twoFactorDoneAt();
     dto.completedAt = progress.completedAt();
+    List<AccountInviteTargetRole> roles = accountRoles.get(row.invite().getId());
+    dto.accountRoles = roles == null ? null : roles.stream().map(Enum::name).toList();
     TopicPermission permission = permissions.get(row.invite().getId());
     if (permission != null) {
       dto.topicPermission = permission.name();
@@ -617,7 +640,11 @@ public class AccountInviteController {
     public LocalDateTime unitCreatedAt;
     public LocalDateTime sentAt;
     public LocalDateTime accountCreatedAt;
+    public LocalDateTime twoFactorDoneAt;
     public LocalDateTime completedAt;
+
+    /** Accepted invites: the roles the account holds now, also ones added later; else null. */
+    public List<String> accountRoles;
 
     /**
      * Only set by the public accept endpoint (ORISO-Admin#569 resume contract): {@code
@@ -733,7 +760,9 @@ public class AccountInviteController {
     "unitCreatedAt",
     "sentAt",
     "accountCreatedAt",
-    "completedAt"
+    "twoFactorDoneAt",
+    "completedAt",
+    "accountRoles"
   })
   public static class PublicAccountInviteResponseDTO extends AccountInviteResponseDTO {}
 
@@ -744,8 +773,11 @@ public class AccountInviteController {
     public int page;
     public int size;
 
-    /** Every progress phase with its count over all pages; status and phase filters ignored. */
+    /** Every progress phase counted over all pages of the tab; status and phase filters ignored. */
     public Map<String, Long> phaseCounts;
+
+    /** Per phase, what its count is made of: the status, or why a NEEDS_ACTION invite is stuck. */
+    public Map<String, Map<String, Long>> phaseDetailCounts;
   }
 
   public static class InviteEmailTemplateResponseDTO {

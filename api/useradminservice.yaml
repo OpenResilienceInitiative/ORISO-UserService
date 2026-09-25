@@ -1188,6 +1188,14 @@ paths:
       summary: 'Lists the account invites in the caller''s scope [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
       operationId: listAccountInvites
       parameters:
+        - name: tab
+          in: query
+          description: >-
+            The Admin's tab. TENANT = Träger admins who found a new Träger; UNIT = everyone joining
+            a unit. The list and phaseCounts both cover only this tab.
+          schema:
+            type: string
+            enum: [TENANT, UNIT]
         - name: target_role
           in: query
           schema:
@@ -2711,7 +2719,9 @@ components:
         unitCreatedAt:
           type: string
           format: date-time
-          description: When the unit a WAITING_FOR_UNIT invite needed was created (its release); set once.
+          description: >-
+            When the new unit this invite needed was created, set once: the release of a
+            WAITING_FOR_UNIT invite, or for a Träger admin founding a new Träger its creation.
         sentAt:
           type: string
           format: date-time
@@ -2720,6 +2730,16 @@ components:
           type: string
           format: date-time
           description: When the account was created (same moment as acceptedAt).
+        twoFactorDoneAt:
+          type: string
+          format: date-time
+          description: When 2FA was activated or waived (acceptedAt when not required); null until then.
+        accountRoles:
+          type: array
+          nullable: true
+          description: Accepted invites only; the roles the account holds now, also ones added later.
+          items:
+            $ref: '#/components/schemas/AccountInviteTargetRole'
         completedAt:
           type: string
           format: date-time
@@ -2745,10 +2765,23 @@ components:
           type: integer
         phaseCounts:
           type: object
-          description: Invites per progress phase over all pages; ignores the status and progress_phase filters.
+          description: >-
+            Invites per progress phase over all pages of the tab and the caller's scope; ignores the
+            status and progress_phase filters.
           additionalProperties:
             type: integer
             format: int64
+        phaseDetailCounts:
+          type: object
+          description: >-
+            Per progress phase, what its count is made of: the invite status, or for NEEDS_ACTION
+            why it is stuck (DELIVERY_FAILED, LINK_EXPIRED, PROVISIONING_FAILED, NO_UNIT_ADMIN,
+            EXPIRED).
+          additionalProperties:
+            type: object
+            additionalProperties:
+              type: integer
+              format: int64
     AccountInviteProgressPhase:
       type: string
       x-internal: true
