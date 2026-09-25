@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -8,8 +7,8 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.EnumSet;
+import java.util.List;
 import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -38,7 +37,6 @@ public class AccountInviteAccessPolicy {
 
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull AdminScope adminScope;
-  private final @NonNull AgencyService agencyService;
 
   /** The filter a listing has to apply for the calling admin. */
   public record InviteListScope(
@@ -124,20 +122,10 @@ public class AccountInviteAccessPolicy {
     assertTenantIsOwn(command.tenantId(), callerTenantId);
     if (command.agencyId() != null
         && !IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
-      assertAgencyBelongsToTenant(command.agencyId(), callerTenantId);
+      // The accepted invite would attach the new account to that agency.
+      adminScope.assertMay(Target.agencies(List.of(command.agencyId())));
     }
     return withCallerTenant(command, callerTenantId);
-  }
-
-  /**
-   * The accepted invite would attach the new account to that agency. An unknown agency is refused:
-   * its tenant cannot be proven.
-   */
-  private void assertAgencyBelongsToTenant(Long agencyId, Long tenantId) {
-    AgencyDTO agency = agencyService.getAgencyWithoutCaching(agencyId);
-    if (agency == null || !tenantId.equals(agency.getTenantId())) {
-      throw deny("invite into agency " + agencyId);
-    }
   }
 
   /** A named tenant is stored on the invite, so it must be the caller's own. */

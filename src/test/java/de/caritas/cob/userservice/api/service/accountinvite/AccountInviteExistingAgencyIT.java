@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -31,7 +32,10 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispa
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -94,6 +98,8 @@ class AccountInviteExistingAgencyIT {
       return new AuthenticatedUser();
     }
   }
+
+  private final Map<Long, AgencyDTO> knownAgencies = new HashMap<>();
 
   @Autowired private AccountInviteService service;
   @Autowired private AccountInviteRepository accountInviteRepository;
@@ -311,8 +317,12 @@ class AccountInviteExistingAgencyIT {
   }
 
   private void givenAgency(long agencyId, long tenantId, boolean deleted, List<Long> topicIds) {
-    when(agencyService.getAgencyWithoutCaching(agencyId))
-        .thenReturn(new AgencyDTO().id(agencyId).tenantId(tenantId).topicIds(topicIds));
+    knownAgencies.put(agencyId, new AgencyDTO().id(agencyId).tenantId(tenantId).topicIds(topicIds));
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            call ->
+                ((List<?>) call.getArgument(0))
+                    .stream().map(knownAgencies::get).filter(Objects::nonNull).toList());
     when(existingAgencyClient.find(agencyId))
         .thenReturn(Optional.of(new ExistingAgency(agencyId, tenantId, deleted, topicIds)));
   }
