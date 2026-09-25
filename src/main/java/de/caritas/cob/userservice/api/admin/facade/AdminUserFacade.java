@@ -18,13 +18,12 @@ import de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService
 import de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.AdminFilterService;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.port.out.SearchSort;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort.Direction;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.stereotype.Service;
 
@@ -124,8 +123,7 @@ public class AdminUserFacade {
       final int pageSize,
       final String fieldName,
       final boolean isAscending) {
-    var direction = isAscending ? Direction.ASC : Direction.DESC;
-    var pageRequest = PageRequest.of(pageNumber, pageSize, direction, fieldName);
+    var pageRequest = SearchSort.pageRequestOf(pageNumber, pageSize, fieldName, isAscending);
     return this.agencyAdminUserService.findAgencyAdminsByInfix(infix, pageRequest);
   }
 
@@ -135,8 +133,7 @@ public class AdminUserFacade {
       final int pageSize,
       final String fieldName,
       final boolean isAscending) {
-    var direction = isAscending ? Direction.ASC : Direction.DESC;
-    var pageRequest = PageRequest.of(pageNumber, pageSize, direction, fieldName);
+    var pageRequest = SearchSort.pageRequestOf(pageNumber, pageSize, fieldName, isAscending);
     return this.tenantAdminUserService.findTenantAdminsByInfix(infix, pageRequest);
   }
 
