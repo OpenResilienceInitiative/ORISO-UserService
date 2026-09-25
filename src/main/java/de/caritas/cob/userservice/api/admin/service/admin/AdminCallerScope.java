@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.admin.service.admin;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
@@ -16,6 +17,7 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -35,9 +37,9 @@ import org.springframework.stereotype.Component;
  * explicitly:
  *
  * <ul>
- *   <li><b>Platform admin</b> (tenant {@code 0}) and callers without a tenant (single-tenant
- *       deployment): unrestricted — the same boundary as {@link AdminTenantOwnershipValidator} and
- *       {@code AccountInviteAccessPolicy}.
+ *   <li><b>Platform admin</b> (tenant {@code 0} with the platform-admin roles) and callers without
+ *       a tenant (single-tenant deployment): unrestricted — the same boundary as {@link
+ *       AdminTenantOwnershipValidator} and {@code AccountInviteAccessPolicy}.
  *   <li><b>Träger admin</b> (bound to a tenant): admins and users of their own tenant, agencies of
  *       their own tenant.
  *   <li><b>Beratungsstellen admin</b> (restricted agency admin): admins and counsellors sharing one
@@ -126,11 +128,14 @@ public class AdminCallerScope {
       }
       return;
     }
-    for (Long agencyId : requested) {
-      AgencyDTO agency = agencyService.getAgencyWithoutCaching(agencyId);
-      if (agency == null || !isOwnTenant(agency.getTenantId())) {
-        throw deny("use agency " + agencyId + " of another tenant");
-      }
+    // An agency missing from the response counts as foreign, so the check fails closed.
+    Set<Long> ownTenantAgencyIds =
+        agencyService.getAgenciesWithoutCaching(List.copyOf(requested)).stream()
+            .filter(agency -> isOwnTenant(agency.getTenantId()))
+            .map(AgencyDTO::getId)
+            .collect(Collectors.toSet());
+    if (!ownTenantAgencyIds.containsAll(requested)) {
+      throw deny("use agencies " + requested + " outside own tenant");
     }
   }
 
@@ -143,18 +148,31 @@ public class AdminCallerScope {
   }
 
   /**
-   * Platform admins, and tenant-less callers other than Beratungsstellen admins, are unrestricted.
+   * Platform admins, technical users, and tenant-less callers (single-tenant deployment) other than
+   * Beratungsstellen admins are unrestricted.
+   *
+   * @throws ForbiddenException for tenant 0 without the platform-admin roles
    */
   private boolean isUnrestricted() {
-    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
-      return false;
+    boolean restricted = authenticatedUser.hasRestrictedAgencyPriviliges();
+    if (!restricted && (authenticatedUser.isPlatformAdmin() || isTechnicalUser())) {
+      return true;
     }
-    return authenticatedUser.isPlatformAdmin() || boundTenantId() == null;
+    // Tenant 0 is nobody's Träger: without the platform-admin roles it grants no reach at all.
+    if (TenantContext.TECHNICAL_TENANT_ID.equals(authenticatedUser.getTenantId())) {
+      throw deny("act from tenant 0 without the platform-admin roles");
+    }
+    return !restricted && authenticatedUser.getTenantId() == null;
+  }
+
+  private boolean isTechnicalUser() {
+    var roles = authenticatedUser.getRoles();
+    return roles != null && roles.contains(UserRole.TECHNICAL.getValue());
   }
 
   /** A Beratungsstellen admin without a bound tenant is only narrowed by their agencies. */
   private boolean isOwnTenant(Long tenantId) {
-    Long callerTenantId = boundTenantId();
+    Long callerTenantId = authenticatedUser.getTenantId();
     return callerTenantId == null || callerTenantId.equals(tenantId);
   }
 
@@ -174,15 +192,6 @@ public class AdminCallerScope {
         .map(ConsultantAgency::getAgencyId)
         .filter(Objects::nonNull)
         .collect(Collectors.toCollection(HashSet::new));
-  }
-
-  /** The caller's own tenant, or {@code null} for the platform (0) and single-tenant contexts. */
-  private Long boundTenantId() {
-    Long tenantId = authenticatedUser.getTenantId();
-    if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
-      return null;
-    }
-    return tenantId;
   }
 
   private ForbiddenException deny(String attempt) {
