@@ -4,6 +4,7 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
@@ -702,6 +703,8 @@ class UserControllerConsultantE2EIT {
     givenConsultantsMatching(easyRandom.nextInt(20) + 11, infix);
     givenAgencyServiceReturningDummyAgencies();
     var numAll = (int) consultantRepository.countByDeleteDateIsNull();
+    // Seeded consultants may have no agency; assert on one this test created (one agency each).
+    var withAgency = "_embedded[?(@._embedded.id == '" + consultantIdsToDelete.get(0) + "')]";
 
     var pageUrlPrefix = "http://localhost/users/consultants/search?";
     var consultantUrlPrefix = "http://localhost/useradmin/consultants/";
@@ -725,18 +728,15 @@ class UserControllerConsultantE2EIT {
             .andExpect(jsonPath("_embedded[0]._embedded.status", not(contains(nullValue()))))
             .andExpect(jsonPath("_embedded[9]._embedded.status", not(contains(nullValue()))))
             .andExpect(jsonPath("_embedded[*]._embedded.email", not(contains(nullValue()))))
+            .andExpect(jsonPath(withAgency + "._embedded.agencies[0].id", hasSize(1)))
             .andExpect(
-                jsonPath("_embedded[0]._embedded.agencies[0].id", not(contains(nullValue()))))
+                jsonPath(withAgency + "._embedded.agencies[0].id", everyItem(notNullValue())))
+            .andExpect(jsonPath(withAgency + "._embedded.agencies[0].name", hasSize(1)))
             .andExpect(
-                jsonPath("_embedded[0]._embedded.agencies[0].name", not(contains(nullValue()))))
+                jsonPath(withAgency + "._embedded.agencies[0].name", everyItem(notNullValue())))
+            .andExpect(jsonPath(withAgency + "._embedded.agencies[0].postcode", hasSize(1)))
             .andExpect(
-                jsonPath("_embedded[0]._embedded.agencies[0].postcode", not(contains(nullValue()))))
-            .andExpect(
-                jsonPath("_embedded[9]._embedded.agencies[0].id", not(contains(nullValue()))))
-            .andExpect(
-                jsonPath("_embedded[9]._embedded.agencies[0].name", not(contains(nullValue()))))
-            .andExpect(
-                jsonPath("_embedded[9]._embedded.agencies[0].postcode", not(contains(nullValue()))))
+                jsonPath(withAgency + "._embedded.agencies[0].postcode", everyItem(notNullValue())))
             .andExpect(jsonPath("_embedded[0]._links.self.href", startsWith(consultantUrlPrefix)))
             .andExpect(jsonPath("_embedded[0]._links.self.method", is("GET")))
             .andExpect(jsonPath("_embedded[0]._links.self.templated", is(false)))
