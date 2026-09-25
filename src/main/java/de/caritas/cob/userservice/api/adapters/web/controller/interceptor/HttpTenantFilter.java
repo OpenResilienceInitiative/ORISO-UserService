@@ -44,7 +44,6 @@ public class HttpTenantFilter extends OncePerRequestFilter {
               "(/service)?/users/askers/new",
               "(/service)?/users/magic-link/(request|consume)",
               "(/service)?/users/invitelinks/[^/]+/(context|redeem)",
-              "(/service)?/conversations/askers/anonymous/new",
               "(/service)?/users/identity-suggestions",
               // TenantService's callback; DpaSignedNoticeService takes the tenant from the path.
               "(/service)?/users/tenants/[^/]+/dpa-signed-notices")

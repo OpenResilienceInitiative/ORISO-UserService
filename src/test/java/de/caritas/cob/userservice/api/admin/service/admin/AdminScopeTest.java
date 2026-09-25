@@ -308,6 +308,29 @@ class AdminScopeTest {
   }
 
   @Test
+  void assertMay_Should_LetAnOrphanedAgencyGo_But_KeepForeignOnesOut_When_RelationsAreRemoved() {
+    actAs(4L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenAgencies(agency(10L, 4L), agency(20L, 5L));
+
+    assertThatCode(() -> adminScope.assertMay(Target.removedAgencies(List.of(10L, 99L))))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> adminScope.assertMay(Target.removedAgencies(List.of(10L, 20L))))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMay_Should_KeepAgencyAdminToOwnAgencies_When_RelationsAreRemoved() {
+    actAs(4L, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenOwnAgencies(10L);
+
+    assertThatCode(() -> adminScope.assertMay(Target.removedAgencies(List.of(10L))))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> adminScope.assertMay(Target.removedAgencies(List.of(99L))))
+        .isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(agencyService);
+  }
+
+  @Test
   void assertMay_Should_DenyAdminOfAnotherTenant_And_PassUnknownAdmin() {
     actAs(4L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
     when(adminRepository.findById("foreign"))
