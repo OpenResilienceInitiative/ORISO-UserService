@@ -103,6 +103,11 @@ public class AdminScope {
       return new AgenciesTarget(ids);
     }
 
+    /** Agencies a relation is removed from; one AgencyService no longer knows may go (#86). */
+    static Target removedAgencies(Collection<Long> ids) {
+      return new RemovedAgenciesTarget(ids);
+    }
+
     /** A Träger as a whole, e.g. to create or list its Träger admins. */
     static Target tenant(Long id) {
       return new TenantTarget(id);
@@ -123,6 +128,8 @@ public class AdminScope {
   private record AccountTarget(String id) implements Target {}
 
   private record AgenciesTarget(Collection<Long> ids) implements Target {}
+
+  private record RemovedAgenciesTarget(Collection<Long> ids) implements Target {}
 
   private record TenantTarget(Long id) implements Target {}
 
@@ -167,7 +174,8 @@ public class AdminScope {
           case CounsellorTarget counsellor -> mayActOnCounsellor(reach, counsellor.id());
           case AdviceSeekerTarget asker -> mayActOnAdviceSeeker(reach, asker.id());
           case AccountTarget account -> mayReadAccount(reach, account.id());
-          case AgenciesTarget agencies -> mayUseAgencies(reach, agencies.ids());
+          case AgenciesTarget agencies -> mayUseAgencies(reach, agencies.ids(), false);
+          case RemovedAgenciesTarget removed -> mayUseAgencies(reach, removed.ids(), true);
             // Only the platform, returned above, may target an unnamed Träger.
           case TenantTarget tenant ->
               tenant.id() != null
@@ -223,7 +231,7 @@ public class AdminScope {
         .orElse(false);
   }
 
-  private boolean mayUseAgencies(Reach reach, Collection<Long> agencyIds) {
+  private boolean mayUseAgencies(Reach reach, Collection<Long> agencyIds, boolean orphansMayGo) {
     if (agencyIds == null || agencyIds.isEmpty()) {
       return true;
     }
@@ -232,12 +240,15 @@ public class AdminScope {
     if (reach instanceof Agencies agencies) {
       return agencies.ids().containsAll(requested);
     }
-    // One lookup for all; an agency missing from the answer counts as foreign (fail closed).
-    return agencyService.getAgenciesWithoutCaching(List.copyOf(requested)).stream()
-        .filter(agency -> isTenantReach(reach, agency.getTenantId()))
-        .map(AgencyDTO::getId)
-        .collect(Collectors.toSet())
-        .containsAll(requested);
+    // One lookup for all. A missing agency counts as foreign (fail closed), except when a relation
+    // to it is removed: it no longer belongs to any Träger.
+    List<AgencyDTO> known = agencyService.getAgenciesWithoutCaching(List.copyOf(requested));
+    return known.stream().allMatch(agency -> isTenantReach(reach, agency.getTenantId()))
+        && (orphansMayGo
+            || known.stream()
+                .map(AgencyDTO::getId)
+                .collect(Collectors.toSet())
+                .containsAll(requested));
   }
 
   private boolean mayActOnPlaced(Reach reach, PlacedTarget placed) {

@@ -116,6 +116,8 @@ class UserAdminAgencyScopeIT {
   private static final long OWN_AGENCY = 9301L;
   private static final long OTHER_AGENCY_OF_OWN_TENANT = 9302L;
   private static final long FOREIGN_TENANT_AGENCY = 9401L;
+  // Deleted in AgencyService; its relations are orphans (#86).
+  private static final long ORPHANED_AGENCY = 9999L;
 
   @Autowired private TenantFixtures fixtures;
   @Autowired private MockMvc mockMvc;
@@ -375,6 +377,99 @@ class UserAdminAgencyScopeIT {
         .andExpect(status().isOk());
 
     assertThat(activeAgenciesOf(sharedConsultant)).containsOnly(OTHER_AGENCY_OF_OWN_TENANT);
+  }
+
+  // --- orphaned relations: the agency is gone from AgencyService ------------------------
+
+  @Test
+  @AsTenantAdmin
+  void removeConsultantAgency_Should_Succeed_When_TenantAdminRemovesAnOrphanedAgency()
+      throws Exception {
+    actAsTenantAdmin();
+    var counsellor = fixtures.consultant(OWN_TENANT, OWN_AGENCY, ORPHANED_AGENCY);
+
+    mockMvc
+        .perform(
+            withCsrf(
+                delete(
+                    "/useradmin/consultants/"
+                        + counsellor.getId()
+                        + "/agencies/"
+                        + ORPHANED_AGENCY)))
+        .andExpect(status().isOk());
+
+    assertThat(activeAgenciesOf(counsellor)).containsOnly(OWN_AGENCY);
+  }
+
+  @Test
+  @AsTenantAdmin
+  void setConsultantAgencies_Should_Succeed_When_TenantAdminDropsAnOrphanedAgency()
+      throws Exception {
+    actAsTenantAdmin();
+    var counsellor = fixtures.consultant(OWN_TENANT, OWN_AGENCY, ORPHANED_AGENCY);
+
+    mockMvc.perform(setAgencies(counsellor, OWN_AGENCY)).andExpect(status().isOk());
+
+    assertThat(activeAgenciesOf(counsellor)).containsOnly(OWN_AGENCY);
+  }
+
+  @Test
+  @AsTenantAdmin
+  void setConsultantAgencies_Should_Refuse_When_TenantAdminAddsAnOrphanedAgency() throws Exception {
+    actAsTenantAdmin();
+
+    var result =
+        mockMvc.perform(setAgencies(ownConsultant, OWN_AGENCY, ORPHANED_AGENCY)).andReturn();
+
+    assertThat(activeAgenciesOf(ownConsultant)).containsOnly(OWN_AGENCY);
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @AsTenantAdmin
+  void removeConsultantAgency_Should_Refuse_When_TenantAdminRemovesAnExistingForeignAgency()
+      throws Exception {
+    actAsTenantAdmin();
+    var counsellor = fixtures.consultant(OWN_TENANT, OWN_AGENCY, FOREIGN_TENANT_AGENCY);
+
+    var result =
+        mockMvc
+            .perform(
+                withCsrf(
+                    delete(
+                        "/useradmin/consultants/"
+                            + counsellor.getId()
+                            + "/agencies/"
+                            + FOREIGN_TENANT_AGENCY)))
+            .andReturn();
+
+    assertThat(activeAgenciesOf(counsellor)).contains(FOREIGN_TENANT_AGENCY);
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @AsTenantAdmin
+  void deleteAdminAgencyRelation_Should_Succeed_When_TenantAdminRemovesAnOrphanedAgency()
+      throws Exception {
+    actAsTenantAdmin();
+    var agencyAdmin = fixtures.admin(OWN_TENANT, AdminType.AGENCY, OWN_AGENCY, ORPHANED_AGENCY);
+
+    mockMvc
+        .perform(
+            withCsrf(
+                delete(
+                    "/useradmin/agencyadmins/"
+                        + agencyAdmin.getId()
+                        + "/agencies/"
+                        + ORPHANED_AGENCY)))
+        .andExpect(status().isOk());
+
+    assertThat(
+            Tenants.acrossAll(
+                () ->
+                    adminAgencyRepository.findByAdminIdAndAgencyId(
+                        agencyAdmin.getId(), ORPHANED_AGENCY)))
+        .isEmpty();
   }
 
   // --- counsellor routes, agency admin vs. a counsellor of another agency ----------

@@ -8,12 +8,10 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.SupervisorLogsService.SupervisorLogEntry;
 import de.caritas.cob.userservice.api.service.SupervisorLogsService.SupervisorLogsResult;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
-import java.util.Base64;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
@@ -35,7 +33,6 @@ import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 class SupervisorLogsServiceTest {
 
   @Mock private NamedParameterJdbcTemplate namedParameterJdbcTemplate;
-  @Mock private AuthenticatedUser authenticatedUser;
   @Mock private AdminScope adminScope;
 
   @InjectMocks private SupervisorLogsService service;
@@ -54,8 +51,6 @@ class SupervisorLogsServiceTest {
 
   @Test
   void listSupervisorLogs_Should_ReturnResult_When_CalledWithValidParams() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(5L);
     stubJdbc(3L, List.of(buildEntry()));
 
     SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
@@ -68,8 +63,6 @@ class SupervisorLogsServiceTest {
 
   @Test
   void listSupervisorLogs_Should_ReturnMultipleEntries() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(2L);
     stubJdbc(4L, List.of(buildEntry(), buildEntry(), buildEntry(), buildEntry()));
 
     SupervisorLogsResult result = service.listSupervisorLogs(1, 20);
@@ -80,8 +73,6 @@ class SupervisorLogsServiceTest {
 
   @Test
   void listSupervisorLogs_Should_UseZeroTotal_When_JdbcReturnsNull() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(1L);
     when(namedParameterJdbcTemplate.queryForObject(
             anyString(), any(SqlParameterSource.class), eq(Long.class)))
         .thenReturn(null);
@@ -98,8 +89,6 @@ class SupervisorLogsServiceTest {
 
   @Test
   void listSupervisorLogs_Should_ClampPerPageToMax200_When_LargeValueGiven() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(1L);
     stubJdbc(0L, List.of());
 
     SupervisorLogsResult result = service.listSupervisorLogs(1, 9999);
@@ -109,8 +98,6 @@ class SupervisorLogsServiceTest {
 
   @Test
   void listSupervisorLogs_Should_ClampPerPageToMin1_When_ZeroGiven() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(1L);
     stubJdbc(0L, List.of());
 
     SupervisorLogsResult result = service.listSupervisorLogs(1, 0);
@@ -120,8 +107,6 @@ class SupervisorLogsServiceTest {
 
   @Test
   void listSupervisorLogs_Should_ClampPageToMin1_When_NegativePageGiven() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(1L);
     stubJdbc(0L, List.of());
 
     SupervisorLogsResult result = service.listSupervisorLogs(-3, 10);
@@ -132,107 +117,7 @@ class SupervisorLogsServiceTest {
   // ─── resolveEffectiveTenantId — JWT paths ─────────────────────────────────
 
   @Test
-  void listSupervisorLogs_Should_UseJwtNumericTenantId_When_TokenContainsNumericTenantId() {
-    when(authenticatedUser.getAccessToken()).thenReturn(buildToken("{\"tenantId\":7}"));
-    stubJdbc(1L, List.of(buildEntry()));
-
-    SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
-
-    assertThat(result.getTotal()).isEqualTo(1L);
-  }
-
-  @Test
-  void listSupervisorLogs_Should_UseJwtStringTenantId_When_TokenContainsStringTenantId() {
-    when(authenticatedUser.getAccessToken()).thenReturn(buildToken("{\"tenantId\":\"3\"}"));
-    stubJdbc(2L, List.of(buildEntry(), buildEntry()));
-
-    SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
-
-    assertThat(result.getTotal()).isEqualTo(2L);
-  }
-
-  @Test
-  void listSupervisorLogs_Should_UseNullTenant_When_JwtTenantIdIsZero() {
-    when(authenticatedUser.getAccessToken()).thenReturn(buildToken("{\"tenantId\":0}"));
-    stubJdbc(10L, List.of());
-
-    SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
-
-    assertThat(result.getTotal()).isEqualTo(10L);
-  }
-
-  @Test
-  void listSupervisorLogs_Should_FallbackToTenantContext_When_NoAccessToken() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(9L);
-    stubJdbc(2L, List.of(buildEntry(), buildEntry()));
-
-    SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
-
-    assertThat(result.getTotal()).isEqualTo(2L);
-  }
-
-  @Test
-  void listSupervisorLogs_Should_FallbackToTenantContext_When_AccessTokenIsBlank() {
-    when(authenticatedUser.getAccessToken()).thenReturn("   ");
-    TenantContext.setCurrentTenant(4L);
-    stubJdbc(0L, List.of());
-
-    SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
-
-    assertThat(result.getTotal()).isZero();
-  }
-
-  @Test
-  void listSupervisorLogs_Should_FallbackToTenantContext_When_TokenHasFewerThanTwoParts() {
-    when(authenticatedUser.getAccessToken()).thenReturn("notavalidjwt");
-    TenantContext.setCurrentTenant(6L);
-    stubJdbc(0L, List.of());
-
-    SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
-
-    assertThat(result.getTotal()).isZero();
-  }
-
-  @Test
-  void listSupervisorLogs_Should_ReturnNullTenant_When_TenantContextIsTechnicalAdmin() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(0L); // isTechnicalOrSuperAdminContext = true
-    stubJdbc(15L, List.of());
-
-    SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
-
-    assertThat(result.getTotal()).isEqualTo(15L);
-  }
-
-  @Test
-  void listSupervisorLogs_Should_FallbackGracefully_When_TokenPayloadIsMalformedJson() {
-    String fakeHeader = Base64.getUrlEncoder().encodeToString("{}".getBytes());
-    String fakePayload = Base64.getUrlEncoder().encodeToString("{not-json}".getBytes());
-    when(authenticatedUser.getAccessToken()).thenReturn(fakeHeader + "." + fakePayload + ".sig");
-    TenantContext.setCurrentTenant(1L);
-    stubJdbc(0L, List.of());
-
-    SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
-
-    assertThat(result.getTotal()).isZero();
-  }
-
-  @Test
-  void listSupervisorLogs_Should_FallbackGracefully_When_TenantIdIsBlankString() {
-    when(authenticatedUser.getAccessToken()).thenReturn(buildToken("{\"tenantId\":\"\"}"));
-    TenantContext.setCurrentTenant(2L);
-    stubJdbc(0L, List.of());
-
-    SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
-
-    assertThat(result.getTotal()).isZero();
-  }
-
-  @Test
   void listSupervisorLogs_Should_ReturnPagedResult_When_MultiplePages() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(1L);
     stubJdbc(100L, List.of(buildEntry()));
 
     SupervisorLogsResult result = service.listSupervisorLogs(3, 10);
@@ -243,47 +128,10 @@ class SupervisorLogsServiceTest {
 
   // ─── tenantId bound into SQL params ───────────────────────────────────────
 
-  @Test
-  void listSupervisorLogs_Should_BindJwtTenantId_Into_SqlParams() {
-    when(authenticatedUser.getAccessToken()).thenReturn(buildToken("{\"tenantId\":55}"));
-    ArgumentCaptor<SqlParameterSource> paramsCaptor =
-        ArgumentCaptor.forClass(SqlParameterSource.class);
-    when(namedParameterJdbcTemplate.queryForObject(
-            anyString(), paramsCaptor.capture(), eq(Long.class)))
-        .thenReturn(0L);
-    when(namedParameterJdbcTemplate.query(
-            anyString(), any(SqlParameterSource.class), any(RowMapper.class)))
-        .thenReturn(List.of());
-
-    service.listSupervisorLogs(1, 10);
-
-    assertThat(paramsCaptor.getValue().getValue("tenantId")).isEqualTo(55L);
-  }
-
-  @Test
-  void listSupervisorLogs_Should_BindTenantContextId_Into_SqlParams_When_NoToken() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(77L);
-    ArgumentCaptor<SqlParameterSource> paramsCaptor =
-        ArgumentCaptor.forClass(SqlParameterSource.class);
-    when(namedParameterJdbcTemplate.queryForObject(
-            anyString(), paramsCaptor.capture(), eq(Long.class)))
-        .thenReturn(0L);
-    when(namedParameterJdbcTemplate.query(
-            anyString(), any(SqlParameterSource.class), any(RowMapper.class)))
-        .thenReturn(List.of());
-
-    service.listSupervisorLogs(1, 10);
-
-    assertThat(paramsCaptor.getValue().getValue("tenantId")).isEqualTo(77L);
-  }
-
   // ─── agency scope (Beratungsstellen-Admins) ───────────────────────────────
 
   @Test
   void listSupervisorLogs_Should_FilterByAgency_When_AdminIsAgencyScoped() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(5L);
     when(adminScope.current()).thenReturn(new AdminScope.Agencies(1L, Set.of(7L, 9L)));
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<SqlParameterSource> paramsCaptor =
@@ -304,8 +152,6 @@ class SupervisorLogsServiceTest {
 
   @Test
   void listSupervisorLogs_Should_NotFilterByAgency_When_AdminIsTenantWide() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(5L);
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
     when(namedParameterJdbcTemplate.queryForObject(
             sqlCaptor.capture(), any(SqlParameterSource.class), eq(Long.class)))
@@ -323,8 +169,6 @@ class SupervisorLogsServiceTest {
   @Test
   void listSupervisorLogs_Should_ReturnNothing_When_AgencyScopeIsEmpty() {
     // Fail closed: an agency admin assigned to no agency must not fall back to the tenant.
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    TenantContext.setCurrentTenant(5L);
     when(adminScope.current()).thenReturn(new AdminScope.Agencies(1L, Set.of()));
 
     SupervisorLogsResult result = service.listSupervisorLogs(1, 10);
@@ -361,9 +205,27 @@ class SupervisorLogsServiceTest {
         .build();
   }
 
-  private String buildToken(String payloadJson) {
-    String header = Base64.getUrlEncoder().encodeToString("{\"alg\":\"RS256\"}".getBytes());
-    String payload = Base64.getUrlEncoder().encodeToString(payloadJson.getBytes());
-    return header + "." + payload + ".fakesig";
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> reachAndTenant() {
+    return java.util.stream.Stream.of(
+        org.junit.jupiter.params.provider.Arguments.arguments(new AdminScope.Platform(), null),
+        org.junit.jupiter.params.provider.Arguments.arguments(new AdminScope.Tenant(4L), 4L),
+        org.junit.jupiter.params.provider.Arguments.arguments(
+            new AdminScope.Agencies(4L, Set.of(11L)), 4L));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("reachAndTenant")
+  void listSupervisorLogs_Should_BindTheTenantOfTheCallersReach(
+      AdminScope.Reach reach, Long tenantId) {
+    when(adminScope.current()).thenReturn(reach);
+    ArgumentCaptor<SqlParameterSource> paramsCaptor =
+        ArgumentCaptor.forClass(SqlParameterSource.class);
+    when(namedParameterJdbcTemplate.queryForObject(
+            any(String.class), paramsCaptor.capture(), eq(Long.class)))
+        .thenReturn(0L);
+
+    service.listSupervisorLogs(1, 10);
+
+    assertThat(paramsCaptor.getValue().getValue("tenantId")).isEqualTo(tenantId);
   }
 }
