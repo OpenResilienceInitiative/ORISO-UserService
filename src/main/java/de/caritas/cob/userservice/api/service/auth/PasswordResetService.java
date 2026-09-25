@@ -17,13 +17,11 @@ import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettings
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.OrisoSmtpTransport;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
-import jakarta.mail.PasswordAuthentication;
-import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import java.net.URLEncoder;
@@ -33,7 +31,6 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.UUID;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.Executor;
@@ -337,26 +334,13 @@ public class PasswordResetService {
   private void sendViaSmtp(
       String recipient, String locale, String resetUrl, GlobalSmtpSettings smtpSettings)
       throws Exception {
-    Properties props = new Properties();
-    props.put("mail.smtp.auth", "true");
-    props.put("mail.smtp.host", smtpSettings.getHost());
-    props.put("mail.smtp.port", String.valueOf(smtpSettings.getPort()));
-    if (smtpSettings.isSecure()) {
-      props.put("mail.smtp.ssl.enable", "true");
-    } else {
-      props.put("mail.smtp.starttls.enable", "true");
-    }
-
     jakarta.mail.Session session =
-        jakarta.mail.Session.getInstance(
-            props,
-            new Authenticator() {
-              @Override
-              protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(
-                    smtpSettings.getUsername(), smtpSettings.getPassword());
-              }
-            });
+        OrisoSmtpTransport.session(
+            smtpSettings.getHost(),
+            smtpSettings.getPort(),
+            smtpSettings.isSecure(),
+            smtpSettings.getUsername(),
+            smtpSettings.getPassword());
 
     var email = renderPasswordReset(locale, resetUrl, smtpSettings.getEmailThemeColor());
     MimeMessage message = new MimeMessage(session);
@@ -364,7 +348,7 @@ public class PasswordResetService {
     message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
     message.setSubject(email.subject(), "UTF-8");
     message.setContent(OrisoEmailMime.alternative(email));
-    Transport.send(message);
+    OrisoSmtpTransport.send(message);
   }
 
   /**
