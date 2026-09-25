@@ -198,6 +198,130 @@ class CounsellorInviteProvisioningServiceTest {
   }
 
   @Test
+  void theTechnicalTokenIsAmbientOnlyForTheRemoteProvisioningCalls() {
+    AccountInvite invite = activeCounsellorInvite();
+    var ambientDuringDatabaseWrites = new java.util.ArrayList<Optional<String>>();
+    var ambientDuringAgencyAssignment = new java.util.ArrayList<Optional<String>>();
+    var ambientDuringAdminGrant = new java.util.ArrayList<Optional<String>>();
+    var ambientDuringInviteAccept = new java.util.ArrayList<Optional<String>>();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(
+            invocation -> {
+              ambientDuringDatabaseWrites.add(TechnicalAccessTokenContext.get());
+              return invocation.getArgument(0);
+            });
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TechnicalAccessTokenContext.get()).contains("technical-token");
+              return new ConsultantAdminResponseDTO()
+                  .embedded(new ConsultantDTO().id("created-consultant"));
+            });
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              ambientDuringAgencyAssignment.add(TechnicalAccessTokenContext.get());
+              return null;
+            })
+        .when(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(
+            org.mockito.ArgumentMatchers.eq("created-consultant"),
+            any(CreateConsultantAgencyDTO.class));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              ambientDuringAdminGrant.add(TechnicalAccessTokenContext.get());
+              return null;
+            })
+        .when(counsellorAgencyAdminGrantService)
+        .grantAgencyAdmin(any(), any(), any());
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant"))
+        .thenAnswer(
+            invocation -> {
+              ambientDuringInviteAccept.add(TechnicalAccessTokenContext.get());
+              return invite;
+            });
+
+    service.acceptInvite(
+        "raw-token",
+        new ProvisionCounsellorCommand(
+            "invited-counsellor",
+            "test-password",
+            true,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            java.util.List.of(2L),
+            true));
+
+    assertThat(ambientDuringAgencyAssignment).containsExactly(Optional.of("technical-token"));
+    // Keycloak admin REST and local writes never need the service-to-service bearer.
+    assertThat(ambientDuringAdminGrant).containsExactly(Optional.empty());
+    assertThat(ambientDuringInviteAccept).containsExactly(Optional.empty());
+    assertThat(ambientDuringDatabaseWrites).isNotEmpty().allMatch(Optional::isEmpty);
+    assertThat(TechnicalAccessTokenContext.get()).isEmpty();
+  }
+
+  @Test
+  void aFailedTechnicalLoginMarksTheInviteFailedInsteadOfLeavingItInProgress() {
+    AccountInvite invite = activeCounsellorInvite();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(identityAuthentication.login("technical-user", "technical-password"))
+        .thenThrow(new IllegalStateException("identity provider unavailable"));
+
+    assertThatThrownBy(
+            () ->
+                service.acceptInvite(
+                    "raw-token",
+                    new ProvisionCounsellorCommand(
+                        "invited-counsellor", "test-password", true, null)))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
+    assertThat(invite.getProvisioningFailureReason())
+        .isEqualTo("Service authentication unavailable");
+    verifyNoInteractions(consultantAdminFacade);
+    assertThat(TechnicalAccessTokenContext.get()).isEmpty();
+  }
+
+  @Test
+  void theRollbackOfAPartiallyCreatedConsultantRunsWithTheTechnicalToken() {
+    AccountInvite invite = activeCounsellorInvite();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(
+            new ConsultantAdminResponseDTO()
+                .embedded(new ConsultantDTO().id("partially-created-consultant")));
+    Consultant partiallyCreatedConsultant = mock(Consultant.class);
+    when(consultantRepository.findById("partially-created-consultant"))
+        .thenReturn(Optional.of(partiallyCreatedConsultant));
+    doThrow(new IllegalStateException("agency assignment failed"))
+        .when(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(
+            org.mockito.ArgumentMatchers.eq("partially-created-consultant"),
+            any(CreateConsultantAgencyDTO.class));
+    var ambientDuringRollback = new java.util.ArrayList<Optional<String>>();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              ambientDuringRollback.add(TechnicalAccessTokenContext.get());
+              return null;
+            })
+        .when(createConsultantSaga)
+        .rollbackCreateNewConsultant(partiallyCreatedConsultant);
+
+    assertThatThrownBy(
+        () ->
+            service.acceptInvite(
+                "raw-token",
+                new ProvisionCounsellorCommand("invited-counsellor", "test-password", true, null)));
+
+    assertThat(ambientDuringRollback).containsExactly(Optional.of("technical-token"));
+    assertThat(TechnicalAccessTokenContext.get()).isEmpty();
+  }
+
+  @Test
   void newAgencyRegistrationMakesTheInviteeTheAgencyAdmin() {
     // The invitee just created this Beratungsstelle, so they administrate it.
     AccountInvite invite = activeCounsellorInvite();

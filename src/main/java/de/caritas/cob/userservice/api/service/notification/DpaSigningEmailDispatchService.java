@@ -2,9 +2,25 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import java.time.LocalDateTime;
 
+/** Sends and previews the DPA signing mail; preview and send render the same document. */
 public interface DpaSigningEmailDispatchService {
-  void send(String recipientEmail, String tenantName, String signLink, LocalDateTime expiresAt);
+
+  /**
+   * @param tenantId tenant whose branding the mail carries (may be only reserved, not created)
+   * @param tenantName the Träger name, or {@code null} while the tenant is only reserved
+   * @param expiresAt zoneless UTC, as TenantService issues it
+   */
+  void send(
+      Long tenantId,
+      String recipientEmail,
+      String tenantName,
+      String signLink,
+      LocalDateTime expiresAt);
 
   DpaSigningEmailPreview preview(
-      String recipientEmail, String tenantName, String signLink, LocalDateTime expiresAt);
+      Long tenantId,
+      String recipientEmail,
+      String tenantName,
+      String signLink,
+      LocalDateTime expiresAt);
 }

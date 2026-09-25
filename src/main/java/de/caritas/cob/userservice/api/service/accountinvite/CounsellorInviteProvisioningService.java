@@ -13,6 +13,7 @@ import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
+import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -66,16 +67,21 @@ public class CounsellorInviteProvisioningService {
     accountInviteRepository.save(invite);
 
     String consultantId = null;
-    var technicalUser = identityClientConfig.getTechnicalUser();
-    String technicalAccessToken =
-        identityAuthentication
-            .login(technicalUser.getUsername(), technicalUser.getPassword())
-            .accessToken();
-    TechnicalAccessTokenContext.set(technicalAccessToken);
+    String technicalAccessToken = null;
     TenantData requestTenant = snapshotTenantContext();
     TenantContext.setCurrentTenant(invite.getTenantId());
     try {
-      var consultant = consultantAdminFacade.createNewConsultant(toConsultant(command, invite));
+      // Inside the try: a failed service login must mark the invite FAILED (retryable) instead of
+      // leaving it IN_PROGRESS, which would answer every retry with 409.
+      technicalAccessToken = loginTechnicalUser();
+      // The service identity is ambient ONLY around the remote calls that need it: consultant
+      // creation and agency assignment reach TenantService/AgencyService/ConsultingTypeService
+      // through the shared admin services, which read the bearer from the header supplier.
+      // Local writes and the Keycloak admin REST client never see it (ORISO-Helm#367).
+      var consultant =
+          TechnicalAccessTokenContext.callWith(
+              technicalAccessToken,
+              () -> consultantAdminFacade.createNewConsultant(toConsultant(command, invite)));
       if (consultant.getEmbedded() == null || consultant.getEmbedded().getId() == null) {
         throw new IllegalStateException("Consultant provisioning returned no user id");
       }
@@ -85,11 +91,15 @@ public class CounsellorInviteProvisioningService {
       invite.setUpdateDate(LocalDateTime.now());
       accountInviteRepository.save(invite);
 
-      consultantAgencyRelationCreatorService.createNewConsultantAgency(
-          consultantId,
-          new CreateConsultantAgencyDTO()
-              .agencyId(invite.getAgencyId())
-              .roleSetKey(DEFAULT_ROLE_SET));
+      String createdConsultantId = consultantId;
+      TechnicalAccessTokenContext.runWith(
+          technicalAccessToken,
+          () ->
+              consultantAgencyRelationCreatorService.createNewConsultantAgency(
+                  createdConsultantId,
+                  new CreateConsultantAgencyDTO()
+                      .agencyId(invite.getAgencyId())
+                      .roleSetKey(DEFAULT_ROLE_SET)));
 
       if (Boolean.TRUE.equals(command.grantAgencyAdmin())) {
         // The invitee brought this Beratungsstelle into existence, so they administrate it —
@@ -105,7 +115,7 @@ public class CounsellorInviteProvisioningService {
       accepted.setUpdateDate(LocalDateTime.now());
       return accountInviteRepository.save(accepted);
     } catch (RuntimeException failure) {
-      rollbackPartiallyCreatedConsultant(consultantId, failure);
+      rollbackPartiallyCreatedConsultant(consultantId, technicalAccessToken, failure);
       invite.setProvisionedUserId(null);
       invite.setProvisioningStatus(AccountInviteProvisioningStatus.FAILED);
       invite.setProvisioningFailureReason(truncate(failure.getMessage(), 1024));
@@ -114,8 +124,23 @@ public class CounsellorInviteProvisioningService {
       throw failure;
     } finally {
       restoreTenantContext(requestTenant);
-      TechnicalAccessTokenContext.clear();
     }
+  }
+
+  private String loginTechnicalUser() {
+    var technicalUser = identityClientConfig.getTechnicalUser();
+    IdentityLogin login;
+    try {
+      login =
+          identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
+    } catch (RuntimeException exception) {
+      // The failure reason is persisted on the invite; keep identity-provider text out of it.
+      throw new IllegalStateException("Service authentication unavailable", exception);
+    }
+    if (login == null || login.accessToken() == null || login.accessToken().isBlank()) {
+      throw new IllegalStateException("Service authentication unavailable");
+    }
+    return login.accessToken();
   }
 
   private static TenantData snapshotTenantContext() {
@@ -154,14 +179,18 @@ public class CounsellorInviteProvisioningService {
             });
   }
 
-  private void rollbackPartiallyCreatedConsultant(String consultantId, RuntimeException failure) {
-    if (consultantId == null) {
+  private void rollbackPartiallyCreatedConsultant(
+      String consultantId, String technicalAccessToken, RuntimeException failure) {
+    if (consultantId == null || technicalAccessToken == null) {
       return;
     }
     try {
-      consultantRepository
-          .findById(consultantId)
-          .ifPresent(createConsultantSaga::rollbackCreateNewConsultant);
+      TechnicalAccessTokenContext.runWith(
+          technicalAccessToken,
+          () ->
+              consultantRepository
+                  .findById(consultantId)
+                  .ifPresent(createConsultantSaga::rollbackCreateNewConsultant));
     } catch (RuntimeException rollbackFailure) {
       failure.addSuppressed(rollbackFailure);
     }
