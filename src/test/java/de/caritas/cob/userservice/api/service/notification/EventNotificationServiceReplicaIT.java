@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
@@ -78,7 +79,8 @@ class EventNotificationServiceReplicaIT {
         userRepository,
         consultantRepository,
         identityTombstoneService,
-        deduplicationWriter);
+        deduplicationWriter,
+        new ConsultantDisplayNameResolver());
   }
 
   private void publishReminder(

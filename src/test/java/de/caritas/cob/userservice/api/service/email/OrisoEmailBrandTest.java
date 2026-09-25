@@ -3,11 +3,13 @@ package de.caritas.cob.userservice.api.service.email;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import org.junit.jupiter.api.Test;
 
 class OrisoEmailBrandTest {
 
-  private final OrisoEmailBrand brand = new OrisoEmailBrand();
+  private final OrisoEmailBrand brand =
+      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
 
   @Test
   void keepsATenantColourThatCarriesWhiteText() {
@@ -46,5 +48,29 @@ class OrisoEmailBrandTest {
     assertThat(values.get("privacyUrl")).isEqualTo("https://app.example.org/datenschutz");
     assertThat(values.get("unsubscribeUrl"))
         .isEqualTo("https://app.example.org/profile/settings/notifications");
+  }
+
+  @Test
+  void theSenderBlockIsThePlatformOwnersAdminMasterData() {
+    var values = brand.values("https://app.example.org", null);
+
+    assertThat(values)
+        .containsEntry("orgName", "ORISO")
+        .containsEntry("orgAddress", "Betreiberweg 1, 10115 Berlin")
+        .containsEntry("contactLine", "info@betreiber.example");
+  }
+
+  /** Frank, 2026-09-23: nothing entered means nothing shown — no built-in sample organisation. */
+  @Test
+  void theSenderBlockStaysBlank_When_thePlatformOwnerEnteredNothing() {
+    var values =
+        new OrisoEmailBrand(SenderOrganisationFixture.nobody())
+            .values("https://app.example.org", null);
+
+    assertThat(values)
+        .containsEntry("orgName", "")
+        .containsEntry("orgAddress", "")
+        .containsEntry("contactLine", "")
+        .containsEntry("offeringName", values.get("platformName"));
   }
 }
