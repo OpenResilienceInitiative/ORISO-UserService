@@ -186,6 +186,8 @@ public class AccountInviteService {
    * compensated; ambiguous transport failures retain the claim so a retry cannot duplicate mail.
    */
   public InviteSendResult createAndSendInvite(CreateAccountInviteCommand command, Long templateId) {
+    // Before the invite exists: a refused template must not reserve ids or write a row.
+    InviteEmailTemplate template = findTemplate(templateId);
     DirectInviteDispatch dispatch;
     AccountInvite[] claimedInvite = new AccountInvite[1];
     try {
@@ -195,7 +197,6 @@ public class AccountInviteService {
                   transaction -> {
                     AccountInvite invite = createInvite(command);
                     claimedInvite[0] = invite;
-                    InviteEmailTemplate template = findTemplate(templateId);
                     LocalDateTime now = LocalDateTime.now();
                     String rawToken = generateToken();
                     String acceptUrl =
@@ -1062,9 +1063,14 @@ public class AccountInviteService {
     if (templateId == null) {
       throw new BadRequestException("templateId is required");
     }
-    return templateRepository
-        .findById(templateId)
-        .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    InviteEmailTemplate template =
+        templateRepository
+            .findById(templateId)
+            .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    // Hiding another Träger's template from the list is not enough: the id travels in
+    // the send request body, so sending with it has to be refused too (ORISO-Admin#1026).
+    accessPolicy.authorizeTemplateUse(template.getTenantId());
+    return template;
   }
 
   /**

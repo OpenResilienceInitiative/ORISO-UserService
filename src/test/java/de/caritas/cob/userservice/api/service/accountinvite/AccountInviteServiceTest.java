@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -17,6 +18,7 @@ import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -179,6 +181,93 @@ class AccountInviteServiceTest {
     assertThat(result.invite().getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
     assertThat(result.invite().getSupersededByInviteId()).isNull();
     assertThat(result.invite().getRecipientEmail()).isEqualTo(oldInvite.getRecipientEmail());
+  }
+
+  // --- another Träger's template is refused before any mail or write (ORISO-Admin#1026) ---
+
+  private InviteEmailTemplate givenForeignTemplate() {
+    InviteEmailTemplate foreign =
+        InviteEmailTemplate.builder()
+            .id(21L)
+            .tenantId(8L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("B's subject")
+            .body("B's body {{inviteLink}}")
+            .active(true)
+            .build();
+    lenient().when(templateRepository.findById(21L)).thenReturn(Optional.of(foreign));
+    doThrow(new ForbiddenException("foreign template")).when(accessPolicy).authorizeTemplateUse(8L);
+    return foreign;
+  }
+
+  @Test
+  void sendInvite_Should_RefuseAnotherTraegersTemplate_BeforeMailOrWrite() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(7L)
+            .recipientEmail("owner@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    lenient().when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
+    givenForeignTemplate();
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(10L, 21L)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    verifyNoInteractions(inviteMailDispatchService, deliveryRepository);
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void resendInvite_Should_RefuseAnotherTraegersTemplate_BeforeMailOrWrite() {
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(7L)
+            .recipientEmail("counsellor@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    lenient().when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
+    givenForeignTemplate();
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(10L, 21L)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    verifyNoInteractions(inviteMailDispatchService, deliveryRepository);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void createAndSendInvite_Should_RefuseAnotherTraegersTemplate_BeforeCreatingTheInvite() {
+    givenForeignTemplate();
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "new@example.org",
+            "New",
+            "Counsellor",
+            null,
+            null,
+            30L);
+
+    assertThatThrownBy(() -> service.createAndSendInvite(command, 21L))
+        .isInstanceOf(ForbiddenException.class);
+
+    verify(accessPolicy, never()).authorizeCreate(any());
+    verifyNoInteractions(
+        inviteMailDispatchService,
+        deliveryRepository,
+        tenantIdAllocationClient,
+        agencyIdAllocationClient,
+        identityEmailOwnerLookup);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+    verify(accountInviteRepository, never()).save(any());
   }
 
   // --- TEN-INV-U6 (#890): SENT only after the transport confirmed the handover ---

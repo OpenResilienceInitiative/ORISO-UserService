@@ -409,8 +409,11 @@ public class DpaSignedNoticeService {
   }
 
   private Optional<InviteEmailTemplate> findActiveTemplate(String language) {
+    // Platform templates only (tenant_id is null): this notice is sent by the platform
+    // operator, so a Träger's own template must never be able to take it over
+    // (ORISO-Admin#1026, template ownership).
     var templates =
-        templateRepository.findByKindAndActiveTrueOrderByCreateDateDesc(
+        templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE);
     return templates.stream()
         .filter(template -> language.equalsIgnoreCase(template.getLanguage()))
