@@ -203,9 +203,11 @@ public class AdminCallerScope {
    * admin sees everything.
    *
    * @return the caller's own agency IDs, or empty when the caller is not agency-restricted
+   * @throws ForbiddenException for tenant 0 without the platform-admin roles
    */
   public Optional<Set<Long>> agencyRestriction() {
-    if (!authenticatedUser.hasRestrictedAgencyPriviliges()) {
+    // isUnrestricted() refuses tenant 0 without platform roles, whose lists run unfiltered.
+    if (isUnrestricted() || !authenticatedUser.hasRestrictedAgencyPriviliges()) {
       return Optional.empty();
     }
     return Optional.of(Collections.unmodifiableSet(ownAgencyIds()));
