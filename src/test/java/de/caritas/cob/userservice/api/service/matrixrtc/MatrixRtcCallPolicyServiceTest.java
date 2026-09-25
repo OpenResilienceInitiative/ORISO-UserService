@@ -18,10 +18,13 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.SessionSupervisorRepository;
 import de.caritas.cob.userservice.api.port.out.TeamDiscussionRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Settings;
 import java.util.List;
 import java.util.Optional;
+import java.util.concurrent.atomic.AtomicReference;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -59,6 +62,30 @@ class MatrixRtcCallPolicyServiceTest {
             correlationIdHasher());
     when(matrixSynapseService.getRoomMembers(ROOM_ID))
         .thenReturn(Optional.of(List.of(MATRIX_USER_ID)));
+  }
+
+  @AfterEach
+  void clearTenantContext() {
+    TenantContext.clear();
+  }
+
+  @Test
+  void resolve_Should_LookUpAcrossTenants_AndRestoreTheCallersTenantData() {
+    var callers = new TenantData(null, "synthetic");
+    TenantContext.setCurrentTenantData(callers);
+    var lookedUpIn = new AtomicReference<Long>();
+    when(sessionRepository.findByMatrixRoomId(ROOM_ID))
+        .thenAnswer(
+            call -> {
+              lookedUpIn.set(TenantContext.getCurrentTenant());
+              return Optional.empty();
+            });
+
+    service.resolve(ROOM_ID, MATRIX_USER_ID);
+
+    assertThat(lookedUpIn.get()).isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
+    assertThat(TenantContext.getCurrentTenantData()).isSameAs(callers);
+    assertThat(callers.getTenantId()).isNull();
   }
 
   @Test
