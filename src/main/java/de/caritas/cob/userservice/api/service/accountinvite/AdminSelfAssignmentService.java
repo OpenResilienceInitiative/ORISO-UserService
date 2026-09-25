@@ -10,12 +10,16 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AdminAgency;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -86,13 +90,16 @@ public class AdminSelfAssignmentService {
   private boolean assignAsCounsellor(
       String userId, AgencyFacts.Agency agency, List<Long> topicIds) {
     // The row lock makes a double click wait for the first request and then answer 409.
-    if (consultantRepository.findActiveByIdForUpdate(userId).isPresent()) {
+    Optional<Consultant> counsellor = consultantRepository.findActiveByIdForUpdate(userId);
+    if (counsellor.isPresent()) {
       if (consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
           userId, agency.id())) {
         throw alreadyAssigned();
       }
+      List<Long> topics = resolveTopics(topicIds, agency);
       consultantAgencyRelationCreatorService.createNewConsultantAgency(
           userId, new CreateConsultantAgencyDTO().agencyId(agency.id()));
+      addTopics(counsellor.get(), topics);
       log.info("Admin {} assigned themselves as counsellor of agency {}", userId, agency.id());
       return false;
     }
@@ -106,6 +113,17 @@ public class AdminSelfAssignmentService {
         userId,
         agency.id());
     return true;
+  }
+
+  /** Routing finds counsellors by topic only, so the new agency's topics join the existing ones. */
+  private void addTopics(Consultant consultant, List<Long> topicIds) {
+    Set<Long> merged = new LinkedHashSet<>();
+    if (consultant.getConsultantTopics() != null) {
+      consultant.getConsultantTopics().forEach(topic -> merged.add(topic.getTopicId()));
+    }
+    merged.addAll(topicIds);
+    consultant.replaceTopics(merged);
+    consultantRepository.save(consultant);
   }
 
   /** A counsellor needs at least one topic: the agency's only one, or a pick among several. */

@@ -23,10 +23,12 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantTopic;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentRole;
 import de.caritas.cob.userservice.api.tenant.TenantFixtures;
@@ -41,6 +43,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -101,6 +104,7 @@ class AdminSelfAssignmentIT {
   @Autowired private AuthenticatedUser caller;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
+  @Autowired private ConsultantTopicRepository consultantTopicRepository;
 
   @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
@@ -135,6 +139,10 @@ class AdminSelfAssignmentIT {
 
   @AfterEach
   void cleanUp() {
+    consultantTopicRepository.deleteAll(
+        StreamSupport.stream(consultantTopicRepository.findAll().spliterator(), false)
+            .filter(topic -> topic.getConsultant().getId().equals(counsellingCaller.getId()))
+            .toList());
     consultantAgencyRepository.deleteAll(
         consultantAgencyRepository
             .findByConsultantIdAndDeleteDateIsNull(counsellingCaller.getId())
@@ -212,7 +220,7 @@ class AdminSelfAssignmentIT {
   }
 
   @Test
-  void anAdminWhoAlreadyCounsels_Should_OnlyGetTheAgencyAdded() {
+  void anAdminWhoAlreadyCounsels_Should_GetTheAgencyAndItsOnlyTopicAdded() {
     actAsTenantAdmin(counsellingCaller.getId());
 
     service.assign(
@@ -223,8 +231,41 @@ class AdminSelfAssignmentIT {
     verify(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(eq(counsellingCaller.getId()), relation.capture());
     assertThat(relation.getValue().getAgencyId()).isEqualTo(OTHER_OWN_TENANT_AGENCY);
+    // A single-topic agency needs no pick: its topic comes along, no new identity is created.
+    assertThat(consultantTopicRepository.findTopicIdsByConsultantId(counsellingCaller.getId()))
+        .containsExactly(21L);
     verify(grantConsultantIdentityService, never())
         .grantConsultantIdentityToAdmin(anyString(), any());
+  }
+
+  @Test
+  void anAdminWhoAlreadyCounsels_Should_GetTheChosenTopicOfTheNewAgency() {
+    givenTopic(counsellingCaller, 11L);
+    givenAgency(OTHER_OWN_TENANT_AGENCY, OWN_TENANT, List.of(21L, 22L));
+    actAsTenantAdmin(counsellingCaller.getId());
+
+    service.assign(
+        new SelfAssignmentCommand(
+            SelfAssignmentRole.COUNSELLOR, OTHER_OWN_TENANT_AGENCY, List.of(21L)));
+
+    // Routing finds counsellors by topic only, so without 21 they never see its enquiries.
+    assertThat(consultantTopicRepository.findTopicIdsByConsultantId(counsellingCaller.getId()))
+        .containsExactlyInAnyOrder(11L, 21L);
+  }
+
+  @Test
+  void anAdminWhoAlreadyCounsels_Should_BeRejected_When_NoTopicForAMultiTopicAgency() {
+    givenAgency(OTHER_OWN_TENANT_AGENCY, OWN_TENANT, List.of(21L, 22L));
+    actAsTenantAdmin(counsellingCaller.getId());
+
+    assertThatThrownBy(
+            () ->
+                service.assign(
+                    new SelfAssignmentCommand(
+                        SelfAssignmentRole.COUNSELLOR, OTHER_OWN_TENANT_AGENCY)))
+        .isInstanceOf(BadRequestException.class);
+    verify(consultantAgencyRelationCreatorService, never())
+        .createNewConsultantAgency(anyString(), any());
   }
 
   @Test
@@ -322,6 +363,17 @@ class AdminSelfAssignmentIT {
   private void actAsAgencyAdmin() {
     Tenants.actAs(
         caller, AGENCY_ADMIN_ID, OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+  }
+
+  private void givenTopic(Consultant consultant, long topicId) {
+    var now = LocalDateTime.now();
+    consultantTopicRepository.save(
+        ConsultantTopic.builder()
+            .consultant(consultant)
+            .topicId(topicId)
+            .createDate(now)
+            .updateDate(now)
+            .build());
   }
 
   private void givenAgency(long agencyId, long tenantId, List<Long> topicIds) {
