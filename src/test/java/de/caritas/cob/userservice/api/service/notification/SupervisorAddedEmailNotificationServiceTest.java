@@ -59,10 +59,12 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void missingPublicFrontendUrlFailsStartupWithSettingName() {
+  void missingPublicFrontendUrlFailsSendWithSettingName() {
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "");
+    when(emailRoutes.resolve(1L)).thenReturn(Optional.of(routeSettings()));
 
-    org.assertj.core.api.Assertions.assertThatThrownBy(service::validateFrontendUrl)
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
         .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
         .hasMessageContaining("system.notification.frontend.base-url");
   }
@@ -306,16 +308,16 @@ class SupervisorAddedEmailNotificationServiceTest {
   // ── public frontend URL validation ──────────────────────────────
 
   @Test
-  void notifyEmailAddressChanged_Should_RejectInvalidPublicFrontendUrl_When_ConfigIsLocalhost() {
+  void notifyEmailAddressChanged_Should_AllowExplicitLocalUrl_When_ConfigIsLocalhost() {
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://localhost:8080");
     TenantSystemEmailRouteService.Route settings =
         new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
     when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
 
-    // Invalid configuration fails before delivery.
+    // Explicit loopback addresses remain usable in the local test profile.
     assertThatCode(
             () -> service.notifyEmailAddressChanged("johndoe", "john@example.com", 1L, null, null))
-        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
+        .doesNotThrowAnyException();
   }
 
   // ── notifySupervisorRemoved — valid consultant email ─────────────────────
@@ -430,23 +432,23 @@ class SupervisorAddedEmailNotificationServiceTest {
   // ── reject loopback and malformed URLs ────────────────────────────
 
   @Test
-  void notifyEmailAddressChanged_Should_RejectInvalidPublicFrontendUrl_When_ConfigIs127_0_0_1() {
+  void notifyEmailAddressChanged_Should_AllowExplicitLocalUrl_When_ConfigIs127_0_0_1() {
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://127.0.0.1:8080");
     when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     assertThatCode(
             () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
-        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
+        .doesNotThrowAnyException();
   }
 
   @Test
-  void notifyEmailAddressChanged_Should_RejectInvalidPublicFrontendUrl_When_ConfigIsIPv6Loopback() {
+  void notifyEmailAddressChanged_Should_AllowExplicitLocalUrl_When_ConfigIsIPv6Loopback() {
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://[::1]:8080");
     when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     assertThatCode(
             () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
-        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
+        .doesNotThrowAnyException();
   }
 
   @Test

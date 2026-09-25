@@ -11,7 +11,6 @@ import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSuppli
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
-import jakarta.annotation.PostConstruct;
 import java.net.URI;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
@@ -46,11 +45,6 @@ public class SupervisorAddedEmailNotificationService {
 
   @Value("${identity.email-dummy-suffix}")
   private String emailDummySuffix;
-
-  @PostConstruct
-  void validateFrontendUrl() {
-    requireFrontendUrl(publicFrontendBaseUrl, "system.notification.frontend.base-url");
-  }
 
   @Async
   public void notifySupervisorAdded(
@@ -254,18 +248,36 @@ public class SupervisorAddedEmailNotificationService {
                   () ->
                       new TenantSystemEmailRouteService.ConfigurationException(
                           "Tenant email URL is missing"));
-      return requireFrontendUrl(resolved, "tenant email URL");
+      String url = requireFrontendUrl(resolved, "tenant email URL");
+      if (isLocalUrl(url)) {
+        throw new TenantSystemEmailRouteService.ConfigurationException(
+            "tenant email URL must be public");
+      }
+      return url;
     } finally {
       TenantContext.clear();
     }
   }
 
   private String requireFrontendUrl(String url, String setting) {
-    if (!isNotBlank(url) || isLocalUrl(url)) {
+    if (!isNotBlank(url) || !isAbsoluteHttpUrl(url)) {
       throw new TenantSystemEmailRouteService.ConfigurationException(
-          setting + " must be an absolute public URL");
+          setting + " must be an absolute http(s) URL");
     }
     return url;
+  }
+
+  private boolean isAbsoluteHttpUrl(String url) {
+    try {
+      URI uri = URI.create(url.trim());
+      return ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+          && uri.getHost() != null
+          && uri.getRawUserInfo() == null
+          && uri.getRawQuery() == null
+          && uri.getRawFragment() == null;
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
   }
 
   private boolean isLocalUrl(String url) {
