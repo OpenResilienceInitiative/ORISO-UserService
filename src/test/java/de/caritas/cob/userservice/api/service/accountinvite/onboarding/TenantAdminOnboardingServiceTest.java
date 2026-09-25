@@ -1001,6 +1001,91 @@ class TenantAdminOnboardingServiceTest {
     assertThrows(InternalServerErrorException.class, () -> service.forwardDpa(RAW_TOKEN, null));
   }
 
+  // --- Träger sender block (Frank, 2026-09-23): legal name and contact entered at onboarding ---
+
+  private static RegisterTenantAdminCommand commandWithSenderBlock(
+      String legalName, String contactEmail, String contactPhone) {
+    return new RegisterTenantAdminCommand(
+        "Beispiel gGmbH",
+        "beispiel",
+        "Musterstrasse 1, 12345 Musterstadt",
+        true,
+        "Erika Beispiel",
+        "CEO",
+        "tenant.admin@example.org",
+        "Beispiel gGmbH",
+        "s3cretPassword",
+        RESERVED_TENANT_ID,
+        RESERVATION_TOKEN,
+        legalName,
+        contactEmail,
+        contactPhone);
+  }
+
+  private MultilingualTenantDTO registerAndCaptureTenant(RegisterTenantAdminCommand command) {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    givenPublishedOperatorDpa();
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+
+    service.registerTenantAdmin(RAW_TOKEN, command);
+
+    ArgumentCaptor<MultilingualTenantDTO> tenantCaptor =
+        ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(tenantCaptor.capture());
+    return tenantCaptor.getValue();
+  }
+
+  @Test
+  void registerTenantAdmin_createsTheTenantWithTheLegalNameAndContactEntered() {
+    MultilingualTenantDTO tenant =
+        registerAndCaptureTenant(
+            commandWithSenderBlock(
+                "  Beispiel Verband e.V. ", " kontakt@beispiel.example ", " +49 30 123456 "));
+
+    assertEquals("Beispiel Verband e.V.", tenant.getLegalName());
+    assertEquals("kontakt@beispiel.example", tenant.getContactEmail());
+    assertEquals("+49 30 123456", tenant.getContactPhone());
+  }
+
+  @Test
+  void registerTenantAdmin_leavesTheSenderBlockOut_When_nothingWasEntered() {
+    MultilingualTenantDTO tenant = registerAndCaptureTenant(commandWithSenderBlock(null, " ", ""));
+
+    assertNull(tenant.getLegalName());
+    assertNull(tenant.getContactEmail());
+    assertNull(tenant.getContactPhone());
+  }
+
+  @Test
+  void registerTenantAdmin_rejectsAContactEmailThatIsNoEmailAddress_beforeCreatingAnything() {
+    var command = commandWithSenderBlock(null, "kontakt at beispiel", null);
+
+    assertThrows(BadRequestException.class, () -> service.registerTenantAdmin(RAW_TOKEN, command));
+    verifyNoInteractions(tenantCreationClient, createAdminService);
+  }
+
+  @Test
+  void registerTenantAdmin_rejectsSenderValuesLongerThanTenantServiceStores() {
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            service.registerTenantAdmin(
+                RAW_TOKEN, commandWithSenderBlock("x".repeat(256), null, null)));
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            service.registerTenantAdmin(
+                RAW_TOKEN, commandWithSenderBlock(null, null, "1".repeat(65))));
+    verifyNoInteractions(tenantCreationClient, createAdminService);
+  }
+
   @Test
   void registerTenantAdmin_shortPassword_throwsBadRequest() {
     var command =

@@ -221,6 +221,27 @@ class TenantAdminOnboardingControllerTest {
   }
 
   @Test
+  void registerTenantAdmin_carriesTheTraegerLegalNameAndContactIntoTheCommand() {
+    when(onboardingService.registerTenantAdmin(eq("tok"), org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new TenantAdminRegistrationResult(21L, "TOTPSECRET", null));
+    var request = new TenantAdminOnboardingController.TenantAdminRegistrationRequestDTO();
+    request.organisation = new TenantAdminOnboardingController.OrganisationDataDTO();
+    request.organisation.name = "Beispiel gGmbH";
+    request.organisation.legalName = "Beispiel Verband e.V.";
+    request.organisation.contactEmail = "kontakt@beispiel.example";
+    request.organisation.contactPhone = "+49 30 123456";
+
+    controller.registerTenantAdmin("tok", request);
+
+    ArgumentCaptor<RegisterTenantAdminCommand> captor =
+        ArgumentCaptor.forClass(RegisterTenantAdminCommand.class);
+    verify(onboardingService).registerTenantAdmin(eq("tok"), captor.capture());
+    assertEquals("Beispiel Verband e.V.", captor.getValue().legalName());
+    assertEquals("kontakt@beispiel.example", captor.getValue().contactEmail());
+    assertEquals("+49 30 123456", captor.getValue().contactPhone());
+  }
+
+  @Test
   void registerTenantAdmin_mapsRequestToCommandAndResultToResponse() {
     when(onboardingService.registerTenantAdmin(eq("tok"), org.mockito.ArgumentMatchers.any()))
         .thenReturn(new TenantAdminRegistrationResult(21L, "TOTPSECRET", "QRBASE64"));

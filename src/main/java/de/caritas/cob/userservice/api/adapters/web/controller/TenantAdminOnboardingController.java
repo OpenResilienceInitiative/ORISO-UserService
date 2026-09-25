@@ -195,13 +195,22 @@ public class TenantAdminOnboardingController {
         dpa.signerOrganisation,
         account.password,
         safe.reservedTenantId,
-        safe.tenantIdReservationToken);
+        safe.tenantIdReservationToken,
+        organisation.legalName,
+        organisation.contactEmail,
+        organisation.contactPhone);
   }
 
   public static class OrganisationDataDTO {
     public String name;
     public String subdomain;
     public String address;
+
+    /** Optional sender block for the mail footer (Frank, 2026-09-23). */
+    public String legalName;
+
+    public String contactEmail;
+    public String contactPhone;
   }
 
   public static class DpaAcceptanceDataDTO {

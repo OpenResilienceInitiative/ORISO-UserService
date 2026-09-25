@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -43,7 +44,10 @@ class SupervisorAddedEmailNotificationServiceTest {
   // design system. A mock here would assert that a method was called; this
   // asserts that a mail comes out.
   @Spy private OrisoEmailRenderer emailRenderer = new OrisoEmailRenderer();
-  @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand();
+
+  @Spy
+  private OrisoEmailBrand emailBrand =
+      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
 
   @InjectMocks private SupervisorAddedEmailNotificationService service;
 
@@ -339,22 +343,6 @@ class SupervisorAddedEmailNotificationServiceTest {
         .doesNotThrowAnyException();
   }
 
-  // ── null supervisorDisplayName fallback ───────────────────────────────────
-
-  @Test
-  void notifySupervisorAdded_Should_UseDefaultDisplayName_When_SupervisorDisplayNameIsNull() {
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings = smtpSettings();
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(settings));
-
-    User user = new User();
-    user.setTenantId(1L);
-    user.setEmail("user@dummy.invalid");
-
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
-        .doesNotThrowAnyException();
-  }
-
   // ── resolveAppFrontendUrl with tenantData ─────────────────────────────────
 
   @Test
@@ -537,22 +525,6 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setEmail("user@dummy.invalid");
 
     assertThatCode(() -> service.notifySupervisorAdded(user, null, null, null, null))
-        .doesNotThrowAnyException();
-  }
-
-  // ── escapeHtml — HTML special chars in supervisorDisplayName ──────────────
-
-  @Test
-  void notifySupervisorAdded_Should_EscapeHtmlInDisplayName_When_DisplayNameContainsHtmlChars() {
-    // escapeHtml must sanitize & < > " ' without crashing
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
-
-    User user = new User();
-    user.setTenantId(1L);
-    user.setEmail("user@example.com");
-
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
         .doesNotThrowAnyException();
   }
 

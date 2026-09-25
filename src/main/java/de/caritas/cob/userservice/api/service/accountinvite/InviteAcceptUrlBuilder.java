@@ -37,19 +37,16 @@ public class InviteAcceptUrlBuilder {
   private final String adminFrontendBaseUrl;
 
   /**
-   * Both origins fall back to this environment's own {@code app.base.url}, never to a hardcoded
-   * production host: an environment whose ACCOUNT_INVITE_* env vars are missing must mail out a
-   * link to itself, not to https://app.oriso.org (dev invite mails pointed at production,
-   * 2026-09-16).
+   * Both origins are required and have no fallback: a guessed host mails people into the wrong
+   * environment (ORISO-Helm#368). {@link
+   * de.caritas.cob.userservice.api.config.PublicUrlStartupValidator} checks their shape at startup.
    */
   public InviteAcceptUrlBuilder(
-      @Value("${account.invite.app.frontend.base-url:${app.base.url}}") String appFrontendBaseUrl,
-      @Value("${account.invite.admin.frontend.base-url:${app.base.url}}")
-          String adminFrontendBaseUrl,
-      @Value("${app.base.url}") String appBaseUrl) {
-    String fallback = normalize(appBaseUrl, "http://localhost:8082");
-    this.appFrontendBaseUrl = normalize(appFrontendBaseUrl, fallback);
-    this.adminFrontendBaseUrl = normalize(adminFrontendBaseUrl, fallback);
+      @Value("${account.invite.app.frontend.base-url}") String appFrontendBaseUrl,
+      @Value("${account.invite.admin.frontend.base-url}") String adminFrontendBaseUrl) {
+    this.appFrontendBaseUrl = normalize(appFrontendBaseUrl, "ACCOUNT_INVITE_APP_FRONTEND_BASE_URL");
+    this.adminFrontendBaseUrl =
+        normalize(adminFrontendBaseUrl, "ACCOUNT_INVITE_ADMIN_FRONTEND_BASE_URL");
   }
 
   /** Builds the absolute accept URL for the given role's public frontend route. */
@@ -65,8 +62,11 @@ public class InviteAcceptUrlBuilder {
     return appFrontendBaseUrl + APP_ACCEPT_PATH + "/" + rawToken;
   }
 
-  private static String normalize(String baseUrl, String fallback) {
-    String base = isBlank(baseUrl) ? fallback : baseUrl.trim();
+  private static String normalize(String baseUrl, String envVar) {
+    if (isBlank(baseUrl)) {
+      throw new IllegalStateException("invite accept link origin must be set (" + envVar + ")");
+    }
+    String base = baseUrl.trim();
     while (base.endsWith("/")) {
       base = base.substring(0, base.length() - 1);
     }
