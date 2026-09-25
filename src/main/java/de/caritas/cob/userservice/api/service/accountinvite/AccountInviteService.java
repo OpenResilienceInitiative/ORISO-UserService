@@ -613,7 +613,7 @@ public class AccountInviteService {
     }
     List<Long> topicIds = agency.topicIds() == null ? List.of() : agency.topicIds();
     Long departmentId = command.departmentId();
-    if (departmentId != null && !topicIds.isEmpty() && !topicIds.contains(departmentId)) {
+    if (departmentId != null && !topicIds.contains(departmentId)) {
       throw new BadRequestException(
           "departmentId " + departmentId + " is not a topic of agency " + command.agencyId());
     }
@@ -1188,7 +1188,7 @@ public class AccountInviteService {
   }
 
   public AccountInvite waiveTwoFactor(Long inviteId, WaiveTwoFactorCommand command) {
-    return waiveTwoFactor(findInvite(inviteId), command);
+    return waiveTwoFactor(findAuthorizedInvite(inviteId), command);
   }
 
   /** Waives the 2FA gate; applies the cross-Träger guard itself, whichever overload is used. */
@@ -1357,9 +1357,16 @@ public class AccountInviteService {
 
   /** Loads an invite for an admin action and applies the cross-Träger guard. */
   private AccountInvite findAuthorizedInvite(Long inviteId) {
-    AccountInvite invite = findInvite(inviteId);
-    accessPolicy.authorizeAccess(invite);
-    return invite;
+    if (inviteId == null) {
+      throw new BadRequestException("inviteId is required");
+    }
+    Optional<AccountInvite> invite = accountInviteRepository.findById(inviteId);
+    if (invite.isEmpty()) {
+      accessPolicy.authorizeMissing(inviteId);
+      throw new NotFoundException("Account invite not found");
+    }
+    accessPolicy.authorizeAccess(invite.get());
+    return invite.get();
   }
 
   private AccountInvite findInvite(Long inviteId) {

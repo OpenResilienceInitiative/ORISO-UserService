@@ -50,8 +50,8 @@ public class TenantContext {
   }
 
   /**
-   * Runs {@code lookup} in the technical tenant, so tenant rows of every Träger are visible. Only
-   * for scope checks that must see a foreign row in order to refuse it.
+   * Runs {@code lookup} in the technical tenant, so tenant rows of every Träger are visible, and
+   * restores the caller's context exactly. Only for reads that must cross Träger on purpose.
    */
   public static <T> T supplyAcrossTenants(java.util.function.Supplier<T> lookup) {
     var callerTenantData = CURRENT_TENANT_DATA.get();

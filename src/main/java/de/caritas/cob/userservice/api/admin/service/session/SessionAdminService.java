@@ -30,7 +30,9 @@ public class SessionAdminService {
     SessionPageProvider sessionPageProvider =
         adminScope.current() instanceof AdminScope.Agencies agencies
             ? new AgencyScopedSessionPageProvider(
-                this.sessionRepository, sessionFilter, agencies.ids())
+                this.sessionRepository,
+                sessionFilter != null ? sessionFilter : new SessionFilter(),
+                agencies.ids())
             : PageProviderFactory.getInstance(this.sessionRepository, sessionFilter)
                 .retrieveFirstSupportedSessionPageProvider();
     return SessionAdminResultDTOBuilder.getInstance()

@@ -32,7 +32,7 @@ public class ExistingAgencyClient {
 
   public record ExistingAgency(Long id, Long tenantId, boolean deleted, List<Long> topicIds) {}
 
-  /** Empty on 404, which for a tenant-bound caller also covers another tenant's agency. */
+  /** Empty on 404 or 403, which for a tenant-bound caller also cover another tenant's agency. */
   public Optional<ExistingAgency> find(long agencyId) {
     try {
       var response = createControllerApi().getAgency(agencyId);
@@ -46,7 +46,7 @@ public class ExistingAgencyClient {
               agency.getTenantId(),
               isDeleted(agency.getDeleteDate()),
               topicIds(agency)));
-    } catch (HttpClientErrorException.NotFound exception) {
+    } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden exception) {
       return Optional.empty();
     }
   }
