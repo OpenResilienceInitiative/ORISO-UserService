@@ -34,6 +34,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.apache.commons.beanutils.BeanUtils;
 import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Service class to handle administrative operations on consultant-agencies. */
 @Service
@@ -238,6 +239,8 @@ public class ConsultantAgencyAdminService {
    * @param consultantId the consultant id
    * @param agencyId the agency id
    */
+  // One transaction: the relation and its centre's topic rows (#1264) go together or not at all.
+  @Transactional
   public void markConsultantAgencyForDeletion(String consultantId, Long agencyId) {
     List<ConsultantAgency> consultantAgencies =
         this.consultantAgencyRepository.findByConsultantIdAndAgencyIdAndDeleteDateIsNull(
@@ -250,6 +253,7 @@ public class ConsultantAgencyAdminService {
         .forEach(this::markAsDeleted);
   }
 
+  @Transactional
   public void markConsultantAgenciesForDeletion(String consultantId, List<Long> agencyIds) {
 
     agencyIds.forEach(
