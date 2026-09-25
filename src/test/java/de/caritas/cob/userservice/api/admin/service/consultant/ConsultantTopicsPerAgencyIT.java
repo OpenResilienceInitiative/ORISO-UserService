@@ -151,6 +151,27 @@ class ConsultantTopicsPerAgencyIT {
   }
 
   @Test
+  void topicsByAgencyAlone_replacesExistingTopics_When_flatTopicIdsAreNotSent() {
+    update(dto().topicIds(List.of(TOPIC_BOTH)));
+
+    // The generated DTO defaults topicIds to [] although the client never sent it.
+    update(dto().topicsByAgency(List.of(centre(CENTRE_A, TOPIC_A_ONLY))));
+
+    var embedded = consultantAdminService.findConsultantById(CONSULTANT_ID).getEmbedded();
+    assertThat(embedded.getTopicsByAgency()).containsExactly(centre(CENTRE_A, TOPIC_A_ONLY));
+  }
+
+  @Test
+  void topicsByAgency_isRejected_When_itWouldRemoveTheLastTopic() {
+    update(dto().topicIds(List.of(TOPIC_BOTH)));
+    var request = dto().topicsByAgency(List.of(centre(CENTRE_A)));
+
+    assertThatThrownBy(() -> update(request)).isInstanceOf(BadRequestException.class);
+    assertThat(consultantTopicRepository.findTopicIdsByConsultantId(CONSULTANT_ID))
+        .containsExactly(TOPIC_BOTH);
+  }
+
+  @Test
   void topicsByAgency_isRejected_When_centreDoesNotOfferTheTopic() {
     var request = dto().topicsByAgency(List.of(centre(CENTRE_B, TOPIC_A_ONLY)));
 

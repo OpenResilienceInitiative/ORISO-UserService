@@ -389,8 +389,49 @@ class CounsellorInviteProvisioningServiceTest {
         "raw-token",
         new ProvisionCounsellorCommand("invited-counsellor", "test-password", true, null));
 
-    var order = org.mockito.Mockito.inOrder(consultantAdminFacade, consultantTopicRepository);
-    order.verify(consultantAdminFacade).createNewConsultantAgency(eq("created-consultant"), any());
+    var order =
+        org.mockito.Mockito.inOrder(
+            consultantAgencyRelationCreatorService, consultantTopicRepository);
+    order
+        .verify(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(eq("created-consultant"), any());
+    order
+        .verify(consultantTopicRepository)
+        .assignUnscopedTopicsToAgency("created-consultant", invite.getAgencyId());
+  }
+
+  @Test
+  void anAgencyAdminWhoAlsoCounsels_getsTheChosenTopicsStoredForTheInvitesCentre() {
+    AccountInvite invite = activeCounsellorInvite();
+    invite.setTargetRole(AccountInviteTargetRole.AGENCY_ADMIN);
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(
+            new ConsultantAdminResponseDTO()
+                .embedded(new ConsultantDTO().id("created-consultant")));
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant")).thenReturn(invite);
+
+    service.acceptInvite(
+        "raw-token",
+        new ProvisionCounsellorCommand(
+            "invited-counsellor",
+            "test-password",
+            true,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            java.util.List.of(2L),
+            true));
+
+    var order =
+        org.mockito.Mockito.inOrder(
+            consultantAgencyRelationCreatorService, consultantTopicRepository);
+    order
+        .verify(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(eq("created-consultant"), any());
     order
         .verify(consultantTopicRepository)
         .assignUnscopedTopicsToAgency("created-consultant", invite.getAgencyId());
