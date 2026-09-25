@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantPictureRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import jakarta.persistence.EntityManager;
+import jakarta.persistence.EntityNotFoundException;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,7 +45,12 @@ public class ConsultantPictureStore {
     // Discard only the pre-scan owner snapshot. Hibernate may optimize refresh of an already
     // locked entity to a non-locking SELECT, which can read MariaDB's repeatable-read snapshot.
     // Reloading a detached owner with SELECT FOR UPDATE obtains current fields and the lock.
-    entityManager.detach(entityManager.getReference(Consultant.class, id));
+    try {
+      entityManager.detach(entityManager.getReference(Consultant.class, id));
+    } catch (EntityNotFoundException otherTenant) {
+      // The tenant filter reports another Träger's counsellor as missing: answer 404, not 500.
+      throw new NotFoundException("Consultant not found");
+    }
     var consultant =
         consultants
             .findPictureOwnerForUpdate(id)
