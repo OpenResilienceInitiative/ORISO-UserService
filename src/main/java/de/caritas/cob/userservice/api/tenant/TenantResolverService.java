@@ -60,7 +60,8 @@ public class TenantResolverService {
   private Long resolveForAuthenticatedUser(HttpServletRequest request) {
     var tenantId = getFirstResolvedTenant(request, authenticatedTenantResolvers());
     if (multitenancyWithSingleDomain) {
-      return tenantId.orElseThrow();
+      return tenantId.orElseThrow(
+          () -> new AccessDeniedException("Tenant id could not be resolved"));
     } else {
       if (shouldValidateResolvedTenant(tenantId)) {
         Optional<Long> tenantIdFromCustomHeaderOrSubdomain =
