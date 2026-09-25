@@ -513,8 +513,6 @@ class UserAdminControllerAuthorizationIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isOk());
-
-    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(agencies);
     verify(consultantAdminFacade).setConsultantAgencies(anyString(), any());
   }
 

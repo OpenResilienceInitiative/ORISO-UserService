@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
@@ -213,9 +212,6 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> createConsultantAgency(
       @PathVariable String consultantId, CreateConsultantAgencyDTO createConsultantAgencyDTO) {
-    consultantAdminFacade.checkPermissionsToConsultant(consultantId);
-    consultantAdminFacade.checkPermissionsToAssignedAgencies(
-        Lists.newArrayList(createConsultantAgencyDTO));
     this.consultantAdminFacade.createNewConsultantAgency(consultantId, createConsultantAgencyDTO);
     return new ResponseEntity<>(HttpStatus.CREATED);
   }
@@ -223,7 +219,6 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
-    this.consultantAdminFacade.checkPermissionsToAssignedAgencies(agencyList);
     this.consultantAdminFacade.setConsultantAgencies(consultantId, agencyList);
     return ResponseEntity.ok().build();
   }
