@@ -1142,6 +1142,71 @@ paths:
           security:
             - Bearer: [ ]
 
+  /useradmin/list-preferences:
+    get:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Returns the caller's own saved user-list preferences, so the last chosen sort per list
+        tab follows the admin to every device. Only the caller's own data; tabs never saved are
+        absent. [Authorization: Role: user-admin, tenant-admin, single-tenant-admin,
+        restricted-agency-admin]
+      operationId: getOwnAdminListPreferences
+      responses:
+        200:
+          description: OK - successful operation
+          content:
+            'application/json':
+              schema:
+                $ref: '#/components/schemas/AdminListPreferencesDTO'
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /useradmin/list-preferences/sorts/{tab}:
+    put:
+      tags:
+        - admin-user-controller
+      summary: >-
+        Saves the caller's last chosen sort for one user-list tab, replacing the previous one.
+        [Authorization: Role: user-admin, tenant-admin, single-tenant-admin,
+        restricted-agency-admin]
+      operationId: putOwnAdminListSort
+      parameters:
+        - name: tab
+          in: path
+          description: >-
+            The user-list tab: consultants, agency-admins, tenant-admins or platform-admins.
+            Any other value is answered with 400.
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          'application/json':
+            schema:
+              $ref: '#/components/schemas/AdminListSortDTO'
+        required: true
+      responses:
+        204:
+          description: NO CONTENT - sort saved
+        400:
+          description: >-
+            BAD REQUEST - unknown tab, a field the tab cannot be sorted by, or an order other
+            than ASC/DESC
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+
 components:
   schemas:
     RootDTO:
@@ -2131,6 +2196,35 @@ components:
             - 'DEFAULT_AGENCY'
 
 
+
+    AdminListSortDTO:
+      type: object
+      description: >-
+        One saved list sort. field is FIRSTNAME, LASTNAME, EMAIL or UPDATE_DATE; the
+        tenant-admins and platform-admins tabs also accept TENANT_ID. order is ASC or DESC.
+      required:
+        - field
+        - order
+      properties:
+        field:
+          type: string
+          maxLength: 32
+          example: LASTNAME
+        order:
+          type: string
+          maxLength: 4
+          example: ASC
+
+    AdminListPreferencesDTO:
+      type: object
+      required:
+        - sorts
+      properties:
+        sorts:
+          type: object
+          description: Saved sort per list tab, keyed by tab name.
+          additionalProperties:
+            $ref: '#/components/schemas/AdminListSortDTO'
 
   securitySchemes:
     Bearer:

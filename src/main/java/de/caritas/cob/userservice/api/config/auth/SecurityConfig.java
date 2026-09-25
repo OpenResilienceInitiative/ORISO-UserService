@@ -503,6 +503,11 @@ public class SecurityConfig {
                     "/useradmin/statistics/tutorials",
                     "/service/useradmin/statistics/tutorials")
                 .hasAnyAuthority(TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                // An admin's own list sorts (#1263): every admin role that sees a user list keeps
+                // its own; the data is always the caller's, so no other access widens.
+                .requestMatchers("/useradmin/list-preferences", "/useradmin/list-preferences/**")
+                .hasAnyAuthority(
+                    USER_ADMIN, TENANT_ADMIN, SINGLE_TENANT_ADMIN, RESTRICTED_AGENCY_ADMIN)
                 .requestMatchers(
                     "/useradmin", "/useradmin/**", "/service/useradmin", "/service/useradmin/**")
                 .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT)
