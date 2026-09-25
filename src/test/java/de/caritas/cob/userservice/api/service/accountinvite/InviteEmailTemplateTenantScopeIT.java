@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -55,6 +56,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({
   InviteEmailTemplateService.class,
   AccountInviteAccessPolicy.class,
+  AdminScope.class,
   InviteEmailTemplateTenantScopeIT.CallerConfig.class
 })
 class InviteEmailTemplateTenantScopeIT {
