@@ -109,6 +109,8 @@ class AccountInviteReservationReleaseIT {
         .thenReturn(IdAllocationStatus.ASSIGNED);
     when(agencyService.getAgencyWithoutCaching(EXISTING_AGENCY))
         .thenReturn(new AgencyDTO().id(EXISTING_AGENCY).tenantId(OWN_TENANT));
+    when(agencyService.getAgenciesWithoutCaching(java.util.List.of(EXISTING_AGENCY)))
+        .thenReturn(java.util.List.of(new AgencyDTO().id(EXISTING_AGENCY).tenantId(OWN_TENANT)));
     when(existingAgencyClient.find(EXISTING_AGENCY))
         .thenReturn(
             Optional.of(
