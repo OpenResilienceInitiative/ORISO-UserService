@@ -55,6 +55,10 @@ class CounsellorInviteProvisioningServiceTest {
 
   @BeforeEach
   void setUp() {
+    // The row is still in the status the test put it in (no racing revoke here).
+    org.mockito.Mockito.lenient()
+        .when(accountInviteRepository.holdInStatus(any(), any(), any()))
+        .thenReturn(1);
     service =
         new CounsellorInviteProvisioningService(
             accountInviteService,

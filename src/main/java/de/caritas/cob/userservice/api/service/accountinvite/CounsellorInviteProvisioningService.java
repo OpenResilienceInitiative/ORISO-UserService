@@ -39,6 +39,13 @@ public class CounsellorInviteProvisioningService {
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
+    return acceptInvite(rawToken, command, () -> {});
+  }
+
+  /** {@code createUnit}: the founding wizard's Beratungsstelle, created while the row is held. */
+  @Transactional(noRollbackFor = RuntimeException.class)
+  public AccountInvite acceptInvite(
+      String rawToken, ProvisionCounsellorCommand command, Runnable createUnit) {
     AccountInvite invite = accountInviteService.findInviteByToken(rawToken);
     // A counselling agency admin comes here only via the wizard, which asks for the admin grant.
     boolean agencyAdminAlsoCounselling =
@@ -62,6 +69,8 @@ public class CounsellorInviteProvisioningService {
       throw new ConflictException("Account invite provisioning is already in progress");
     }
     validate(command, invite);
+    InviteRowHold.hold(accountInviteRepository, invite, LocalDateTime.now());
+    createUnit.run();
 
     invite.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
     invite.setProvisioningFailureReason(null);

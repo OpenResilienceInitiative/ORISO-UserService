@@ -15,20 +15,28 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.AgencyCreationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
+import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import java.time.LocalDateTime;
 import java.util.concurrent.Callable;
@@ -76,12 +84,16 @@ import org.springframework.transaction.support.TransactionTemplate;
   AccountInviteTopicPermissionService.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   IdReservationReleaseProcessor.class,
+  InviteRoleChange.class,
+  de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.class,
   RevokeAcceptRaceContract.CallerConfig.class
 })
 abstract class RevokeAcceptRaceContract {
 
   static final long OWN_TENANT = 1L;
   private static final long NEW_AGENCY = 700L;
+  private static final long EXISTING_AGENCY = 1L;
+  private static final long TOPIC = 11L;
   private static final String RAW_TOKEN = "revoke-accept-race-token";
   private static final String ADMIN_ID = "revoke-race-admin";
   private static final String RECIPIENT = "revoke-race@example.org";
@@ -132,6 +144,21 @@ abstract class RevokeAcceptRaceContract {
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
+  @MockitoBean private CounsellorInviteProvisioningService counsellorProvisioning;
+  @MockitoBean private IdentitySecondFactor identitySecondFactor;
+  @MockitoBean private IdentityProfileLookup identityProfileLookup;
+  @MockitoBean private TopicService topicService;
+  @MockitoBean private UsernameTranscoder usernameTranscoder;
+  @MockitoBean private AgencyCreationClient agencyCreationClient;
+
+  @Autowired private InviteRoleChange roleChange;
+  @Autowired private CounsellorOnboardingService wizard;
+  @Autowired private InviteEmailTemplateRepository templateRepository;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository deliveryRepository;
+
+  private Long templateId;
 
   private ExecutorService executor;
 
@@ -176,10 +203,19 @@ abstract class RevokeAcceptRaceContract {
                   .toList());
           adminRepository.findById(ADMIN_ID).ifPresent(adminRepository::delete);
         });
-    accountInviteRepository.deleteAll(
+    var ownInvites =
         accountInviteRepository.findAll().stream()
             .filter(invite -> RECIPIENT.equals(invite.getRecipientEmail()))
+            .toList();
+    var ownIds = ownInvites.stream().map(AccountInvite::getId).toList();
+    deliveryRepository.deleteAll(
+        deliveryRepository.findAll().stream()
+            .filter(delivery -> ownIds.contains(delivery.getAccountInviteId()))
             .toList());
+    accountInviteRepository.deleteAll(ownInvites);
+    if (templateId != null) {
+      templateRepository.deleteById(templateId);
+    }
     releaseTaskRepository.deleteAll(
         releaseTaskRepository.findAll().stream()
             .filter(task -> Long.valueOf(NEW_AGENCY).equals(task.getReservedId()))
@@ -286,6 +322,235 @@ abstract class RevokeAcceptRaceContract {
 
     assertThat(again.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
     verify(agencyIdAllocationClient, times(1)).release(NEW_AGENCY);
+  }
+
+  // --- admin writers: a revoke that holds the row must never be written over ---
+
+  @Test
+  void sendWhileARevokeHoldsTheRow_Should_NotMailOrReviveTheInvite() throws Exception {
+    AccountInvite invite = persistedAgencyAdminInvite();
+    Long template = persistedTemplate();
+    CountDownLatch writerRead = new CountDownLatch(1);
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
+        .thenAnswer(
+            call -> {
+              writerRead.countDown();
+              return "https://dev.example.org/accept";
+            });
+    mailGoesOut();
+
+    Object sent =
+        writeWhileRevokeHoldsTheRow(
+            invite.getId(),
+            writerRead,
+            () ->
+                service.sendInvite(
+                    new AccountInviteService.SendInviteCommand(invite.getId(), template)));
+
+    assertThat(sent).isInstanceOf(RuntimeException.class);
+    assertThat(reload(invite).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+    verify(inviteMailDispatchService, never())
+        .send(anyString(), anyString(), anyString(), any(), any(), any());
+  }
+
+  @Test
+  void resendWhileARevokeHoldsTheRow_Should_CreateNoReplacement() throws Exception {
+    AccountInvite invite = persistedAgencyAdminInvite();
+    Long template = persistedTemplate();
+    CountDownLatch writerRead = new CountDownLatch(1);
+    when(identityEmailOwnerLookup.findByEmail(anyString()))
+        .thenAnswer(
+            call -> {
+              writerRead.countDown();
+              return java.util.Optional.empty();
+            });
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
+        .thenReturn("https://dev.example.org/accept");
+    mailGoesOut();
+
+    Object resent =
+        writeWhileRevokeHoldsTheRow(
+            invite.getId(),
+            writerRead,
+            () ->
+                service.resendInvite(
+                    new AccountInviteService.SendInviteCommand(invite.getId(), template)));
+
+    assertThat(resent).isInstanceOf(RuntimeException.class);
+    assertThat(reload(invite).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+    assertThat(
+            accountInviteRepository.findAll().stream()
+                .filter(each -> RECIPIENT.equals(each.getRecipientEmail())))
+        .hasSize(1);
+    verify(inviteMailDispatchService, never())
+        .send(anyString(), anyString(), anyString(), any(), any(), any());
+  }
+
+  @Test
+  void roleChangeWhileARevokeHoldsTheRow_Should_Answer409_And_KeepTheRevoke() throws Exception {
+    AccountInvite invite = persistedAgencyAdminInviteIntoExistingAgency();
+    CountDownLatch writerRead = new CountDownLatch(1);
+    when(agencyService.getAgenciesWithoutCaching(java.util.List.of(EXISTING_AGENCY)))
+        .thenAnswer(
+            call -> {
+              writerRead.countDown();
+              return java.util.List.of(
+                  new de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO()
+                      .id(EXISTING_AGENCY)
+                      .tenantId(OWN_TENANT));
+            });
+
+    Object changed =
+        writeWhileRevokeHoldsTheRow(
+            invite.getId(),
+            writerRead,
+            () ->
+                roleChange.change(
+                    invite.getId(),
+                    new InviteRoleChange.ChangeRoleCommand(
+                        AccountInviteTargetRole.AGENCY_ADMIN, false)));
+
+    assertThat(changed).isInstanceOf(CustomValidationHttpStatusException.class);
+    assertThat(
+            ((CustomValidationHttpStatusException) changed)
+                .getCustomHttpHeaders()
+                .getFirst("X-Reason"))
+        .isEqualTo("INVITE_NOT_PENDING");
+    AccountInvite persisted = reload(invite);
+    assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+    assertThat(persisted.getAlsoCounsellor()).isTrue();
+  }
+
+  // --- founding wizard: the Beratungsstelle is created only by the accept that holds the row ---
+
+  @Test
+  void revokeRightBeforeTheFoundingWizardCreatesTheAgency_Should_CreateNoAgency() throws Exception {
+    AccountInvite invite = persistedAgencyAdminInvite();
+    CountDownLatch wizardRead = new CountDownLatch(1);
+    CountDownLatch revokeCommitted = new CountDownLatch(1);
+    when(agencyService.getAgencyWithoutCaching(NEW_AGENCY))
+        .thenAnswer(
+            call -> {
+              // The wizard has read the invite as open; the admin's revoke commits right now.
+              wizardRead.countDown();
+              revokeCommitted.await(10, TimeUnit.SECONDS);
+              return null;
+            });
+    when(topicService.getAllActiveTopicsMap())
+        .thenReturn(
+            java.util.Map.of(
+                TOPIC,
+                new de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO()
+                    .id(TOPIC)
+                    .name("Sucht")));
+    when(agencyCreationClient.createAgencyWithReservedId(any(), any(), any(), any()))
+        .thenReturn(NEW_AGENCY);
+
+    Future<Object> registration =
+        submit(
+            "revoke-race-invitee",
+            () ->
+                wizard.registerCounsellor(
+                    RAW_TOKEN,
+                    new CounsellorOnboardingService.RegisterCounsellorCommand(
+                        "race-admin",
+                        "Passw0rd!",
+                        null,
+                        null,
+                        null,
+                        null,
+                        null,
+                        java.util.List.of(TOPIC),
+                        null,
+                        null,
+                        "Neue Beratungsstelle",
+                        false)));
+    assertThat(wizardRead.await(10, TimeUnit.SECONDS)).isTrue();
+    Object revoked =
+        submit(
+                REVOKE_THREAD,
+                () -> {
+                  AccountInvite result = revokeAsAdmin(invite.getId());
+                  revokeCommitted.countDown();
+                  return result;
+                })
+            .get(30, TimeUnit.SECONDS);
+    Object registered = registration.get(30, TimeUnit.SECONDS);
+
+    assertThat(revoked).isInstanceOf(AccountInvite.class);
+    assertThat(registered).isInstanceOf(AccountInviteLinkException.class);
+    assertThat(((AccountInviteLinkException) registered).getReason())
+        .isEqualTo(AccountInviteLinkException.Reason.REVOKED);
+    verify(agencyCreationClient, never()).createAgencyWithReservedId(any(), any(), any(), any());
+    verify(createAdminService, never()).createNewAgencyAdminInTenant(any());
+  }
+
+  /**
+   * The admin's revoke holds the row until the other writer has read the invite as open (before the
+   * fix) or 1 s passed (after it, the writer waits for the row), then commits.
+   */
+  private Object writeWhileRevokeHoldsTheRow(
+      Long inviteId, CountDownLatch writerRead, Callable<Object> writer) throws Exception {
+    CountDownLatch revokeHoldsRow = new CountDownLatch(1);
+    Future<Object> revoke =
+        submit(
+            REVOKE_THREAD,
+            () ->
+                new TransactionTemplate(transactionManager)
+                    .execute(
+                        transaction -> {
+                          AccountInvite revoked = revokeAsAdmin(inviteId);
+                          revokeHoldsRow.countDown();
+                          awaitQuietly(writerRead);
+                          return revoked;
+                        }));
+    assertThat(revokeHoldsRow.await(10, TimeUnit.SECONDS)).isTrue();
+    Future<Object> write =
+        submit(
+            "revoke-race-other-admin",
+            () -> {
+              Tenants.actIn(OWN_TENANT);
+              return writer.call();
+            });
+    assertThat(revoke.get(30, TimeUnit.SECONDS)).isInstanceOf(AccountInvite.class);
+    return write.get(30, TimeUnit.SECONDS);
+  }
+
+  private void mailGoesOut() {
+    when(inviteMailDispatchService.send(anyString(), anyString(), anyString(), any(), any(), any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt(
+                RECIPIENT, java.time.Instant.now()));
+  }
+
+  private Long persistedTemplate() {
+    templateId =
+        templateRepository
+            .save(
+                InviteEmailTemplate.builder()
+                    .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+                    .name("revoke-race")
+                    .language("de")
+                    .subject("Einladung")
+                    .body("Hallo {{firstName}}")
+                    .active(true)
+                    .createDate(LocalDateTime.now())
+                    .build())
+            .getId();
+    return templateId;
+  }
+
+  private AccountInvite reload(AccountInvite invite) {
+    return accountInviteRepository.findById(invite.getId()).orElseThrow();
+  }
+
+  /** An agency admin for an agency that exists, who would also counsel. */
+  private AccountInvite persistedAgencyAdminInviteIntoExistingAgency() {
+    AccountInvite invite = persistedAgencyAdminInvite();
+    invite.setAgencyId(EXISTING_AGENCY);
+    invite.setAgencyIdAllocationMode(null);
+    invite.setAlsoCounsellor(true);
+    return accountInviteRepository.save(invite);
   }
 
   private AccountInvite revokeAsAdmin(Long inviteId) {

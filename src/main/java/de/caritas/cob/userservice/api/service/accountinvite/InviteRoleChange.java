@@ -61,11 +61,12 @@ public class InviteRoleChange {
     }
     AccountInvite invite =
         accountInviteRepository
-            .findById(inviteId)
+            .findByIdForUpdate(inviteId)
             .orElseThrow(() -> new NotFoundException("Account invite not found"));
     accessPolicy.authorizeAccess(invite);
     LocalDateTime now = LocalDateTime.now();
     requirePending(invite, now);
+    InviteRowHold.hold(accountInviteRepository, invite, now);
 
     AccountInviteTargetRole from = invite.getTargetRole();
     AccountInviteTargetRole to = command.targetRole();

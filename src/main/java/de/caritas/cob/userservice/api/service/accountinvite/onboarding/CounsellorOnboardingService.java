@@ -170,23 +170,22 @@ public class CounsellorOnboardingService {
       throw new BadRequestException("A new agency needs at least one topic");
     }
 
-    // A reserved (not yet created) Beratungsstellen-ID: the invitee named the agency in the
-    // wizard and it has to exist — under exactly the reserved ID — before the consultant can be
-    // attached to it. Deliberately here, OUTSIDE any transaction of this service: the invite's
-    // PESSIMISTIC_WRITE lock must never be held across a remote call (#1008 review).
-    boolean agencyCreated = false;
-    if (!coverage.agencyExists()) {
-      createReservedAgency(invite, command);
-      agencyCreated = true;
+    // A reserved Beratungsstellen-ID: the agency is created by the accept that holds the invite
+    // row, so a revoke that wins leaves no agency behind (ORISO-Admin#1026).
+    boolean agencyCreated = !coverage.agencyExists();
+    if (agencyCreated && isBlank(command.agencyName())) {
+      throw new BadRequestException("agency.name is required for an invite without an agency");
     }
+    RegisterCounsellorCommand named = command;
+    Runnable createUnit = agencyCreated ? () -> createReservedAgency(invite, named) : () -> {};
 
     // A counsellor gets admin rights only on the agency they just created.
     AccountInvite accepted =
         counsels
             ? counsellorInviteProvisioningService.acceptInvite(
-                rawToken, toProvisionCommand(command, agencyCreated || agencyAdmin))
+                rawToken, toProvisionCommand(command, agencyCreated || agencyAdmin), createUnit)
             : agencyAdminInviteProvisioningService.acceptAsAgencyAdmin(
-                rawToken, command.username(), command.password());
+                rawToken, command.username(), command.password(), createUnit);
 
     if (agencyAdmin || agencyCreated) {
       // The agency now has its admin: release its waiting invites (idempotent for further admins).
@@ -451,9 +450,6 @@ public class CounsellorOnboardingService {
    * follow-up attempt sees {@code agencyExists == true} and simply attaches to it.
    */
   private void createReservedAgency(AccountInvite invite, RegisterCounsellorCommand command) {
-    if (isBlank(command.agencyName())) {
-      throw new BadRequestException("agency.name is required for an invite without an agency");
-    }
     TenantData requestTenant = snapshotTenantContext();
     TenantContext.setCurrentTenant(invite.getTenantId());
     try {

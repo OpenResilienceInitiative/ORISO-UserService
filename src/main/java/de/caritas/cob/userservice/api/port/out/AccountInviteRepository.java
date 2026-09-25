@@ -85,6 +85,19 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("revokedByUserId") String revokedByUserId,
       @Param("now") LocalDateTime now);
 
+  /**
+   * Locks the row and proves it still has the status its writer checked; 0 when a revoke or accept
+   * changed it first. Keeps the persistence context so the writer goes on with its entity.
+   */
+  @Modifying(flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status = :expected")
+  int holdInStatus(
+      @Param("id") Long id,
+      @Param("expected") AccountInviteStatus expected,
+      @Param("now") LocalDateTime now);
+
   boolean existsByTenantIdAndTargetRoleAndStatusIn(
       Long tenantId, AccountInviteTargetRole targetRole, Collection<AccountInviteStatus> statuses);
 

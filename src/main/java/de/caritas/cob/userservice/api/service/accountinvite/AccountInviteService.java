@@ -265,6 +265,10 @@ public class AccountInviteService {
       requiresNewTransaction()
           .executeWithoutResult(
               transaction -> {
+                if (!stillSent(invite.getId())) {
+                  // Revoked meanwhile: that revoke already gave the numbers back.
+                  return;
+                }
                 AccountInvite stored = findInvite(invite.getId());
                 ledger.releaseUnneeded(stored, LocalDateTime.now());
                 accountInviteRepository.deleteById(stored.getId());
@@ -277,6 +281,13 @@ public class AccountInviteService {
           compensationFailure);
       sendFailure.addSuppressed(compensationFailure);
     }
+  }
+
+  private boolean stillSent(Long inviteId) {
+    return accountInviteRepository
+        .findByIdForUpdate(inviteId)
+        .filter(invite -> invite.getStatus() == AccountInviteStatus.EMAIL_SENT)
+        .isPresent();
   }
 
   private TransactionTemplate requiresNewTransaction() {
@@ -418,6 +429,7 @@ public class AccountInviteService {
       throw new BadRequestException("Inactive invites cannot be sent");
     }
     LocalDateTime now = LocalDateTime.now();
+    InviteRowHold.hold(accountInviteRepository, invite, now);
     Prepared prepared = delivery.prepare(invite, template, now);
     InviteEmailDelivery sent =
         delivery.sendNow(
@@ -463,6 +475,7 @@ public class AccountInviteService {
               }
 
               LocalDateTime now = LocalDateTime.now();
+              InviteRowHold.hold(accountInviteRepository, initialOldInvite, now);
               verifyRecipientEmailAvailableExcluding(
                   initialOldInvite.getRecipientEmail(), initialOldInvite.getId(), now);
               // The expiry cleanup is a clearing bulk update, so reload the old row before the
@@ -527,7 +540,17 @@ public class AccountInviteService {
       requiresNewTransaction()
           .executeWithoutResult(
               transaction -> {
-                accountInviteRepository.deleteById(resend.prepared().invite().getId());
+                Long replacementId = resend.prepared().invite().getId();
+                // A revoke that landed while SMTP was failing wins: the old link stays dead.
+                if (!stillSent(replacementId)
+                    || accountInviteRepository.holdInStatus(
+                            resend.oldInviteId(),
+                            AccountInviteStatus.SUPERSEDED,
+                            LocalDateTime.now())
+                        != 1) {
+                  return;
+                }
+                accountInviteRepository.deleteById(replacementId);
                 accountInviteRepository.flush();
                 AccountInvite oldInvite = findInvite(resend.oldInviteId());
                 resend.oldState().restore(oldInvite);

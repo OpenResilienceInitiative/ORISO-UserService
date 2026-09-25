@@ -38,6 +38,13 @@ public class AgencyAdminInviteProvisioningService {
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptAsAgencyAdmin(String rawToken, String username, String password) {
+    return acceptAsAgencyAdmin(rawToken, username, password, () -> {});
+  }
+
+  /** {@code createUnit}: the founding wizard's Beratungsstelle, created while the row is held. */
+  @Transactional(noRollbackFor = RuntimeException.class)
+  public AccountInvite acceptAsAgencyAdmin(
+      String rawToken, String username, String password, Runnable createUnit) {
     AccountInvite invite = accountInviteService.findInviteByToken(rawToken);
     if (invite.getTargetRole() != AccountInviteTargetRole.AGENCY_ADMIN) {
       throw new BadRequestException("Not an agency-admin invite");
@@ -56,6 +63,8 @@ public class AgencyAdminInviteProvisioningService {
     if (isBlank(username) || isBlank(password)) {
       throw new BadRequestException("username and password are required");
     }
+    InviteRowHold.hold(accountInviteRepository, invite, LocalDateTime.now());
+    createUnit.run();
 
     invite.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
     invite.setProvisioningFailureReason(null);

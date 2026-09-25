@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -117,6 +118,11 @@ class AccountInviteServiceTest {
                 accountInviteRepository, templateRepository, ledger, delivery, transactionManager),
             delivery);
     lenient().when(accessPolicy.authorizeCreate(any())).thenAnswer(call -> call.getArgument(0));
+    // No racing revoke in these tests: the locked read sees what the plain one sees.
+    lenient().when(accountInviteRepository.holdInStatus(any(), any(), any())).thenReturn(1);
+    lenient()
+        .when(accountInviteRepository.findByIdForUpdate(any()))
+        .thenAnswer(call -> accountInviteRepository.findById(call.getArgument(0)));
     lenient()
         .when(accessPolicy.scopeForListing(any(), any()))
         .thenAnswer(
@@ -345,8 +351,19 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    AccountInvite[] replacement = new AccountInvite[1];
     when(accountInviteRepository.saveAndFlush(any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              AccountInvite saved = invocation.getArgument(0);
+              if (saved.getId() == null) {
+                saved.setId(11L);
+                replacement[0] = saved;
+              }
+              return saved;
+            });
+    when(accountInviteRepository.findById(11L))
+        .thenAnswer(invocation -> Optional.ofNullable(replacement[0]));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any())).thenReturn("https://x/y");
     when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenThrow(
@@ -366,6 +383,58 @@ class AccountInviteServiceTest {
     // The FAILED audit row anchors on the committed old invite.
     verify(deliveryFailureRecorder)
         .recordFailure(eq(10L), eq(template), any(), any(), any(), any());
+  }
+
+  @Test
+  void resendInvite_Should_KeepARevokedReplacement_When_TransportFailsAfterTheRevoke() {
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(10L)
+            .recipientEmail("owner@example.org")
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(20L)
+            .kind(InviteEmailTemplateKind.TENANT_INVITE)
+            .subject("s")
+            .body("{{inviteLink}}")
+            .build();
+    when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    AccountInvite[] replacement = new AccountInvite[1];
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(
+            invocation -> {
+              AccountInvite saved = invocation.getArgument(0);
+              if (saved.getId() == null) {
+                saved.setId(11L);
+                replacement[0] = saved;
+              }
+              return saved;
+            });
+    when(accountInviteRepository.findById(11L))
+        .thenAnswer(invocation -> Optional.ofNullable(replacement[0]));
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any())).thenReturn("https://x/y");
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+        .thenAnswer(
+            invocation -> {
+              // An admin revokes the replacement while the mail server refuses the message.
+              replacement[0].setStatus(AccountInviteStatus.REVOKED);
+              throw new SmtpSendException(
+                  SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+                  SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+                  "SMTP refused the message");
+            });
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(10L, 20L)))
+        .isInstanceOf(SmtpSendException.class);
+
+    // The revoke wins: the old link is not brought back and the revoked row is kept.
+    assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
+    assertThat(replacement[0].getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+    verify(accountInviteRepository, never()).deleteById(11L);
   }
 
   @Test
@@ -834,7 +903,7 @@ class AccountInviteServiceTest {
   void revokeInvite_Should_revokeUnderTheRowLock_When_notAccepted() {
     AccountInvite invite = heldNumberInvite(AccountInviteStatus.EMAIL_SENT);
     AccountInvite revoked = heldNumberInvite(AccountInviteStatus.REVOKED);
-    when(accountInviteRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(invite));
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
     when(authenticatedUser.getUserId()).thenReturn("admin-1");
     when(accountInviteRepository.revokeWhileStatusIn(eq(1L), any(), eq("admin-1"), any()))
         .thenReturn(1);
@@ -850,7 +919,7 @@ class AccountInviteServiceTest {
   @Test
   void revokeInvite_Should_answer409AlreadyAccepted_When_alreadyAccepted() {
     AccountInvite invite = heldNumberInvite(AccountInviteStatus.ACCEPTED);
-    when(accountInviteRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(invite));
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
 
     assertThatThrownBy(() -> service.revokeInvite(1L))
         .isInstanceOfSatisfying(
@@ -868,7 +937,7 @@ class AccountInviteServiceTest {
   void revokeInvite_Should_answer409AlreadyAccepted_When_anAcceptWinsTheConditionalUpdate() {
     AccountInvite invite = heldNumberInvite(AccountInviteStatus.EMAIL_SENT);
     AccountInvite accepted = heldNumberInvite(AccountInviteStatus.ACCEPTED);
-    when(accountInviteRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(invite));
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
     when(accountInviteRepository.revokeWhileStatusIn(eq(1L), any(), any(), any())).thenReturn(0);
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(accepted));
 
@@ -880,7 +949,7 @@ class AccountInviteServiceTest {
   @Test
   void revokeInvite_Should_giveNothingBackAgain_When_alreadyRevoked() {
     AccountInvite invite = heldNumberInvite(AccountInviteStatus.REVOKED);
-    when(accountInviteRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(invite));
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
 
     assertThat(service.revokeInvite(1L)).isSameAs(invite);
     verify(accountInviteRepository, never()).revokeWhileStatusIn(any(), any(), any(), any());
@@ -889,7 +958,7 @@ class AccountInviteServiceTest {
 
   @Test
   void revokeInvite_Should_throwNotFound_When_inviteMissing() {
-    when(accountInviteRepository.findByIdForUpdate(99L)).thenReturn(Optional.empty());
+    doReturn(Optional.empty()).when(accountInviteRepository).findByIdForUpdate(99L);
 
     assertThatThrownBy(() -> service.revokeInvite(99L)).isInstanceOf(NotFoundException.class);
   }
