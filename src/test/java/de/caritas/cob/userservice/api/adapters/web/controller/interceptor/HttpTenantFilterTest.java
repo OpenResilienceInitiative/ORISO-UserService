@@ -154,4 +154,20 @@ class HttpTenantFilterTest {
             de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant())
         .isNull();
   }
+
+  @Test
+  void tenantIsClearedWhenTheSubdomainLookupFails() {
+    Mockito.when(request.getRequestURI()).thenReturn("/users/1");
+    Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
+    Mockito.when(tenantService.getRestrictedTenantData(1L))
+        .thenThrow(new IllegalStateException("TenantService unavailable"));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () -> httpTenantFilter.doFilterInternal(request, response, filterChain))
+        .isInstanceOf(IllegalStateException.class);
+
+    org.assertj.core.api.Assertions.assertThat(
+            de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenantData())
+        .isNull();
+  }
 }
