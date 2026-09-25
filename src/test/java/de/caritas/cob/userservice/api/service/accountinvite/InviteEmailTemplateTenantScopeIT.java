@@ -132,11 +132,14 @@ class InviteEmailTemplateTenantScopeIT {
   void listTemplates_Should_HideAnotherTraegersTemplate_When_FilteredByKind() {
     actAsTenantAdmin(TRAEGER_B);
     service.createTemplate(command("B's own"));
+    actAsPlatformAdmin();
+    service.createTemplate(command("Platform text"));
     actAsTenantAdmin(TRAEGER_A);
+    service.createTemplate(command("A's own"));
 
     assertThat(service.listTemplates(InviteEmailTemplateKind.COUNSELLOR_INVITE))
         .extracting(InviteEmailTemplate::getName)
-        .doesNotContain("B's own");
+        .containsExactlyInAnyOrder("A's own", "Platform text");
   }
 
   @Test
