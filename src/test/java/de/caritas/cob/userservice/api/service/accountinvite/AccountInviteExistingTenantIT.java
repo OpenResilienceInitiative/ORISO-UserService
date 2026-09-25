@@ -17,7 +17,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
-import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
@@ -344,10 +343,7 @@ class AccountInviteExistingTenantIT {
                 ((List<?>) call.getArgument(0))
                     .stream().map(knownAgencies::get).filter(Objects::nonNull).toList());
     when(agencyFacts.find(agencyId))
-        .thenReturn(
-            Optional.of(
-                new AgencyFacts.Agency(
-                    agencyId, tenantId, false, topicIds, TopicPermission.CREATE)));
+        .thenReturn(Optional.of(new AgencyFacts.Agency(agencyId, tenantId, false, topicIds)));
   }
 
   private static CreateAccountInviteCommand tenantAdmin(Long tenantId, String name) {

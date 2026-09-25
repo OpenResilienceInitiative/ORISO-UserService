@@ -37,9 +37,9 @@ jobs:
       uses: actions/checkout@v6
       with:
         repository: OpenResilienceInitiative/ORISO-AgencyService
-        # Companion-PR pin to ORISO-AgencyService#308 (adds counsellorTopicPermission).
-        # Move back to AgencyService dev once #308 is merged.
-        ref: ${{ github.event_name == 'pull_request' && '3bf413a64bf57a341a9e0064dc03db5a0b9418eb' || 'pre-dev' }}
+        # AgencyService dev HEAD. UserService no longer reads counsellorTopicPermission, so this
+        # branch needs no companion pin to ORISO-AgencyService#308.
+        ref: ${{ github.event_name == 'pull_request' && 'bbdc934477212020b8c43d8bf3cb28a30081156c' || 'pre-dev' }}
         path: .providers/agency
         persist-credentials: false
 

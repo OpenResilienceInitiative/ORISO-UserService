@@ -12,7 +12,6 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
-import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
@@ -456,9 +455,7 @@ class AccountInviteTenantScopeIT {
   private void givenAgency(long agencyId, long tenantId) {
     when(agencyFacts.find(agencyId))
         .thenReturn(
-            Optional.of(
-                new AgencyFacts.Agency(
-                    agencyId, tenantId, false, java.util.List.of(11L), TopicPermission.CREATE)));
+            Optional.of(new AgencyFacts.Agency(agencyId, tenantId, false, java.util.List.of(11L))));
     var agency = new AgencyDTO().id(agencyId).tenantId(tenantId);
     when(agencyService.getAgencyWithoutCaching(agencyId)).thenReturn(agency);
     knownAgencies.put(agencyId, agency);

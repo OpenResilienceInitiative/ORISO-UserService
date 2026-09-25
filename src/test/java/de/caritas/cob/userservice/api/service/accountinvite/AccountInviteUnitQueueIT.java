@@ -19,7 +19,6 @@ import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpS
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
-import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
@@ -144,12 +143,7 @@ class AccountInviteUnitQueueIT {
     when(agencyFacts.find(EXISTING_AGENCY))
         .thenReturn(
             Optional.of(
-                new AgencyFacts.Agency(
-                    EXISTING_AGENCY,
-                    OWN_TENANT,
-                    false,
-                    java.util.List.of(),
-                    TopicPermission.CREATE)));
+                new AgencyFacts.Agency(EXISTING_AGENCY, OWN_TENANT, false, java.util.List.of())));
     when(tenantService.getRestrictedTenantData(NEW_TENANT))
         .thenThrow(HttpClientErrorException.create(HttpStatus.NOT_FOUND, "", null, null, null));
     templateId =

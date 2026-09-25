@@ -130,11 +130,11 @@ class AccountInviteTopicPermissionIT {
   @BeforeEach
   void givenAgencies() {
     when(identityEmailOwnerLookup.findByEmail(anyString())).thenReturn(Optional.empty());
-    givenAgency(LEGACY_AGENCY, OWN_TENANT, TopicPermission.CREATE, List.of(11L));
-    givenAgency(SELECT_AGENCY, OWN_TENANT, TopicPermission.SELECT_EXISTING, List.of(21L, 22L));
-    givenAgency(NEW_STYLE_AGENCY, OWN_TENANT, TopicPermission.NONE, List.of(51L, 52L));
-    givenAgency(TOPICLESS_AGENCY, OWN_TENANT, TopicPermission.CREATE, List.of());
-    givenAgency(FOREIGN_AGENCY, FOREIGN_TENANT, TopicPermission.CREATE, List.of(31L));
+    givenAgency(LEGACY_AGENCY, OWN_TENANT, List.of(11L));
+    givenAgency(SELECT_AGENCY, OWN_TENANT, List.of(21L, 22L));
+    givenAgency(NEW_STYLE_AGENCY, OWN_TENANT, List.of(51L, 52L));
+    givenAgency(TOPICLESS_AGENCY, OWN_TENANT, List.of());
+    givenAgency(FOREIGN_AGENCY, FOREIGN_TENANT, List.of(31L));
     when(agencyIdAllocationClient.reserve(any(), any())).thenReturn(4711L);
     when(agencyIdAllocationClient.getAvailability(anyLong()))
         .thenReturn(IdAllocationStatus.RESERVED);
@@ -180,7 +180,7 @@ class AccountInviteTopicPermissionIT {
   }
 
   @Test
-  void createInvite_Should_StoreTheAdminsChoice_When_ItDiffersFromTheAgencyDefault() {
+  void createInvite_Should_StoreTheAdminsChoice_When_ItDiffersFromTheOmittedDefault() {
     actAsTenantAdmin();
 
     assertThat(
@@ -469,8 +469,7 @@ class AccountInviteTopicPermissionIT {
         UserRole.USER_ADMIN);
   }
 
-  private void givenAgency(
-      long agencyId, long tenantId, TopicPermission agencyDefault, List<Long> topicIds) {
+  private void givenAgency(long agencyId, long tenantId, List<Long> topicIds) {
     knownAgencies.put(agencyId, new AgencyDTO().id(agencyId).tenantId(tenantId));
     when(agencyService.getAgenciesWithoutCaching(anyList()))
         .thenAnswer(
@@ -478,9 +477,7 @@ class AccountInviteTopicPermissionIT {
                 ((List<?>) call.getArgument(0))
                     .stream().map(knownAgencies::get).filter(Objects::nonNull).toList());
     when(agencyFacts.find(agencyId))
-        .thenReturn(
-            Optional.of(
-                new AgencyFacts.Agency(agencyId, tenantId, false, topicIds, agencyDefault)));
+        .thenReturn(Optional.of(new AgencyFacts.Agency(agencyId, tenantId, false, topicIds)));
   }
 
   private static CreateAccountInviteCommand withPermission(

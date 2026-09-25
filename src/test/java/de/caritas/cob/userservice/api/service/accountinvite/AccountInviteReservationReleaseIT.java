@@ -116,11 +116,7 @@ class AccountInviteReservationReleaseIT {
         .thenReturn(
             Optional.of(
                 new AgencyFacts.Agency(
-                    EXISTING_AGENCY,
-                    OWN_TENANT,
-                    false,
-                    java.util.List.of(11L),
-                    de.caritas.cob.userservice.api.model.TopicPermission.CREATE)));
+                    EXISTING_AGENCY, OWN_TENANT, false, java.util.List.of(11L))));
     when(tenantService.getRestrictedTenantData(NEW_TENANT))
         .thenThrow(HttpClientErrorException.create(HttpStatus.NOT_FOUND, "", null, null, null));
     when(tenantIdAllocationClient.getAvailability(NEW_TENANT))

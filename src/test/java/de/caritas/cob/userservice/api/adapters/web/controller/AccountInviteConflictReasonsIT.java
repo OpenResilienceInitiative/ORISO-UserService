@@ -16,7 +16,6 @@ import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
-import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
@@ -167,9 +166,7 @@ class AccountInviteConflictReasonsIT {
   void selfAssignment_Should_Answer409AlreadyExists_When_TheAdminCounselsThereAlready()
       throws Exception {
     when(agencyFacts.find(1L))
-        .thenReturn(
-            Optional.of(
-                new AgencyFacts.Agency(1L, 1L, false, List.of(1L), TopicPermission.CREATE)));
+        .thenReturn(Optional.of(new AgencyFacts.Agency(1L, 1L, false, List.of(1L))));
 
     // A Träger admin who already counsels in agency 1.
     var counsellingAdmin = fixtures.consultant(1L, 1L);

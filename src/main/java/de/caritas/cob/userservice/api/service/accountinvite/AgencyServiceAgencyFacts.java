@@ -5,7 +5,6 @@ import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyA
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.TopicDTO;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyAdminServiceApiControllerFactory;
-import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import java.util.List;
@@ -42,8 +41,7 @@ public class AgencyServiceAgencyFacts implements AgencyFacts {
               agency.getId(),
               agency.getTenantId(),
               isDeleted(agency.getDeleteDate()),
-              topicIds(agency),
-              defaultPermission(agency)));
+              topicIds(agency)));
     } catch (HttpClientErrorException.NotFound | HttpClientErrorException.Forbidden exception) {
       return Optional.empty();
     }
@@ -61,15 +59,6 @@ public class AgencyServiceAgencyFacts implements AgencyFacts {
     return agency.getTopics() == null
         ? List.of()
         : agency.getTopics().stream().map(TopicDTO::getId).filter(Objects::nonNull).toList();
-  }
-
-  /** An AgencyService without the setting answers without it: today's behaviour, CREATE. */
-  private static TopicPermission defaultPermission(AgencyAdminResponseDTO agency) {
-    var settings = agency.getSettings();
-    if (settings == null || settings.getCounsellorTopicPermission() == null) {
-      return TopicPermission.CREATE;
-    }
-    return TopicPermission.valueOf(settings.getCounsellorTopicPermission().getValue());
   }
 
   /** AgencyService writes the delete date with String.valueOf, so a live agency says "null". */
