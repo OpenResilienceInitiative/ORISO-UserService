@@ -181,8 +181,7 @@ class SessionAdminServiceTest {
   void findSessions_Should_ListNothing_When_CallerAdministersNoAgency() {
     when(adminScope.current()).thenReturn(new AdminScope.Agencies(1L, Set.of()));
 
-    SessionAdminResultDTO result =
-        sessionAdminService.findSessions(1, 10, new SessionFilter());
+    SessionAdminResultDTO result = sessionAdminService.findSessions(1, 10, new SessionFilter());
 
     assertThat(result.getEmbedded()).isEmpty();
     verifyNoInteractions(sessionRepository);
