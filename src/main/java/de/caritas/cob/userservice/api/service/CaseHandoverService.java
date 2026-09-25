@@ -878,19 +878,21 @@ public class CaseHandoverService {
         || !consultantAgencyIds(requester).contains(session.getAgencyId())) {
       return false;
     }
-    Set<Long> requesterTopicIds = consultantTopicIds(requester);
+    Set<Long> requesterTopicIds = consultantTopicIds(requester, session.getAgencyId());
     if (requesterTopicIds.isEmpty()) {
       return !topicsEnabled;
     }
     return !Collections.disjoint(sessionTopicIds(session), requesterTopicIds);
   }
 
-  private Set<Long> consultantTopicIds(Consultant consultant) {
+  /** #1264: topics held at that centre, plus legacy rows without a centre (every centre). */
+  private Set<Long> consultantTopicIds(Consultant consultant, Long agencyId) {
     Set<ConsultantTopic> topics = consultant.getConsultantTopics();
     if (topics == null) {
       return Set.of();
     }
     return topics.stream()
+        .filter(topic -> topic.getAgencyId() == null || topic.getAgencyId().equals(agencyId))
         .map(ConsultantTopic::getTopicId)
         .filter(Objects::nonNull)
         .collect(Collectors.toSet());
