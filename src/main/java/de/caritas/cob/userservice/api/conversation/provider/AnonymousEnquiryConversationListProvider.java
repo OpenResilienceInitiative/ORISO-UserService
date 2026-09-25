@@ -111,7 +111,7 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
     var minUpdateDate = nowInUtc().minusMinutes(liveChatQueueActivePeriodMinutes);
 
     // The topic queue is deliberately cross-tenant; only this query leaves the caller's tenant.
-    return runCrossTenant(
+    return TenantContext.supplyAcrossTenants(
         () ->
             this.sessionRepository.findAnonymousEnquiriesVisibleForConsultantsByTopicsOnly(
                 new HashSet<>(consultantTopicIds),
@@ -119,20 +119,6 @@ public class AnonymousEnquiryConversationListProvider implements ConversationLis
                 minUpdateDate,
                 ANONYMOUS,
                 pageable));
-  }
-
-  private Page<Session> runCrossTenant(java.util.function.Supplier<Page<Session>> query) {
-    var callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return query.get();
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
   }
 
   /** {@inheritDoc} */

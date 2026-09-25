@@ -29,17 +29,7 @@ public class MatrixRtcCallPolicyService {
     }
 
     // Public callback without a tenant; the room lookup is deliberately cross-tenant.
-    var callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return resolveCrossTenant(sourceRoomId, matrixUserId);
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
+    return TenantContext.supplyAcrossTenants(() -> resolveCrossTenant(sourceRoomId, matrixUserId));
   }
 
   private CallMediaPolicy resolveCrossTenant(String sourceRoomId, String matrixUserId) {

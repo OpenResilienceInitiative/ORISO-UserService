@@ -11,6 +11,10 @@ public class TenantContextProvider {
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
 
+  public boolean isMultiTenancyEnabled() {
+    return multiTenancyEnabled;
+  }
+
   public void setTechnicalContextIfMultiTenancyIsEnabled() {
     if (multiTenancyEnabled) {
       TenantContext.setCurrentTenant(TECHNICAL_TENANT_ID);
