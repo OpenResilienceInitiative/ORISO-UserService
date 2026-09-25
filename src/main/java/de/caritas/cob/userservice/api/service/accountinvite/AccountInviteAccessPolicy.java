@@ -80,6 +80,16 @@ public class AccountInviteAccessPolicy {
     return new InviteListScope(tenantId, AccountInviteTargetRole.COUNSELLOR, agencies.ids(), empty);
   }
 
+  /**
+   * A scoped admin gets 403 for a missing invite as for a foreign one, so the status never tells
+   * that a foreign invite exists; the platform sees every invite and keeps 404.
+   */
+  public void authorizeMissing(Long inviteId) {
+    if (!(adminScope.current() instanceof AdminScope.Platform)) {
+      throw deny("act on invite " + inviteId);
+    }
+  }
+
   /** Covers every action on an existing invite: send, resend, revoke, waive 2FA. */
   public void authorizeAccess(AccountInvite invite) {
     if (invite == null) {
