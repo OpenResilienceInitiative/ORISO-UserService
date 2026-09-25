@@ -85,6 +85,7 @@ import org.springframework.web.client.HttpClientErrorException;
 class AccountInviteUnitQueueIT {
 
   static final long OWN_TENANT = 1L;
+  private static final long OTHER_TENANT = 2L;
   private static final long NEW_AGENCY = 500L;
   private static final long EXISTING_AGENCY = 1L;
   private static final long NEW_TENANT = 900L;
@@ -102,6 +103,7 @@ class AccountInviteUnitQueueIT {
   @Autowired private InviteEmailTemplateRepository templateRepository;
   @Autowired private InviteEmailDeliveryRepository deliveryRepository;
   @Autowired private AuthenticatedUser caller;
+  @Autowired private org.springframework.transaction.PlatformTransactionManager transactions;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
@@ -189,6 +191,19 @@ class AccountInviteUnitQueueIT {
         HttpStatusExceptionReason.NO_PENDING_UNIT_ADMIN);
     assertThat(accountInviteRepository.count()).isZero();
     verify(agencyIdAllocationClient, never()).reserve(any(), any());
+  }
+
+  @Test
+  void counsellorOfAnotherTraeger_Should_Answer409_When_TheNumbersAdminInviteIsNotItsOwn() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    actAsTenantAdminOf(OTHER_TENANT);
+
+    assertReason(
+        () -> service.createInvite(counsellor(NEW_AGENCY)),
+        HttpStatusExceptionReason.NO_PENDING_UNIT_ADMIN);
+    assertThat(accountInviteRepository.findAll())
+        .noneMatch(invite -> Long.valueOf(OTHER_TENANT).equals(invite.getTenantId()));
   }
 
   @Test
@@ -291,7 +306,8 @@ class AccountInviteUnitQueueIT {
     when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
         .thenReturn(IdAllocationStatus.ASSIGNED);
 
-    List<Long> released = service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY);
+    List<Long> released =
+        service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY, OWN_TENANT);
 
     assertThat(released).containsExactly(queued.invite().getId());
     AccountInvite sent = reload(queued.invite());
@@ -325,7 +341,7 @@ class AccountInviteUnitQueueIT {
     Callable<List<Long>> trigger =
         () -> {
           start.await();
-          return service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY);
+          return service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY, OWN_TENANT);
         };
     ExecutorService executor = Executors.newFixedThreadPool(2);
     try {
@@ -346,6 +362,39 @@ class AccountInviteUnitQueueIT {
   }
 
   @Test
+  void claimWaitingInvite_Should_ClaimOnce_When_TwoReleasesReachTheSameInvite() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    Long waitingId = service.createInvite(counsellor(NEW_AGENCY)).getId();
+    var now = LocalDateTime.now();
+    var claims = new org.springframework.transaction.support.TransactionTemplate(transactions);
+
+    Integer first =
+        claims.execute(tx -> accountInviteRepository.claimWaitingInvite(waitingId, now, now));
+    Integer second =
+        claims.execute(tx -> accountInviteRepository.claimWaitingInvite(waitingId, now, now));
+
+    assertThat(first).isEqualTo(1);
+    assertThat(second).isZero();
+  }
+
+  @Test
+  void release_Should_LeaveInvitesOfAnotherTraegerWaiting_When_TheyNameTheSameNumber() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite own = service.createInvite(counsellor(NEW_AGENCY));
+    AccountInvite foreign = service.createInvite(counsellor(NEW_AGENCY));
+    foreign.setTenantId(OTHER_TENANT);
+    accountInviteRepository.save(foreign);
+
+    List<Long> released =
+        service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY, OWN_TENANT);
+
+    assertThat(released).containsExactly(own.getId());
+    assertThat(reload(foreign).getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
+  }
+
+  @Test
   void release_Should_LeaveADraftWithoutLink_When_SmtpConfirmsTheMailWasNotSent() {
     actAsTenantAdmin();
     service.createInvite(agencyAdmin(NEW_AGENCY));
@@ -356,7 +405,8 @@ class AccountInviteUnitQueueIT {
             new SmtpSendException(
                 SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE, "smtp off"));
 
-    List<Long> released = service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY);
+    List<Long> released =
+        service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY, OWN_TENANT);
 
     assertThat(released).containsExactly(queued.invite().getId());
     AccountInvite draft = reload(queued.invite());
@@ -370,7 +420,7 @@ class AccountInviteUnitQueueIT {
     service.createInvite(agencyAdmin(NEW_AGENCY));
     AccountInvite queued = service.createInvite(counsellor(NEW_AGENCY));
 
-    service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY);
+    service.releaseWaitingInvites(InviteUnitType.AGENCY, NEW_AGENCY, OWN_TENANT);
 
     AccountInvite draft = reload(queued);
     assertThat(draft.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
@@ -427,7 +477,7 @@ class AccountInviteUnitQueueIT {
     verify(agencyIdAllocationClient, never()).reserve(any(), any());
 
     when(agencyIdAllocationClient.reserve(null, NEW_TENANT)).thenReturn(701L);
-    service.releaseWaitingInvites(InviteUnitType.TENANT, NEW_TENANT);
+    service.releaseWaitingInvites(InviteUnitType.TENANT, NEW_TENANT, NEW_TENANT);
 
     AccountInvite released = reload(agencyAdmin);
     assertThat(released.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
@@ -495,6 +545,16 @@ class AccountInviteUnitQueueIT {
         caller,
         "tenant-admin-1",
         OWN_TENANT,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
+  }
+
+  private void actAsTenantAdminOf(long tenantId) {
+    Tenants.actAs(
+        caller,
+        "tenant-admin-" + tenantId,
+        tenantId,
         UserRole.TENANT_ADMIN,
         UserRole.AGENCY_ADMIN,
         UserRole.USER_ADMIN);

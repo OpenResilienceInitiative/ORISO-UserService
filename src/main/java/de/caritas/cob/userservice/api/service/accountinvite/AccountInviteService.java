@@ -1666,7 +1666,7 @@ public class AccountInviteService {
   }
 
   /** Releases the invites waiting for a unit that now exists; returns the IDs it released. */
-  public List<Long> releaseWaitingInvites(InviteUnitType unitType, Long unitId) {
+  public List<Long> releaseWaitingInvites(InviteUnitType unitType, Long unitId, Long tenantId) {
     if (unitType == null || unitId == null) {
       return List.of();
     }
@@ -1676,7 +1676,7 @@ public class AccountInviteService {
                 transaction ->
                     unitType == InviteUnitType.AGENCY
                         ? accountInviteRepository.findIdsWaitingForAgency(
-                            AccountInviteStatus.WAITING_FOR_UNIT, unitId)
+                            AccountInviteStatus.WAITING_FOR_UNIT, unitId, tenantId)
                         : accountInviteRepository.findIdsWaitingForTenant(
                             AccountInviteStatus.WAITING_FOR_UNIT, unitId));
     List<Long> released = new java.util.ArrayList<>();

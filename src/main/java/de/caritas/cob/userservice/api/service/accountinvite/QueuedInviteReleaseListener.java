@@ -34,7 +34,8 @@ public class QueuedInviteReleaseListener {
       if (event.tenantId() != null) {
         TenantContext.setCurrentTenant(event.tenantId());
       }
-      accountInviteService.releaseWaitingInvites(event.unitType(), event.unitId());
+      accountInviteService.releaseWaitingInvites(
+          event.unitType(), event.unitId(), event.tenantId());
     } catch (RuntimeException exception) {
       log.error(
           "Invites waiting for {} {} could not be released; they stay waiting",
