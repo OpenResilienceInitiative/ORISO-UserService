@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateCons
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
+import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
@@ -40,6 +41,7 @@ public class CounsellorInviteProvisioningService {
   private final @NonNull CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
+  private final @NonNull AgencyFacts agencyFacts;
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
@@ -80,6 +82,8 @@ public class CounsellorInviteProvisioningService {
       // Inside the try: a failed service login must mark the invite FAILED (retryable) instead of
       // leaving it IN_PROGRESS, which would answer every retry with 409.
       technicalAccessToken = loginTechnicalUser();
+      // The agency may have been deleted since the invite was written (ORISO-Admin#1026 P2-3).
+      TechnicalAccessTokenContext.runWith(technicalAccessToken, () -> requireLiveAgency(invite));
       // The service identity is ambient ONLY around the remote calls that need it: consultant
       // creation and agency assignment reach TenantService/AgencyService/ConsultingTypeService
       // through the shared admin services, which read the bearer from the header supplier.
@@ -134,6 +138,17 @@ public class CounsellorInviteProvisioningService {
     } finally {
       restoreTenantContext(requestTenant);
     }
+  }
+
+  /** The service token bypasses AgencyService's tenant filter, so the tenant is checked here. */
+  private void requireLiveAgency(AccountInvite invite) {
+    agencyFacts
+        .find(invite.getAgencyId())
+        .filter(agency -> !agency.deleted())
+        .filter(
+            agency -> agency.tenantId() == null || agency.tenantId().equals(invite.getTenantId()))
+        .orElseThrow(
+            () -> new NotFoundException("agencyId " + invite.getAgencyId() + " does not exist"));
   }
 
   private String loginTechnicalUser() {

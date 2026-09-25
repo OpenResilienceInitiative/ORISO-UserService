@@ -28,6 +28,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProv
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -48,6 +49,7 @@ class CounsellorInviteProvisioningServiceTest {
 
   private final ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService =
       mock(ConsultantAgencyRelationCreatorService.class);
+  private final AgencyFacts agencyFacts = mock(AgencyFacts.class);
 
   private CounsellorInviteProvisioningService service;
 
@@ -63,7 +65,10 @@ class CounsellorInviteProvisioningServiceTest {
             identityAuthentication,
             identityClientConfig,
             counsellorAgencyAdminGrantService,
-            consultantAgencyRelationCreatorService);
+            consultantAgencyRelationCreatorService,
+            agencyFacts);
+    when(agencyFacts.find(275L))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(275L, 79L, false, List.of())));
     var technicalUser = new TechnicalUserConfig();
     technicalUser.setUsername("technical-user");
     technicalUser.setPassword("technical-password");

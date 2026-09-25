@@ -56,6 +56,7 @@ import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient;
@@ -73,6 +74,7 @@ import jakarta.servlet.http.Cookie;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.junit.jupiter.api.AfterEach;
@@ -153,8 +155,16 @@ class MultiTenantRegistrationIT {
   private final List<String> createdUserIds = new ArrayList<>();
   private final List<Runnable> cleanups = new ArrayList<>();
 
+  /** The accept re-checks the agency with the service token (ORISO-Admin#1026 P2-3). */
+  @MockitoBean private AgencyFacts agencyFacts;
+
   @BeforeEach
   void oneAgencyOfTenantTwo() throws Exception {
+    when(agencyFacts.find(anyLong()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
     // The platform domain resolves to the main tenant, as with single-domain multitenancy.
     when(tenantResolverService.resolve(any())).thenReturn(1L);
     when(((IdentityAuthentication) identityClient).login(anyString(), anyString()))

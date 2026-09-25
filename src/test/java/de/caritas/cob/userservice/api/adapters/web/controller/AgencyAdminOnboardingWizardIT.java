@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
@@ -35,6 +36,7 @@ import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
@@ -104,8 +106,16 @@ class AgencyAdminOnboardingWizardIT {
   /** The tenant's active topics — the wizard offers them on top of the agency's coverage. */
   @MockitoBean private TopicService topicService;
 
+  /** The accept re-checks the agency with the service token (ORISO-Admin#1026 P2-3). */
+  @MockitoBean private AgencyFacts agencyFacts;
+
   @BeforeEach
   void upstreams() {
+    when(agencyFacts.find(anyLong()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
     when(agencyService.getAgencyWithoutCaching(AGENCY))
         .thenReturn(new AgencyDTO().id(AGENCY).tenantId(TENANT).topicIds(List.of(TOPIC)));
     when(agencyService.getAgencyWithoutCaching(NEW_AGENCY)).thenReturn(null);

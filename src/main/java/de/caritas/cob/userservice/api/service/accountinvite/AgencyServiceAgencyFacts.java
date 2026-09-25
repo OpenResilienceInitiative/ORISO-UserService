@@ -18,7 +18,8 @@ import org.springframework.web.client.HttpClientErrorException;
 
 /**
  * Reads AgencyService's admin detail endpoint with the caller's token: only that view carries the
- * delete date, and its tenant filter hides other tenants' agencies.
+ * delete date, and its tenant filter hides other tenants' agencies. The anonymous invite accept
+ * reads it with the service token, which AgencyService does not tenant-filter.
  */
 @Component
 @RequiredArgsConstructor
