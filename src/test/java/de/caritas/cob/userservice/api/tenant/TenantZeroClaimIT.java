@@ -79,6 +79,13 @@ class TenantZeroClaimIT {
   }
 
   @Test
+  void adviceSeeker_Should_BeServed_When_TokenClaimsTheSubdomainsTenant() throws Exception {
+    mockMvc
+        .perform(ownRoute().with(token(SUBDOMAIN_TENANT, AuthorityValue.USER_DEFAULT, "user")))
+        .andExpect(status().isOk());
+  }
+
+  @Test
   void platformAdmin_Should_BeServed_When_TokenClaimsTenantZero() throws Exception {
     mockMvc
         .perform(
