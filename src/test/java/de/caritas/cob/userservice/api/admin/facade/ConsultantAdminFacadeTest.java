@@ -45,7 +45,6 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
@@ -112,7 +111,7 @@ class ConsultantAdminFacadeTest {
     lenient()
         .doThrow(new ForbiddenException("out of scope"))
         .when(adminScope)
-        .assertMay(AdminScope.Target.agencies(List.of(1L)));
+        .assertMay(AdminScope.Target.removedAgencies(List.of(1L)));
 
     assertThrows(
         ForbiddenException.class,
@@ -537,7 +536,8 @@ class ConsultantAdminFacadeTest {
             new CreateConsultantAgencyDTO().agencyId(2L),
             new CreateConsultantAgencyDTO().agencyId(3L)));
 
-    verify(adminScope).assertMay(AdminScope.Target.agencies(Set.of(1L, 3L)));
+    verify(adminScope).assertMay(AdminScope.Target.agencies(List.of(3L)));
+    verify(adminScope).assertMay(AdminScope.Target.removedAgencies(List.of(1L)));
   }
 
   @Test
@@ -547,7 +547,7 @@ class ConsultantAdminFacadeTest {
     lenient()
         .doThrow(new ForbiddenException("out of scope"))
         .when(adminScope)
-        .assertMay(AdminScope.Target.agencies(Set.of(1L, 3L)));
+        .assertMay(AdminScope.Target.agencies(List.of(3L)));
 
     assertThrows(
         ForbiddenException.class,

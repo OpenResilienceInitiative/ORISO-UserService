@@ -10,6 +10,8 @@ import jakarta.servlet.http.HttpServletResponse;
 import java.io.IOException;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -128,6 +130,31 @@ class HttpTenantFilterTest {
     httpTenantFilter.doFilterInternal(request, response, filterChain);
 
     Mockito.verify(tenantResolverService).resolve(request);
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/conversations/askers/anonymous/new",
+        "/service/conversations/askers/anonymous/new"
+      })
+  void anonymousEnquiryRunsInTheResolvedTenant(String uri) throws ServletException, IOException {
+    Mockito.when(request.getRequestURI()).thenReturn(uri);
+    Mockito.when(tenantResolverService.resolve(request)).thenReturn(7L);
+    Mockito.when(tenantService.getRestrictedTenantData(7L)).thenReturn(new RestrictedTenantDTO());
+    var tenantInChain = new java.util.concurrent.atomic.AtomicReference<Long>();
+    Mockito.doAnswer(
+            invocation -> {
+              tenantInChain.set(
+                  de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant());
+              return null;
+            })
+        .when(filterChain)
+        .doFilter(request, response);
+
+    httpTenantFilter.doFilterInternal(request, response, filterChain);
+
+    org.assertj.core.api.Assertions.assertThat(tenantInChain.get()).isEqualTo(7L);
   }
 
   @Test
