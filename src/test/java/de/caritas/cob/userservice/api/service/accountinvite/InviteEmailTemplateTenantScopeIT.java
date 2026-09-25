@@ -50,7 +50,7 @@ import org.springframework.transaction.annotation.Transactional;
  * agency admin is the seeded admin {@value #AGENCY_ADMIN_ID}, who belongs to tenant 1.
  */
 @DataJpaTest
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
@@ -111,6 +111,30 @@ class InviteEmailTemplateTenantScopeIT {
     InviteEmailTemplate created = service.createTemplate(command("Platform text"));
 
     assertThat(created.getTenantId()).isNull();
+  }
+
+  // --- callers without a Träger of their own (fail-closed) -------------------------------
+
+  @Test
+  void templates_Should_BeRefused_When_CallerHasNoTenant() {
+    actAs("no-tenant", null, UserRole.USER_ADMIN);
+
+    assertThatThrownBy(() -> service.createTemplate(command("Nobody's")))
+        .isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> service.listTemplates(null)).isInstanceOf(ForbiddenException.class);
+    assertThat(templateRepository.count()).isZero();
+  }
+
+  @Test
+  void templates_Should_BeRefused_When_AgencyAdminSitsInTenantZero() {
+    actAsPlatformAdmin();
+    service.createTemplate(command("Platform text"));
+    actAs(AGENCY_ADMIN_ID, 0L, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+
+    assertThatThrownBy(() -> service.createTemplate(command("Ownerless")))
+        .isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> service.listTemplates(null)).isInstanceOf(ForbiddenException.class);
+    assertThat(templateRepository.count()).isEqualTo(1);
   }
 
   // --- what a Träger sees -----------------------------------------------------------------
