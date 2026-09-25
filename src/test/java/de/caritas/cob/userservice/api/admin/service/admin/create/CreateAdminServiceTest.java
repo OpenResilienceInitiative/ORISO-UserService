@@ -10,6 +10,7 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -136,17 +137,15 @@ class CreateAdminServiceTest {
     CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(7);
 
     // when, then
-    ForbiddenException exception =
-        assertThrows(
-            ForbiddenException.class,
-            () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
+    assertThrows(
+        ForbiddenException.class, () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
 
     verifyNoInteractions(identityClient);
     verifyNoInteractions(adminRepository);
   }
 
   @Test
-  void createNewAgencyAdmin_Should_KeepOwnTenantId_WhenCallerIsTenantScoped() {
+  void createNewAgencyAdmin_Should_CheckTheNamedTenantFirst_And_KeepIt_When_ScopeAllows() {
     // given
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
@@ -159,23 +158,10 @@ class CreateAdminServiceTest {
 
     // then
     assertThat(admin.getTenantId()).isEqualTo(9L);
+    var order = inOrder(adminScope, identityClient);
+    order.verify(adminScope).assertMay(AdminScope.Target.tenant(9L));
+    order.verify(identityClient).createUser(any(), anyString(), anyString());
     verify(identityAccountRemover, never()).rollbackUser(anyString());
-  }
-
-  @Test
-  void createNewAgencyAdmin_Should_AllowForeignTenantId_WhenCallerIsPlatformAdmin() {
-    // given
-    ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
-    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    givenKeycloakCreatesUser();
-
-    CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(7);
-
-    // when
-    Admin admin = createAdminService.createNewAgencyAdmin(createAdminDTO);
-
-    // then
-    assertThat(admin.getTenantId()).isEqualTo(7L);
   }
 
   private CreateAdminDTO givenValidCreateAdminDTO(Integer tenantId) {

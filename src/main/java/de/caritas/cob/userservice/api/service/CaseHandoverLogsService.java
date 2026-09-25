@@ -1,15 +1,9 @@
 package de.caritas.cob.userservice.api.service;
 
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
-import de.caritas.cob.userservice.api.tenant.TenantContext;
-import java.nio.charset.StandardCharsets;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.time.LocalDateTime;
-import java.util.Base64;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
@@ -27,16 +21,19 @@ import org.springframework.stereotype.Service;
 public class CaseHandoverLogsService {
 
   private final @NonNull NamedParameterJdbcTemplate namedParameterJdbcTemplate;
-  private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull AdminScope adminScope;
-  private final ObjectMapper objectMapper = new ObjectMapper();
 
   public CaseHandoverLogsResult listCaseHandoverLogs(int page, int perPage) {
     int safePerPage = Math.min(Math.max(perPage, 1), 200);
     int safePage = Math.max(page, 1);
     int offset = (safePage - 1) * safePerPage;
-    Long tenantId = resolveEffectiveTenantId();
-    Optional<Set<Long>> agencyIds = agencyRestriction();
+    // One reach for both filters: the platform reads every Träger, everyone else their own.
+    AdminScope.Reach reach = adminScope.current();
+    Long tenantId = reach.tenantId();
+    Optional<Set<Long>> agencyIds =
+        reach instanceof AdminScope.Agencies agencies
+            ? Optional.of(agencies.ids())
+            : Optional.empty();
 
     // Fail closed: a Beratungsstellen-Admin without a single agency assignment reads nothing —
     // never the whole tenant, and never an `IN ()` that the database would reject.
@@ -134,42 +131,6 @@ public class CaseHandoverLogsService {
     }
   }
 
-  private Long resolveEffectiveTenantId() {
-    Long tokenTenantId = getTenantIdFromAccessToken();
-    if (tokenTenantId != null) {
-      return tokenTenantId == 0L ? null : tokenTenantId;
-    }
-    return TenantContext.isTechnicalOrSuperAdminContext() ? null : TenantContext.getCurrentTenant();
-  }
-
-  private Long getTenantIdFromAccessToken() {
-    try {
-      String accessToken = authenticatedUser.getAccessToken();
-      if (accessToken == null || accessToken.isBlank()) {
-        return null;
-      }
-      String[] tokenParts = accessToken.split("\\.");
-      if (tokenParts.length < 2) {
-        return null;
-      }
-      String payload =
-          new String(Base64.getUrlDecoder().decode(tokenParts[1]), StandardCharsets.UTF_8);
-      JsonNode tenantIdNode = objectMapper.readTree(payload).get("tenantId");
-      if (tenantIdNode == null || tenantIdNode.isNull()) {
-        return null;
-      }
-      if (tenantIdNode.isNumber()) {
-        return tenantIdNode.asLong();
-      }
-      if (tenantIdNode.isTextual() && !tenantIdNode.asText().isBlank()) {
-        return Long.parseLong(tenantIdNode.asText());
-      }
-      return null;
-    } catch (Exception exception) {
-      return null;
-    }
-  }
-
   @Data
   @Builder
   public static class CaseHandoverLogEntry {
@@ -199,11 +160,5 @@ public class CaseHandoverLogsService {
     private long total;
     private int page;
     private int perPage;
-  }
-
-  private Optional<Set<Long>> agencyRestriction() {
-    return adminScope.current() instanceof AdminScope.Agencies agencies
-        ? Optional.of(agencies.ids())
-        : Optional.empty();
   }
 }
