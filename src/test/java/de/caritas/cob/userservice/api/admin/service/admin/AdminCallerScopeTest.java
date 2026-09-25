@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
@@ -15,6 +16,9 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
+import de.caritas.cob.userservice.api.model.AdminAgency;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -23,8 +27,10 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import java.time.LocalDateTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
@@ -40,6 +46,7 @@ import org.mockito.quality.Strictness;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class AdminCallerScopeTest {
 
+  private static final String CALLER = "traeger-admin";
   private static final long OWN_TENANT = 1L;
   private static final long FOREIGN_TENANT = 2L;
 
@@ -68,7 +75,7 @@ class AdminCallerScopeTest {
             userRepository,
             sessionRepository,
             userAgencyRepository);
-    caller.setUserId("traeger-admin");
+    caller.setUserId(CALLER);
     caller.setTenantId(OWN_TENANT);
     caller.setRoles(
         Set.of(
@@ -111,14 +118,14 @@ class AdminCallerScopeTest {
   void assertMayActOnAdmin_Should_Refuse_When_TenantZeroCallerLacksPlatformAdminRoles() {
     actAs(0L, UserRole.USER_ADMIN);
 
-    assertThatThrownBy(() -> adminCallerScope.assertMayActOnAdmin(admin(FOREIGN_TENANT)))
+    assertThatThrownBy(() -> adminCallerScope.assertMayActOnAdmin(admin(0L)))
         .isInstanceOf(ForbiddenException.class);
   }
 
   @Test
   void assertMayUseAgencies_Should_Refuse_When_TenantZeroCallerLacksPlatformAdminRoles() {
     actAs(0L, UserRole.USER_ADMIN);
-    givenAgencies(agency(20L, FOREIGN_TENANT));
+    givenAgencies(agency(20L, 0L));
 
     assertThatThrownBy(() -> adminCallerScope.assertMayUseAgencies(List.of(20L)))
         .isInstanceOf(ForbiddenException.class);
@@ -140,6 +147,94 @@ class AdminCallerScopeTest {
         .doesNotThrowAnyException();
   }
 
+  @Test
+  void assertMayActOnAdmin_Should_Allow_When_TechnicalUserActsAcrossTenants() {
+    actAs(OWN_TENANT, UserRole.TECHNICAL);
+
+    assertThatCode(() -> adminCallerScope.assertMayActOnAdmin(admin(FOREIGN_TENANT)))
+        .doesNotThrowAnyException();
+    verify(adminAgencyRepository, never()).findByAdminId(any());
+  }
+
+  @Test
+  void assertMayActOnAdmin_Should_KeepAgencyScope_When_TechnicalUserIsAlsoAgencyAdmin() {
+    actAs(OWN_TENANT, UserRole.TECHNICAL, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenAgenciesOfAdmin(CALLER, 7L);
+    givenAgenciesOfAdmin("target-admin", 8L);
+
+    assertThatThrownBy(() -> adminCallerScope.assertMayActOnAdmin(admin(OWN_TENANT)))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMayActOnAdmin_Should_Refuse_When_TenantlessAgencyAdminSharesNoAgency() {
+    actAs(null, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenAgenciesOfAdmin(CALLER, 7L);
+    givenAgenciesOfAdmin("target-admin", 8L);
+
+    assertThatThrownBy(() -> adminCallerScope.assertMayActOnAdmin(admin(FOREIGN_TENANT)))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMayUseAgencies_Should_CheckOwnAgenciesOnly_When_AgencyAdmin() {
+    actAs(OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenAgenciesOfAdmin(CALLER, 7L);
+
+    assertThatCode(() -> adminCallerScope.assertMayUseAgencies(List.of(7L)))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> adminCallerScope.assertMayUseAgencies(List.of(7L, 8L)))
+        .isInstanceOf(ForbiddenException.class);
+    verifyNoInteractions(agencyService);
+  }
+
+  @Test
+  void assertMayReadUser_Should_AllowCounsellorOfOwnTenant_And_RefuseForeignOrUnknown() {
+    givenCounsellor("own-counsellor", OWN_TENANT);
+    givenCounsellor("foreign-counsellor", FOREIGN_TENANT);
+
+    assertThatCode(() -> adminCallerScope.assertMayReadUser("own-counsellor"))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> adminCallerScope.assertMayReadUser("foreign-counsellor"))
+        .isInstanceOf(ForbiddenException.class);
+    assertThatThrownBy(() -> adminCallerScope.assertMayReadUser("unknown"))
+        .isInstanceOf(ForbiddenException.class);
+    verify(consultantRepository).findById("unknown");
+  }
+
+  private void givenAgenciesOfAdmin(String adminId, Long... agencyIds) {
+    when(adminAgencyRepository.findByAdminId(adminId))
+        .thenReturn(
+            Arrays.stream(agencyIds)
+                .map(agencyId -> AdminAgency.builder().agencyId(agencyId).build())
+                .toList());
+  }
+
+  private void givenCounsellor(String id, long tenantId) {
+    var counsellor = new Consultant();
+    counsellor.setId(id);
+    counsellor.setTenantId(tenantId);
+    when(consultantRepository.findById(id)).thenReturn(Optional.of(counsellor));
+  }
+
+  @Test
+  void agencyRestriction_Should_Refuse_When_TenantZeroCallerLacksPlatformAdminRoles() {
+    actAs(0L, UserRole.USER_ADMIN);
+
+    assertThatThrownBy(() -> adminCallerScope.agencyRestriction())
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void agencyRestriction_Should_BeEmpty_When_TraegerAdmin_And_OwnAgencies_When_AgencyAdmin() {
+    assertThat(adminCallerScope.agencyRestriction()).isEmpty();
+
+    actAs(OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenAgenciesOfAdmin(CALLER, 7L);
+
+    assertThat(adminCallerScope.agencyRestriction()).contains(Set.of(7L));
+  }
+
   private void actAs(Long tenantId, UserRole... roles) {
     caller.setTenantId(tenantId);
     caller.setRoles(Arrays.stream(roles).map(UserRole::getValue).collect(Collectors.toSet()));
@@ -154,6 +249,54 @@ class AdminCallerScopeTest {
         .lastName("Admin")
         .email("target@synthetic.oriso.test")
         .build();
+  }
+
+  @Test
+  void
+      assertMayActOnConsultant_Should_Refuse_When_DeletedCounsellorLeftCallersAgencyBeforeDeletion() {
+    givenDeletedCounsellorWhoLeftAgency10AndWasDeletedFromAgency11();
+    actAsAgencyAdminOf(10L);
+
+    assertThatThrownBy(() -> adminCallerScope.assertMayActOnConsultant("deleted-counsellor"))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMayActOnConsultant_Should_Allow_When_DeletedCounsellorBelongedToCallersAgency() {
+    givenDeletedCounsellorWhoLeftAgency10AndWasDeletedFromAgency11();
+    actAsAgencyAdminOf(11L);
+
+    assertThatCode(() -> adminCallerScope.assertMayActOnConsultant("deleted-counsellor"))
+        .doesNotThrowAnyException();
+  }
+
+  /** The deletion stamps the relations it removes with the counsellor's own delete date. */
+  private void givenDeletedCounsellorWhoLeftAgency10AndWasDeletedFromAgency11() {
+    var deletedAt = LocalDateTime.of(2026, 9, 25, 10, 0);
+    var counsellor = new Consultant();
+    counsellor.setId("deleted-counsellor");
+    counsellor.setTenantId(OWN_TENANT);
+    counsellor.setDeleteDate(deletedAt);
+    when(consultantRepository.findById("deleted-counsellor")).thenReturn(Optional.of(counsellor));
+    when(consultantAgencyRepository.findByConsultantId("deleted-counsellor"))
+        .thenReturn(
+            List.of(
+                relation(counsellor, 10L, deletedAt.minusDays(30)),
+                relation(counsellor, 11L, deletedAt)));
+  }
+
+  private static ConsultantAgency relation(Consultant counsellor, long agencyId, LocalDateTime at) {
+    var relation = new ConsultantAgency();
+    relation.setConsultant(counsellor);
+    relation.setAgencyId(agencyId);
+    relation.setDeleteDate(at);
+    return relation;
+  }
+
+  private void actAsAgencyAdminOf(long agencyId) {
+    actAs(OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    when(adminAgencyRepository.findByAdminId(caller.getUserId()))
+        .thenReturn(List.of(AdminAgency.builder().agencyId(agencyId).build()));
   }
 
   private void givenAgencies(AgencyDTO... agencies) {

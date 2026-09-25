@@ -205,9 +205,11 @@ public class AdminCallerScope {
    * admin sees everything.
    *
    * @return the caller's own agency IDs, or empty when the caller is not agency-restricted
+   * @throws ForbiddenException for tenant 0 without the platform-admin roles
    */
   public Optional<Set<Long>> agencyRestriction() {
-    if (!authenticatedUser.hasRestrictedAgencyPriviliges()) {
+    // isUnrestricted() refuses tenant 0 without platform roles, whose lists run unfiltered.
+    if (isUnrestricted() || !authenticatedUser.hasRestrictedAgencyPriviliges()) {
       return Optional.empty();
     }
     return Optional.of(Collections.unmodifiableSet(ownAgencyIds()));
@@ -268,12 +270,16 @@ public class AdminCallerScope {
         .collect(Collectors.toCollection(HashSet::new));
   }
 
-  /** Deleting a counsellor soft-deletes its agency relations, so those count for a deleted one. */
+  /**
+   * A deleted counsellor counts with the relations its deletion removed, which carry its own delete
+   * date; agencies it had left before stay out of reach.
+   */
   private Set<Long> agencyIdsOfConsultant(Consultant consultant) {
     if (consultant.getDeleteDate() == null) {
       return agencyIdsOfConsultant(consultant.getId());
     }
     return consultantAgencyRepository.findByConsultantId(consultant.getId()).stream()
+        .filter(relation -> consultant.getDeleteDate().equals(relation.getDeleteDate()))
         .map(ConsultantAgency::getAgencyId)
         .filter(Objects::nonNull)
         .collect(Collectors.toCollection(HashSet::new));

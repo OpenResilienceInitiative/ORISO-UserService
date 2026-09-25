@@ -732,6 +732,21 @@ class UserAdminAgencyScopeIT {
     assertThat(pausedBy(ownConsultant)).isEqualTo(callingAgencyAdmin.getId());
   }
 
+  @Test
+  @AsAgencyAdmin
+  void pauseConsultantDeletion_Should_Refuse_When_DeletedCounsellorHadLeftTheAgencyBefore()
+      throws Exception {
+    actAsAgencyAdmin();
+    markLeft(sharedConsultant, OWN_AGENCY);
+    markDeleted(sharedConsultant);
+
+    var result =
+        mockMvc.perform(pauseDeletion("consultants", sharedConsultant.getId())).andReturn();
+
+    assertThat(pausedBy(sharedConsultant)).isNull();
+    assertStatus(result, 403);
+  }
+
   // --- Suspect 3: advice-seeker routes, agency admin vs. an asker of another agency -----------
 
   @Test
@@ -911,21 +926,38 @@ class UserAdminAgencyScopeIT {
                 .collect(Collectors.toSet()));
   }
 
-  /** A deleted counsellor keeps its agency relations only as soft-deleted rows. */
+  /**
+   * A deleted counsellor keeps its agency relations only as soft-deleted rows, stamped with the
+   * counsellor's own delete date as the deletion flow does.
+   */
   private void markDeleted(Consultant consultant) {
+    var deletedAt = LocalDateTime.now().withNano(0);
     Tenants.acrossAll(
         () -> {
           var reloaded = consultantRepository.findById(consultant.getId()).orElseThrow();
-          reloaded.setDeleteDate(LocalDateTime.now());
+          reloaded.setDeleteDate(deletedAt);
           consultantRepository.save(reloaded);
           consultantAgencyRepository
               .findByConsultantIdAndDeleteDateIsNull(consultant.getId())
               .forEach(
                   relation -> {
-                    relation.setDeleteDate(LocalDateTime.now());
+                    relation.setDeleteDate(deletedAt);
                     consultantAgencyRepository.save(relation);
                   });
         });
+  }
+
+  /** The counsellor left the agency some time before being deleted. */
+  private void markLeft(Consultant consultant, long agencyId) {
+    Tenants.acrossAll(
+        () ->
+            consultantAgencyRepository
+                .findByConsultantIdAndAgencyIdAndDeleteDateIsNull(consultant.getId(), agencyId)
+                .forEach(
+                    relation -> {
+                      relation.setDeleteDate(LocalDateTime.now().minusDays(30).withNano(0));
+                      consultantAgencyRepository.save(relation);
+                    }));
   }
 
   private void markDeleted(User user) {
