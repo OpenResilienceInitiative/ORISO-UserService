@@ -27,6 +27,7 @@ import jakarta.persistence.criteria.Root;
 import java.util.Collection;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -229,12 +230,12 @@ public class AdminScope {
     if (reach instanceof Agencies agencies) {
       return agencies.ids().containsAll(requested);
     }
-    return requested.stream()
-        .allMatch(
-            agencyId -> {
-              AgencyDTO agency = agencyService.getAgencyWithoutCaching(agencyId);
-              return agency != null && isTenantReach(reach, agency.getTenantId());
-            });
+    // One lookup for all; an agency missing from the answer counts as foreign (fail closed).
+    return agencyService.getAgenciesWithoutCaching(List.copyOf(requested)).stream()
+        .filter(agency -> isTenantReach(reach, agency.getTenantId()))
+        .map(AgencyDTO::getId)
+        .collect(Collectors.toSet())
+        .containsAll(requested);
   }
 
   private boolean mayActOnPlaced(Reach reach, PlacedTarget placed) {

@@ -27,7 +27,6 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
-import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.model.AgencyInviteLink;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -66,12 +65,18 @@ import java.lang.annotation.Retention;
 import java.lang.annotation.RetentionPolicy;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.stream.Collectors;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.Answers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -442,26 +447,171 @@ class UserAdminAgencyScopeIT {
   void setConsultantAgencies_Should_Succeed_When_AgencyAdminKeepsOtherAgencyOfSharedCounsellor()
       throws Exception {
     actAsAgencyAdmin();
-    adminAgencyRepository.save(
-        AdminAgency.builder()
-            .admin(callingAgencyAdmin)
-            .agencyId(OTHER_AGENCY_OF_OWN_TENANT)
-            .build());
 
     mockMvc
-        .perform(
-            withCsrf(put("/useradmin/consultants/" + ownConsultant.getId() + "/agencies"))
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(
-                    "[{\"agencyId\":"
-                        + OWN_AGENCY
-                        + "},{\"agencyId\":"
-                        + OTHER_AGENCY_OF_OWN_TENANT
-                        + "}]"))
+        .perform(setAgencies(sharedConsultant, OWN_AGENCY, OTHER_AGENCY_OF_OWN_TENANT))
         .andExpect(status().isOk());
 
-    assertThat(activeAgenciesOf(ownConsultant))
+    assertThat(activeAgenciesOf(sharedConsultant))
         .containsOnly(OWN_AGENCY, OTHER_AGENCY_OF_OWN_TENANT);
+  }
+
+  @Test
+  @AsTenantAdmin
+  void setConsultantAgencies_Should_Refuse_When_TenantAdminAddsAgencyOfAnotherTenant()
+      throws Exception {
+    actAsTenantAdmin();
+
+    var result =
+        mockMvc.perform(setAgencies(ownConsultant, OWN_AGENCY, FOREIGN_TENANT_AGENCY)).andReturn();
+
+    assertThat(activeAgenciesOf(ownConsultant)).containsOnly(OWN_AGENCY);
+    assertStatus(result, 403);
+  }
+
+  @Test
+  @AsTenantAdmin
+  void addConsultantAgency_Should_Refuse_When_TenantAdminAddsAgencyOfAnotherTenant()
+      throws Exception {
+    actAsTenantAdmin();
+
+    var result =
+        mockMvc
+            .perform(
+                withCsrf(post("/useradmin/consultants/" + ownConsultant.getId() + "/agencies"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        "{\"agencyId\":"
+                            + FOREIGN_TENANT_AGENCY
+                            + ",\"roleSetKey\":\"main-consultant\"}"))
+            .andReturn();
+
+    assertThat(activeAgenciesOf(ownConsultant)).containsOnly(OWN_AGENCY);
+    assertStatus(result, 403);
+  }
+
+  // --- Every /useradmin/consultants/{consultantId}/** route, Träger admin vs. another tenant ---
+
+  static Stream<Arguments> consultantRoutes() {
+    return Stream.of(
+        route("GET consultant", id -> get("/useradmin/consultants/" + id)),
+        route(
+            "PUT consultant",
+            id ->
+                withCsrf(put("/useradmin/consultants/" + id))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        "{\"firstname\":\"Renamed\",\"lastname\":\"Counsellor\","
+                            + "\"email\":\"renamed@synthetic.oriso.test\","
+                            + "\"formalLanguage\":true,\"absent\":false}")),
+        route("DELETE consultant", id -> withCsrf(delete("/useradmin/consultants/" + id))),
+        route(
+            "POST chat-identity",
+            id -> withCsrf(post("/useradmin/consultants/" + id + "/chat-identity"))),
+        route("GET agencies", id -> get("/useradmin/consultants/" + id + "/agencies")),
+        route(
+            "POST agencies",
+            id ->
+                withCsrf(post("/useradmin/consultants/" + id + "/agencies"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content(
+                        "{\"agencyId\":" + OWN_AGENCY + ",\"roleSetKey\":\"main-consultant\"}")),
+        route(
+            "PUT agencies",
+            id ->
+                withCsrf(put("/useradmin/consultants/" + id + "/agencies"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("[]")),
+        route(
+            "DELETE agency",
+            id ->
+                withCsrf(
+                    delete("/useradmin/consultants/" + id + "/agencies/" + FOREIGN_TENANT_AGENCY))),
+        route("POST deletion/pause", id -> pauseDeletion("consultants", id)));
+  }
+
+  /** The picture routes check access in their own module and hide a foreign counsellor (404). */
+  static Stream<Arguments> pictureRoutes() {
+    return Stream.of(
+        route("GET picture", id -> get("/useradmin/consultants/" + id + "/picture")),
+        route(
+            "PUT picture",
+            id ->
+                withCsrf(put("/useradmin/consultants/" + id + "/picture"))
+                    .contentType(MediaType.IMAGE_PNG)
+                    .content(new byte[] {(byte) 0x89, 'P', 'N', 'G'})),
+        route(
+            "DELETE picture", id -> withCsrf(delete("/useradmin/consultants/" + id + "/picture"))),
+        route(
+            "GET picture visibility",
+            id -> get("/useradmin/consultants/" + id + "/picture/visibility")),
+        route(
+            "PUT picture visibility",
+            id ->
+                withCsrf(put("/useradmin/consultants/" + id + "/picture/visibility"))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"internalOnly\":false}")));
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("consultantRoutes")
+  @AsTenantAdmin
+  void consultantRoute_Should_Refuse_When_TenantAdminTargetsCounsellorOfAnotherTenant(
+      String route, Function<String, MockHttpServletRequestBuilder> request) throws Exception {
+    actAsTenantAdmin();
+    caller.setGrantedAuthorities(
+        Set.of(
+            AuthorityValue.USER_ADMIN,
+            AuthorityValue.CONSULTANT_UPDATE,
+            AuthorityValue.TENANT_ADMIN));
+    var before = stateOf(foreignTenantConsultant);
+
+    var result = mockMvc.perform(request.apply(foreignTenantConsultant.getId())).andReturn();
+
+    assertStatus(result, 403);
+    assertThat(result.getResponse().getContentAsString())
+        .doesNotContain(foreignTenantConsultant.getEmail());
+    assertThat(stateOf(foreignTenantConsultant)).isEqualTo(before);
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("pictureRoutes")
+  @AsTenantAdmin
+  void pictureRoute_Should_Refuse_When_TenantAdminTargetsCounsellorOfAnotherTenant(
+      String route, Function<String, MockHttpServletRequestBuilder> request) throws Exception {
+    actAsTenantAdmin();
+    caller.setGrantedAuthorities(
+        Set.of(
+            AuthorityValue.USER_ADMIN,
+            AuthorityValue.CONSULTANT_UPDATE,
+            AuthorityValue.TENANT_ADMIN));
+    var before = stateOf(foreignTenantConsultant);
+
+    var result = mockMvc.perform(request.apply(foreignTenantConsultant.getId())).andReturn();
+
+    assertThat(result.getResponse().getStatus()).as("HTTP status").isIn(403, 404);
+    assertThat(stateOf(foreignTenantConsultant)).isEqualTo(before);
+  }
+
+  @Test
+  @AsAgencyAdmin
+  void repairChatIdentity_Should_Refuse_When_AgencyAdminTargetsCounsellorOfAnotherAgency()
+      throws Exception {
+    actAsAgencyAdmin();
+
+    var result =
+        mockMvc
+            .perform(
+                withCsrf(
+                    post(
+                        "/useradmin/consultants/"
+                            + otherAgencyConsultant.getId()
+                            + "/chat-identity")))
+            .andReturn();
+
+    assertThat(result.getResponse().getContentAsString())
+        .doesNotContain(otherAgencyConsultant.getEmail());
+    assertStatus(result, 403);
   }
 
   @Test
@@ -874,6 +1024,34 @@ class UserAdminAgencyScopeIT {
     return withCsrf(post("/useradmin/" + kind + "/" + id + "/deletion/pause"))
         .contentType(MediaType.APPLICATION_JSON)
         .content("{\"reason\":\"Synthetic legal hold\",\"months\":1}");
+  }
+
+  private static Arguments route(
+      String name, Function<String, MockHttpServletRequestBuilder> request) {
+    return Arguments.of(name, request);
+  }
+
+  private static MockHttpServletRequestBuilder setAgencies(
+      Consultant consultant, long... agencyIds) {
+    return withCsrf(put("/useradmin/consultants/" + consultant.getId() + "/agencies"))
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(
+            Arrays.stream(agencyIds)
+                .mapToObj(id -> "{\"agencyId\":" + id + "}")
+                .collect(Collectors.joining(",", "[", "]")));
+  }
+
+  /** What a route may change on a counsellor: profile, deletion, chat identity and agencies. */
+  private List<Object> stateOf(Consultant consultant) {
+    var reloaded = reload(consultant);
+    return Arrays.asList(
+        reloaded.getFirstName(),
+        reloaded.getEmail(),
+        reloaded.getDeleteDate(),
+        reloaded.getStatus(),
+        reloaded.getMatrixUserId(),
+        reloaded.getDeletionPausedBy(),
+        activeAgenciesOf(consultant));
   }
 
   private static MockHttpServletRequestBuilder withCsrf(MockHttpServletRequestBuilder request) {
