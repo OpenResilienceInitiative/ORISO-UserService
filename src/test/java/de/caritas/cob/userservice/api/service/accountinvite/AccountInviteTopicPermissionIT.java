@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.never;
@@ -10,6 +11,7 @@ import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
@@ -35,7 +37,10 @@ import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.time.LocalDateTime;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -111,6 +116,8 @@ class AccountInviteTopicPermissionIT {
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
+
+  private final Map<Long, AgencyDTO> knownAgencies = new HashMap<>();
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
@@ -164,7 +171,7 @@ class AccountInviteTopicPermissionIT {
   }
 
   @Test
-  void createInvite_Should_AskAgencyServiceOnce_ForScopeBindingAndPermission() {
+  void createInvite_Should_ReadTheAgencyFactsOnce_ForBindingAndPermission() {
     actAsTenantAdmin();
 
     invites.createInvite(withPermission(counsellorInto(SELECT_AGENCY, null), null));
@@ -444,6 +451,12 @@ class AccountInviteTopicPermissionIT {
 
   private void givenAgency(
       long agencyId, long tenantId, TopicPermission agencyDefault, List<Long> topicIds) {
+    knownAgencies.put(agencyId, new AgencyDTO().id(agencyId).tenantId(tenantId));
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            call ->
+                ((List<?>) call.getArgument(0))
+                    .stream().map(knownAgencies::get).filter(Objects::nonNull).toList());
     when(agencyFacts.find(agencyId))
         .thenReturn(
             Optional.of(

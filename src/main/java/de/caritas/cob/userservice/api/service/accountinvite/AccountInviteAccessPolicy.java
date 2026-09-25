@@ -56,8 +56,7 @@ public class AccountInviteAccessPolicy {
     }
     return switch (adminScope.current()) {
       case AdminScope.Platform platform -> command;
-      case AdminScope.Tenant tenant ->
-          authorizeTenantAdminCreate(command, tenant.tenantId());
+      case AdminScope.Tenant tenant -> authorizeTenantAdminCreate(command, tenant.tenantId());
       case AdminScope.Agencies agencies -> authorizeAgencyAdminCreate(command, agencies);
     };
   }
@@ -140,8 +139,7 @@ public class AccountInviteAccessPolicy {
   }
 
   private CreateAccountInviteCommand authorizeTenantAdminCreate(
-      CreateAccountInviteCommand command,
-      Long callerTenantId) {
+      CreateAccountInviteCommand command, Long callerTenantId) {
     Set<AccountInviteTargetRole> invitable =
         authenticatedUser.hasTenantLevelAdminRole()
             ? TENANT_ADMIN_INVITABLE_ROLES

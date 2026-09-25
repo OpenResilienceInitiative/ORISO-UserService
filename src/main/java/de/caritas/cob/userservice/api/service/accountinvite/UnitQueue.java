@@ -90,8 +90,8 @@ public class UnitQueue {
 
   /**
    * Sends each invite of {@code tenantId} waiting for the now existing unit with its queued
-   * template, or leaves a DRAFT. One failure does not hold up the others. Returns the IDs this
-   * call released.
+   * template, or leaves a DRAFT. One failure does not hold up the others. Returns the IDs this call
+   * released.
    */
   public List<Long> release(InviteUnitType unitType, Long unitId, Long tenantId) {
     if (unitType == null || unitId == null) {

@@ -395,8 +395,7 @@ class AccountInviteUnitQueueIT {
     foreign.setTenantId(OTHER_TENANT);
     accountInviteRepository.save(foreign);
 
-    List<Long> released =
-        queue.release(InviteUnitType.AGENCY, NEW_AGENCY, OWN_TENANT);
+    List<Long> released = queue.release(InviteUnitType.AGENCY, NEW_AGENCY, OWN_TENANT);
 
     assertThat(released).containsExactly(own.getId());
     assertThat(reload(foreign).getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);

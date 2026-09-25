@@ -116,9 +116,7 @@ class AccountInviteServiceTest {
             new UnitQueue(
                 accountInviteRepository, templateRepository, ledger, delivery, transactionManager),
             delivery);
-    lenient()
-        .when(accessPolicy.authorizeCreate(any()))
-        .thenAnswer(call -> call.getArgument(0));
+    lenient().when(accessPolicy.authorizeCreate(any())).thenAnswer(call -> call.getArgument(0));
     lenient()
         .when(accessPolicy.scopeForListing(any(), any()))
         .thenAnswer(
