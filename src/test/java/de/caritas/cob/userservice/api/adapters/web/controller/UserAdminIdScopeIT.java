@@ -1,6 +1,8 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.contains;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
@@ -8,6 +10,7 @@ import static org.springframework.test.web.servlet.request.MockMvcRequestBuilder
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
@@ -45,7 +48,11 @@ import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
+import java.util.Arrays;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
@@ -137,7 +144,10 @@ class UserAdminIdScopeIT {
   private Admin ownAgencyAdmin;
   private Admin otherAgencyAdmin;
 
+  private final Map<Long, AgencyDTO> agencies = new HashMap<>();
+
   @BeforeEach
+  @SuppressWarnings("unchecked")
   void seedAdminsOfTwoTenants() {
     when(tenantService.getRestrictedTenantData(anyLong()))
         .thenReturn(new RestrictedTenantDTO().subdomain("synthetic"));
@@ -146,6 +156,11 @@ class UserAdminIdScopeIT {
     givenAgency(OWN_AGENCY, OWN_TENANT);
     givenAgency(OTHER_AGENCY_OF_OWN_TENANT, OWN_TENANT);
     givenAgency(FOREIGN_TENANT_AGENCY, FOREIGN_TENANT);
+    when(agencyService.getAgenciesWithoutCaching(any()))
+        .thenAnswer(
+            call ->
+                ((List<Long>) call.getArgument(0))
+                    .stream().map(agencies::get).filter(Objects::nonNull).toList());
 
     ownTenantAdmin = fixtures.admin(OWN_TENANT, AdminType.TENANT);
     foreignTenantAgencyAdmin =
@@ -242,6 +257,31 @@ class UserAdminIdScopeIT {
             .build());
 
     addAgency(ownAgencyAdmin, OWN_AGENCY).andExpect(status().isCreated());
+
+    assertThat(agenciesOf(ownAgencyAdmin)).containsOnly(OWN_AGENCY, OTHER_AGENCY_OF_OWN_TENANT);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void setAgencies_Should_Refuse_When_AgencyAdminEmptiesAdminOfAnotherAgency() throws Exception {
+    actAsAgencyAdmin();
+
+    setAgencies(otherAgencyAdmin).andExpect(status().isForbidden());
+
+    assertThat(agenciesOf(otherAgencyAdmin)).containsOnly(OTHER_AGENCY_OF_OWN_TENANT);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void setAgencies_Should_Refuse_When_AgencyAdminDropsForeignAgencyOfSharedAdmin()
+      throws Exception {
+    actAsAgencyAdmin();
+    adminAgencyRepository.save(
+        AdminAgency.builder().admin(ownAgencyAdmin).agencyId(OTHER_AGENCY_OF_OWN_TENANT).build());
+
+    setAgencies(ownAgencyAdmin, OWN_AGENCY).andExpect(status().isForbidden());
+
+    assertThat(agenciesOf(ownAgencyAdmin)).containsOnly(OWN_AGENCY, OTHER_AGENCY_OF_OWN_TENANT);
   }
 
   @Test
@@ -304,7 +344,18 @@ class UserAdminIdScopeIT {
 
     mockMvc
         .perform(get("/useradmin/agencyadmins/" + ownAgencyAdmin.getId() + "/agencies"))
-        .andExpect(status().isOk());
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$", contains((int) OWN_AGENCY)));
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void getAdminAgencies_Should_Refuse_When_AgencyAdminReadsAdminOfAnotherAgency() throws Exception {
+    actAsAgencyAdmin();
+
+    mockMvc
+        .perform(get("/useradmin/agencyadmins/" + otherAgencyAdmin.getId() + "/agencies"))
+        .andExpect(status().isForbidden());
   }
 
   // --- GET /useradmin/users/{userId}/identities --------------------------------------------
@@ -326,7 +377,9 @@ class UserAdminIdScopeIT {
 
     mockMvc
         .perform(get("/useradmin/users/" + ownAgencyAdmin.getId() + "/identities"))
-        .andExpect(status().isOk());
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.hasAdminIdentity").value(true))
+        .andExpect(jsonPath("$.hasConsultantIdentity").value(false));
   }
 
   // --- helpers ---------------------------------------------------------------------------------
@@ -336,6 +389,16 @@ class UserAdminIdScopeIT {
         withCsrf(post("/useradmin/agencyadmins/" + target.getId() + "/agencies"))
             .contentType(MediaType.APPLICATION_JSON)
             .content("{\"agencyId\":" + agencyId + "}"));
+  }
+
+  private ResultActions setAgencies(Admin target, long... agencyIds) throws Exception {
+    return mockMvc.perform(
+        withCsrf(put("/useradmin/agencyadmins/" + target.getId() + "/agencies"))
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(
+                Arrays.stream(agencyIds)
+                    .mapToObj(id -> "{\"agencyId\":" + id + "}")
+                    .collect(Collectors.joining(",", "[", "]"))));
   }
 
   private ResultActions removeAgency(Admin target, long agencyId) throws Exception {
@@ -402,5 +465,6 @@ class UserAdminIdScopeIT {
     var agency = new AgencyDTO().id(agencyId).tenantId(tenantId).consultingType(1);
     when(agencyService.getAgency(agencyId)).thenReturn(agency);
     when(agencyService.getAgencyWithoutCaching(agencyId)).thenReturn(agency);
+    agencies.put(agencyId, agency);
   }
 }

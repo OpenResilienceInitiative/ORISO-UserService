@@ -167,6 +167,14 @@ class ConsultantAgencyLateJoinerMembershipIT {
     var consultant = givenConsultantWithoutAgency();
     givenOpenEnquiry(AGENCY_ID, ENQUIRY_ROOM_ID);
     when(agencyService.getAgency(UNKNOWN_AGENCY_ID)).thenReturn(null);
+    // Only the platform reaches an agency AgencyService does not know; a Träger admin is refused.
+    Tenants.actAs(
+        caller,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
 
     assertThrows(
         BadRequestException.class,
