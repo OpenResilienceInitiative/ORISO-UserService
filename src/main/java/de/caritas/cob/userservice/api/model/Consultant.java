@@ -22,6 +22,7 @@ import jakarta.validation.constraints.Size;
 import java.time.LocalDateTime;
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -456,6 +457,40 @@ public class Consultant implements TenantAware, NotificationsAware {
                         .createDate(now)
                         .updateDate(now)
                         .build()));
+  }
+
+  /**
+   * Replaces the full set of topics per counselling centre (#1264). Rows that stay are left
+   * untouched for the same unique-key reason as {@link #replaceTopics}; legacy rows without a
+   * centre are dropped. A {@code null} argument leaves the current set untouched.
+   */
+  @JsonIgnore
+  public void replaceTopicsPerAgency(Map<Long, ? extends Collection<Long>> topicIdsByAgencyId) {
+    if (isNull(topicIdsByAgencyId)) {
+      return;
+    }
+    if (isNull(this.consultantTopics)) {
+      this.consultantTopics = new HashSet<>();
+    }
+    var now = LocalDateTime.now();
+    var target = new HashSet<ConsultantTopic>();
+    topicIdsByAgencyId.forEach(
+        (agencyId, topicIds) ->
+            topicIds.stream()
+                .filter(Objects::nonNull)
+                .forEach(
+                    topicId ->
+                        target.add(
+                            ConsultantTopic.builder()
+                                .consultant(this)
+                                .agencyId(agencyId)
+                                .topicId(topicId)
+                                .createDate(now)
+                                .updateDate(now)
+                                .build())));
+    this.consultantTopics.removeIf(ct -> !target.contains(ct));
+    target.removeAll(this.consultantTopics);
+    this.consultantTopics.addAll(target);
   }
 
   @JsonIgnore

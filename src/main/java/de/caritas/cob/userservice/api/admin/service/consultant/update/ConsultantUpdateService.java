@@ -86,8 +86,12 @@ public class ConsultantUpdateService {
                     new BadRequestException(
                         String.format("Consultant with id %s does not exist", consultantId)));
 
-    consultantTopicAgencyCompatibilityValidator.validateTopicUpdateAgainstAssignedAgencies(
-        consultant.getId(), updateConsultantDTO.getTopicIds(), consultant.getTenantId());
+    var topicIdsByAgencyId =
+        consultantTopicAgencyCompatibilityValidator.resolveTopicUpdate(
+            consultant.getId(),
+            updateConsultantDTO.getTopicIds(),
+            updateConsultantDTO.getTopicsByAgency(),
+            consultant.getTenantId());
     rejectRemovingTheLastTopic(consultant, updateConsultantDTO.getTopicIds());
 
     boolean identityDataChanged = identityDataChanged(consultant, updateConsultantDTO);
@@ -120,6 +124,7 @@ public class ConsultantUpdateService {
     String previousPublishedName =
         consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
 
+    consultant.replaceTopicsPerAgency(topicIdsByAgencyId);
     var updatedConsultant = updateDatabaseConsultant(updateConsultantDTO, consultant, adminEdit);
     // updateDatabaseConsultant mutates this very entity, so it already carries the new values.
     scheduleMatrixDisplayNameUpdate(consultant, identityDataChanged, previousPublishedName);
@@ -225,7 +230,6 @@ public class ConsultantUpdateService {
     consultant.setAbsent(updateConsultantDTO.getAbsent());
     consultant.setAbsenceMessage(updateConsultantDTO.getAbsenceMessage());
     applyPersonalInfo(updateConsultantDTO, consultant);
-    consultant.replaceTopics(updateConsultantDTO.getTopicIds());
     applyTopicPermission(updateConsultantDTO, consultant);
     // Always update supervisor field if provided (even if false)
     if (updateConsultantDTO.getIsSupervisor() != null) {

@@ -6,14 +6,25 @@ import java.util.List;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.CrudRepository;
 
+/**
+ * Rows are stored per counselling centre (#1264), so the flat queries use DISTINCT: routing and
+ * every other flat reader keep seeing each topic / consultant once.
+ */
 public interface ConsultantTopicRepository extends CrudRepository<ConsultantTopic, Long> {
 
-  @Query("SELECT ct.topicId FROM ConsultantTopic ct WHERE ct.consultant.id = ?1")
+  @Query("SELECT DISTINCT ct.topicId FROM ConsultantTopic ct WHERE ct.consultant.id = ?1")
   List<Long> findTopicIdsByConsultantId(String consultantId);
 
-  @Query("SELECT ct.consultant.id, ct.topicId FROM ConsultantTopic ct WHERE ct.consultant.id IN ?1")
+  @Query(
+      "SELECT DISTINCT ct.consultant.id, ct.topicId FROM ConsultantTopic ct WHERE ct.consultant.id IN ?1")
   List<Object[]> findTopicIdsByConsultantIdIn(Collection<String> consultantIds);
 
-  @Query("SELECT ct.consultant.id FROM ConsultantTopic ct WHERE ct.topicId = ?1")
+  @Query("SELECT DISTINCT ct.consultant.id FROM ConsultantTopic ct WHERE ct.topicId = ?1")
   List<String> findConsultantIdsByTopicId(Long topicId);
+
+  /** Rows as {consultantId, agencyId (nullable), topicId}, for the per-centre admin view. */
+  @Query(
+      "SELECT ct.consultant.id, ct.agencyId, ct.topicId FROM ConsultantTopic ct"
+          + " WHERE ct.consultant.id IN ?1")
+  List<Object[]> findAgencyTopicRowsByConsultantIdIn(Collection<String> consultantIds);
 }

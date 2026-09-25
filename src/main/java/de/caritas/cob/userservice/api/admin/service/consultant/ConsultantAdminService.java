@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantTopicDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAdminConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateConsultantDTO;
+import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantTopicsByAgencyMapper;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
 import de.caritas.cob.userservice.api.admin.service.consultant.delete.ConsultantPreDeletionService;
 import de.caritas.cob.userservice.api.admin.service.consultant.update.ConsultantUpdateService;
@@ -101,6 +102,12 @@ public class ConsultantAdminService {
   }
 
   private void enrichWithTopics(String consultantId, ConsultantAdminResponseDTO response) {
+    response
+        .getEmbedded()
+        .setTopicsByAgency(
+            ConsultantTopicsByAgencyMapper.topicsByAgencyOf(
+                    consultantTopicRepository, List.of(consultantId))
+                .getOrDefault(consultantId, Collections.emptyList()));
     var topicIds = consultantTopicRepository.findTopicIdsByConsultantId(consultantId);
     if (topicIds.isEmpty()) {
       response.getEmbedded().setTopics(Collections.emptyList());
