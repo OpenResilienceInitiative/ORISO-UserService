@@ -217,6 +217,24 @@ class AdminCallerScopeTest {
     when(consultantRepository.findById(id)).thenReturn(Optional.of(counsellor));
   }
 
+  @Test
+  void agencyRestriction_Should_Refuse_When_TenantZeroCallerLacksPlatformAdminRoles() {
+    actAs(0L, UserRole.USER_ADMIN);
+
+    assertThatThrownBy(() -> adminCallerScope.agencyRestriction())
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void agencyRestriction_Should_BeEmpty_When_TraegerAdmin_And_OwnAgencies_When_AgencyAdmin() {
+    assertThat(adminCallerScope.agencyRestriction()).isEmpty();
+
+    actAs(OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    givenAgenciesOfAdmin(CALLER, 7L);
+
+    assertThat(adminCallerScope.agencyRestriction()).contains(Set.of(7L));
+  }
+
   private void actAs(Long tenantId, UserRole... roles) {
     caller.setTenantId(tenantId);
     caller.setRoles(Arrays.stream(roles).map(UserRole::getValue).collect(Collectors.toSet()));

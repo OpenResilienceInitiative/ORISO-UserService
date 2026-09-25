@@ -356,6 +356,22 @@ class UserAdminListAndChatIdentityScopeIT {
     assertThat(body).contains(ownConsultant.getId());
   }
 
+  @Test
+  @AsTenantAdmin
+  void listRoutes_Should_Refuse_When_TenantZeroCallerLacksPlatformAdminRoles() throws Exception {
+    actAs("tenant-zero-user-admin", 0L, UserRole.USER_ADMIN);
+
+    var consultants =
+        mockMvc.perform(consultantList().param("perPage", ALL)).andReturn().getResponse();
+    var sessions = mockMvc.perform(sessionList().param("perPage", ALL)).andReturn().getResponse();
+
+    assertThat(consultants.getStatus()).as("consultant list status").isEqualTo(403);
+    assertThat(consultants.getContentAsString()).doesNotContain(foreignTenantConsultant.getId());
+    assertThat(sessions.getStatus()).as("session list status").isEqualTo(403);
+    assertThat(sessions.getContentAsString())
+        .doesNotContain(foreignTenantSession.getUser().getUserId());
+  }
+
   // --- GET /useradmin/sessions --------------------------------------------------------------
 
   @Test
