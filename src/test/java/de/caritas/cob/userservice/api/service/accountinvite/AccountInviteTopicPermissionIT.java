@@ -418,8 +418,28 @@ class AccountInviteTopicPermissionIT {
                 .updatePermission(waitingInvite.getId(), TopicPermission.SELECT_EXISTING)
                 .getTopicPermission())
         .isEqualTo(TopicPermission.SELECT_EXISTING);
+  }
+
+  @Test
+  void updatePermission_Should_AnswerAsForAForeignInvite_When_ATraegerAdminNamesAMissingOne() {
+    actAsTenantAdmin();
+    assertThatThrownBy(() -> service.updatePermission(987654L, TopicPermission.NONE))
+        .isInstanceOf(ForbiddenException.class);
+
+    actAsPlatformAdmin();
     assertThatThrownBy(() -> service.updatePermission(987654L, TopicPermission.NONE))
         .isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void updatePermission_Should_BeForbidden_When_AnAgencyAdminNamesAnAgencyAdminInvite() {
+    actAsTenantAdmin();
+    AccountInvite adminInvite =
+        invites.createInvite(withPermission(agencyAdminInto(LEGACY_AGENCY, "c"), null));
+
+    actAsAgencyAdmin();
+    assertThatThrownBy(() -> service.updatePermission(adminInvite.getId(), TopicPermission.NONE))
+        .isInstanceOf(ForbiddenException.class);
   }
 
   // --- helpers ----------------------------------------------------------------------------------
