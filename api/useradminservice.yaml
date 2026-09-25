@@ -1310,7 +1310,7 @@ paths:
       x-internal: true
       tags:
         - account-invite-controller
-      summary: 'Revokes an invite and gives back a Träger or agency number no other invite needs [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
+      summary: 'Revokes an invite and gives back a Träger or agency number no other invite needs; 409 INVITE_ALREADY_ACCEPTED once its account exists [Authorization: tenant-admin, user-admin, restricted-agency-admin]'
       operationId: revokeAccountInvite
       parameters:
         - $ref: '#/components/parameters/InviteId'
@@ -1321,10 +1321,10 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/AccountInvite'
-        400:
-          description: BAD REQUEST - accepted invite
         403:
           description: FORBIDDEN - invite outside the caller's scope
+        409:
+          $ref: '#/components/responses/AccountInviteConflict'
       security:
         - Bearer: [ ]
   /useradmin/account-invites/{inviteId}/topic-permission:

@@ -415,6 +415,27 @@ class AccountInviteUnitQueueIT {
   }
 
   @Test
+  void release_Should_KeepARevokeThatLandsWhileSmtpFails_When_TheMailWasNotSent() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    var queued = service.createAndSendInvite(counsellor(NEW_AGENCY), templateId);
+    when(inviteMailDispatchService.send(
+            anyString(), anyString(), anyString(), anyString(), any(), any()))
+        .thenAnswer(
+            call -> {
+              // The admin revokes the released invite while the mail server is failing.
+              service.revokeInvite(queued.invite().getId());
+              throw new SmtpSendException(
+                  SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE, "smtp off");
+            });
+
+    queue.release(InviteUnitType.AGENCY, NEW_AGENCY, OWN_TENANT);
+
+    // The SMTP fallback must not turn the revoked invite back into a sendable draft.
+    assertThat(reload(queued.invite()).getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
+  }
+
+  @Test
   void release_Should_TurnAWaitingInviteWithoutTemplateIntoADraft() {
     actAsTenantAdmin();
     service.createInvite(agencyAdmin(NEW_AGENCY));

@@ -831,32 +831,65 @@ class AccountInviteServiceTest {
   // --- revokeInvite ---
 
   @Test
-  void revokeInvite_Should_setRevokedFields_When_notAccepted() {
-    AccountInvite invite =
-        AccountInvite.builder().id(1L).status(AccountInviteStatus.EMAIL_SENT).build();
-    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+  void revokeInvite_Should_revokeUnderTheRowLock_When_notAccepted() {
+    AccountInvite invite = heldNumberInvite(AccountInviteStatus.EMAIL_SENT);
+    AccountInvite revoked = heldNumberInvite(AccountInviteStatus.REVOKED);
+    when(accountInviteRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(invite));
     when(authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(accountInviteRepository.revokeWhileStatusIn(eq(1L), any(), eq("admin-1"), any()))
+        .thenReturn(1);
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(revoked));
 
     AccountInvite result = service.revokeInvite(1L);
 
     assertThat(result.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
-    assertThat(result.getRevokedByUserId()).isEqualTo("admin-1");
-    assertThat(result.getRevokedAt()).isNotNull();
+    // Only the call that revoked asks the ledger whether the held number can go back.
+    verify(accountInviteRepository).existsReservationHolderForAgency(eq(700L), any());
   }
 
   @Test
-  void revokeInvite_Should_throwBadRequest_When_alreadyAccepted() {
-    AccountInvite invite =
-        AccountInvite.builder().id(1L).status(AccountInviteStatus.ACCEPTED).build();
-    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+  void revokeInvite_Should_answer409AlreadyAccepted_When_alreadyAccepted() {
+    AccountInvite invite = heldNumberInvite(AccountInviteStatus.ACCEPTED);
+    when(accountInviteRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(invite));
 
-    assertThatThrownBy(() -> service.revokeInvite(1L)).isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> service.revokeInvite(1L))
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            conflict -> {
+              assertThat(conflict.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(conflict.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("INVITE_ALREADY_ACCEPTED");
+            });
+    verify(accountInviteRepository, never()).revokeWhileStatusIn(any(), any(), any(), any());
+    verify(accountInviteRepository, never()).existsReservationHolderForAgency(any(), any());
+  }
+
+  @Test
+  void revokeInvite_Should_answer409AlreadyAccepted_When_anAcceptWinsTheConditionalUpdate() {
+    AccountInvite invite = heldNumberInvite(AccountInviteStatus.EMAIL_SENT);
+    AccountInvite accepted = heldNumberInvite(AccountInviteStatus.ACCEPTED);
+    when(accountInviteRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.revokeWhileStatusIn(eq(1L), any(), any(), any())).thenReturn(0);
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(accepted));
+
+    assertThatThrownBy(() -> service.revokeInvite(1L))
+        .isInstanceOf(CustomValidationHttpStatusException.class);
+    verify(accountInviteRepository, never()).existsReservationHolderForAgency(any(), any());
+  }
+
+  @Test
+  void revokeInvite_Should_giveNothingBackAgain_When_alreadyRevoked() {
+    AccountInvite invite = heldNumberInvite(AccountInviteStatus.REVOKED);
+    when(accountInviteRepository.findByIdForUpdate(1L)).thenReturn(Optional.of(invite));
+
+    assertThat(service.revokeInvite(1L)).isSameAs(invite);
+    verify(accountInviteRepository, never()).revokeWhileStatusIn(any(), any(), any(), any());
+    verify(accountInviteRepository, never()).existsReservationHolderForAgency(any(), any());
   }
 
   @Test
   void revokeInvite_Should_throwNotFound_When_inviteMissing() {
-    when(accountInviteRepository.findById(99L)).thenReturn(Optional.empty());
+    when(accountInviteRepository.findByIdForUpdate(99L)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> service.revokeInvite(99L)).isInstanceOf(NotFoundException.class);
   }
@@ -864,6 +897,16 @@ class AccountInviteServiceTest {
   @Test
   void revokeInvite_Should_throwBadRequest_When_inviteIdNull() {
     assertThatThrownBy(() -> service.revokeInvite(null)).isInstanceOf(BadRequestException.class);
+  }
+
+  /** An invite that holds a reserved Beratungsstelle number the ledger may give back. */
+  private static AccountInvite heldNumberInvite(AccountInviteStatus status) {
+    return AccountInvite.builder()
+        .id(1L)
+        .agencyId(700L)
+        .agencyIdAllocationMode(IdAllocationMode.MANUAL)
+        .status(status)
+        .build();
   }
 
   // --- acceptInvite ---

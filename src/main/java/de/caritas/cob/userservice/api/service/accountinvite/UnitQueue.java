@@ -216,7 +216,12 @@ public class UnitQueue {
       newTransaction()
           .executeWithoutResult(
               transaction -> {
-                AccountInvite invite = findInvite(inviteId);
+                AccountInvite invite =
+                    accountInviteRepository.findByIdForUpdate(inviteId).orElse(null);
+                // A revoke that landed while SMTP was failing wins; the draft must not revive it.
+                if (invite == null || invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
+                  return;
+                }
                 invite.setStatus(AccountInviteStatus.DRAFT);
                 invite.setTokenHash(null);
                 invite.setUpdateDate(LocalDateTime.now());

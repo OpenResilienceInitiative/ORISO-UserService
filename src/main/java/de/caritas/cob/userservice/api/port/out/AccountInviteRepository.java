@@ -60,6 +60,31 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("acceptedByUserId") String acceptedByUserId,
       @Param("now") LocalDateTime now);
 
+  /** Waits for a running accept, which holds this row lock while it creates the account. */
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("SELECT i FROM AccountInvite i WHERE i.id = :id")
+  Optional<AccountInvite> findByIdForUpdate(@Param("id") Long id);
+
+  /**
+   * Counterpart of {@link #claimForAcceptance}: of a racing revoke and accept only one changes the
+   * row. Returns 0 when an accept or another revoke came first.
+   */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i"
+          + " SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.REVOKED,"
+          + " i.activeRecipientKey = NULL,"
+          + " i.revokedAt = :now,"
+          + " i.revokedByUserId = :revokedByUserId,"
+          + " i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status IN :revocable")
+  int revokeWhileStatusIn(
+      @Param("id") Long id,
+      @Param("revocable") Collection<AccountInviteStatus> revocable,
+      @Param("revokedByUserId") String revokedByUserId,
+      @Param("now") LocalDateTime now);
+
   boolean existsByTenantIdAndTargetRoleAndStatusIn(
       Long tenantId, AccountInviteTargetRole targetRole, Collection<AccountInviteStatus> statuses);
 

@@ -68,6 +68,15 @@ public class AccountInviteService {
   private static final List<AccountInviteStatus> EXPIRABLE_STATUSES =
       List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
 
+  /** Everything but ACCEPTED and REVOKED, as before the revoke became conditional. */
+  private static final List<AccountInviteStatus> REVOCABLE_STATUSES =
+      List.of(
+          AccountInviteStatus.WAITING_FOR_UNIT,
+          AccountInviteStatus.DRAFT,
+          AccountInviteStatus.EMAIL_SENT,
+          AccountInviteStatus.EXPIRED,
+          AccountInviteStatus.SUPERSEDED);
+
   private static final int EXPIRY_SWEEP_BATCH = 100;
 
   private final @NonNull AccountInviteRepository accountInviteRepository;
@@ -554,21 +563,37 @@ public class AccountInviteService {
     return elapsed.size();
   }
 
+  /**
+   * Locked and conditional so a racing accept and revoke cannot both win (ORISO-Admin#1026); only
+   * the call that revoked gives the numbers back.
+   */
   @Transactional
   public AccountInvite revokeInvite(Long inviteId) {
-    AccountInvite invite = findAuthorizedInvite(inviteId);
+    AccountInvite invite = findAuthorizedInviteForUpdate(inviteId);
     if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
-      throw new BadRequestException("Accepted invites cannot be revoked");
+      throw inviteAlreadyAccepted();
+    }
+    if (invite.getStatus() == AccountInviteStatus.REVOKED) {
+      return invite;
     }
     LocalDateTime now = LocalDateTime.now();
-    invite.setStatus(AccountInviteStatus.REVOKED);
-    invite.setActiveRecipientKey(null);
-    invite.setRevokedAt(now);
-    invite.setRevokedByUserId(authenticatedUser.getUserId());
-    invite.setUpdateDate(now);
-    AccountInvite saved = accountInviteRepository.save(invite);
-    ledger.releaseUnneeded(saved, now);
-    return saved;
+    int revoked =
+        accountInviteRepository.revokeWhileStatusIn(
+            invite.getId(), REVOCABLE_STATUSES, authenticatedUser.getUserId(), now);
+    AccountInvite current = findInvite(inviteId);
+    if (revoked == 0) {
+      if (current.getStatus() == AccountInviteStatus.ACCEPTED) {
+        throw inviteAlreadyAccepted();
+      }
+      return current;
+    }
+    ledger.releaseUnneeded(current, now);
+    return current;
+  }
+
+  private static CustomValidationHttpStatusException inviteAlreadyAccepted() {
+    return new CustomValidationHttpStatusException(
+        HttpStatusExceptionReason.INVITE_ALREADY_ACCEPTED, HttpStatus.CONFLICT);
   }
 
   private void expireAndReleaseNumbers(AccountInvite invite, LocalDateTime now) {
@@ -782,6 +807,19 @@ public class AccountInviteService {
       throw new BadRequestException("inviteId is required");
     }
     Optional<AccountInvite> invite = accountInviteRepository.findById(inviteId);
+    if (invite.isEmpty()) {
+      accessPolicy.authorizeMissing(inviteId);
+      throw new NotFoundException("Account invite not found");
+    }
+    accessPolicy.authorizeAccess(invite.get());
+    return invite.get();
+  }
+
+  private AccountInvite findAuthorizedInviteForUpdate(Long inviteId) {
+    if (inviteId == null) {
+      throw new BadRequestException("inviteId is required");
+    }
+    Optional<AccountInvite> invite = accountInviteRepository.findByIdForUpdate(inviteId);
     if (invite.isEmpty()) {
       accessPolicy.authorizeMissing(inviteId);
       throw new NotFoundException("Account invite not found");
