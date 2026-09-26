@@ -58,6 +58,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
@@ -360,6 +361,8 @@ class ChatServiceTest {
         .thenReturn(singletonList(activeChatWithAgency()));
     when(consultantService.findConsultantsByAgencyIds(Mockito.any()))
         .thenReturn(singletonList(CONSULTANT));
+    when(groupChatInviteTokenService.tokensFor(List.of(CHAT_ID)))
+        .thenReturn(Map.of(CHAT_ID, "legacy-token"));
 
     List<ConsultantSessionResponseDTO> resultList = chatService.getChatsForConsultant(consultant);
 
@@ -387,6 +390,8 @@ class ChatServiceTest {
     assertNotNull(resultList.get(0).getChat().getModerators());
     assertEquals(1, resultList.get(0).getChat().getModerators().length);
     assertEquals(CONSULTANT.getMatrixUserId(), resultList.get(0).getChat().getModerators()[0]);
+    assertEquals("legacy-token", resultList.get(0).getChat().getInviteToken());
+    verify(groupChatInviteTokenService).tokensFor(List.of(CHAT_ID));
   }
 
   @Test
@@ -741,12 +746,16 @@ class ChatServiceTest {
         .thenReturn(List.of(activeChatWithAgency()));
     when(groupChatConsultantAccess.filterAccessible(Mockito.anyList(), eq(CONSULTANT)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(groupChatInviteTokenService.tokensFor(List.of(CHAT_ID)))
+        .thenReturn(Map.of(CHAT_ID, "legacy-token"));
 
     List<ConsultantSessionResponseDTO> result =
         chatService.getChatSessionsForConsultantByIds(Set.of(CHAT_ID), CONSULTANT);
 
     assertThat(result, hasSize(1));
     assertNotNull(result.get(0).getChat());
+    assertEquals("legacy-token", result.get(0).getChat().getInviteToken());
+    verify(groupChatInviteTokenService).tokensFor(List.of(CHAT_ID));
   }
 
   @Test
@@ -778,6 +787,8 @@ class ChatServiceTest {
         .thenReturn(List.of(activeChatWithAgency()));
     when(groupChatConsultantAccess.filterAccessible(Mockito.anyList(), eq(CONSULTANT)))
         .thenAnswer(invocation -> invocation.getArgument(0));
+    when(groupChatInviteTokenService.tokensFor(List.of(CHAT_ID)))
+        .thenReturn(Map.of(CHAT_ID, "legacy-token"));
 
     List<ConsultantSessionResponseDTO> result =
         chatService.getChatSessionsForConsultantByRoomIds(Set.of(MATRIX_ROOM_ID), CONSULTANT);
