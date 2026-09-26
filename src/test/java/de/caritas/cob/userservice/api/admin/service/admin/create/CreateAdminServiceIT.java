@@ -115,7 +115,8 @@ class CreateAdminServiceIT {
     verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
     assertNull(userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient)
+        .updateTemporaryPassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 
@@ -151,7 +152,8 @@ class CreateAdminServiceIT {
     assertNotNull(userDTOArgumentCaptor.getValue().getTenantId());
     assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient)
+        .updateTemporaryPassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 
@@ -191,7 +193,8 @@ class CreateAdminServiceIT {
     assertNotNull(userDTOArgumentCaptor.getValue().getTenantId());
     assertEquals(1L, (long) userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient)
+        .updateTemporaryPassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 
@@ -223,7 +226,8 @@ class CreateAdminServiceIT {
     verify(identityClient).createUser(userDTOArgumentCaptor.capture(), anyString(), anyString());
     assertNull(userDTOArgumentCaptor.getValue().getTenantId());
 
-    verify((IdentityPasswordUpdater) identityClient).updatePassword(anyString(), anyString());
+    verify((IdentityPasswordUpdater) identityClient)
+        .updateTemporaryPassword(anyString(), anyString());
     verify(identityClient).updateRole(anyString(), eq(RESTRICTED_AGENCY_ADMIN));
     verify(identityClient).updateRole(anyString(), eq(USER_ADMIN));
 

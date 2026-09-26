@@ -311,7 +311,7 @@ class TenantAdminOnboardingServiceTest {
             .firstName("Erika")
             .lastName("Beispiel")
             .build();
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(admin);
+    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(admin);
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
     when(tenantCreationClient.createTenant(any()))
@@ -324,7 +324,7 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("QRBASE64", result.totpQrCodeBase64());
 
     ArgumentCaptor<CreateAdminDTO> adminCaptor = ArgumentCaptor.forClass(CreateAdminDTO.class);
-    verify(createAdminService).createNewTenantAdmin(adminCaptor.capture());
+    verify(createAdminService).createNewTenantAdminFromInvite(adminCaptor.capture());
     assertEquals("tenant.admin@example.org", adminCaptor.getValue().getUsername());
     assertEquals("tenant.admin@example.org", adminCaptor.getValue().getEmail());
     assertEquals("s3cretPassword", adminCaptor.getValue().getPassword());
@@ -358,7 +358,7 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -393,7 +393,7 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -444,7 +444,7 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -523,7 +523,7 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -545,7 +545,7 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdmin(any(CreateAdminDTO.class)))
+    when(createAdminService.createNewTenantAdminFromInvite(any(CreateAdminDTO.class)))
         .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
@@ -565,7 +565,7 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdmin(any(CreateAdminDTO.class)))
+    when(createAdminService.createNewTenantAdminFromInvite(any(CreateAdminDTO.class)))
         .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
@@ -1028,7 +1028,7 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(onboardedAdmin());
+    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -1185,7 +1185,7 @@ class TenantAdminOnboardingServiceTest {
             .firstName("Erika")
             .lastName("Beispiel")
             .build();
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(admin);
+    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(admin);
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", null, null));
     when(tenantCreationClient.createTenant(any()))
@@ -1211,7 +1211,7 @@ class TenantAdminOnboardingServiceTest {
             .firstName("Erika")
             .lastName("Beispiel")
             .build();
-    when(createAdminService.createNewTenantAdmin(any())).thenReturn(admin);
+    when(createAdminService.createNewTenantAdminFromInvite(any())).thenReturn(admin);
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(IdentityOtpCredential.empty());
 

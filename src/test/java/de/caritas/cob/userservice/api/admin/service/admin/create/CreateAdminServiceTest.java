@@ -60,6 +60,25 @@ class CreateAdminServiceTest {
   private final EasyRandom easyRandom = new EasyRandom();
 
   @Test
+  void directlyCreatedAdminsGetTemporaryPasswordsButInvitedAdminsDoNot() {
+    givenKeycloakCreatesUser();
+    var admin = easyRandom.nextObject(CreateAdminDTO.class);
+    admin.setUsername("valid_username");
+    admin.setEmail("valid@email.com");
+    admin.setPassword("initial-secret");
+
+    createAdminService.createNewTenantAdmin(admin);
+    verify(identityPasswordUpdater).updateTemporaryPassword("kc-user-id", "initial-secret");
+
+    createAdminService.createNewTenantAdminFromInvite(admin);
+    verify(identityPasswordUpdater).updatePassword("kc-user-id", "initial-secret");
+
+    admin.setPassword("agency-secret");
+    createAdminService.createNewAgencyAdmin(admin);
+    verify(identityPasswordUpdater).updateTemporaryPassword("kc-user-id", "agency-secret");
+  }
+
+  @Test
   void getDefaultRoles_Should_NotAssignLegacySingleTenantAdmin_ForSingleDomainTenantAdmin() {
     ReflectionTestUtils.setField(createAdminService, "multitenancyWithSingleDomain", true);
 

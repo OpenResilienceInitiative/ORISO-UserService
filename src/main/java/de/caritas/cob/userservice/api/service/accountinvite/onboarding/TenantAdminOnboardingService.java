@@ -240,7 +240,7 @@ public class TenantAdminOnboardingService {
       throw linkDeathException(current);
     }
 
-    var admin = createAdminService.createNewTenantAdmin(buildAdminDto(invite, command));
+    var admin = createAdminService.createNewTenantAdminFromInvite(buildAdminDto(invite, command));
     try {
       IdentityOtpCredential otpInfo =
           identitySecondFactor.getOtpCredential(

@@ -504,11 +504,12 @@ public class KeycloakService
         .anyMatch(userRepresentation -> userRepresentation.getEmail().equals(email));
   }
 
-  private CredentialRepresentation getCredentialRepresentation(final String password) {
+  private CredentialRepresentation getCredentialRepresentation(
+      final String password, boolean temporary) {
     var credentials = new CredentialRepresentation();
     credentials.setType(CredentialRepresentation.PASSWORD);
     credentials.setValue(password);
-    credentials.setTemporary(false);
+    credentials.setTemporary(temporary);
 
     return credentials;
   }
@@ -799,7 +800,16 @@ public class KeycloakService
    */
   @Override
   public void updatePassword(final String userId, final String password) {
-    var newCredentials = getCredentialRepresentation(password);
+    resetPassword(userId, password, false);
+  }
+
+  @Override
+  public void updateTemporaryPassword(final String userId, final String password) {
+    resetPassword(userId, password, true);
+  }
+
+  private void resetPassword(final String userId, final String password, boolean temporary) {
+    var newCredentials = getCredentialRepresentation(password, temporary);
     var userResource = keycloakClient.getUsersResource().get(userId);
 
     try {

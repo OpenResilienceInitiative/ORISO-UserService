@@ -2090,6 +2090,22 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  void adminChosenPasswordIsTemporaryButUserChosenPasswordIsPermanent() {
+    UserResource account = mock(UserResource.class);
+    UsersResource users = givenUsersResourceWithAnyUserId(account);
+    when(keycloakClient.getUsersResource()).thenReturn(users);
+
+    keycloakService.updateTemporaryPassword("userId", "initial-secret");
+    keycloakService.updatePassword("userId", "own-secret");
+
+    var credentials =
+        ArgumentCaptor.forClass(org.keycloak.representations.idm.CredentialRepresentation.class);
+    verify(account, times(2)).resetPassword(credentials.capture());
+    assertTrue(credentials.getAllValues().get(0).isTemporary());
+    assertFalse(credentials.getAllValues().get(1).isTemporary());
+  }
+
+  @Test
   public void
       updatePassword_Should_throwCustomValidationHttpStatusException_When_MessageMentionsPasswordPolicy() {
     givenResetPasswordThrows(new RuntimeException("password policy violation"));
