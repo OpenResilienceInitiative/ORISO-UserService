@@ -556,6 +556,17 @@
       "status": "bounded"
     },
     {
+      "id": "reply-email-delivery-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/notification/ReplyEmailDeliveryScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": ["deliverPending"],
+      "decision": "A shared lease selects durable pending claims and a pessimistic row lock prevents concurrent claims if the lease expires mid-batch. Each claim becomes SENDING before SMTP; a stale or ambiguous outcome becomes UNCERTAIN for operator reconciliation rather than automatic replay.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "bounded"
+    },
+    {
       "id": "event-notification-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/notificationretention/scheduler/EventNotificationRetentionScheduler.java",
       "kind": "scheduler",

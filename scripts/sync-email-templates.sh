@@ -17,6 +17,9 @@ if [[ ! -d "$src/plain" ]]; then
   exit 1
 fi
 
+# Validate the App's complete locale/occasion set before touching the installed copy.
+python3 "$(dirname "$0")/verify-email-template-source.py" "$frontend"
+
 target="$(cd "$(dirname "$0")/.." && pwd)/src/main/resources/emails"
 rm -rf "$target"
 mkdir -p "$target"
@@ -26,10 +29,10 @@ cp "$src/catalogue.json" "$target/catalogue.json"
 echo "synced $(find "$target" -type f | wc -l | tr -d ' ') files into src/main/resources/emails"
 echo "review the diff before committing — it is the only review this content gets here."
 
-# This sync wipes the target directory, so a template the generator does not know about
-# disappears without a word. Name the ones the service cannot start without, loudly.
+# The source preflight above checks every App locale, occasion and MIME part.
+# Keep an installed-copy check for the operator-authored invitation frame.
 missing=()
-for tone in de-sie de-du en; do
+for tone in de-sie de-du en fr ru ti tr; do
   for id in einladung-freitext; do
     for ext in html txt; do
       [[ -f "$target/$tone/$id.$ext" ]] || missing+=("$tone/$id.$ext")

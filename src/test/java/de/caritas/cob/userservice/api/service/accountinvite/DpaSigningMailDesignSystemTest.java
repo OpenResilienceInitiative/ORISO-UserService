@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -13,7 +12,6 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteFrameMail
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailTransport;
-import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisation;
@@ -42,7 +40,6 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
-import org.springframework.web.client.RestTemplate;
 
 /**
  * The DPA signing mail ("Vertragsunterlagen"), observed where the Admin wizard sees it: the preview
@@ -70,8 +67,6 @@ class DpaSigningMailDesignSystemTest {
 
   @Mock private TenantService tenantService;
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
-  @Mock private RestTemplate restTemplate;
-  @Mock private ApplicationSettingsService applicationSettingsService;
   @Mock private InviteMailTransport inviteMailTransport;
 
   private DefaultDpaSigningEmailDispatchService dispatch;
@@ -79,7 +74,6 @@ class DpaSigningMailDesignSystemTest {
 
   @BeforeEach
   void setUp() {
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(completeSmtpSettings());
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("legal@example.org", Instant.now()));
     when(tenantTemplateSupplier.getTenantBaseUrl(any(RestrictedTenantDTO.class))).thenReturn("");
@@ -98,14 +92,17 @@ class DpaSigningMailDesignSystemTest {
             new OrisoEmailRenderer());
     InviteMailDispatchService mailDispatch =
         new InviteMailDispatchService(
-            restTemplate,
-            applicationSettingsService,
+            new de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider(
+                "smtp.example.org",
+                "587",
+                "false",
+                "smtp-user",
+                "smtp-pass",
+                "noreply@example.org",
+                false),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(
-                brandingResolver, senderOrganisations),
-            "http://consultingtypeservice:8080/service",
-            "smtp-user",
-            "smtp-pass");
+                brandingResolver, senderOrganisations));
     dispatch = new DefaultDpaSigningEmailDispatchService(renderer, mailDispatch, CLOCK);
     forward = new DpaForwardEmailService(tenantService, dispatch, APP_ORIGIN);
   }
@@ -373,16 +370,6 @@ class DpaSigningMailDesignSystemTest {
                     new Theming()
                         .logo("data:image/png;base64,iVBORw0KGgo=")
                         .primaryColor("#0a5c36")));
-  }
-
-  private static Map<String, Object> completeSmtpSettings() {
-    return Map.of(
-        "globalFeatureSystemNotificationEmailsEnabled", Map.of("value", true),
-        "globalSmtpEnabled", Map.of("value", true),
-        "globalSmtpHost", Map.of("value", "smtp.example.org"),
-        "globalSmtpPort", Map.of("value", "587"),
-        "globalSmtpSecure", Map.of("value", false),
-        "globalSmtpFrom", Map.of("value", "noreply@example.org"));
   }
 
   private static String offeredByLine(String text) {

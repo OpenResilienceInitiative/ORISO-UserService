@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
+import de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -45,6 +46,8 @@ public class MatrixEventListenerService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
+  private final @NonNull AdviceSeekerReplyEmailService replyEmailService;
+  private final @NonNull MatrixEmailSyncCursorStore emailSyncCursorStore;
 
   private OutboundHttpMetrics outboundHttpMetrics;
   private LiveChatDiagnosticMetrics diagnosticMetrics;
@@ -64,6 +67,7 @@ public class MatrixEventListenerService {
 
   // Matrix sync token (updated after each sync)
   private String syncToken = null;
+  private Long firstEmailSyncStartedAtMillis;
 
   // Flag to control sync loop
   private volatile boolean running = false;
@@ -177,9 +181,17 @@ public class MatrixEventListenerService {
     long errorBackoffMs = INITIAL_BACKOFF_MS;
     long iteration = 0;
     int consecutiveSyncFailures = 0;
+    boolean cursorLoaded = false;
 
     while (running) {
       try {
+        if (!cursorLoaded) {
+          // A transient database outage retries through the normal sync-loop backoff.
+          var start = emailSyncCursorStore.readOrCreateActivation();
+          syncToken = start.batchToken();
+          firstEmailSyncStartedAtMillis = syncToken == null ? start.activationEpochMillis() : null;
+          cursorLoaded = true;
+        }
         MatrixSyncCycleResult cycleResult = executeObservedMatrixSyncCycle();
 
         if (cycleResult == MatrixSyncCycleResult.SUCCESS) {
@@ -253,6 +265,12 @@ public class MatrixEventListenerService {
       }
 
       processMatrixSyncEvents(syncResult);
+      Object nextBatch = syncResult.get("next_batch");
+      if (nextBatch instanceof String token && !token.isBlank()) {
+        emailSyncCursorStore.write(token);
+        syncToken = token;
+        firstEmailSyncStartedAtMillis = null;
+      }
       result = "success";
       return MatrixSyncCycleResult.SUCCESS;
     } catch (RuntimeException | Error exception) {
@@ -350,12 +368,6 @@ public class MatrixEventListenerService {
       // Call Matrix sync endpoint
       Map<String, Object> syncResult =
           matrixSynapseService.makeMatrixRequest(syncUrl, "GET", adminAccessToken, null);
-
-      // Update sync token for next request
-      if (syncResult != null && syncResult.containsKey("next_batch")) {
-        syncToken = (String) syncResult.get("next_batch");
-        log.debug("🔷 Matrix sync cursor updated");
-      }
 
       return syncResult;
 
@@ -486,6 +498,16 @@ public class MatrixEventListenerService {
       return false;
     }
 
+    // Matrix keeps relation metadata outside the encrypted payload so homeservers can
+    // aggregate edits and reactions. They are not new replies and must not send mail.
+    Object relation = content.get("m.relates_to");
+    if (relation instanceof Map<?, ?> relationFields) {
+      Object relationType = relationFields.get("rel_type");
+      if ("m.replace".equals(relationType) || "m.annotation".equals(relationType)) {
+        return false;
+      }
+    }
+
     String msgtype = (String) content.get("msgtype");
     String senderDomainUserId = resolveDomainUserIdFromMatrixUserId(senderId);
     String threadRootId = extractThreadRootId(content);
@@ -534,6 +556,16 @@ public class MatrixEventListenerService {
           recipientIds.size());
     }
 
+    // Commit the mail claim before this batch's Matrix cursor advances. A failed claim makes the
+    // sync loop replay the event; the recipient/event uniqueness key collapses that replay.
+    if (!"m.notice".equals(msgtype)
+        && (messageBody == null || !messageBody.startsWith("[SYSTEM_NOTIFICATION]"))
+        && isConsultantMatrixUser(senderId)
+        && isEligibleForReplyEmail(event)) {
+      replyEmailService.onConsultantReply(
+          roomId, privacyEnvelope == null ? null : privacyEnvelope.getMessageId());
+    }
+
     // Notify asynchronously so the Matrix sync loop is not blocked.
     executorService.submit(
         () -> {
@@ -558,7 +590,6 @@ public class MatrixEventListenerService {
           } catch (Exception e) {
             recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
             log.error("❌ Failed to create event notification from room", e);
-            return;
           }
 
           if (mappedSessionId != null
@@ -573,6 +604,17 @@ public class MatrixEventListenerService {
         });
 
     return true;
+  }
+
+  private boolean isEligibleForReplyEmail(Map<String, Object> event) {
+    if (firstEmailSyncStartedAtMillis == null) {
+      return true;
+    }
+    // An initial /sync contains recent historical messages. The activation instant is persisted
+    // before polling, so restarts cannot turn those old messages into a burst of new mail.
+    Object timestamp = event.get("origin_server_ts");
+    return timestamp instanceof Number number
+        && number.longValue() >= firstEmailSyncStartedAtMillis;
   }
 
   private void recordMatrixEvent(String eventType, Outcome outcome) {

@@ -189,6 +189,7 @@
     file="db/changelog/changeset/0100_team_discussion_room_cleanup/0100_changeSet.xml" />
 
   <include file="db/changelog/changeset/0101_team_discussion_access_repair/0101_changeSet.xml" />
+  <include file="db/changelog/changeset/0102_reply_email_delivery/0102_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
