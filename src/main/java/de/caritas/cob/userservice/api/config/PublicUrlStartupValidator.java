@@ -147,7 +147,8 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
     }
     String host = uri.getHost().toLowerCase(Locale.ROOT);
     if (deployed && isPlaceholder(host)) {
-      return "uses a reserved example or template host (example.com/.org/.net, your-domain),"
+      return "uses a reserved example or template host (example.com/.org/.net,"
+          + " your-domain) or loopback host (localhost, 127.0.0.1),"
           + " which cannot be this environment's public host";
     }
     return null;
@@ -155,6 +156,10 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
 
   private static boolean isPlaceholder(String host) {
     return host.contains("your-domain")
+        || host.equals("localhost")
+        || host.endsWith(".localhost")
+        || host.equals("0.0.0.0")
+        || host.matches("127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}")
         || EXAMPLE_DOMAINS.stream().anyMatch(d -> host.equals(d) || host.endsWith("." + d));
   }
 }
