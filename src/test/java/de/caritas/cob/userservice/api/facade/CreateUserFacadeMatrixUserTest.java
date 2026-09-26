@@ -96,6 +96,7 @@ class CreateUserFacadeMatrixUserTest {
   @Mock private SessionService sessionService;
   @Mock private ApplicationSettingsService applicationSettingsService;
   @Mock private WelcomeEmailService welcomeEmailService;
+  @Mock private GroupInviteRegistration groupInviteRegistration;
 
   @Spy
   private ProvisioningCompensator provisioningCompensator =

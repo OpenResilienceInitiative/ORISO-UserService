@@ -1404,6 +1404,13 @@ paths:
           required: true
           schema:
             type: string
+        - name: inviteToken
+          in: query
+          description: 'Secret part of the invite link. Required when the chat is addressed by
+            its numeric series ID; only self-help groups can be joined that way.'
+          required: false
+          schema:
+            type: string
       responses:
         200:
           description: OK - successful operation
@@ -2075,6 +2082,21 @@ components:
           example: 'DIVERSE'
         preferredLanguage:
           $ref: "#/components/schemas/LanguageCode"
+        groupChatId:
+          type: integer
+          format: int64
+          description: >-
+            Self-help group the person joins through its invite link. When set, the
+            registration assigns that group and opens no counselling enquiry. It must be a
+            self-help group of `agencyId`, it needs `groupChatInviteToken`, and it cannot be
+            combined with `consultantId`.
+          example: 19
+        groupChatInviteToken:
+          type: string
+          description: >-
+            The secret part of that group's invite link. Required with `groupChatId`; a missing
+            or wrong token answers 403 before any account is created, the same check as joining
+            by invite link.
 
 
     SessionDataDTO:
@@ -2663,6 +2685,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/GroupChatParticipantDTO'
+        inviteToken:
+          type: string
+          description: 'Secret part of the invite link (send it as inviteToken to
+            /users/chat/{id}/assign). Only present for counsellors who may see the group.'
         startDateWithTime:
           type: string
           format: date-time

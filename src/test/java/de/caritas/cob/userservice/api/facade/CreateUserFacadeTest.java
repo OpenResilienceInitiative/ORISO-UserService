@@ -127,6 +127,7 @@ public class CreateUserFacadeTest {
 
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private WelcomeEmailService welcomeEmailService;
+  @Mock private GroupInviteRegistration groupInviteRegistration;
 
   @Spy
   private ProvisioningCompensator provisioningCompensator =

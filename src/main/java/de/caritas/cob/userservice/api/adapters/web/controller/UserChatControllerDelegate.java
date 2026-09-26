@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
+import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -46,6 +47,7 @@ class UserChatControllerDelegate {
   private final @NonNull UserDtoMapper userDtoMapper;
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull GroupChatFeatureGate groupChatFeatureGate;
+  private final @NonNull GroupChatPermissionService groupChatPermissionService;
 
   ResponseEntity<CreateChatResponseDTO> createChatV1(ChatDTO chatDTO) {
     var callingConsultant = this.userAccountProvider.retrieveValidatedConsultant();
@@ -81,10 +83,10 @@ class UserChatControllerDelegate {
     return new ResponseEntity<>(response, HttpStatus.OK);
   }
 
-  ResponseEntity<Void> assignChat(String chatReference) {
+  ResponseEntity<Void> assignChat(String chatReference, String inviteToken) {
     if (chatReference.matches("\\d+")) {
       try {
-        assignChatFacade.assignChat(Long.parseLong(chatReference), authenticatedUser);
+        assignChatFacade.assignChat(Long.parseLong(chatReference), inviteToken, authenticatedUser);
       } catch (NumberFormatException exception) {
         throw new BadRequestException("Numeric chat id is outside the supported range.");
       }
@@ -149,9 +151,13 @@ class UserChatControllerDelegate {
                 () -> {
                   throw new NotFoundException("Matrix user (%s) not found", matrixUserId);
                 });
-    if (!messenger.existsChat(chatId)) {
-      throw new NotFoundException("Chat (%s) not found", chatId);
-    }
+    var chat =
+        chatService
+            .getChat(chatId)
+            .orElseThrow(() -> new NotFoundException("Chat (%s) not found", chatId));
+    // The ban runs as the chat owner in Matrix, so only a moderator may ask for it (#1237).
+    groupChatPermissionService.requireCanModerate(
+        chat, userAccountProvider.retrieveValidatedConsultant());
 
     var adviceSeekerId = adviceSeeker.getUserId();
     if (!messenger.banUserFromChat(adviceSeekerId, chatId)) {

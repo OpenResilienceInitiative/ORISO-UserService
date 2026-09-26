@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.facade;
 
 import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.CHAT_IDENTITY;
 import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.DATABASE_USER;
+import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.GROUP_CHAT_MEMBERSHIP;
 import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.IDENTITY_USER;
 import static de.caritas.cob.userservice.api.service.provisioning.ProvisioningResource.SESSION;
 import static java.util.Objects.isNull;
@@ -20,6 +21,7 @@ import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
@@ -85,6 +87,8 @@ public class CreateUserFacade {
 
   private final @NonNull ApplicationSettingsService applicationSettingsService;
 
+  private final @NonNull GroupInviteRegistration groupInviteRegistration;
+
   @Value("${feature.multitenancy.with.single.domain.enabled:false}")
   private boolean multitenancyWithSingleDomain;
 
@@ -113,6 +117,7 @@ public class CreateUserFacade {
       userVerifier.checkIfAllRequiredAttributesAreCorrectlyFilled(userDTO);
       userVerifier.checkIfUsernameIsAvailable(userDTO);
       agencyVerifier.checkIfConsultingTypeMatchesToAgency(userDTO);
+      Optional<Chat> invitedGroup = groupInviteRegistration.resolveInvitedGroup(userDTO);
 
       RecoveryPolicySnapshot snapshot =
           chatRecoveryEnrollmentPolicyService.forNewAsker(TenantContext.getCurrentTenant());
@@ -145,18 +150,31 @@ public class CreateUserFacade {
       }
       provisionMatrixUser(user, plainUsername, activeAttempt);
 
-      var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
-      activeAttempt.register(
-          SESSION, identityUserId, () -> deleteSessionsForUser(provisionedUser.get()));
-      NewRegistrationResponseDto registration =
-          createNewSessionFacade.initializeNewSession(userDTO, user, consultingTypeSettings);
+      Long sessionId;
+      if (invitedGroup.isPresent()) {
+        // Joining a self-help group is not a request for counselling: no enquiry (FE#1499).
+        Chat group = invitedGroup.get();
+        activeAttempt.register(
+            GROUP_CHAT_MEMBERSHIP,
+            identityUserId,
+            () -> groupInviteRegistration.leave(group, provisionedUser.get()));
+        groupInviteRegistration.join(group, user);
+        sessionId = null;
+      } else {
+        var consultingTypeSettings = obtainConsultingTypeSettings(userDTO);
+        activeAttempt.register(
+            SESSION, identityUserId, () -> deleteSessionsForUser(provisionedUser.get()));
+        NewRegistrationResponseDto registration =
+            createNewSessionFacade.initializeNewSession(userDTO, user, consultingTypeSettings);
+        sessionId = registration.getSessionId();
+      }
 
       try {
         RegistrationStatisticsEvent registrationEvent =
             new RegistrationStatisticsEvent(
                 userDTO,
                 user,
-                registration.getSessionId(),
+                sessionId,
                 topicService.findTopicInternalIdentifier(userDTO.getMainTopicId()),
                 topicService.findTopicsInternalAttributes(userDTO.getTopicIds()),
                 getTenantName(),
@@ -179,7 +197,7 @@ public class CreateUserFacade {
         log.error("Could not schedule welcome mail", e);
       }
 
-      return registration.getSessionId();
+      return sessionId;
     } finally {
       compensateProvisioning(provisioningAttempt);
       de.caritas.cob.userservice.api.helper.PlainCredentialsHolder.clear();
