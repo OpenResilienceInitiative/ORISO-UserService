@@ -7,9 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.adapters.web.controller.interceptor.ApiResponseEntityExceptionHandler;
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionListResponseDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogEntry;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
@@ -46,7 +50,30 @@ class CaseHandoverControllerTest {
 
   @BeforeEach
   void setUpMockMvc() {
-    mockMvc = MockMvcBuilders.standaloneSetup(controller).build();
+    mockMvc =
+        MockMvcBuilders.standaloneSetup(controller)
+            .setControllerAdvice(new ApiResponseEntityExceptionHandler())
+            .build();
+  }
+
+  @Test
+  void extendCoAccess_returnsTheExtendedStatus() throws Exception {
+    when(caseHandoverService.extendCoAccess(13L))
+        .thenReturn(CaseHandoverStatus.builder().sessionId(13L).canExtend(true).build());
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/extend"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.canExtend").value(true));
+  }
+
+  @Test
+  void extendCoAccess_withoutAnActiveCoAccess_isAConflict() throws Exception {
+    when(caseHandoverService.extendCoAccess(13L)).thenThrow(new ConflictException("none"));
+
+    mockMvc
+        .perform(post("/users/sessions/13/case-handover/extend"))
+        .andExpect(status().isConflict());
   }
 
   @Test

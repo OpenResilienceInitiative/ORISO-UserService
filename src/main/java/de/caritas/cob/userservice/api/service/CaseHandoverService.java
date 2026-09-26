@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantSessionResponse
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionConsultantForConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionUserDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
@@ -89,9 +90,22 @@ public class CaseHandoverService {
       "CLIENT_OPTOUT_DECLINED_AFTER_TAKEOVER";
   private static final String OUTCOME_CLIENT_CONSENT_DECLINED = "CLIENT_CONSENT_DECLINED";
   private static final String OUTCOME_ACCESS_EXPIRED = "ACCESS_EXPIRED";
+  private static final String OUTCOME_ACCESS_EXTENDED = "ACCESS_EXTENDED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
   private static final String CO_ACCESS_EXPIRY_TASK = "case-handover-co-access-expiry";
+
+  /**
+   * Session rooms are created with the private_chat preset, so events_default is 0 and every member
+   * may post. A co-access requester sits below that for the lifetime of the grant: they read the
+   * case, Synapse refuses anything they send (#200, ADR-002 "read-only co-access").
+   */
+  private static final int CO_ACCESS_POWER_LEVEL = -1;
+
+  private static final int MEMBER_POWER_LEVEL = 0;
+
+  /** The level an assigned counsellor gets on assignment (AssignEnquiryFacade). */
+  private static final int OWNER_POWER_LEVEL = 100;
 
   private record ClientHandoverCopy(
       String grantedTitle,
@@ -539,6 +553,58 @@ public class CaseHandoverService {
                 .build());
   }
 
+  /**
+   * #200: the colleague holding an advice co-access extends it once while it is still open, so an
+   * OPT_IN consent cannot be stretched indefinitely; more time needs a new request and its consent.
+   * The advice seeker is not asked again; a consent step for OPT_IN would wrap {@link
+   * #applyCoAccessExtension}.
+   */
+  @Transactional
+  public CaseHandoverStatus extendCoAccess(Long sessionId) {
+    Consultant requester = retrieveCurrentConsultant();
+    Session session = getSession(sessionId);
+    verifyEligibleForSession(session, requester);
+
+    // Locked read: an expiry sweep that already holds this grant finishes first and wins.
+    CaseHandoverRequest grant =
+        List.of(Status.GRANTED, Status.GRANTED_PENDING_CLIENT_OPTOUT).stream()
+            .flatMap(
+                status ->
+                    caseHandoverRequestRepository
+                        .findBySessionIdAndStatusAndAccessType(
+                            sessionId, status, AccessType.CO_ACCESS)
+                        .stream())
+            .filter(request -> requester.getId().equals(request.getRequesterConsultant().getId()))
+            .filter(this::isExtendable)
+            .findFirst()
+            .orElseThrow(() -> new ConflictException("No active co-access to extend"));
+    return toStatus(applyCoAccessExtension(grant));
+  }
+
+  /**
+   * Adds the granted duration to the current end, so an early click does not waste the single
+   * extension; the total stays within two durations. Audited on the same row, like expiry: once the
+   * access expires, the log no longer shows that it was extended.
+   */
+  private CaseHandoverRequest applyCoAccessExtension(CaseHandoverRequest grant) {
+    grant.setExpiresAt(
+        grant
+            .getExpiresAt()
+            .plusMinutes(
+                validateMaxAccessDuration(ADVICE_NEEDED, grant.getMaxAccessDurationMinutes())));
+    grant.setAuditOutcome(OUTCOME_ACCESS_EXTENDED);
+    grant.setResolvedAt(LocalDateTime.now(clock));
+    return caseHandoverRequestRepository.save(grant);
+  }
+
+  private boolean isExtendable(CaseHandoverRequest request) {
+    return hasGrantedAccess(request.getStatus())
+        && effectiveAccessType(request) == AccessType.CO_ACCESS
+        && request.getExpiresAt() != null
+        && request.getExpiresAt().isAfter(LocalDateTime.now(clock))
+        && !OUTCOME_ACCESS_EXTENDED.equals(request.getAuditOutcome());
+  }
+
   @Transactional(readOnly = true)
   public ConsultantSessionListResponseDTO searchCandidates(
       String query, int offset, int count, boolean archived) {
@@ -645,7 +711,8 @@ public class CaseHandoverService {
     CaseHandoverRequest saved;
     if (hasGrantedAccess(status)) {
       request.setMatrixMembershipAdded(
-          ensureRequesterJoinedMatrixRoom(session, requester, session.getConsultant()));
+          ensureRequesterJoinedMatrixRoom(
+              session, requester, session.getConsultant(), request.getAccessType()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
         session.setConsultant(requester);
         session.setUpdateDate(now);
@@ -719,7 +786,10 @@ public class CaseHandoverService {
       }
       request.setMatrixMembershipAdded(
           ensureRequesterJoinedMatrixRoom(
-              session, request.getRequesterConsultant(), request.getPreviousConsultant()));
+              session,
+              request.getRequesterConsultant(),
+              request.getPreviousConsultant(),
+              request.getAccessType()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
         session.setConsultant(request.getRequesterConsultant());
         session.setUpdateDate(now);
@@ -1388,6 +1458,7 @@ public class CaseHandoverService {
         .resolvedAt(request.getResolvedAt())
         .accessType(accessType.name())
         .expiresAt(request.getExpiresAt())
+        .canExtend(isExtendable(request))
         .build();
   }
 
@@ -1608,9 +1679,7 @@ public class CaseHandoverService {
   }
 
   private boolean removeCoAccessRequesterFromMatrixRoom(CaseHandoverRequest request) {
-    if (!Boolean.TRUE.equals(request.getMatrixMembershipAdded())) {
-      return true;
-    }
+    boolean membershipAdded = Boolean.TRUE.equals(request.getMatrixMembershipAdded());
     try {
       Session accessSession = request.getSession();
       Consultant requester = request.getRequesterConsultant();
@@ -1622,14 +1691,11 @@ public class CaseHandoverService {
       }
       String roomId = accessSession.getMatrixRoomId();
       String requesterId = requester.getMatrixUserId();
-      if (transferMembershipOwnershipToAnotherActiveGrant(request)) {
-        return true;
-      }
-      var membersBefore = matrixSynapseService.getRoomMembers(roomId);
-      if (membersBefore.isEmpty()) {
-        return false;
-      }
-      if (!membersBefore.get().contains(requesterId)) {
+      boolean anotherGrantStillNeedsAccess =
+          membershipAdded
+              ? transferMembershipOwnershipToAnotherActiveGrant(request)
+              : findAnotherActiveGrant(request).isPresent();
+      if (anotherGrantStillNeedsAccess) {
         return true;
       }
       Consultant operator =
@@ -1643,6 +1709,22 @@ public class CaseHandoverService {
           matrixSynapseService.loginAsUserAccessToken(operator.getMatrixUserId());
       if (isBlank(operatorToken)) {
         return false;
+      }
+      // Undo the read-only level first, also for a requester who is removed below: a stale -1
+      // would silence them again whenever they rejoin, even as the case owner.
+      if (!matrixSynapseService.setUserPowerLevel(
+          roomId, requesterId, MEMBER_POWER_LEVEL, operatorToken)) {
+        return false;
+      }
+      if (!membershipAdded) {
+        return true;
+      }
+      var membersBefore = matrixSynapseService.getRoomMembers(roomId);
+      if (membersBefore.isEmpty()) {
+        return false;
+      }
+      if (!membersBefore.get().contains(requesterId)) {
+        return true;
       }
       if (matrixSynapseService.removeUserFromRoom(roomId, requesterId, operatorToken)) {
         return restoreIfAnotherGrantBecameActive(request, roomId, requesterId);
@@ -1827,7 +1909,7 @@ public class CaseHandoverService {
   }
 
   private boolean ensureRequesterJoinedMatrixRoom(
-      Session session, Consultant requester, Consultant previousConsultant) {
+      Session session, Consultant requester, Consultant previousConsultant, AccessType accessType) {
     if (session == null || isBlank(session.getMatrixRoomId())) {
       return false;
     }
@@ -1890,6 +1972,25 @@ public class CaseHandoverService {
         previousConsultant.getMatrixUserId(),
         previousConsultantToken,
         wasMemberBefore);
+
+    // Fail closed: a co-access that could write to the advice seeker must not be granted at all.
+    if (accessType == AccessType.CO_ACCESS
+        && !matrixSynapseService.setUserPowerLevel(
+            roomId, requester.getMatrixUserId(), CO_ACCESS_POWER_LEVEL, previousConsultantToken)) {
+      throw new InternalServerErrorException("Case handover co-access could not be made read-only");
+    }
+    // The new owner needs the owner's room rights: later co-access grants on this case lower and
+    // restore levels and remove members with the owner's token. Never block an absence cover over
+    // this, though: at level 0 the new owner can still post.
+    if (accessType == AccessType.TAKEOVER
+        && !matrixSynapseService.setUserPowerLevel(
+            roomId, requester.getMatrixUserId(), OWNER_POWER_LEVEL, previousConsultantToken)) {
+      log.warn(
+          "Could not give the new owner {} of session {} the owner power level in room {}",
+          requester.getUsername(),
+          session.getId(),
+          roomId);
+    }
 
     // The previous counsellor deliberately keeps their membership. ADR-002's reveal lifecycle has
     // a takeover re-hide the original counsellor while they stay a member, so they can reclaim the
@@ -2067,5 +2168,6 @@ public class CaseHandoverService {
     private LocalDateTime resolvedAt;
     private String accessType;
     private LocalDateTime expiresAt;
+    private boolean canExtend;
   }
 }
