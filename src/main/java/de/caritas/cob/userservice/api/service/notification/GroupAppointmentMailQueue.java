@@ -144,7 +144,11 @@ public class GroupAppointmentMailQueue {
     boolean nextDateConfirmed = false;
     for (var state :
         states.findBySeriesId(series.getId()).stream()
-            .sorted(Comparator.comparingInt(GroupAppointmentOccurrenceState::getOccurrenceIndex))
+            .sorted(
+                Comparator.comparing(
+                        GroupAppointmentOccurrenceState::getEffectiveStartUtc,
+                        Comparator.nullsLast(Comparator.naturalOrder()))
+                    .thenComparingInt(GroupAppointmentOccurrenceState::getOccurrenceIndex))
             .toList()) {
       if (state.getStatus() != GroupAppointmentOccurrenceState.Status.ACTIVE
           || state.getEffectiveStartUtc() == null

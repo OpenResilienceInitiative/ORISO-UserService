@@ -175,6 +175,47 @@ class GroupAppointmentMailQueueTest {
         .isZero();
   }
 
+  @Test
+  void joiningConfirmsTheEarliestEffectiveDateAfterAnOverrideReordersTheSeries() {
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(5);
+    var series = series(start);
+    var movedFirst =
+        GroupAppointmentOccurrenceState.builder()
+            .seriesId(42L)
+            .occurrenceIndex(0)
+            .revision(2)
+            .effectiveStartUtc(start.plusWeeks(2))
+            .timezone("Europe/Berlin")
+            .status(GroupAppointmentOccurrenceState.Status.ACTIVE)
+            .build();
+    var second =
+        GroupAppointmentOccurrenceState.builder()
+            .seriesId(42L)
+            .occurrenceIndex(1)
+            .revision(1)
+            .effectiveStartUtc(start.plusWeeks(1))
+            .timezone("Europe/Berlin")
+            .status(GroupAppointmentOccurrenceState.Status.ACTIVE)
+            .build();
+    when(chats.findSeriesForAppointmentMailUpdate(42L)).thenReturn(Optional.of(series));
+    when(states.findBySeriesId(42L)).thenReturn(List.of(movedFirst, second));
+
+    queue.recordMemberJoined(
+        series,
+        new GroupAppointmentMailQueue.Member(
+            GroupAppointmentMailOutbox.RecipientRole.PARTICIPANT, "participant"));
+
+    var saved = ArgumentCaptor.forClass(GroupAppointmentMailOutbox.class);
+    verify(outbox, org.mockito.Mockito.times(3)).save(saved.capture());
+    assertThat(
+            saved.getAllValues().stream()
+                .filter(mail -> mail.getEventType() == EventType.CONFIRMED)
+                .findFirst()
+                .orElseThrow()
+                .getOccurrenceIndex())
+        .isEqualTo(1);
+  }
+
   private static Chat series(LocalDateTime start) {
     return Chat.builder()
         .id(42L)

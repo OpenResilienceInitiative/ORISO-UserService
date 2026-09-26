@@ -27,12 +27,16 @@ public class GroupAppointmentSeriesEventProducer {
     }
     var byStart = exceptionsByOriginalStart(series);
     int nextActiveIndex = -1;
-    for (int index = series.getCurrentOccurrenceIndex(); index < series.getRepeatCount(); index++) {
+    LocalDateTime nextActiveStart = null;
+    var now = LocalDateTime.now(ZoneOffset.UTC);
+    for (int index = 0; index < series.getRepeatCount(); index++) {
       var original = series.occurrenceStart(index);
       var effective = effectiveStart(original, byStart.get(original));
-      if (effective != null && effective.isAfter(LocalDateTime.now(ZoneOffset.UTC))) {
+      if (effective != null
+          && effective.isAfter(now)
+          && (nextActiveStart == null || effective.isBefore(nextActiveStart))) {
         nextActiveIndex = index;
-        break;
+        nextActiveStart = effective;
       }
     }
     for (int index = 0; index < series.getRepeatCount(); index++) {
