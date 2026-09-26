@@ -21,7 +21,8 @@ import lombok.Setter;
 @NoArgsConstructor
 public class ReplyEmailDelivery {
   public enum Status {
-    RESERVED,
+    PENDING,
+    SENDING,
     SENT,
     REJECTED,
     UNCERTAIN
@@ -40,12 +41,24 @@ public class ReplyEmailDelivery {
   @Column(name = "tenant_id", nullable = false)
   private Long tenantId;
 
+  @Column(name = "session_id", nullable = false)
+  private Long sessionId;
+
   @Enumerated(EnumType.STRING)
   @Column(name = "status", nullable = false, length = 16)
   private Status status;
 
   @Column(name = "created_at", nullable = false)
   private LocalDateTime createdAt;
+
+  @Column(name = "next_attempt_at", nullable = false)
+  private LocalDateTime nextAttemptAt;
+
+  @Column(name = "attempted_at")
+  private LocalDateTime attemptedAt;
+
+  @Column(name = "attempt_count", nullable = false)
+  private int attemptCount;
 
   @Column(name = "sent_at")
   private LocalDateTime sentAt;

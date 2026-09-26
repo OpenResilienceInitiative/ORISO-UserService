@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAnonymo
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAppointmentServiceAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerEventNotificationsAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerReplyEmailDeliveriesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteAskerRoomsAndSessionsAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.asker.DeleteDatabaseAskerAgencyAction;
@@ -68,6 +69,7 @@ class DeleteUserAccountServiceActionCoverageTest {
           DeleteAppointmentServiceAskerAction.class,
           DeleteAskerDraftMessagesAction.class,
           DeleteAskerEventNotificationsAction.class,
+          DeleteAskerReplyEmailDeliveriesAction.class,
           DeleteDatabaseAskerAction.class);
 
   private static final List<Class<?>> EXPECTED_CONSULTANT_CHAIN =

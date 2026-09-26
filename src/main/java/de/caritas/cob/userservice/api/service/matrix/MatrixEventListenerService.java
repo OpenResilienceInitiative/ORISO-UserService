@@ -47,6 +47,7 @@ public class MatrixEventListenerService {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
   private final @NonNull AdviceSeekerReplyEmailService replyEmailService;
+  private final @NonNull MatrixEmailSyncCursorStore emailSyncCursorStore;
 
   private OutboundHttpMetrics outboundHttpMetrics;
   private LiveChatDiagnosticMetrics diagnosticMetrics;
@@ -179,9 +180,15 @@ public class MatrixEventListenerService {
     long errorBackoffMs = INITIAL_BACKOFF_MS;
     long iteration = 0;
     int consecutiveSyncFailures = 0;
+    boolean cursorLoaded = false;
 
     while (running) {
       try {
+        if (!cursorLoaded) {
+          // A transient database outage retries through the normal sync-loop backoff.
+          syncToken = emailSyncCursorStore.read();
+          cursorLoaded = true;
+        }
         MatrixSyncCycleResult cycleResult = executeObservedMatrixSyncCycle();
 
         if (cycleResult == MatrixSyncCycleResult.SUCCESS) {
@@ -255,6 +262,11 @@ public class MatrixEventListenerService {
       }
 
       processMatrixSyncEvents(syncResult);
+      Object nextBatch = syncResult.get("next_batch");
+      if (nextBatch instanceof String token && !token.isBlank()) {
+        emailSyncCursorStore.write(token);
+        syncToken = token;
+      }
       result = "success";
       return MatrixSyncCycleResult.SUCCESS;
     } catch (RuntimeException | Error exception) {
@@ -352,12 +364,6 @@ public class MatrixEventListenerService {
       // Call Matrix sync endpoint
       Map<String, Object> syncResult =
           matrixSynapseService.makeMatrixRequest(syncUrl, "GET", adminAccessToken, null);
-
-      // Update sync token for next request
-      if (syncResult != null && syncResult.containsKey("next_batch")) {
-        syncToken = (String) syncResult.get("next_batch");
-        log.debug("🔷 Matrix sync cursor updated");
-      }
 
       return syncResult;
 
@@ -546,6 +552,13 @@ public class MatrixEventListenerService {
           recipientIds.size());
     }
 
+    // Commit the mail claim before this batch's Matrix cursor advances. A failed claim makes the
+    // sync loop replay the event; the recipient/event uniqueness key collapses that replay.
+    if (!"m.notice".equals(msgtype) && isConsultantMatrixUser(senderId)) {
+      replyEmailService.onConsultantReply(
+          roomId, privacyEnvelope == null ? null : privacyEnvelope.getMessageId());
+    }
+
     // Notify asynchronously so the Matrix sync loop is not blocked.
     executorService.submit(
         () -> {
@@ -570,16 +583,6 @@ public class MatrixEventListenerService {
           } catch (Exception e) {
             recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
             log.error("❌ Failed to create event notification from room", e);
-          }
-
-          if (!"m.notice".equals(msgtype) && isConsultantMatrixUser(senderId)) {
-            try {
-              replyEmailService.onConsultantReply(
-                  roomId, privacyEnvelope == null ? null : privacyEnvelope.getMessageId());
-            } catch (Exception failure) {
-              // Keep the Matrix sync and in-app notification independent of SMTP failures.
-              log.error("Failed to dispatch advice-seeker reply email");
-            }
           }
 
           if (mappedSessionId != null

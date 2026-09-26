@@ -8,6 +8,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.atLeast;
 import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -83,6 +84,7 @@ class MatrixEventListenerServiceTest {
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
   @Mock private ConsultantMessageStatService consultantMessageStatService;
   @Mock private AdviceSeekerReplyEmailService replyEmailService;
+  @Mock private MatrixEmailSyncCursorStore emailSyncCursorStore;
   @Mock private LiveChatDiagnosticMetrics diagnosticMetrics;
 
   private Logger logger;
@@ -124,7 +126,8 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
-            replyEmailService);
+            replyEmailService,
+            emailSyncCursorStore);
     service.setDiagnosticMetrics(diagnosticMetrics);
     return service;
   }
@@ -197,7 +200,8 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
-            replyEmailService) {
+            replyEmailService,
+            emailSyncCursorStore) {
           @Override
           void sleep(long millis) {
             // deterministic: never actually sleep in the test
@@ -643,7 +647,8 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
-            replyEmailService) {
+            replyEmailService,
+            emailSyncCursorStore) {
           @Override
           void sleep(long millis) {
             // no-op
@@ -676,7 +681,8 @@ class MatrixEventListenerServiceTest {
             consultantRepository,
             sessionRepository,
             consultantMessageStatService,
-            replyEmailService) {
+            replyEmailService,
+            emailSyncCursorStore) {
           @Override
           void sleep(long millis) throws InterruptedException {
             throw new InterruptedException("shutdown");
@@ -832,7 +838,8 @@ class MatrixEventListenerServiceTest {
         (Map<String, Object>) ReflectionTestUtils.invokeMethod(service, "performMatrixSync");
 
     assertThat(result).containsEntry("next_batch", "s1");
-    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("s1");
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("s0");
+    verifyNoInteractions(emailSyncCursorStore);
   }
 
   @Test
@@ -922,6 +929,7 @@ class MatrixEventListenerServiceTest {
 
     assertThat(result).hasToString("SUCCESS");
     assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("batch-observed");
+    verify(emailSyncCursorStore).write("batch-observed");
     assertThat(registry.getCurrentObservation()).isNull();
     assertThat(syncObservation.get()).isNotNull();
     assertThat(processingObservation.get()).isSameAs(syncObservation.get());
@@ -981,6 +989,39 @@ class MatrixEventListenerServiceTest {
     assertThat(handler.stoppedContext.getError())
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("repository unavailable");
+  }
+
+  @Test
+  void observedSyncCycle_shouldReplayBatchWhenDurableReplyClaimFails() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    ReflectionTestUtils.setField(service, "syncToken", "previous-batch");
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    var response =
+        new HashMap<String, Object>(
+            syncResultWithEvents(
+                MATRIX_ROOM_ID,
+                List.of(messageEvent(CONSULTANT_MATRIX_ID, "m.text", "reply", "$new-reply"))));
+    response.put("next_batch", "uncommitted-batch");
+    when(matrixSynapseService.makeMatrixRequest(
+            anyString(), eq("GET"), eq("admin-token"), eq(null)))
+        .thenReturn(response);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    doThrow(new IllegalStateException("delivery claim database unavailable"))
+        .when(replyEmailService)
+        .onConsultantReply(MATRIX_ROOM_ID, "$new-reply");
+
+    assertThatThrownBy(
+            () -> ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("delivery claim database unavailable");
+
+    assertThat(ReflectionTestUtils.getField(service, "syncToken")).isEqualTo("previous-batch");
+    verify(emailSyncCursorStore, never()).write(anyString());
   }
 
   // ── processMatrixSyncEvents ────────────────────────────────────────────────

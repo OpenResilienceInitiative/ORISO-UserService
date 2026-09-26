@@ -7,6 +7,6 @@
     <sqlFile
       path="db/changelog/changeset/0102_reply_email_delivery/migrate.sql"
       relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
-    <rollback><sql>DROP TABLE reply_email_delivery;</sql></rollback>
+    <rollback><sql>DROP TABLE matrix_email_sync_cursor; DROP TABLE reply_email_delivery;</sql></rollback>
   </changeSet>
 </databaseChangeLog>

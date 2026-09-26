@@ -6,12 +6,14 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.model.ReplyEmailDelivery;
 import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.Status;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -67,6 +69,7 @@ class AdviceSeekerReplyEmailServiceTest {
     User asker = asker(true, "asker@example.net");
     Session session = session(asker);
     when(sessions.findByMatrixRoomId("!room")).thenReturn(Optional.of(session));
+    when(sessions.findById(42L)).thenReturn(Optional.of(session));
     var tenant = new RestrictedTenantDTO().id(7L).subdomain("tenant");
     when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
     when(tenantTemplates.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.net");
@@ -76,14 +79,18 @@ class AdviceSeekerReplyEmailServiceTest {
                 new TenantSystemEmailRouteService.Route(
                     TenantSystemEmailRouteService.Mode.PLATFORM, null)));
     when(emailBrand.values("https://tenant.example.net", null)).thenReturn(neutralBrand());
-    when(writer.reserve(eq("asker"), anyString(), eq(7L)))
+    when(writer.reserve(eq("asker"), anyString(), eq(7L), eq(42L)))
         .thenReturn(1L, 2L)
         .thenThrow(new DataIntegrityViolationException("duplicate"));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    when(writer.claim(2L)).thenReturn(Optional.of(claim(2L)));
     when(delivery.sendConfirmed(anyLong(), any(), any(), anyString(), any())).thenReturn(true);
 
     service.onConsultantReply("!room", "$first");
     service.onConsultantReply("!room", "$second");
     service.onConsultantReply("!room", "$first");
+    service.deliverPending(1L);
+    service.deliverPending(2L);
 
     var rendered = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
     verify(delivery, org.mockito.Mockito.times(2))
@@ -132,9 +139,10 @@ class AdviceSeekerReplyEmailServiceTest {
   }
 
   @Test
-  void invalidTenantUrlFailsBeforeReservingAnEmail() {
-    when(sessions.findByMatrixRoomId("!room"))
-        .thenReturn(Optional.of(session(asker(true, "asker@example.net"))));
+  void invalidTenantUrlDefersTheQueuedEmailWithoutSMTPFallback() {
+    var session = session(asker(true, "asker@example.net"));
+    when(sessions.findById(42L)).thenReturn(Optional.of(session));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
     var tenant = new RestrictedTenantDTO().id(7L).subdomain("tenant");
     when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
     when(tenantTemplates.getTenantBaseUrl(tenant)).thenReturn("not-a-public-url");
@@ -144,10 +152,52 @@ class AdviceSeekerReplyEmailServiceTest {
                 new TenantSystemEmailRouteService.Route(
                     TenantSystemEmailRouteService.Mode.PLATFORM, null)));
 
-    assertThatThrownBy(() -> service.onConsultantReply("!room", "$first"))
+    service.deliverPending(1L);
+
+    verify(writer).retryLater(1L);
+    verify(delivery, never()).sendConfirmed(anyLong(), any(), any(), anyString(), any());
+  }
+
+  @Test
+  void definiteSmtpRejectionRetriesTheSameClaim() {
+    prepareReadyClaim();
+    when(delivery.sendConfirmed(anyLong(), any(), any(), anyString(), any())).thenReturn(false);
+
+    service.deliverPending(1L);
+
+    verify(writer).retryLater(1L);
+    verify(writer, never()).finish(1L, Status.UNCERTAIN);
+  }
+
+  @Test
+  void uncertainSmtpResultStopsAutomaticReplay() {
+    prepareReadyClaim();
+    when(delivery.sendConfirmed(anyLong(), any(), any(), anyString(), any()))
+        .thenThrow(new IllegalStateException("SMTP acknowledgement lost"));
+
+    assertThatThrownBy(() -> service.deliverPending(1L))
         .isInstanceOf(IllegalStateException.class)
-        .hasMessage("Reply email app URL is invalid");
-    verifyNoInteractions(writer, delivery);
+        .hasMessage("SMTP acknowledgement lost");
+
+    verify(writer).finish(1L, Status.UNCERTAIN);
+    verify(writer, never()).retryLater(1L);
+  }
+
+  @Test
+  void missingPlatformSmtpConfigurationDefersBeforeAttemptingSend() {
+    when(sessions.findById(42L)).thenReturn(Optional.of(session(asker(true, "asker@example.net"))));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    var route =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(routes.resolve(7L)).thenReturn(Optional.of(route));
+    org.mockito.Mockito.doThrow(new IllegalStateException("SMTP is not configured"))
+        .when(delivery)
+        .requireConfigured(route);
+
+    service.deliverPending(1L);
+
+    verify(writer).retryLater(1L);
+    verify(delivery, never()).sendConfirmed(anyLong(), any(), any(), anyString(), any());
   }
 
   @Test
@@ -171,6 +221,29 @@ class AdviceSeekerReplyEmailServiceTest {
         .postcode("10000")
         .status(Session.SessionStatus.IN_PROGRESS)
         .build();
+  }
+
+  private static ReplyEmailDelivery claim(long id) {
+    var claim = new ReplyEmailDelivery();
+    claim.setId(id);
+    claim.setSessionId(42L);
+    claim.setTenantId(7L);
+    claim.setRecipientUserId("asker");
+    return claim;
+  }
+
+  private TenantSystemEmailRouteService.Route prepareReadyClaim() {
+    var session = session(asker(true, "asker@example.net"));
+    when(sessions.findById(42L)).thenReturn(Optional.of(session));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+    var tenant = new RestrictedTenantDTO().id(7L).subdomain("tenant");
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
+    when(tenantTemplates.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.net");
+    var route =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(routes.resolve(7L)).thenReturn(Optional.of(route));
+    when(emailBrand.values("https://tenant.example.net", null)).thenReturn(neutralBrand());
+    return route;
   }
 
   private static User asker(boolean enabled, String address) {

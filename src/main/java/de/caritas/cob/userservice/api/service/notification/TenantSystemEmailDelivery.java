@@ -26,6 +26,13 @@ public class TenantSystemEmailDelivery {
   private final @NonNull PlatformSmtpSettingsProvider platformSettings;
   private final @NonNull OrisoEmailDispatcher platformDispatcher;
 
+  /** Fail before entering an SMTP attempt when the selected platform route is unconfigured. */
+  public void requireConfigured(TenantSystemEmailRouteService.Route route) {
+    if (route.mode() == TenantSystemEmailRouteService.Mode.PLATFORM) {
+      platformSettings.requireConfigured();
+    }
+  }
+
   public void send(
       long tenantId,
       TenantSystemEmailRouteService.Route route,

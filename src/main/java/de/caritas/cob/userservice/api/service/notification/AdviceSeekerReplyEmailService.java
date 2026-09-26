@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deser
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.model.ReplyEmailDelivery;
 import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.Status;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
@@ -21,6 +22,7 @@ import java.util.HexFormat;
 import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
@@ -30,6 +32,7 @@ import org.springframework.stereotype.Service;
  */
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class AdviceSeekerReplyEmailService {
   private final @NonNull SessionRepository sessions;
   private final @NonNull TenantService tenants;
@@ -71,52 +74,86 @@ public class AdviceSeekerReplyEmailService {
         || (session.getTenantId() != null && !Objects.equals(tenantId, session.getTenantId()))) {
       throw new IllegalStateException("Reply email recipient tenant is missing or inconsistent");
     }
-    var route = routes.resolve(tenantId).orElse(null);
-    if (route == null) {
-      return;
-    }
     if (session.getId() == null) {
       throw new IllegalStateException("Reply email session id is missing");
     }
 
-    RestrictedTenantDTO tenant = tenants.getRestrictedTenantDataFresh(tenantId);
-    if (tenant == null || !Objects.equals(tenant.getId(), tenantId)) {
-      throw new IllegalStateException("Reply email tenant is unavailable");
-    }
-    if (multitenancyEnabled && !singleDomainMultitenancy && isBlank(tenant.getSubdomain())) {
-      throw new IllegalStateException("Reply email tenant subdomain is missing");
-    }
-    String baseUrl =
-        requireBaseUrl(
-            multitenancyEnabled ? tenantTemplates.getTenantBaseUrl(tenant) : applicationBaseUrl);
-    // Confirm the URL belongs to this tenant, then use the platform's neutral sender identity.
-    // A counselling-centre or counsellor name must not enter an advice seeker's mailbox.
-    branding.resolveNotification(tenantId, baseUrl);
-    var values = emailBrand.values(baseUrl, route.emailThemeColor());
-    values.put("messageUrl", baseUrl + "/sessions/user/view/session/" + session.getId());
-    OrisoEmailRenderer.Tone tone = OrisoEmailRenderer.Tone.of(user.getLanguageCode());
-    if (tone == OrisoEmailRenderer.Tone.DE_FORMAL && !user.isLanguageFormal()) {
-      tone = OrisoEmailRenderer.Tone.DE_INFORMAL;
-    }
-    var email = renderer.render("neue-nachricht", tone, values);
-    long deliveryId;
     try {
-      deliveryId = writer.reserve(user.getUserId(), eventKey(roomId, eventId), tenantId);
+      writer.reserve(user.getUserId(), eventKey(roomId, eventId), tenantId, session.getId());
     } catch (DataIntegrityViolationException alreadyReserved) {
+      // Matrix can replay this event after an interrupted batch.
+    }
+  }
+
+  /** Send one durable claim, rechecking the current address and consent before SMTP. */
+  public void deliverPending(long deliveryId) {
+    ReplyEmailDelivery claim = writer.claim(deliveryId).orElse(null);
+    if (claim == null) {
       return;
     }
+    Session session = sessions.findById(claim.getSessionId()).orElse(null);
+    User user = session == null ? null : session.getUser();
+    if (user == null
+        || !Objects.equals(user.getUserId(), claim.getRecipientUserId())
+        || !Objects.equals(user.getTenantId(), claim.getTenantId())
+        || (session.getTenantId() != null
+            && !Objects.equals(session.getTenantId(), claim.getTenantId()))
+        || !hasUsableAddress(user)
+        || !wantsReplyEmail(user)) {
+      writer.finish(deliveryId, Status.REJECTED);
+      return;
+    }
+
+    TenantSystemEmailRouteService.Route route;
+    OrisoEmailRenderer.RenderedEmail email;
+    try {
+      route =
+          routes
+              .resolve(claim.getTenantId())
+              .orElseThrow(() -> new IllegalStateException("Reply email SMTP route is missing"));
+      delivery.requireConfigured(route);
+      RestrictedTenantDTO tenant = tenants.getRestrictedTenantDataFresh(claim.getTenantId());
+      if (tenant == null || !Objects.equals(tenant.getId(), claim.getTenantId())) {
+        throw new IllegalStateException("Reply email tenant is unavailable");
+      }
+      if (multitenancyEnabled && !singleDomainMultitenancy && isBlank(tenant.getSubdomain())) {
+        throw new IllegalStateException("Reply email tenant subdomain is missing");
+      }
+      String baseUrl =
+          requireBaseUrl(
+              multitenancyEnabled ? tenantTemplates.getTenantBaseUrl(tenant) : applicationBaseUrl);
+      branding.resolveNotification(claim.getTenantId(), baseUrl);
+      var values = emailBrand.values(baseUrl, route.emailThemeColor());
+      values.put("messageUrl", baseUrl + "/sessions/user/view/session/" + session.getId());
+      OrisoEmailRenderer.Tone tone = OrisoEmailRenderer.Tone.of(user.getLanguageCode());
+      if (tone == OrisoEmailRenderer.Tone.DE_FORMAL && !user.isLanguageFormal()) {
+        tone = OrisoEmailRenderer.Tone.DE_INFORMAL;
+      }
+      email = renderer.render("neue-nachricht", tone, values);
+    } catch (RuntimeException setupFailure) {
+      writer.retryLater(deliveryId);
+      log.warn(
+          "Reply email setup unavailable for delivery {} ({})",
+          deliveryId,
+          setupFailure.getClass().getSimpleName());
+      return;
+    }
+
     try {
       boolean sent =
           delivery.sendConfirmed(
-              tenantId,
+              claim.getTenantId(),
               route,
               TenantSystemEmailDelivery.Purpose.NEW_MESSAGE,
               user.getEmail(),
               email);
-      writer.finish(deliveryId, sent ? Status.SENT : Status.REJECTED);
+      if (sent) {
+        writer.finish(deliveryId, Status.SENT);
+      } else {
+        writer.retryLater(deliveryId);
+      }
     } catch (RuntimeException sendFailure) {
-      // SMTP may have accepted a message before returning an error. An automatic replay could
-      // send a duplicate, so the incident is recorded for an operator instead.
+      // SMTP may have accepted the message before its acknowledgement was lost.
       writer.finish(deliveryId, Status.UNCERTAIN);
       throw sendFailure;
     }
