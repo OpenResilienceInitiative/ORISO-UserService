@@ -222,10 +222,7 @@ public class MagicLinkLoginService {
       message.setContent(OrisoEmailMime.alternative(email));
       Transport.send(message);
     } catch (Exception ex) {
-      log.warn(
-          "Magic link email dispatch failed for account {}, reason: {}",
-          target.getUsername(),
-          ex.getMessage());
+      log.warn("Magic link email dispatch failed ({})", ex.getClass().getSimpleName());
     }
   }
 
@@ -311,7 +308,9 @@ public class MagicLinkLoginService {
       return Optional.of(
           new GlobalSmtpSettings(host, port, secure, username, password, from, emailThemeColor));
     } catch (Exception ex) {
-      log.debug("Could not resolve global SMTP settings for magic link mail: {}", ex.getMessage());
+      log.debug(
+          "Could not resolve global SMTP settings for magic link mail ({})",
+          ex.getClass().getSimpleName());
       return Optional.empty();
     }
   }

@@ -5,10 +5,12 @@ import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
@@ -19,6 +21,10 @@ import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSuppli
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
+import jakarta.mail.Message;
+import jakarta.mail.MessagingException;
+import jakarta.mail.Transport;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -26,6 +32,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -203,8 +210,37 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(eq(4L), any()))
         .thenReturn(Optional.of(settings));
 
-    // sendEmailSafely catches any smtp connection error — no exception should escape
-    service.notifyEmailAddressChanged("johndoe", "john@example.com", 4L, null, null);
+    String smtpReply = "550 john@example.com mailbox unavailable";
+    try (var logs = LogbackCaptor.forClass(SupervisorAddedEmailNotificationService.class);
+        MockedStatic<Transport> transport = mockStatic(Transport.class)) {
+      transport
+          .when(() -> Transport.send(any(Message.class)))
+          .thenThrow(new MessagingException(smtpReply));
+      service.notifyEmailAddressChanged("johndoe", "john@example.com", 4L, null, null);
+      transport.verify(() -> Transport.send(any(Message.class)));
+
+      assertThat(logs.events()).isNotEmpty();
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage()).doesNotContain("john@example.com");
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+      var failure =
+          logs.events().stream()
+              .filter(
+                  event ->
+                      event
+                          .getFormattedMessage()
+                          .startsWith("Failed to send system notification email"))
+              .findFirst()
+              .orElseThrow();
+      assertThat(failure.getLevel()).isEqualTo(Level.ERROR);
+      assertThat(failure.getFormattedMessage()).contains("(MessagingException)");
+      assertThat(failure.getFormattedMessage())
+          .doesNotContain("john@example.com", "mailbox unavailable", smtpReply);
+      assertThat(failure.getThrowableProxy()).isNull();
+    }
   }
 
   // ── resolveUserWithEmail ──────────────────────────────────────────────────

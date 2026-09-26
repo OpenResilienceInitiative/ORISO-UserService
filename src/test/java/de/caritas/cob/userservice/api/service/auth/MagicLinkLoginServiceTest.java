@@ -6,10 +6,12 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
@@ -21,6 +23,10 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
+import jakarta.mail.Message;
+import jakarta.mail.MessagingException;
+import jakarta.mail.Transport;
 import java.time.Instant;
 import java.util.HashMap;
 import java.util.Map;
@@ -30,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -543,8 +550,35 @@ class MagicLinkLoginServiceTest {
     when(emailRenderer.render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("subject", "<html></html>", "text"));
 
-    assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
-        .doesNotThrowAnyException();
+    String smtpReply = "550 real@example.com mailbox unavailable";
+    try (var logs = LogbackCaptor.forClass(MagicLinkLoginService.class);
+        MockedStatic<Transport> transport = mockStatic(Transport.class)) {
+      transport
+          .when(() -> Transport.send(any(Message.class)))
+          .thenThrow(new MessagingException(smtpReply));
+      assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
+          .doesNotThrowAnyException();
+      transport.verify(() -> Transport.send(any(Message.class)));
+      assertThat(logs.events()).isNotEmpty();
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain("testuser", "real@example.com", "mailbox unavailable");
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+      var failure =
+          logs.events().stream()
+              .filter(
+                  event ->
+                      event.getFormattedMessage().startsWith("Magic link email dispatch failed"))
+              .findFirst()
+              .orElseThrow();
+      assertThat(failure.getLevel()).isEqualTo(Level.WARN);
+      assertThat(failure.getFormattedMessage()).contains("(MessagingException)");
+      assertThat(failure.getFormattedMessage())
+          .doesNotContain("real@example.com", "mailbox unavailable", smtpReply);
+    }
 
     verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
   }
