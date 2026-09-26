@@ -217,7 +217,9 @@ public class AccountInviteController {
   public ResponseEntity<InviteEmailTemplateResponseDTO> createTemplate(
       @RequestBody TemplateRequestDTO request) {
     InviteEmailTemplate template = templateService.createTemplate(toCommand(request));
-    return new ResponseEntity<>(InviteEmailTemplateResponseDTO.from(template), HttpStatus.CREATED);
+    return new ResponseEntity<>(
+        InviteEmailTemplateResponseDTO.from(template, templateService.mayChange(template)),
+        HttpStatus.CREATED);
   }
 
   @PreAuthorize(ADMIN_AUTH)
@@ -225,7 +227,8 @@ public class AccountInviteController {
   public ResponseEntity<InviteEmailTemplateResponseDTO> updateTemplate(
       @PathVariable Long templateId, @RequestBody TemplateRequestDTO request) {
     InviteEmailTemplate template = templateService.updateTemplate(templateId, toCommand(request));
-    return ResponseEntity.ok(InviteEmailTemplateResponseDTO.from(template));
+    return ResponseEntity.ok(
+        InviteEmailTemplateResponseDTO.from(template, templateService.mayChange(template)));
   }
 
   @PreAuthorize(ADMIN_AUTH)
@@ -236,7 +239,10 @@ public class AccountInviteController {
         templateService
             .listTemplates(parseOptionalEnum(InviteEmailTemplateKind.class, kind, "kind"))
             .stream()
-            .map(InviteEmailTemplateResponseDTO::from)
+            .map(
+                template ->
+                    InviteEmailTemplateResponseDTO.from(
+                        template, templateService.mayChange(template)))
             .toList();
     return ResponseEntity.ok(response);
   }
@@ -571,6 +577,19 @@ public class AccountInviteController {
 
   public static class InviteEmailTemplateResponseDTO {
     public Long id;
+
+    /**
+     * The Träger the template belongs to, or {@code null} for a platform template everyone may use
+     * (ORISO-Admin#1026).
+     */
+    public Long tenantId;
+
+    /**
+     * Whether this caller may change the stored template. The Admin shows the others disabled with
+     * the reason instead of hiding them.
+     */
+    public Boolean editable;
+
     public String kind;
     public String name;
     public String language;
@@ -580,9 +599,11 @@ public class AccountInviteController {
     public LocalDateTime createDate;
     public LocalDateTime updateDate;
 
-    static InviteEmailTemplateResponseDTO from(InviteEmailTemplate template) {
+    static InviteEmailTemplateResponseDTO from(InviteEmailTemplate template, boolean editable) {
       InviteEmailTemplateResponseDTO dto = new InviteEmailTemplateResponseDTO();
       dto.id = template.getId();
+      dto.tenantId = template.getTenantId();
+      dto.editable = editable;
       dto.kind = template.getKind() == null ? null : template.getKind().name();
       dto.name = template.getName();
       dto.language = template.getLanguage();

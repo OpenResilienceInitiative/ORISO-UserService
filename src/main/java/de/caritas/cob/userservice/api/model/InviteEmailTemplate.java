@@ -36,6 +36,15 @@ public class InviteEmailTemplate {
   @Column(name = "id", nullable = false)
   private Long id;
 
+  /**
+   * The Träger this template belongs to, or {@code null} for a <b>platform template</b> written by
+   * the platform operator and offered to everyone (ORISO-Admin#1026). Nullable on purpose: every
+   * row that existed before templates had an owner is a platform template, and a NOT NULL column
+   * without a default would fail every integration test on an empty schema.
+   */
+  @Column(name = "tenant_id")
+  private Long tenantId;
+
   @Enumerated(EnumType.STRING)
   @Column(name = "kind", nullable = false, length = 32)
   private InviteEmailTemplateKind kind;

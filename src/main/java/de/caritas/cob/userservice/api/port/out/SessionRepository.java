@@ -234,6 +234,18 @@ public interface SessionRepository extends CrudRepository<Session, Long> {
 
   Page<Session> findAll(Pageable pageable);
 
+  /** {@code agencyIds} must not be empty. */
+  Page<Session> findByAgencyIdIn(Set<Long> agencyIds, Pageable pageable);
+
+  Page<Session> findByUserUserIdAndAgencyIdIn(
+      String userId, Set<Long> agencyIds, Pageable pageable);
+
+  Page<Session> findByConsultantIdAndAgencyIdIn(
+      String consultantId, Set<Long> agencyIds, Pageable pageable);
+
+  Page<Session> findByConsultingTypeIdAndAgencyIdIn(
+      int consultingTypeId, Set<Long> agencyIds, Pageable pageable);
+
   /**
    * Find the {@link Session}s by consulting type, registration type and pageable.
    *
