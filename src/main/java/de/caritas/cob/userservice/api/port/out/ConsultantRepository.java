@@ -71,6 +71,10 @@ public interface ConsultantRepository
 
   List<Consultant> findAllByIdIn(List<String> ids);
 
+  @EntityGraph(attributePaths = "consultantAgencies")
+  @Query("SELECT DISTINCT consultant FROM Consultant consultant WHERE consultant.id IN :ids")
+  List<Consultant> findAllWithAgenciesByIdIn(@Param("ids") Collection<String> ids);
+
   @Query("SELECT c.id FROM Consultant c WHERE c.id IN :ids AND c.deleteDate IS NULL")
   Set<String> findActiveIdsByIdIn(@Param("ids") Collection<String> ids);
 
