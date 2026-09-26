@@ -129,6 +129,15 @@ class PublicUrlStartupValidatorTest {
   }
 
   @Test
+  void rejectsIntegerIpv4AliasThatBrowsersInterpretAsLoopback() {
+    environment.setProperty("magic.link.frontend.base-url", "https://2130706433");
+
+    assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+        .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL")
+        .hasMessageContaining("numeric IP alias");
+  }
+
+  @Test
   void allowsExampleHostsInTheLocalAndTestingProfiles() {
     environment.setActiveProfiles("testing");
     environment.setProperty("dpa.sign.frontend.base-url", "https://app.example.com");
