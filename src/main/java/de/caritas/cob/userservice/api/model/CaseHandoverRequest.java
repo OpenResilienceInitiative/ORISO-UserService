@@ -46,7 +46,9 @@ public class CaseHandoverRequest implements TenantAware {
     GRANTED,
     DENIED,
     CLIENT_CONSENT_DECLINED,
-    EXPIRED
+    EXPIRED,
+    /** The counsellor a takeover moved the case away from took it back. */
+    RECLAIMED
   }
 
   public enum AccessType {

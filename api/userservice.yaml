@@ -1675,6 +1675,47 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/case-handover/reclaim:
+    post:
+      tags:
+        - case-handover-controller
+      summary: 'The counsellor a takeover moved the case away from takes it back (ADR-002 reclaim).
+        The cover counsellor keeps their room membership and is re-hidden.
+        [Authorization: Role: consultant]'
+      operationId: reclaimCaseHandover
+      # The endpoint is implemented by the dedicated handwritten CaseHandoverController.
+      # Do not add its mapping to the generated UsersApi implemented by UserController as well.
+      x-internal: true
+      parameters:
+        - name: sessionId
+          in: path
+          description: Session id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        200:
+          description: OK - the caller owns the case again; body is the case-handover status of
+            the session, as returned by GET /users/sessions/{sessionId}/case-handover
+          content:
+            application/json:
+              schema:
+                type: object
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - the caller is not the counsellor the latest granted takeover of
+            this session moved the case away from
+        404:
+          description: NOT FOUND - a session with such an ID does not exist
+        409:
+          description: CONFLICT - the takeover was for a permanent reason (counsellor left,
+            assignment ended), or the case has moved on from the cover counsellor since
+        500:
+          description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
   /users/2fa/email:
     put:
       tags:
