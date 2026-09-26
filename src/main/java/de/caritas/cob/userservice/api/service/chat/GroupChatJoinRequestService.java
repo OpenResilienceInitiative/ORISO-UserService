@@ -189,6 +189,9 @@ public class GroupChatJoinRequestService {
       if (!isOwner(series, participants, actorId)) {
         throw new ForbiddenException("Only a Series Owner can admit a Co-Moderator");
       }
+      if (series.getChatOwner() == null) {
+        throw new BadRequestException("Chat Series has no owner");
+      }
       if (!Objects.equals(series.getChatOwner().getTenantId(), requester.getTenantId())) {
         throw new BadRequestException("Consultant does not belong to the chat owner's tenant");
       }
@@ -261,14 +264,15 @@ public class GroupChatJoinRequestService {
 
   /** Same rule as reading the group (#1244), so a 409 here always means "you can open it". */
   private boolean hasAccess(Chat series, Consultant consultant) {
-    return consultant.getId().equals(series.getChatOwner().getId())
+    return (series.getChatOwner() != null
+            && consultant.getId().equals(series.getChatOwner().getId()))
         || groupChatConsultantAccess.mayAccess(series, consultant);
   }
 
   private boolean isOwner(
       Chat series, List<GroupChatParticipant> participants, String consultantId) {
     if (participants.isEmpty()) {
-      return consultantId.equals(series.getChatOwner().getId());
+      return series.getChatOwner() != null && consultantId.equals(series.getChatOwner().getId());
     }
     return participants.stream()
         .anyMatch(
