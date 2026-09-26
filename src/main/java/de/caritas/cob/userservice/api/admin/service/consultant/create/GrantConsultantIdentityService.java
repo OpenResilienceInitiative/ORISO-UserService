@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDT
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantResponseDTOBuilder;
 import de.caritas.cob.userservice.api.admin.service.consultant.TransactionalStep;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
@@ -32,6 +33,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -72,6 +74,7 @@ public class GrantConsultantIdentityService {
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
+  private final @NonNull AdminCallerScope adminCallerScope;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
@@ -87,12 +90,17 @@ public class GrantConsultantIdentityService {
   public ConsultantAdminResponseDTO grantConsultantIdentityToAdmin(
       String adminId, GrantConsultantIdentityDTO dto) {
 
+    // Looked up across tenants on purpose: the route only requires user-admin, so the caller's
+    // Träger and agencies are checked right below, and an admin of another Träger must be refused
+    // (403) rather than reported as unknown.
     var admin =
-        adminRepository
-            .findById(adminId)
+        TenantContext.supplyAcrossTenants(() -> adminRepository.findById(adminId))
             .orElseThrow(
                 () ->
                     new BadRequestException(String.format("Admin with id %s not found", adminId)));
+
+    adminCallerScope.assertMayActOnAdmin(admin);
+    adminCallerScope.assertMayUseAgencies(dto.getAgencyIds());
 
     if (consultantRepository.findByIdAndDeleteDateIsNull(adminId).isPresent()) {
       throw new CustomValidationHttpStatusException(

@@ -16,7 +16,9 @@ import de.caritas.cob.userservice.api.adapters.keycloak.KeycloakService;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.Session;
@@ -32,6 +34,8 @@ import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyMatrixCredentialClient;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.agency.dto.AgencyMatrixCredentialsDTO;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.ExtendedConsultingTypeResponseDTO;
 import java.util.List;
 import java.util.Optional;
@@ -70,7 +74,11 @@ import org.springframework.test.context.bean.override.mockito.MockitoBean;
 @TestPropertySource(properties = "spring.profiles.active=testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @DirtiesContext(classMode = ClassMode.BEFORE_EACH_TEST_METHOD)
+@WithTenant(ConsultantAgencyLateJoinerMembershipIT.TENANT)
 class ConsultantAgencyLateJoinerMembershipIT {
+
+  /** The Träger whose admin adds the counsellor; its enquiries are the only ones in reach. */
+  static final long TENANT = 1L;
 
   private static final Long AGENCY_ID = 91015L;
   private static final Long OTHER_AGENCY_ID = 91016L;
@@ -94,6 +102,8 @@ class ConsultantAgencyLateJoinerMembershipIT {
 
   @Autowired private SessionRepository sessionRepository;
 
+  @Autowired private AuthenticatedUser caller;
+
   @MockitoBean private AgencyService agencyService;
 
   @MockitoBean private KeycloakService keycloakService;
@@ -106,6 +116,7 @@ class ConsultantAgencyLateJoinerMembershipIT {
 
   @BeforeEach
   void setUp() {
+    Tenants.actAs(caller, "tenant-admin", TENANT, UserRole.TENANT_ADMIN, UserRole.USER_ADMIN);
     givenAgencyExists(AGENCY_ID);
     givenAgencyExists(OTHER_AGENCY_ID);
     givenConsultingTypeSettings();
@@ -156,6 +167,14 @@ class ConsultantAgencyLateJoinerMembershipIT {
     var consultant = givenConsultantWithoutAgency();
     givenOpenEnquiry(AGENCY_ID, ENQUIRY_ROOM_ID);
     when(agencyService.getAgency(UNKNOWN_AGENCY_ID)).thenReturn(null);
+    // Only the platform reaches an agency AgencyService does not know; a Träger admin is refused.
+    Tenants.actAs(
+        caller,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
 
     assertThrows(
         BadRequestException.class,
@@ -177,6 +196,7 @@ class ConsultantAgencyLateJoinerMembershipIT {
   private void givenAgencyExists(Long agencyId) {
     var agency = new AgencyDTO();
     agency.setId(agencyId);
+    agency.setTenantId(TENANT);
     agency.setTeamAgency(false);
     agency.setConsultingType(0);
     when(agencyService.getAgency(agencyId)).thenReturn(agency);
@@ -202,7 +222,7 @@ class ConsultantAgencyLateJoinerMembershipIT {
     consultant.setSessions(null);
     consultant.setConsultantMobileTokens(null);
     consultant.setConsultantTopics(null);
-    consultant.setTenantId(null);
+    consultant.setTenantId(TENANT);
     consultant.setMatrixUserId(CONSULTANT_MATRIX_USER_ID);
     consultant.setDeleteDate(null);
     consultant.setLanguages(null);
@@ -215,6 +235,7 @@ class ConsultantAgencyLateJoinerMembershipIT {
     user.setSessions(null);
     user.setUserMobileTokens(null);
     user.setUserAgencies(null);
+    user.setTenantId(TENANT);
     userRepository.save(user);
 
     var userAgency = new UserAgency();
@@ -229,6 +250,7 @@ class ConsultantAgencyLateJoinerMembershipIT {
     session.setConsultant(null);
     session.setUser(user);
     session.setAgencyId(agencyId);
+    session.setTenantId(TENANT);
     session.setMatrixRoomId(matrixRoomId);
     session.setLanguageCode(LanguageCode.de);
     session.setTeamSession(true);

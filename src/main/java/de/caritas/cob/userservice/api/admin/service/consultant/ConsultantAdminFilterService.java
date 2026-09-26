@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort.OrderEnum;
 import de.caritas.cob.userservice.api.admin.service.consultant.querybuilder.ConsultantFilterSpecification;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,9 +40,42 @@ public class ConsultantAdminFilterService {
       final Integer perPage,
       final ConsultantFilter consultantFilter,
       final Sort sort) {
+    return findConsultants(
+        page, perPage, consultantFilter, sort, buildSpecification(consultantFilter));
+  }
+
+  /**
+   * Like {@link #findFilteredConsultants(Integer, Integer, ConsultantFilter, Sort)}, but only
+   * returns consultants with an active relation to one of the given agencies. Used for callers
+   * whose reach ends at their own agencies (Beratungsstellen admins).
+   *
+   * @param consultantFilter the filter object containing filter values
+   * @param page the current requested page (1 = first page)
+   * @param perPage the amount of items in one page
+   * @param sort the requested sort
+   * @param agencyIds the agencies the result is limited to; empty yields an empty result
+   * @return the result list
+   */
+  public ConsultantSearchResultDTO findFilteredConsultants(
+      final Integer page,
+      final Integer perPage,
+      final ConsultantFilter consultantFilter,
+      final Sort sort,
+      final Set<Long> agencyIds) {
+    var specification =
+        Specification.where(buildSpecification(consultantFilter))
+            .and(ConsultantFilterSpecification.withActiveRelationToAnyOf(agencyIds));
+    return findConsultants(page, perPage, consultantFilter, sort, specification);
+  }
+
+  private ConsultantSearchResultDTO findConsultants(
+      final Integer page,
+      final Integer perPage,
+      final ConsultantFilter consultantFilter,
+      final Sort sort,
+      final Specification<Consultant> specification) {
     var pageRequest = PageRequest.of(Math.max(page - 1, 0), Math.max(perPage, 1), buildSort(sort));
-    var resultPage =
-        consultantRepository.findAll(buildSpecification(consultantFilter), pageRequest);
+    var resultPage = consultantRepository.findAll(specification, pageRequest);
 
     return ConsultantSearchResultBuilder.getInstance(
             resultPage.getContent(), resultPage.getTotalElements())

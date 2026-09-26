@@ -7,6 +7,7 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.empty;
+import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
@@ -16,6 +17,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import com.google.common.collect.Lists;
@@ -31,6 +33,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.Sort.FieldEnum;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
 import de.caritas.cob.userservice.api.admin.service.agency.ConsultantAgencyAdminService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminFilterService;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantAdminService;
@@ -41,9 +44,13 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.List;
+import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -76,6 +83,8 @@ class ConsultantAdminFacadeTest {
 
   @Mock private AgencyService agencyService;
 
+  @Mock private AdminCallerScope adminCallerScope;
+
   @Test
   void findConsultant_Should_useConsultantAdminService() {
     this.consultantAdminFacade.findConsultant("");
@@ -89,6 +98,43 @@ class ConsultantAdminFacadeTest {
         1, 1, new ConsultantFilter(), new Sort().field(FieldEnum.EMAIL));
 
     verify(this.consultantAdminFilterService).findFilteredConsultants(eq(1), eq(1), any(), any());
+  }
+
+  @Test
+  void findFilteredConsultants_Should_useAgencyScopedQuery_When_callerIsRestrictedToAgencies() {
+    when(adminCallerScope.agencyRestriction()).thenReturn(Optional.of(Set.of(1L)));
+
+    consultantAdminFacade.findFilteredConsultants(1, 1, new ConsultantFilter(), null);
+
+    verify(consultantAdminFilterService)
+        .findFilteredConsultants(eq(1), eq(1), any(), any(), eq(Set.of(1L)));
+    verify(consultantAdminFilterService, never())
+        .findFilteredConsultants(any(), any(), any(), any());
+  }
+
+  @Test
+  void updateConsultant_Should_notUpdate_When_counsellorIsOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminCallerScope)
+        .assertMayActOnConsultant("c-1");
+
+    assertThrows(
+        ForbiddenException.class, () -> consultantAdminFacade.updateConsultant("c-1", null));
+
+    verifyNoInteractions(consultantAdminService);
+  }
+
+  @Test
+  void markConsultantAgencyForDeletion_Should_notDelete_When_agencyIsOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminCallerScope)
+        .assertMayUseAgencies(List.of(1L));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> consultantAdminFacade.markConsultantAgencyForDeletion("c-1", 1L));
+
+    verifyNoInteractions(consultantAgencyAdminService);
   }
 
   @Test
@@ -109,10 +155,10 @@ class ConsultantAdminFacadeTest {
 
   @Test
   void createNewConsultant_Should_RejectUnauthorizedAgenciesBeforeCreatingIdentity() {
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L));
     CreateConsultantDTO dto = new CreateConsultantDTO().agencyIds(List.of(2L));
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminCallerScope)
+        .assertMayUseAgencies(List.of(2L));
 
     assertThrows(ForbiddenException.class, () -> consultantAdminFacade.createNewConsultant(dto));
 
@@ -128,9 +174,53 @@ class ConsultantAdminFacadeTest {
 
   @Test
   void createNewConsultantAgency_Should_useConsultantAgencyAdminServiceCorrectly() {
-    this.consultantAdminFacade.createNewConsultantAgency(null, null);
+    var agency = new CreateConsultantAgencyDTO().agencyId(1L);
 
-    verify(this.relationCreatorService).createNewConsultantAgency(null, null);
+    this.consultantAdminFacade.createNewConsultantAgency("c-1", agency);
+
+    verify(this.relationCreatorService).createNewConsultantAgency("c-1", agency);
+  }
+
+  @Test
+  void createNewConsultantAgency_Should_notCreate_When_counsellorIsOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminCallerScope)
+        .assertMayActOnConsultant("c-1");
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            consultantAdminFacade.createNewConsultantAgency(
+                "c-1", new CreateConsultantAgencyDTO().agencyId(1L)));
+
+    verifyNoInteractions(relationCreatorService);
+  }
+
+  @Test
+  void createNewConsultantAgency_Should_notCreate_When_agencyIsOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminCallerScope)
+        .assertMayUseAgencies(List.of(1L));
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            consultantAdminFacade.createNewConsultantAgency(
+                "c-1", new CreateConsultantAgencyDTO().agencyId(1L)));
+
+    verifyNoInteractions(relationCreatorService);
+  }
+
+  @Test
+  void repairConsultantChatIdentity_Should_notProvision_When_counsellorIsOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminCallerScope)
+        .assertMayActOnConsultant("c-1");
+
+    assertThrows(
+        ForbiddenException.class, () -> consultantAdminFacade.repairConsultantChatIdentity("c-1"));
+
+    verifyNoInteractions(consultantChatIdentityService, consultantAdminService);
   }
 
   @Test
@@ -171,13 +261,10 @@ class ConsultantAdminFacadeTest {
   }
 
   @Test
-  void markConsultantForDeletion_Should_throwForbidden_When_restrictedAdminSharesNoAgency() {
-    // DEL-GUARD-01: a Beratungsstellen-Admin must not delete consultants of foreign agencies.
-    when(this.authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-    when(this.authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(this.adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L, 2L));
-    when(this.consultantAgencyAdminService.findConsultantAgencyIds("consultant-1"))
-        .thenReturn(List.of(3L));
+  void markConsultantForDeletion_Should_throwForbidden_When_counsellorIsOutOfScope() {
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminCallerScope)
+        .assertMayActOnConsultant("consultant-1");
 
     assertThrows(
         ForbiddenException.class,
@@ -187,66 +274,10 @@ class ConsultantAdminFacadeTest {
   }
 
   @Test
-  void markConsultantForDeletion_Should_delegate_When_restrictedAdminSharesAnAgency() {
-    when(this.authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-    when(this.authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(this.adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L, 2L));
-    when(this.consultantAgencyAdminService.findConsultantAgencyIds("consultant-1"))
-        .thenReturn(List.of(2L, 3L));
-
-    this.consultantAdminFacade.markConsultantForDeletion("consultant-1", true);
-
-    verify(this.consultantAdminService).markConsultantForDeletion("consultant-1", true);
-  }
-
-  @Test
-  void markConsultantForDeletion_Should_skipScopeCheck_When_callerIsNotRestricted() {
-    when(this.authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(false);
-
-    this.consultantAdminFacade.markConsultantForDeletion("consultant-1", false);
-
-    verify(this.consultantAdminService).markConsultantForDeletion("consultant-1", false);
-    Mockito.verifyNoInteractions(this.adminUserFacade);
-  }
-
-  @Test
   void findConsultantsForAgency_Should_callConsultantAgencyAdminService() {
     this.consultantAdminFacade.findConsultantsForAgency("1");
 
     verify(this.consultantAgencyAdminService).findConsultantsForAgency(1L);
-  }
-
-  @Test
-  void checkPermissionsToUpdateAgencies_Should_PassIfUserDoesntHaveRestrictedPermissions() {
-    consultantAdminFacade.checkPermissionsToAssignedAgencies(
-        Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(1L)));
-
-    verify(authenticatedUser).hasRestrictedAgencyPriviliges();
-  }
-
-  @Test
-  void
-      checkPermissionsToUpdateAgencies_Should_PassIfUserHasRestrictedPermissionsAndHasPermissionsForTheGivenAgency() {
-    when(adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId()))
-        .thenReturn(Lists.newArrayList(1L, 2L, 3L));
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-    consultantAdminFacade.checkPermissionsToAssignedAgencies(
-        Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(1L)));
-    verify(authenticatedUser).hasRestrictedAgencyPriviliges();
-  }
-
-  @Test
-  void
-      checkPermissionsToUpdateAgencies_Should_ThrowForbiddenExceptionIfUserHasRestrictedPermissionsAndDoesntHavePermissionsForTheGivenAgency() {
-    when(adminUserFacade.findAdminUserAgencyIds(authenticatedUser.getUserId()))
-        .thenReturn(Lists.newArrayList(1L, 2L, 3L));
-    when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
-
-    ArrayList<CreateConsultantAgencyDTO> agencyList =
-        Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(4L));
-    assertThrows(
-        ForbiddenException.class,
-        () -> consultantAdminFacade.checkPermissionsToAssignedAgencies(agencyList));
   }
 
   @Test
@@ -508,6 +539,41 @@ class ConsultantAdminFacadeTest {
                 "consultantId", Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(3L))));
 
     verify(relationCreatorService, never()).createNewConsultantAgency(any(), any());
+  }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void setConsultantAgencies_Should_checkOnlyAddedAndRemovedAgencies() {
+    when(consultantAgencyAdminService.findConsultantAgencyIds("consultantId"))
+        .thenReturn(Lists.newArrayList(1L, 2L));
+
+    consultantAdminFacade.setConsultantAgencies(
+        "consultantId",
+        Lists.newArrayList(
+            new CreateConsultantAgencyDTO().agencyId(2L),
+            new CreateConsultantAgencyDTO().agencyId(3L)));
+
+    ArgumentCaptor<Collection<Long>> checked = ArgumentCaptor.forClass(Collection.class);
+    verify(adminCallerScope).assertMayUseAgencies(checked.capture());
+    assertThat(Set.copyOf(checked.getValue()), is(Set.of(1L, 3L)));
+  }
+
+  @Test
+  void setConsultantAgencies_Should_notChangeAnything_When_anAgencyIsOutOfScope() {
+    when(consultantAgencyAdminService.findConsultantAgencyIds("consultantId"))
+        .thenReturn(Lists.newArrayList(1L));
+    doThrow(new ForbiddenException("out of scope"))
+        .when(adminCallerScope)
+        .assertMayUseAgencies(any());
+
+    assertThrows(
+        ForbiddenException.class,
+        () ->
+            consultantAdminFacade.setConsultantAgencies(
+                "consultantId", Lists.newArrayList(new CreateConsultantAgencyDTO().agencyId(3L))));
+
+    verify(consultantAgencyAdminService, never()).markConsultantAgenciesForDeletion(any(), any());
+    verifyNoInteractions(relationCreatorService);
   }
 
   @Test
