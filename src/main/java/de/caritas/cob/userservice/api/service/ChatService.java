@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
@@ -30,9 +31,7 @@ import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
 import java.time.DateTimeException;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashSet;
@@ -153,6 +152,8 @@ public class ChatService {
     if (chat.getConversationType() == null) {
       chat.setConversationType(ConversationType.INTERNAL_GROUP);
     }
+    // Every chat mutation goes through here, so this is the one place to stamp it.
+    chat.setUpdateDate(nowInUtc());
     return chatRepository.save(chat);
   }
 
@@ -258,18 +259,14 @@ public class ChatService {
             .map(chatAgency -> agencyService.getAgency(chatAgency.getAgencyId()))
             .collect(Collectors.toList());
 
+    // startDate/startTime go out as wall-clock time in chat.timezone, like they come in.
+    var localStart = chat.localStartDate();
     var result =
         new UserChatDTO(
             chat.getId(),
             chat.getTopic(),
-            LocalDate.of(
-                chat.getStartDate().getYear(),
-                chat.getStartDate().getMonth(),
-                chat.getStartDate().getDayOfMonth()),
-            LocalTime.of(
-                chat.getStartDate().getHour(),
-                chat.getStartDate().getMinute(),
-                chat.getStartDate().getSecond()),
+            localStart.toLocalDate(),
+            localStart.toLocalTime().withNano(0),
             chat.getDuration(),
             isTrue(chat.isRepetitive()),
             isTrue(chat.isActive()),
@@ -477,7 +474,6 @@ public class ChatService {
               chatId));
     }
 
-    LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
     // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
     // one when the client sends it (validated like the create path), and preserve the existing
     // zone when the DTO omits it rather than silently resetting to UTC.
@@ -490,6 +486,9 @@ public class ChatService {
       }
       chat.setTimezone(chatDTO.getTimezone());
     }
+    // Same contract as create: the request carries wall-clock time in the chat's zone.
+    LocalDateTime startDate =
+        Chat.toUtc(chatDTO.getStartDate(), chatDTO.getStartTime(), chat.zoneId());
     chat.setTopic(chatDTO.getTopic());
     chat.setDuration(chatDTO.getDuration());
     // Defaulting must match the create path (ChatConverter.convertToEntity) so editing a

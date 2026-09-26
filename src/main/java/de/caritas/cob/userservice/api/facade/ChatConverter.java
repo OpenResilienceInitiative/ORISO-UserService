@@ -15,7 +15,6 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
-import java.time.ZoneOffset;
 import org.springframework.stereotype.Component;
 
 @Component
@@ -40,11 +39,7 @@ public class ChatConverter {
     }
     LocalDateTime startDate = nowInUtc();
     if (nonNull(chatDTO.getStartDate()) && nonNull(chatDTO.getStartTime())) {
-      startDate =
-          LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime())
-              .atZone(zoneId)
-              .withZoneSameInstant(ZoneOffset.UTC)
-              .toLocalDateTime();
+      startDate = Chat.toUtc(chatDTO.getStartDate(), chatDTO.getStartTime(), zoneId);
     }
 
     int repeatCount =
