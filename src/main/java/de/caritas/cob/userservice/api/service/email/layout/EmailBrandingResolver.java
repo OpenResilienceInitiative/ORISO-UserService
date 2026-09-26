@@ -58,10 +58,10 @@ public class EmailBrandingResolver {
    * The supported maximum for {@code email.branding.cache-ttl-seconds}. This is the configuration
    * contract, not an arithmetic guard: the cache exists to collapse one batch, and source 2606d840
    * removed the previous 24-hour cache because a logo change stayed invisible until it expired.
-   * Anything beyond a few minutes walks back that fix, so a larger configured value is clamped and
+   * Anything beyond ten seconds walks back that fix, so a larger configured value is clamped and
    * reported rather than honoured. It also keeps the nanosecond conversion far below overflow.
    */
-  private static final long MAX_CACHE_TTL_SECONDS = 300L;
+  private static final long MAX_CACHE_TTL_SECONDS = 10L;
 
   private final long cacheTtlNanos;
   private final Map<CacheKey, CachedTenant> tenantCache = new ConcurrentHashMap<>();
@@ -171,7 +171,11 @@ public class EmailBrandingResolver {
       if (tenantLogo != null) {
         return tenantLogo;
       }
-      if (isStoredImage(theming.getLogo()) || isStoredImage(theming.getAssociationLogo())) {
+      // The public asset endpoint selects logo whenever it is non-null, even if it cannot decode
+      // that value. Only fall through to associationLogo when that endpoint does the same.
+      String servedLogo =
+          theming.getLogo() != null ? theming.getLogo() : theming.getAssociationLogo();
+      if (isStoredImage(servedLogo)) {
         String baseUrl = firstAbsoluteUrl(applicationBaseUrl);
         if (!isBlank(baseUrl) && tenant != null && tenant.getId() != null) {
           Long assetTenantId = tenant.getId();

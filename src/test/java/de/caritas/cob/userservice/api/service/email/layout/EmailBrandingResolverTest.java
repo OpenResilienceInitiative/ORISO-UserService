@@ -203,6 +203,29 @@ class EmailBrandingResolverTest {
     verify(tenantService, times(1)).getRestrictedTenantDataFresh(7L);
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"https://tracker.example/logo.png", ""})
+  void resolve_Should_notLinkToAnAssetThePublicEndpointCannotServe(String primaryLogo) {
+    givenNoTemplateAttributes();
+    Theming theming = new Theming();
+    theming.setLogo(primaryLogo);
+    theming.setAssociationLogo("data:image/png;base64,iVBORw0KGgo=");
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", theming));
+
+    assertThat(resolver("https://app.oriso.org/platform.png").resolve(7L).logoUrl())
+        .isEqualTo("https://app.oriso.org/platform.png");
+  }
+
+  @Test
+  void constructor_Should_limitBrandingCacheToTenSeconds() {
+    EmailBrandingResolver cached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.oriso.org", 300L);
+
+    assertThat(org.springframework.test.util.ReflectionTestUtils.getField(cached, "cacheTtlNanos"))
+        .isEqualTo(10_000_000_000L);
+  }
+
   @Test
   void constructor_Should_rejectAMissingApplicationUrl() {
     assertThatThrownBy(
