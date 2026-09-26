@@ -11,6 +11,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
@@ -557,11 +558,13 @@ class MagicLinkLoginServiceTest {
           .thenThrow(new MessagingException(smtpReply));
       assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
           .doesNotThrowAnyException();
+      transport.verify(() -> Transport.send(any(Message.class)));
       assertThat(logs.events()).isNotEmpty();
       assertThat(logs.events())
           .allSatisfy(
               event -> {
-                assertThat(event.getFormattedMessage()).doesNotContain("testuser");
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain("testuser", "real@example.com", "mailbox unavailable");
                 assertThat(event.getThrowableProxy()).isNull();
               });
       var failure =
@@ -571,7 +574,10 @@ class MagicLinkLoginServiceTest {
                       event.getFormattedMessage().startsWith("Magic link email dispatch failed"))
               .findFirst()
               .orElseThrow();
-      assertThat(failure.getFormattedMessage()).doesNotContain("real@example.com", smtpReply);
+      assertThat(failure.getLevel()).isEqualTo(Level.WARN);
+      assertThat(failure.getFormattedMessage()).contains("(MessagingException)");
+      assertThat(failure.getFormattedMessage())
+          .doesNotContain("real@example.com", "mailbox unavailable", smtpReply);
     }
 
     verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());

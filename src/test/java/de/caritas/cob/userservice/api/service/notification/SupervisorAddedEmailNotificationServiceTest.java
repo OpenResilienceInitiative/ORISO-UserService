@@ -237,7 +237,8 @@ class SupervisorAddedEmailNotificationServiceTest {
               .orElseThrow();
       assertThat(failure.getLevel()).isEqualTo(Level.ERROR);
       assertThat(failure.getFormattedMessage()).contains("(MessagingException)");
-      assertThat(failure.getFormattedMessage()).doesNotContain("john@example.com", smtpReply);
+      assertThat(failure.getFormattedMessage())
+          .doesNotContain("john@example.com", "mailbox unavailable", smtpReply);
       assertThat(failure.getThrowableProxy()).isNull();
     }
   }
