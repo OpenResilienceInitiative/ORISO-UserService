@@ -2338,7 +2338,7 @@ class UserControllerIT {
         .andExpect(status().isOk());
 
     var captor = ArgumentCaptor.forClass(UpdateAdminConsultantDTO.class);
-    verify(consultantUpdateService).updateConsultant(any(), captor.capture());
+    verify(consultantUpdateService).updateConsultant(any(), captor.capture(), eq(false));
 
     var updateAdminConsultantDTO = captor.getValue();
     assertEquals(updateConsultantDTO.getEmail().toLowerCase(), updateAdminConsultantDTO.getEmail());
