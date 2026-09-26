@@ -33,6 +33,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
@@ -68,6 +69,7 @@ class AccountInviteServiceTest {
   @Mock private TenantService tenantService;
   @Mock private TenantIdAllocationClient tenantIdAllocationClient;
   @Mock private AgencyIdAllocationClient agencyIdAllocationClient;
+  @Mock private ExistingAgencyClient existingAgencyClient;
   @Mock private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @Mock private InviteMailDispatchService inviteMailDispatchService;
   @Mock private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
@@ -654,10 +656,15 @@ class AccountInviteServiceTest {
     // already covered by the identity probe, and a revoked, expired or superseded one must leave
     // the address free — otherwise a mistyped or withdrawn invite would strand the admin with no
     // way to invite that person again.
+    // WAITING_FOR_UNIT holds the address too: the invite is promised.
     verify(accountInviteRepository)
         .countNonTerminalInvitesForRecipientEmail(
             eq("reusable@example.org"),
-            eq(List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT)),
+            eq(
+                List.of(
+                    AccountInviteStatus.WAITING_FOR_UNIT,
+                    AccountInviteStatus.DRAFT,
+                    AccountInviteStatus.EMAIL_SENT)),
             any());
   }
 

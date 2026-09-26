@@ -4,6 +4,7 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import jakarta.persistence.LockModeType;
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -159,11 +160,7 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("searchTenantId") Long searchTenantId,
       Pageable pageable);
 
-  /**
-   * {@link #findAllByFilters} narrowed to the given agencies — the listing a Beratungsstellen admin
-   * gets (restricted agency admin, cross-Träger isolation). The caller never passes an empty
-   * collection; an admin without agencies gets an empty page without a query.
-   */
+  /** {@link #findAllByFilters} narrowed to the given agencies, which are never empty. */
   @Query(
       "SELECT i FROM AccountInvite i"
           + " WHERE i.agencyId IN :agencyIds"
@@ -184,6 +181,178 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("searchTenantId") Long searchTenantId,
       @Param("agencyIds") Collection<Long> agencyIds,
       Pageable pageable);
+
+  /** Null {@code tenantId} matches any tenant; null {@code excludedId} excludes nothing. */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".AGENCY_ADMIN"
+          + " AND i.agencyId = :agencyId"
+          + " AND (:tenantId IS NULL OR i.tenantId = :tenantId)"
+          + " AND (:excludedId IS NULL OR i.id <> :excludedId)"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)"
+          + " ORDER BY i.createDate ASC")
+  List<AccountInvite> findPendingAgencyAdmins(
+      @Param("agencyId") Long agencyId,
+      @Param("tenantId") Long tenantId,
+      @Param("excludedId") Long excludedId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** Same for a not-yet-created Träger: its pending TENANT_ADMIN invites. */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".TENANT_ADMIN"
+          + " AND i.tenantId = :tenantId"
+          + " AND (:excludedId IS NULL OR i.id <> :excludedId)"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)"
+          + " ORDER BY i.createDate ASC")
+  List<AccountInvite> findPendingTenantAdmins(
+      @Param("tenantId") Long tenantId,
+      @Param("excludedId") Long excludedId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /**
+   * The invites waiting for an agency that is about to exist, in its Träger; a null {@code
+   * tenantId} (single-tenant deployment) matches any.
+   */
+  @Query(
+      "SELECT i.id FROM AccountInvite i WHERE i.status = :status"
+          + " AND i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.AGENCY"
+          + " AND i.agencyId = :agencyId"
+          + " AND (:tenantId IS NULL OR i.tenantId = :tenantId) ORDER BY i.createDate ASC")
+  List<Long> findIdsWaitingForAgency(
+      @Param("status") AccountInviteStatus status,
+      @Param("agencyId") Long agencyId,
+      @Param("tenantId") Long tenantId);
+
+  /** Moves a waiting invite to DRAFT; 0 when another release got there first. */
+  @Modifying(clearAutomatically = true, flushAutomatically = true)
+  @Query(
+      "UPDATE AccountInvite i SET i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus.DRAFT,"
+          + " i.waitingForUnit = NULL, i.expiresAt = :expiresAt, i.updateDate = :now"
+          + " WHERE i.id = :id AND i.status ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus"
+          + ".WAITING_FOR_UNIT")
+  int claimWaitingInvite(
+      @Param("id") Long id,
+      @Param("expiresAt") LocalDateTime expiresAt,
+      @Param("now") LocalDateTime now);
+
+  /** The invites waiting for a tenant that is about to exist. */
+  @Query(
+      "SELECT i.id FROM AccountInvite i WHERE i.status = :status"
+          + " AND i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT"
+          + " AND i.tenantId = :tenantId ORDER BY i.createDate ASC")
+  List<Long> findIdsWaitingForTenant(
+      @Param("status") AccountInviteStatus status, @Param("tenantId") Long tenantId);
+
+  /** A further admin of the same new agency shares this reservation instead of taking another. */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".AGENCY_ADMIN"
+          + " AND i.agencyId = :agencyId"
+          + " AND (:tenantId IS NULL OR i.tenantId = :tenantId)"
+          + " AND (:excludedId IS NULL OR i.id <> :excludedId)"
+          + " AND i.agencyIdAllocationMode IN :modes"
+          + " AND (i.waitingForUnit IS NULL)")
+  boolean existsAgencyAdminReservation(
+      @Param("agencyId") Long agencyId,
+      @Param("tenantId") Long tenantId,
+      @Param("excludedId") Long excludedId,
+      @Param("modes") Collection<IdAllocationMode> modes);
+
+  /** Any other invite that references this agency ID under a reserving mode. */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.agencyId = :agencyId"
+          + " AND i.id <> :excludedId AND i.agencyIdAllocationMode IN :modes")
+  boolean existsOtherInviteOnReservedAgency(
+      @Param("agencyId") Long agencyId,
+      @Param("excludedId") Long excludedId,
+      @Param("modes") Collection<IdAllocationMode> modes);
+
+  /** A queued invite does not count: it only points at another invite's reservation. */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.agencyId = :agencyId"
+          + " AND i.agencyIdAllocationMode IN :modes"
+          + " AND i.waitingForUnit IS NULL"
+          + " AND i.status <>"
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus"
+          + ".WAITING_FOR_UNIT")
+  boolean existsReservationHolderForAgency(
+      @Param("agencyId") Long agencyId, @Param("modes") Collection<IdAllocationMode> modes);
+
+  /** Further admins or waiting invites of the same new agency; elapsed invites do not count. */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.agencyId = :agencyId"
+          + " AND i.id <> :excludedId"
+          + " AND i.agencyIdAllocationMode IN :modes"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  boolean existsPendingInviteOnAgencyNumber(
+      @Param("agencyId") Long agencyId,
+      @Param("excludedId") Long excludedId,
+      @Param("modes") Collection<IdAllocationMode> modes,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** Further admins sharing the reservation or invites waiting for the new Träger. */
+  @Query(
+      "SELECT COUNT(i) > 0 FROM AccountInvite i WHERE i.tenantId = :tenantId"
+          + " AND i.id <> :excludedId"
+          + " AND (i.tenantIdReservationToken IS NOT NULL"
+          + "      OR i.waitingForUnit ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType.TENANT)"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  boolean existsPendingInviteOnTenantNumber(
+      @Param("tenantId") Long tenantId,
+      @Param("excludedId") Long excludedId,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** Elapsed, unaccepted invites that may still hold a reserved Träger or agency number. */
+  @Query(
+      "SELECT i FROM AccountInvite i WHERE i.status IN :statuses"
+          + " AND i.expiresAt IS NOT NULL AND i.expiresAt <= :now"
+          + " AND (i.tenantIdReservationToken IS NOT NULL OR i.agencyIdAllocationMode IN :modes)"
+          + " ORDER BY i.expiresAt ASC")
+  List<AccountInvite> findElapsedHoldingANumber(
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("modes") Collection<IdAllocationMode> modes,
+      @Param("now") LocalDateTime now,
+      Pageable pageable);
+
+  /** The elapsed address-holding rows {@link #expireElapsedRecipientClaims} is about to expire. */
+  @Query(
+      "SELECT i FROM AccountInvite i WHERE i.activeRecipientKey = :recipientEmail"
+          + " AND i.status IN :statuses"
+          + " AND i.expiresAt IS NOT NULL"
+          + " AND i.expiresAt <= :now")
+  List<AccountInvite> findElapsedRecipientClaims(
+      @Param("recipientEmail") String recipientEmail,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** The newest TENANT_ADMIN invite holding a tenant-ID reservation token for this tenant. */
+  Optional<AccountInvite>
+      findFirstByTargetRoleAndTenantIdAndTenantIdReservationTokenIsNotNullOrderByCreateDateDesc(
+          AccountInviteTargetRole targetRole, Long tenantId);
+
+  long countByTenantIdReservationTokenAndIdNot(String tenantIdReservationToken, Long id);
+
+  boolean existsByTargetRoleAndTenantIdAndStatusAndIdNot(
+      AccountInviteTargetRole targetRole, Long tenantId, AccountInviteStatus status, Long id);
 
   List<AccountInvite> findAllByAcceptedByUserIdAndTwoFactorStatus(
       String acceptedByUserId, TwoFactorGateStatus twoFactorStatus);

@@ -27,6 +27,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryS
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteQueueProblem;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.lang.reflect.Method;
@@ -113,6 +115,52 @@ class AccountInviteControllerTest {
     verify(accountInviteService).createInvite(commandCaptor.capture());
     assertEquals(IdAllocationMode.AUTO, commandCaptor.getValue().tenantIdAllocationMode());
     assertEquals(IdAllocationMode.MANUAL, commandCaptor.getValue().agencyIdAllocationMode());
+  }
+
+  @Test
+  void createInvite_Should_PassTheRoleFields_AndExposeTheQueueState() {
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.COUNSELLOR.name();
+    request.recipientEmail = "queued@example.org";
+    request.agencyId = 500L;
+    request.agencyIdAllocationMode = "MANUAL";
+
+    var invite = sampleInvite();
+    invite.setStatus(AccountInviteStatus.WAITING_FOR_UNIT);
+    invite.setWaitingForUnit(InviteUnitType.AGENCY);
+    when(accountInviteService.createInvite(any())).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
+    when(accountInviteService.queueProblemOf(invite)).thenReturn(InviteQueueProblem.NO_UNIT_ADMIN);
+
+    var body = controller.createInvite(request).getBody();
+
+    var commandCaptor =
+        ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
+    verify(accountInviteService).createInvite(commandCaptor.capture());
+    assertNotNull(body);
+    assertEquals("WAITING_FOR_UNIT", body.inviteStatus);
+    assertEquals("AGENCY", body.waitingForUnit);
+    assertEquals("NO_UNIT_ADMIN", body.queueProblem);
+  }
+
+  @Test
+  void createInvite_Should_PassAlsoCounsellor() {
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.AGENCY_ADMIN.name();
+    request.recipientEmail = "admin@example.org";
+    request.agencyId = 5L;
+    request.agencyIdAllocationMode = "EXISTING";
+    request.alsoCounsellor = false;
+    var invite = sampleInvite();
+    when(accountInviteService.createInvite(any())).thenReturn(invite);
+
+    controller.createInvite(request);
+
+    var commandCaptor =
+        ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
+    verify(accountInviteService).createInvite(commandCaptor.capture());
+    assertEquals(Boolean.FALSE, commandCaptor.getValue().alsoCounsellor());
   }
 
   @Test

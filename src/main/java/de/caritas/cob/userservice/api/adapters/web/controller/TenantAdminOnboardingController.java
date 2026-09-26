@@ -56,7 +56,7 @@ public class TenantAdminOnboardingController {
   })
   public ResponseEntity<TenantAdminOnboardingInviteResponseDTO> resolveOnboardingInvite(
       @PathVariable String token) {
-    if (targetRoleOf(token) == AccountInviteTargetRole.COUNSELLOR) {
+    if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
       CounsellorOnboardingState state = counsellorOnboardingService.resolveOnboardingInvite(token);
       return ResponseEntity.ok(TenantAdminOnboardingInviteResponseDTO.from(state));
     }
@@ -71,7 +71,7 @@ public class TenantAdminOnboardingController {
   public ResponseEntity<TenantAdminRegistrationResponseDTO> registerTenantAdmin(
       @PathVariable String token,
       @RequestBody(required = false) TenantAdminRegistrationRequestDTO request) {
-    if (targetRoleOf(token) == AccountInviteTargetRole.COUNSELLOR) {
+    if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
       CounsellorRegistrationResult result =
           counsellorOnboardingService.registerCounsellor(token, toCounsellorCommand(request));
       return ResponseEntity.ok(TenantAdminRegistrationResponseDTO.from(result));
@@ -89,7 +89,7 @@ public class TenantAdminOnboardingController {
       @PathVariable String token,
       @RequestBody(required = false) TwoFactorActivationRequestDTO request) {
     String otp = request == null ? null : request.otp;
-    if (targetRoleOf(token) == AccountInviteTargetRole.COUNSELLOR) {
+    if (CounsellorOnboardingService.runsTheCounsellorWizard(targetRoleOf(token))) {
       counsellorOnboardingService.activateTwoFactor(token, otp);
     } else {
       onboardingService.activateTwoFactor(token, otp);
@@ -172,7 +172,8 @@ public class TenantAdminOnboardingController {
         safe.topicIds,
         avatar.kind,
         avatar.id,
-        safe.agency == null ? null : safe.agency.name);
+        safe.agency == null ? null : safe.agency.name,
+        safe.alsoCounsellor);
   }
 
   private static RegisterTenantAdminCommand toCommand(TenantAdminRegistrationRequestDTO request) {
@@ -276,6 +277,9 @@ public class TenantAdminOnboardingController {
 
     /** Counsellor wizard: only for invites whose agency does not exist yet. */
     public AgencyDataDTO agency;
+
+    /** Agency-admin invites only; omitted = the inviter's proposal from the resolve answer. */
+    public Boolean alsoCounsellor;
   }
 
   public static class TwoFactorActivationRequestDTO {
@@ -336,6 +340,9 @@ public class TenantAdminOnboardingController {
      */
     public Boolean agencyExists;
 
+    /** Agency-admin invites only: the inviter's proposal; the invitee may override it. */
+    public Boolean alsoCounsellor;
+
     /**
      * The tenant ID the invite reserved (TenantService {@code TenantIdReservationDTO.tenantId}).
      */
@@ -356,11 +363,17 @@ public class TenantAdminOnboardingController {
     public String dpaContent;
 
     /**
+     * Tenant-admin invites only: true when joining an existing Träger, so the wizard skips the
+     * organisation and DPA steps and registers with {@code account.password} alone.
+     */
+    public Boolean joinsExistingTenant;
+
+    /**
      * Why {@link #dpaContent} is absent — {@code NOT_PUBLISHED} when the platform operator has
      * published no DPA yet (a content task), {@code UPSTREAM_ERROR} when the lookup itself failed,
      * i.e. TenantService could not be read or the technical-user login was rejected (a platform
      * configuration task). Null whenever the contract text is present, and null on the counsellor
-     * variant, which has no DPA step.
+     * variant and when {@link #joinsExistingTenant} is true, neither of which has a DPA step.
      *
      * <p>Without this the Admin panel could only tell the invitee to reload the page, which once
      * hid a server-side misconfiguration on staging for hours.
@@ -380,8 +393,14 @@ public class TenantAdminOnboardingController {
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();
       dto.lastName = invite.getLastName();
-      dto.reservedTenantId = invite.getTenantId();
-      dto.tenantIdReservationToken = invite.getTenantIdReservationToken();
+      boolean joinsExisting = state.joinsExistingTenant();
+      dto.joinsExistingTenant = joinsExisting;
+      if (joinsExisting) {
+        dto.tenantId = invite.getTenantId();
+      } else {
+        dto.reservedTenantId = invite.getTenantId();
+        dto.tenantIdReservationToken = invite.getTenantIdReservationToken();
+      }
       dto.expiresAt = invite.getExpiresAt();
       dto.dpaContent = state.dpaContent();
       dto.dpaUnavailableReason =
@@ -393,7 +412,8 @@ public class TenantAdminOnboardingController {
     static TenantAdminOnboardingInviteResponseDTO from(CounsellorOnboardingState state) {
       AccountInvite invite = state.invite();
       TenantAdminOnboardingInviteResponseDTO dto = new TenantAdminOnboardingInviteResponseDTO();
-      dto.targetRole = AccountInviteTargetRole.COUNSELLOR.name();
+      dto.targetRole = invite.getTargetRole().name();
+      dto.alsoCounsellor = invite.getAlsoCounsellor();
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();
       dto.lastName = invite.getLastName();

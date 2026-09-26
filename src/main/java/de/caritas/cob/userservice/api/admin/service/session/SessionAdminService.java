@@ -2,13 +2,17 @@ package de.caritas.cob.userservice.api.admin.service.session;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionAdminResultDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.SessionFilter;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.session.pageprovider.AgencyScopedSessionPageProvider;
 import de.caritas.cob.userservice.api.admin.service.session.pageprovider.PageProviderFactory;
+import de.caritas.cob.userservice.api.admin.service.session.pageprovider.SessionPageProvider;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.data.domain.PageRequest;
 import org.springframework.data.domain.Pageable;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Service class to handle administrative operations on sessions. */
 @Service
@@ -16,24 +20,21 @@ import org.springframework.stereotype.Service;
 public class SessionAdminService {
 
   private final @NonNull SessionRepository sessionRepository;
+  private final @NonNull AdminScope adminScope;
 
-  /**
-   * Finds existing sessions filtered by {@link SessionFilter} and retrieves all sessions if no
-   * filter is set.
-   *
-   * @param page the current page
-   * @param perPage number of items per page
-   * @param sessionFilter criteria to filter on sessions
-   * @return a generated {@link SessionAdminResultDTO} containing the results
-   */
+  /** Finds the sessions matching {@code sessionFilter} within the caller's reach. */
+  @Transactional(readOnly = true)
   public SessionAdminResultDTO findSessions(
       Integer page, Integer perPage, SessionFilter sessionFilter) {
     Pageable pageable = PageRequest.of(Math.max(page - 1, 0), Math.max(perPage, 1));
-
-    var sessionPageProvider =
-        PageProviderFactory.getInstance(this.sessionRepository, sessionFilter)
-            .retrieveFirstSupportedSessionPageProvider();
-
+    SessionPageProvider sessionPageProvider =
+        adminScope.current() instanceof AdminScope.Agencies agencies
+            ? new AgencyScopedSessionPageProvider(
+                this.sessionRepository,
+                sessionFilter != null ? sessionFilter : new SessionFilter(),
+                agencies.ids())
+            : PageProviderFactory.getInstance(this.sessionRepository, sessionFilter)
+                .retrieveFirstSupportedSessionPageProvider();
     return SessionAdminResultDTOBuilder.getInstance()
         .withPage(page)
         .withPerPage(perPage)

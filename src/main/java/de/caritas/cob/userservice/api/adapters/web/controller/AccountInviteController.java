@@ -23,6 +23,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewSe
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService.TemplateCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteQueueProblem;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.time.LocalDateTime;
@@ -74,18 +75,23 @@ public class AccountInviteController {
             parseOptionalEnum(
                 IdAllocationMode.class, safe.tenantIdAllocationMode, "tenantIdAllocationMode"),
             parseOptionalEnum(
-                IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"));
+                IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"),
+            safe.alsoCounsellor);
 
     if (safe.templateId != null) {
       InviteSendResult result = accountInviteService.createAndSendInvite(command, safe.templateId);
-      return new ResponseEntity<>(AccountInviteResponseDTO.from(result), HttpStatus.CREATED);
+      return new ResponseEntity<>(
+          withQueueState(AccountInviteResponseDTO.from(result), result.invite()),
+          HttpStatus.CREATED);
     }
 
     AccountInvite invite = accountInviteService.createInvite(command);
 
     return new ResponseEntity<>(
-        AccountInviteResponseDTO.from(
-            invite, null, accountInviteService.calculateAccessGate(invite)),
+        withQueueState(
+            AccountInviteResponseDTO.from(
+                invite, null, accountInviteService.calculateAccessGate(invite)),
+            invite),
         HttpStatus.CREATED);
   }
 
@@ -110,10 +116,12 @@ public class AccountInviteController {
         result.getContent().stream()
             .map(
                 invite ->
-                    AccountInviteResponseDTO.from(
-                        invite,
-                        latestDeliveryStatus(invite),
-                        accountInviteService.calculateAccessGate(invite)))
+                    withQueueState(
+                        AccountInviteResponseDTO.from(
+                            invite,
+                            latestDeliveryStatus(invite),
+                            accountInviteService.calculateAccessGate(invite)),
+                        invite))
             .toList();
     PagedAccountInviteResponseDTO response = new PagedAccountInviteResponseDTO();
     response.content = content;
@@ -288,6 +296,14 @@ public class AccountInviteController {
                     safe.language))));
   }
 
+  /** The queue problem is derived on read, never stored. */
+  private AccountInviteResponseDTO withQueueState(
+      AccountInviteResponseDTO dto, AccountInvite invite) {
+    InviteQueueProblem problem = accountInviteService.queueProblemOf(invite);
+    dto.queueProblem = problem == null ? null : problem.name();
+    return dto;
+  }
+
   private InviteEmailDeliveryStatus latestDeliveryStatus(AccountInvite invite) {
     if (invite.getId() == null) {
       return null;
@@ -348,11 +364,21 @@ public class AccountInviteController {
 
     /**
      * TEN-INV-U3: AUTO = the owning service assigns the smallest free ID (the matching ID field
-     * must be omitted); MANUAL = the pinned ID is reserved or rejected with 409.
+     * must be omitted); MANUAL = the pinned ID is reserved or rejected with 409 (both only for
+     * TENANT_ADMIN invites, i.e. a new Träger). EXISTING: {@code tenantId} names an existing
+     * Träger, nothing is reserved (404 unknown, 403 out of scope, 400 for 0 or missing; a Träger
+     * admin who names none gets their own).
      */
     public String tenantIdAllocationMode;
 
+    /**
+     * AUTO / MANUAL as above, or EXISTING: {@code agencyId} names an existing agency that is
+     * validated, not reserved; a missing tenant or single topic is taken from the agency.
+     */
     public String agencyIdAllocationMode;
+
+    /** AGENCY_ADMIN invites only; omitted = true. Set for any other role → 400. */
+    public Boolean alsoCounsellor;
   }
 
   public static class SendInviteRequestDTO {
@@ -436,6 +462,22 @@ public class AccountInviteController {
     public String lastName;
     public Long agencyId;
     public Long departmentId;
+
+    /** AUTO / MANUAL (new Träger) or EXISTING; null on older invites. */
+    public String tenantIdAllocationMode;
+
+    /** AUTO / MANUAL (new Beratungsstelle) or EXISTING; null on older invites. */
+    public String agencyIdAllocationMode;
+
+    /** AGENCY_ADMIN invites: whether the person also counsels; null for every other role. */
+    public Boolean alsoCounsellor;
+
+    /** AGENCY or TENANT while WAITING_FOR_UNIT: that unit does not exist yet. */
+    public String waitingForUnit;
+
+    /** NO_UNIT_ADMIN while no pending admin invite exists for the unit; clears itself. */
+    public String queueProblem;
+
     public String provisioningStatus;
     public String provisionedUserId;
     public String inviteStatus;
@@ -477,7 +519,7 @@ public class AccountInviteController {
       AccountInviteResponseDTO dto =
           from(
               result.invite(),
-              result.delivery().getStatus(),
+              result.delivery() == null ? null : result.delivery().getStatus(),
               result.invite() == null ? null : AccountAccessGateStatus.BLOCKED_INVITE);
       dto.rawToken = result.rawToken();
       dto.acceptUrl = result.acceptUrl();
@@ -525,6 +567,17 @@ public class AccountInviteController {
       dto.lastName = invite.getLastName();
       dto.agencyId = invite.getAgencyId();
       dto.departmentId = invite.getDepartmentId();
+      dto.tenantIdAllocationMode =
+          invite.getTenantIdAllocationMode() == null
+              ? null
+              : invite.getTenantIdAllocationMode().name();
+      dto.agencyIdAllocationMode =
+          invite.getAgencyIdAllocationMode() == null
+              ? null
+              : invite.getAgencyIdAllocationMode().name();
+      dto.alsoCounsellor = invite.getAlsoCounsellor();
+      dto.waitingForUnit =
+          invite.getWaitingForUnit() == null ? null : invite.getWaitingForUnit().name();
       dto.provisioningStatus =
           invite.getProvisioningStatus() == null ? null : invite.getProvisioningStatus().name();
       dto.provisionedUserId = invite.getProvisionedUserId();
@@ -558,7 +611,7 @@ public class AccountInviteController {
    * does not even advertise that vocabulary (ORISO-Admin#896). Admin endpoints keep the full shape
    * with {@code dpaSignedAt} present-as-null until signed.
    */
-  @JsonIgnoreProperties({"dpaForwardedAt", "dpaForwardCount", "dpaSignedAt"})
+  @JsonIgnoreProperties({"dpaForwardedAt", "dpaForwardCount", "dpaSignedAt", "queueProblem"})
   public static class PublicAccountInviteResponseDTO extends AccountInviteResponseDTO {}
 
   public static class PagedAccountInviteResponseDTO {

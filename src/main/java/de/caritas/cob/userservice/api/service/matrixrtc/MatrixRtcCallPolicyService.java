@@ -28,21 +28,8 @@ public class MatrixRtcCallPolicyService {
       return CallMediaPolicy.denied();
     }
 
-    // The call-policy endpoint is whitelisted from HttpTenantFilter, so this thread has no
-    // tenant context. Without technical context TenantAspect enables the Hibernate
-    // tenantFilter with tenantId=null, the room-to-session lookup matches nothing, and every
-    // call is denied regardless of tenant settings.
-    var callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return resolveCrossTenant(sourceRoomId, matrixUserId);
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
+    // Public callback without a tenant; the room lookup is deliberately cross-tenant.
+    return TenantContext.supplyAcrossTenants(() -> resolveCrossTenant(sourceRoomId, matrixUserId));
   }
 
   private CallMediaPolicy resolveCrossTenant(String sourceRoomId, String matrixUserId) {

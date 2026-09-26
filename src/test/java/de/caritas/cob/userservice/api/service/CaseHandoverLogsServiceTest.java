@@ -7,11 +7,10 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
-import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.service.CaseHandoverLogsService.CaseHandoverLogsResult;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.List;
-import java.util.Optional;
 import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -32,16 +31,13 @@ import org.springframework.jdbc.core.namedparam.SqlParameterSource;
 class CaseHandoverLogsServiceTest {
 
   @Mock private NamedParameterJdbcTemplate namedParameterJdbcTemplate;
-  @Mock private AuthenticatedUser authenticatedUser;
-  @Mock private AdminAuditAgencyScope adminAuditAgencyScope;
+  @Mock private AdminScope adminScope;
 
   @InjectMocks private CaseHandoverLogsService service;
 
   @BeforeEach
   void tenantWideByDefault() {
-    when(authenticatedUser.getAccessToken()).thenReturn(null);
-    when(adminAuditAgencyScope.resolveAgencyIds()).thenReturn(Optional.empty());
-    TenantContext.setCurrentTenant(5L);
+    when(adminScope.current()).thenReturn(new AdminScope.Tenant(1L));
   }
 
   @AfterEach
@@ -68,7 +64,7 @@ class CaseHandoverLogsServiceTest {
 
   @Test
   void listCaseHandoverLogs_Should_FilterByAgency_When_AdminIsAgencyScoped() {
-    when(adminAuditAgencyScope.resolveAgencyIds()).thenReturn(Optional.of(Set.of(11L)));
+    when(adminScope.current()).thenReturn(new AdminScope.Agencies(1L, Set.of(11L)));
     ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<SqlParameterSource> paramsCaptor =
         ArgumentCaptor.forClass(SqlParameterSource.class);
@@ -89,7 +85,7 @@ class CaseHandoverLogsServiceTest {
   @Test
   void listCaseHandoverLogs_Should_ReturnNothing_When_AgencyScopeIsEmpty() {
     // Fail closed: an agency admin assigned to no agency must not fall back to the tenant.
-    when(adminAuditAgencyScope.resolveAgencyIds()).thenReturn(Optional.of(Set.of()));
+    when(adminScope.current()).thenReturn(new AdminScope.Agencies(1L, Set.of()));
 
     CaseHandoverLogsResult result = service.listCaseHandoverLogs(1, 10);
 
@@ -111,5 +107,29 @@ class CaseHandoverLogsServiceTest {
 
     assertThat(result.getPage()).isEqualTo(1);
     assertThat(result.getPerPage()).isEqualTo(200);
+  }
+
+  static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments> reachAndTenant() {
+    return java.util.stream.Stream.of(
+        org.junit.jupiter.params.provider.Arguments.arguments(new AdminScope.Platform(), null),
+        org.junit.jupiter.params.provider.Arguments.arguments(new AdminScope.Tenant(4L), 4L),
+        org.junit.jupiter.params.provider.Arguments.arguments(
+            new AdminScope.Agencies(4L, Set.of(11L)), 4L));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("reachAndTenant")
+  void listCaseHandoverLogs_Should_BindTheTenantOfTheCallersReach(
+      AdminScope.Reach reach, Long tenantId) {
+    when(adminScope.current()).thenReturn(reach);
+    ArgumentCaptor<SqlParameterSource> paramsCaptor =
+        ArgumentCaptor.forClass(SqlParameterSource.class);
+    when(namedParameterJdbcTemplate.queryForObject(
+            any(String.class), paramsCaptor.capture(), eq(Long.class)))
+        .thenReturn(0L);
+
+    service.listCaseHandoverLogs(1, 10);
+
+    assertThat(paramsCaptor.getValue().getValue("tenantId")).isEqualTo(tenantId);
   }
 }
