@@ -209,7 +209,9 @@ public class TenantAdminOnboardingService {
     // genuinely happened — never on the client's say-so. The backend legal gate stays in force
     // until the forwarded signature lands.
     boolean dpaForwarded = invite.getDpaForwardedAt() != null;
-    if (!command.dpaAccepted() && !dpaForwarded) {
+    // A verified confirmation (stamped by the DPA_SIGNED_NOTICE chain) counts as well (#1065).
+    boolean dpaConfirmed = invite.getDpaSignedAt() != null;
+    if (!command.dpaAccepted() && !dpaForwarded && !dpaConfirmed) {
       throw new BadRequestException(
           "The data processing agreement must be accepted or forwarded to an authorised signer");
     }
@@ -256,7 +258,8 @@ public class TenantAdminOnboardingService {
               .orElseThrow(() -> new NotFoundException("Account invite not found"));
       claimedInvite.setAcceptedByUserId(admin.getId());
       claimedInvite.setTotpPendingSecret(otpInfo.secret());
-      if (command.dpaAccepted()) {
+      // An earlier external confirmation keeps its own timestamp (#1065).
+      if (command.dpaAccepted() && claimedInvite.getDpaSignedAt() == null) {
         // The own acceptance IS the signature (recorded below as the tenant's U9 admin
         // signature), so stamp it on the invite: the Admin invite progress board proves its
         // final "Vertrag unterschrieben" phase from dpa_signed_at (ORISO-Admin#896, epic #725).
