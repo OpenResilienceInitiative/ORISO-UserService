@@ -37,6 +37,7 @@ public class GroupChatJoinRequest {
 
   public enum Status {
     PENDING,
+    ADMITTING,
     ADMITTED,
     DECLINED,
     CANCELLED
@@ -79,6 +80,17 @@ public class GroupChatJoinRequest {
 
   @Column(name = "decided_by", length = 36)
   private String decidedBy;
+
+  /** Durable admission intent. No participant row or group access exists until Matrix joins. */
+  @Column(name = "admission_requested_at")
+  private LocalDateTime admissionRequestedAt;
+
+  @Builder.Default
+  @Column(name = "admission_attempt_count", nullable = false)
+  private int admissionAttemptCount = 0;
+
+  @Column(name = "admission_last_attempt_at")
+  private LocalDateTime admissionLastAttemptAt;
 
   public boolean isPending() {
     return status == Status.PENDING;

@@ -5,7 +5,6 @@ import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.nullValue;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -34,6 +33,7 @@ import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
@@ -85,6 +85,7 @@ class GroupChatJoinRequestControllerIT {
   @Autowired private ChatRepository chatRepository;
   @Autowired private ChatAgencyRepository chatAgencyRepository;
   @Autowired private GroupChatParticipantRepository participantRepository;
+  @Autowired private GroupChatJoinRequestRepository joinRequestRepository;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private GroupChatMembershipService membershipService;
@@ -330,32 +331,31 @@ class GroupChatJoinRequestControllerIT {
   }
 
   @Test
-  void ownerAdmitsRequesterWhoCanThenOpenTheGroup() throws Exception {
+  void ownerAdmissionPersistsAnIntentWithoutGrantingAccessBeforeMatrixJoins() throws Exception {
     actAs(otherTraegerCounsellor);
     var requestId = readJson(knock().andReturn()).get("id").asLong();
 
     actAs(owner);
     admit(requestId, null).andExpect(status().isNoContent());
 
-    var participation =
-        participantRepository.findBySeriesIdAndConsultantId(
-            group.getId(), otherTraegerCounsellor.getId());
-    assertThat(participation).isPresent();
-    assertThat(participation.get().getRole()).isEqualTo(ParticipantRole.PARTICIPANT);
-    assertThat(participation.get().getChatId()).isEqualTo(SESSION_ID);
-    verify(membershipService).addMemberToRoom(any(Chat.class), eq("@other-traeger:matrix.test"));
+    assertThat(
+            participantRepository.findBySeriesIdAndConsultantId(
+                group.getId(), otherTraegerCounsellor.getId()))
+        .isEmpty();
+    assertThat(joinRequestRepository.findById(requestId).orElseThrow().getAdmissionRequestedAt())
+        .isNotNull();
+    verify(membershipService, never()).addMemberToRoom(any(Chat.class), any());
 
     actAs(otherTraegerCounsellor);
-    mine()
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.status", is("ADMITTED")))
-        .andExpect(jsonPath("$.decidedAt").isNotEmpty());
+    mine().andExpect(status().isOk()).andExpect(jsonPath("$.status", is("ADMITTING")));
     mvc.perform(withCsrf(get("/users/chat/{chatId}", group.getId())))
-        .andExpect(status().isOk())
-        .andExpect(jsonPath("$.id").value(group.getId()));
+        .andExpect(status().isForbidden());
+    mvc.perform(withCsrf(delete("/users/chat-series/{seriesId}/join-requests/mine", group.getId())))
+        .andExpect(status().isConflict());
 
     actAs(owner);
     pending().andExpect(jsonPath("$", hasSize(0)));
+    decline(requestId).andExpect(status().isConflict());
   }
 
   @Test
@@ -366,11 +366,8 @@ class GroupChatJoinRequestControllerIT {
     actAs(coModerator);
     admit(requestId, "PARTICIPANT").andExpect(status().isNoContent());
 
-    assertThat(
-            participantRepository
-                .findBySeriesIdAndConsultantId(group.getId(), otherTraegerCounsellor.getId())
-                .map(GroupChatParticipant::getRole))
-        .contains(ParticipantRole.PARTICIPANT);
+    assertThat(joinRequestRepository.findById(requestId).orElseThrow().getAdmittedRole())
+        .isEqualTo(ParticipantRole.PARTICIPANT);
   }
 
   @Test
@@ -414,27 +411,30 @@ class GroupChatJoinRequestControllerIT {
     admit(requestId.get("id").asLong(), "CO_MODERATOR").andExpect(status().isNoContent());
 
     assertThat(
-            participantRepository
-                .findBySeriesIdAndConsultantId(group.getId(), unrelatedCounsellor.getId())
-                .map(GroupChatParticipant::getRole))
-        .contains(ParticipantRole.CO_MODERATOR);
+            joinRequestRepository
+                .findById(requestId.get("id").asLong())
+                .orElseThrow()
+                .getAdmittedRole())
+        .isEqualTo(ParticipantRole.CO_MODERATOR);
   }
 
   @Test
-  void failedMatrixJoinPersistsNothing() throws Exception {
+  void admissionIsDurableEvenWhenMatrixIsUnavailable() throws Exception {
     when(membershipService.addMemberToRoom(any(Chat.class), any())).thenReturn(false);
     actAs(otherTraegerCounsellor);
     var requestId = readJson(knock().andReturn()).get("id").asLong();
 
     actAs(owner);
-    admit(requestId, null).andExpect(status().isInternalServerError());
+    admit(requestId, null).andExpect(status().isNoContent());
 
     assertThat(
             participantRepository.findBySeriesIdAndConsultantId(
                 group.getId(), otherTraegerCounsellor.getId()))
         .isEmpty();
     actAs(otherTraegerCounsellor);
-    mine().andExpect(jsonPath("$.status", is("PENDING")));
+    mine().andExpect(jsonPath("$.status", is("ADMITTING")));
+    assertThat(joinRequestRepository.findById(requestId).orElseThrow().getAdmissionRequestedAt())
+        .isNotNull();
   }
 
   @Test

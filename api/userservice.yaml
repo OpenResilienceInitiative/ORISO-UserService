@@ -2054,6 +2054,7 @@ paths:
         '204': { description: No pending request remains }
         '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
         '403': { description: Caller is not a consultant }
+        '409': { description: Admission is already being completed }
   /users/chat-series/join-requests:
     get:
       tags: [chat-series-controller]
@@ -2063,7 +2064,7 @@ paths:
         - Bearer: [ ]
       responses:
         '200':
-          description: Pending join requests, oldest first
+          description: Pending requests awaiting a moderator decision, oldest first
           content:
             application/json:
               schema:
@@ -2075,7 +2076,7 @@ paths:
     post:
       tags: [chat-series-controller]
       operationId: admitChatSeriesJoinRequest
-      summary: Admits a pending join request as Participant or Co-Moderator
+      summary: Accepts an admission decision as Participant or Co-Moderator
       security:
         - Bearer: [ ]
       parameters:
@@ -2093,13 +2094,12 @@ paths:
           application/json:
             schema: { $ref: '#/components/schemas/GroupChatJoinRequestAdmitDTO' }
       responses:
-        '204': { description: Requester admitted and added to the Matrix room }
+        '204': { description: Admission accepted; Matrix join may still be pending and will be retried }
         '400': { description: "Not a self-help group, or Co-Moderator requested for a consultant of another tenant" }
         '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
         '403': { description: Caller may not admit (or may not grant Co-Moderator) }
         '404': { description: Unknown join request for this Series }
-        '409': { description: Join request is not pending }
-        '500': { description: Requester could not be added to the Matrix room }
+        '409': { description: Join request is not pending or admission is already being completed }
   /users/chat-series/{seriesId}/join-requests/{requestId}/decline:
     post:
       tags: [chat-series-controller]
@@ -2122,7 +2122,7 @@ paths:
         '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
         '403': { description: Caller may not decline }
         '404': { description: Unknown join request for this Series }
-        '409': { description: Join request is not pending }
+        '409': { description: Join request is not pending or admission is already being completed }
 
 components:
   schemas:
@@ -2184,7 +2184,7 @@ components:
         decidedAt: { type: string, format: date-time, nullable: true }
     GroupChatJoinRequestStatus:
       type: string
-      enum: [PENDING, ADMITTED, DECLINED, CANCELLED]
+      enum: [PENDING, ADMITTING, ADMITTED, DECLINED, CANCELLED]
     GroupChatJoinRequestDTO:
       type: object
       description: Moderator view of a pending join request.
