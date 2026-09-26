@@ -60,6 +60,15 @@ public class TenantSystemEmailClient {
 
   public void deliver(
       long tenantId, String purpose, String recipient, OrisoEmailRenderer.RenderedEmail email) {
+    deliver(tenantId, purpose, recipient, email, UUID.randomUUID());
+  }
+
+  public void deliver(
+      long tenantId,
+      String purpose,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email,
+      UUID correlationId) {
     HttpHeaders headers = technicalHeaders();
     headers.setContentType(MediaType.APPLICATION_JSON);
     Map<String, Object> request =
@@ -69,7 +78,7 @@ public class TenantSystemEmailClient {
             "subject", email.subject(),
             "html", email.html(),
             "text", email.text(),
-            "correlationId", UUID.randomUUID().toString());
+            "correlationId", correlationId.toString());
     try {
       restTemplate.exchange(
           endpoint(tenantId, "/internal/system-email-deliveries"),

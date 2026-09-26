@@ -141,7 +141,12 @@ public class AdviceSeekerReplyEmailService {
     }
 
     try {
-      delivery.sendReply(claim.getTenantId(), route, user.getEmail(), email);
+      delivery.sendReply(
+          claim.getTenantId(),
+          route,
+          user.getEmail(),
+          email,
+          java.util.UUID.fromString(claim.getCorrelationId()));
       writer.finish(deliveryId, Status.SENT);
     } catch (TenantSystemEmailRouteService.ConfigurationException configurationFailure) {
       // TenantService rejected the route before any SMTP attempt.

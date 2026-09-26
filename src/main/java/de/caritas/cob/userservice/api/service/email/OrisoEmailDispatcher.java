@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.email;
 import jakarta.mail.Message;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -32,6 +33,15 @@ public class OrisoEmailDispatcher {
       PlatformSmtpSettingsProvider.Settings smtp,
       String recipient,
       OrisoEmailRenderer.RenderedEmail email) {
+    sendOrThrow(smtp, recipient, email, null);
+  }
+
+  /** The correlation header lets an operator match an uncertain reply to one stored claim. */
+  public void sendOrThrow(
+      PlatformSmtpSettingsProvider.Settings smtp,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email,
+      UUID correlationId) {
     try {
       MimeMessage message =
           new MimeMessage(
@@ -42,6 +52,9 @@ public class OrisoEmailDispatcher {
       // UTF-8 rather than the platform default: these subjects carry umlauts.
       message.setSubject(email.subject(), "UTF-8");
       message.setContent(OrisoEmailMime.alternative(email));
+      if (correlationId != null) {
+        message.setHeader("X-ORISO-Delivery-ID", correlationId.toString());
+      }
       OrisoSmtpTransport.send(message);
     } catch (Exception exception) {
       log.error("Platform mail send failed: {}", exception.getClass().getSimpleName());

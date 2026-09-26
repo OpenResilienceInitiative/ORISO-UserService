@@ -91,7 +91,11 @@ class TenantSystemEmailDeliveryTest {
     when(platformSettings.requireConfigured()).thenReturn(smtp);
     org.mockito.Mockito.doThrow(new IllegalStateException("SMTP acknowledgement lost"))
         .when(platformDispatcher)
-        .sendOrThrow(smtp, "recipient@example.org", email);
+        .sendOrThrow(
+            smtp,
+            "recipient@example.org",
+            email,
+            java.util.UUID.fromString("ab2e5141-2f26-456a-9e46-0ff642918115"));
 
     assertThatThrownBy(
             () ->
@@ -101,7 +105,8 @@ class TenantSystemEmailDeliveryTest {
                         new TenantSystemEmailRouteService.Route(
                             TenantSystemEmailRouteService.Mode.PLATFORM, null),
                         "recipient@example.org",
-                        email))
+                        email,
+                        java.util.UUID.fromString("ab2e5141-2f26-456a-9e46-0ff642918115")))
         .isInstanceOf(IllegalStateException.class)
         .hasMessage("SMTP acknowledgement lost");
   }

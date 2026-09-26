@@ -6,6 +6,7 @@ import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -23,6 +24,7 @@ public class ReplyEmailDeliveryWriter {
     var delivery = new ReplyEmailDelivery();
     delivery.setRecipientUserId(recipientUserId);
     delivery.setEventKey(eventKey);
+    delivery.setCorrelationId(UUID.randomUUID().toString());
     delivery.setTenantId(tenantId);
     delivery.setSessionId(sessionId);
     delivery.setStatus(ReplyEmailDelivery.Status.PENDING);

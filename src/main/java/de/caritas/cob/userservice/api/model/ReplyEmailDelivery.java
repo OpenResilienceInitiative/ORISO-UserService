@@ -38,6 +38,9 @@ public class ReplyEmailDelivery {
   @Column(name = "event_key", nullable = false, length = 64)
   private String eventKey;
 
+  @Column(name = "correlation_id", nullable = false, length = 36)
+  private String correlationId;
+
   @Column(name = "tenant_id", nullable = false)
   private Long tenantId;
 

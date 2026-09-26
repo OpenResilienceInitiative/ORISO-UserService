@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.notification;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailDispatcher;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
+import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -62,11 +63,13 @@ public class TenantSystemEmailDelivery {
       long tenantId,
       TenantSystemEmailRouteService.Route route,
       String recipient,
-      OrisoEmailRenderer.RenderedEmail email) {
+      OrisoEmailRenderer.RenderedEmail email,
+      UUID correlationId) {
     if (route.mode() == TenantSystemEmailRouteService.Mode.OWN) {
-      tenantClient.deliver(tenantId, Purpose.NEW_MESSAGE.name(), recipient, email);
+      tenantClient.deliver(tenantId, Purpose.NEW_MESSAGE.name(), recipient, email, correlationId);
     } else {
-      platformDispatcher.sendOrThrow(platformSettings.requireConfigured(), recipient, email);
+      platformDispatcher.sendOrThrow(
+          platformSettings.requireConfigured(), recipient, email, correlationId);
     }
   }
 }

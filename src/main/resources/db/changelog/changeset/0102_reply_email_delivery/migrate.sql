@@ -2,6 +2,7 @@ CREATE TABLE reply_email_delivery (
   id BIGINT NOT NULL AUTO_INCREMENT,
   recipient_user_id VARCHAR(36) NOT NULL,
   event_key VARCHAR(64) NOT NULL,
+  correlation_id VARCHAR(36) NOT NULL,
   tenant_id BIGINT NOT NULL,
   session_id BIGINT NOT NULL,
   status VARCHAR(16) NOT NULL,

@@ -93,7 +93,7 @@ class AdviceSeekerReplyEmailServiceTest {
 
     var rendered = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
     verify(delivery, org.mockito.Mockito.times(2))
-        .sendReply(eq(7L), any(), eq("asker@example.net"), rendered.capture());
+        .sendReply(eq(7L), any(), eq("asker@example.net"), rendered.capture(), any());
     assertThat(rendered.getAllValues()).hasSize(2);
     for (var mail : rendered.getAllValues()) {
       assertThat(mail.subject()).isEqualTo("Sie haben eine neue Nachricht");
@@ -166,7 +166,7 @@ class AdviceSeekerReplyEmailServiceTest {
     service.deliverPending(1L);
 
     verify(writer).retryLater(1L);
-    verify(delivery, never()).sendReply(anyLong(), any(), anyString(), any());
+    verify(delivery, never()).sendReply(anyLong(), any(), anyString(), any(), any());
   }
 
   @Test
@@ -174,7 +174,7 @@ class AdviceSeekerReplyEmailServiceTest {
     prepareReadyClaim();
     org.mockito.Mockito.doThrow(new IllegalStateException("SMTP acknowledgement lost"))
         .when(delivery)
-        .sendReply(anyLong(), any(), anyString(), any());
+        .sendReply(anyLong(), any(), anyString(), any(), any());
 
     assertThatThrownBy(() -> service.deliverPending(1L))
         .isInstanceOf(IllegalStateException.class)
@@ -190,7 +190,7 @@ class AdviceSeekerReplyEmailServiceTest {
     org.mockito.Mockito.doThrow(
             new TenantSystemEmailRouteService.ConfigurationException("OWN route invalid"))
         .when(delivery)
-        .sendReply(anyLong(), any(), anyString(), any());
+        .sendReply(anyLong(), any(), anyString(), any(), any());
 
     service.deliverPending(1L);
 
@@ -212,7 +212,7 @@ class AdviceSeekerReplyEmailServiceTest {
     service.deliverPending(1L);
 
     verify(writer).retryLater(1L);
-    verify(delivery, never()).sendReply(anyLong(), any(), anyString(), any());
+    verify(delivery, never()).sendReply(anyLong(), any(), anyString(), any(), any());
   }
 
   @Test
@@ -244,6 +244,7 @@ class AdviceSeekerReplyEmailServiceTest {
     claim.setSessionId(42L);
     claim.setTenantId(7L);
     claim.setRecipientUserId("asker");
+    claim.setCorrelationId("ab2e5141-2f26-456a-9e46-0ff642918115");
     return claim;
   }
 
