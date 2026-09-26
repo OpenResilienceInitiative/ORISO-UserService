@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.service.email;
 
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
-import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -14,10 +13,9 @@ import org.springframework.stereotype.Component;
  * The brand placeholders of a design-system mail, with a tenant's branding laid over the platform
  * values.
  *
- * <p>{@link OrisoEmailBrand} is platform-level by contract (ADR-021); {@link EmailBrandingResolver}
- * resolves the tenant-varying half — name, absolute logo URL, accent colour, imprint and privacy
- * URLs — including "the tenant does not exist yet". Every tenant-branded mail builds its value map
- * here, so the invite and the DPA signing mail cannot brand the same tenant differently.
+ * <p>ADR-026 uses {@link EmailBrandingResolver} for the tenant brand in every mail. Invite and DPA
+ * callers already hold a resolved {@link EmailBranding}; this adapter adds their sender block
+ * without making another tenant lookup.
  */
 @Component
 public class TenantEmailBrandValues {
@@ -46,7 +44,7 @@ public class TenantEmailBrandValues {
    */
   public Map<String, String> values(EmailBranding branding, Long senderTenantId) {
     Map<String, String> values =
-        new LinkedHashMap<>(orisoEmailBrand.values(applicationBaseUrl, branding.accentColor()));
+        new LinkedHashMap<>(orisoEmailBrand.valuesForResolvedBrand(applicationBaseUrl, branding));
 
     // Header wordmark only: the offered-by line keeps offeringName, the platform's own name, so
     // it never reads "<Träger> ist ein Angebot von <operator>". brandName falls back to the
@@ -57,13 +55,8 @@ public class TenantEmailBrandValues {
     // <img src=""> next to the wordmark is a broken-image icon in every mail client.
     values.put("logoUrl", branding.logoUrl() == null ? "" : branding.logoUrl());
 
-    // The button fill is contrast-guarded (its label is white in the template); the 4px accent bar
-    // only follows the tenant when the tenant actually configured a colour — otherwise the
-    // platform's two-tone header (lighter bar, darker button) would collapse into one flat red.
+    // The button fill is contrast-guarded (its label is white in the template).
     values.put("primaryColor", orisoEmailBrand.readablePrimary(branding.accentColor()));
-    if (!EmailColors.PLATFORM_ACCENT_DARK.equals(branding.accentColor())) {
-      values.put("accentColor", branding.accentColor());
-    }
 
     if (branding.imprintUrl() != null) {
       values.put("imprintUrl", branding.imprintUrl());

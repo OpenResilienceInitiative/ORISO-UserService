@@ -157,7 +157,8 @@ public class MagicLinkLoginService {
               user.getUserId(),
               user.getUsername(),
               user.getEmail(),
-              user.getMagicLinkLoginEnabled()));
+              user.getMagicLinkLoginEnabled(),
+              user.getTenantId()));
     }
 
     Optional<Consultant> consultantOptional =
@@ -169,7 +170,8 @@ public class MagicLinkLoginService {
               consultant.getId(),
               consultant.getUsername(),
               consultant.getEmail(),
-              consultant.getMagicLinkLoginEnabled()));
+              consultant.getMagicLinkLoginEnabled(),
+              consultant.getTenantId()));
     }
 
     return Optional.empty();
@@ -214,7 +216,7 @@ public class MagicLinkLoginService {
                 }
               });
 
-      var email = renderMagicLink(magicUrl, smtpSettings.getEmailThemeColor());
+      var email = renderMagicLink(magicUrl, target.getTenantId());
       MimeMessage message = new MimeMessage(session);
       message.setFrom(new InternetAddress(smtpSettings.getFrom()));
       message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(target.getEmail()));
@@ -241,10 +243,9 @@ public class MagicLinkLoginService {
    * the platform addresses German-speaking users, which was an accident of the inline copy rather
    * than a decision.
    */
-  private OrisoEmailRenderer.RenderedEmail renderMagicLink(
-      String magicUrl, String emailThemeColor) {
+  private OrisoEmailRenderer.RenderedEmail renderMagicLink(String magicUrl, Long tenantId) {
     Map<String, String> values =
-        new LinkedHashMap<>(emailBrand.values(magicLinkFrontendBaseUrl, emailThemeColor));
+        new LinkedHashMap<>(emailBrand.valuesForTenant(magicLinkFrontendBaseUrl, tenantId));
     values.put("loginUrl", magicUrl);
     values.put("expiryMinutes", String.valueOf(MAGIC_LINK_TOKEN_TTL.toMinutes()));
     return emailRenderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values);
@@ -285,8 +286,6 @@ public class MagicLinkLoginService {
       Integer port = asIntSettingValue(settingsResponse.get("globalSmtpPort"));
       boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
       String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
-      String emailThemeColor =
-          asStringSettingValue(settingsResponse.get("globalSmtpEmailThemeColor"));
 
       if (!systemEmailsEnabled || !smtpEnabled || isBlank(host) || port == null || isBlank(from)) {
         return Optional.empty();
@@ -308,8 +307,7 @@ public class MagicLinkLoginService {
         password = credentials.get().getGlobalSmtpPassword();
       }
 
-      return Optional.of(
-          new GlobalSmtpSettings(host, port, secure, username, password, from, emailThemeColor));
+      return Optional.of(new GlobalSmtpSettings(host, port, secure, username, password, from));
     } catch (Exception ex) {
       log.debug("Could not resolve global SMTP settings for magic link mail: {}", ex.getMessage());
       return Optional.empty();
@@ -368,6 +366,7 @@ public class MagicLinkLoginService {
     String username;
     String email;
     Boolean magicLinkLoginEnabled;
+    Long tenantId;
   }
 
   public enum MagicLinkRequestResult {
@@ -383,6 +382,5 @@ public class MagicLinkLoginService {
     String username;
     String password;
     String from;
-    String emailThemeColor;
   }
 }

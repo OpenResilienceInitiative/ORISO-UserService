@@ -63,7 +63,7 @@ class GlobalSmtpTestEmailServiceTest {
 
     Map<String, String> brandValues = new HashMap<>();
     brandValues.put("appUrl", "https://app.oriso.org");
-    when(emailBrand.values(eq("https://app.oriso.org"), any())).thenReturn(brandValues);
+    when(emailBrand.valuesForTenant(eq("https://app.oriso.org"), any())).thenReturn(brandValues);
     when(emailRenderer.render(eq("smtp-test"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(
             new OrisoEmailRenderer.RenderedEmail(

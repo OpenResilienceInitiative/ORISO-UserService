@@ -523,6 +523,17 @@
       "status": "bounded"
     },
     {
+      "id": "email-branding-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/layout/EmailBrandingResolver.java",
+      "kind": "local-state",
+      "owner": "agency-tenant",
+      "risk": "performance",
+      "components": ["tenantCache"],
+      "decision": "Retain one process-local cache of fresh TenantService branding reads. Default TTL is ten seconds, configuration is capped at 300 seconds, and cardinality is capped at 1000 tenant/mode keys. A cache miss re-reads TenantService; replica differences are bounded by the TTL and never select another tenant's URL.",
+      "signals": ["userservice.replica.local_state"],
+      "status": "bounded"
+    },
+    {
       "id": "case-handover-policy-cache-refresh",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/CaseHandoverPolicyCacheService.java",
       "kind": "scheduler",

@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -14,6 +15,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -47,14 +49,14 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Spy
   private OrisoEmailBrand emailBrand =
-      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
+      new OrisoEmailBrand(
+          SenderOrganisationFixture.platformOwner(), EmailBrandingFixture.platform());
 
   @InjectMocks private SupervisorAddedEmailNotificationService service;
 
   @BeforeEach
   void injectValues() {
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org");
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.oriso.org");
   }
 
@@ -307,21 +309,21 @@ class SupervisorAddedEmailNotificationServiceTest {
     verify(userService, never()).getUser(any());
   }
 
-  // ── sanitizeFrontendUrl — localhost fallback ──────────────────────────────
+  // ── explicitly configured local origins never trigger an implicit fallback ─
 
   @Test
-  void notifyEmailAddressChanged_Should_FallbackToPublicFrontendUrl_When_AppBaseIsLocalhost() {
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "http://localhost:8080");
+  void notifyEmailAddressChanged_Should_UseConfiguredLocalhostOrigin() {
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://localhost:8080");
     SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
         new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
             "smtp.invalid", 587, false, "u", "p", "from@invalid", null);
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(settings));
 
-    // sendEmailSafely catches SMTP connection error — no exception escapes
     assertThatCode(
             () -> service.notifyEmailAddressChanged("johndoe", "john@example.com", 1L, null, null))
         .doesNotThrowAnyException();
+    verify(emailBrand).valuesForTenant(eq("http://localhost:8080"), any());
   }
 
   // ── notifySupervisorRemoved — valid consultant email ─────────────────────
@@ -365,7 +367,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void notifySupervisorAdded_Should_FallbackToAppBaseUrl_When_TemplateSupplierThrows() {
+  void notifySupervisorAdded_Should_NotFallback_When_TemplateSupplierThrows() {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtpSettings()));
     TenantData tenantData = new TenantData();
@@ -373,12 +375,13 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(tenantTemplateSupplier.getTemplateAttributes())
         .thenThrow(new RuntimeException("service unavailable"));
 
-    assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
-        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
+        .isInstanceOf(RuntimeException.class)
+        .hasMessageContaining("service unavailable");
   }
 
   @Test
-  void notifySupervisorAdded_Should_FallbackToAppBaseUrl_When_TemplateSupplierReturnsNoUrlAttr() {
+  void notifySupervisorAdded_Should_RejectMissingTenantUrl() {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtpSettings()));
     TenantData tenantData = new TenantData();
@@ -388,8 +391,26 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(attr.getValue()).thenReturn("some-value");
     when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(List.of(attr));
 
-    assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
-        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("Tenant notification frontend URL is missing for tenant 1");
+  }
+
+  @Test
+  void notifySupervisorAdded_Should_RejectMalformedTenantUrlWithoutUsingPlatformOrigin() {
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(Optional.of(smtpSettings()));
+    TenantData tenantData = new TenantData();
+    tenantData.setTenantId(1L);
+    TemplateDataDTO urlAttr = mock(TemplateDataDTO.class);
+    when(urlAttr.getKey()).thenReturn("url");
+    when(urlAttr.getValue()).thenReturn("https://tenant.example.com?redirect=other");
+    when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(List.of(urlAttr));
+
+    assertThatThrownBy(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("tenant notification frontend URL");
+    verify(emailBrand, never()).valuesForTenant(any(), any());
   }
 
   // ── languageCodeOf — non-German (English) localization paths ─────────────
@@ -441,40 +462,42 @@ class SupervisorAddedEmailNotificationServiceTest {
         .doesNotThrowAnyException();
   }
 
-  // ── isLocalUrl — 127.0.0.1, ::1, malformed URL ────────────────────────────
+  // ── local compose URLs are used only when explicitly configured ──────────
 
   @Test
-  void notifyEmailAddressChanged_Should_FallbackToPublicFrontendUrl_When_AppBaseIs127_0_0_1() {
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "http://127.0.0.1:8080");
+  void notifyEmailAddressChanged_Should_UseConfiguredIpv4LoopbackOrigin() {
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://127.0.0.1:8080");
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtpSettings()));
 
     assertThatCode(
             () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
         .doesNotThrowAnyException();
+    verify(emailBrand).valuesForTenant(eq("http://127.0.0.1:8080"), any());
   }
 
   @Test
-  void notifyEmailAddressChanged_Should_FallbackToPublicFrontendUrl_When_AppBaseIsIPv6Loopback() {
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "http://[::1]:8080");
+  void notifyEmailAddressChanged_Should_UseConfiguredIpv6LoopbackOrigin() {
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://[::1]:8080");
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtpSettings()));
 
     assertThatCode(
             () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
         .doesNotThrowAnyException();
+    verify(emailBrand).valuesForTenant(eq("http://[::1]:8080"), any());
   }
 
   @Test
-  void notifyEmailAddressChanged_Should_FallbackToPublicFrontendUrl_When_AppBaseUrlIsMalformed() {
-    // isLocalUrl: URI.create("not-a-valid-url").getHost() == null → treated as local → fallback
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "not-a-valid-url");
+  void notifyEmailAddressChanged_Should_RejectMalformedOrigin() {
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "not-a-valid-url");
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtpSettings()));
 
-    assertThatCode(
+    assertThatThrownBy(
             () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
-        .doesNotThrowAnyException();
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("system.notification.frontend.base-url");
   }
 
   // ── resolveHexColor — valid hex passes through, invalid → default ─────────
@@ -604,7 +627,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifyEmailAddressChanged_Should_StripTrailingSlash_When_AppBaseUrlEndsWithSlash() {
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org/");
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.oriso.org/");
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtpSettings()));
 
@@ -640,12 +663,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     // and check the full output, not just the hand-authored sentence.
     var email =
         service.renderTeamChange(
-            LanguageCode.de,
-            statement,
-            "https://app.oriso.org",
-            "https://app.oriso.org",
-            null,
-            "#1c4f8f");
+            LanguageCode.de, statement, "https://app.oriso.org", "https://app.oriso.org", null, 1L);
 
     assertThat(email.html())
         .doesNotContain("#4711")
@@ -665,7 +683,7 @@ class SupervisorAddedEmailNotificationServiceTest {
             "https://app.oriso.org",
             "https://app.oriso.org/sessions/consultant/sessionView/session/4711",
             4711L,
-            "#1c4f8f");
+            1L);
 
     assertThat(email.subject()).isEqualTo("Änderung in Ihrem Team");
     assertThat(email.html())
@@ -684,7 +702,7 @@ class SupervisorAddedEmailNotificationServiceTest {
             "https://app.oriso.org",
             "https://app.oriso.org",
             1L,
-            "#1c4f8f");
+            1L);
 
     // The old inline card: a 620px table on #f6f7fb with an #e5e7eb border, in
     // Arial. Checked by its own fingerprints — "620" on its own is no use,
@@ -697,7 +715,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void aTenantColourThatCannotCarryWhiteTextDoesNotReachTheButton() {
+  void theLegacySmtpBlueDoesNotReachTheButton() {
     var email =
         service.renderTeamChange(
             LanguageCode.de,
@@ -705,8 +723,8 @@ class SupervisorAddedEmailNotificationServiceTest {
             "https://app.oriso.org",
             "https://app.oriso.org",
             1L,
-            "#ffd400");
+            1L);
 
-    assertThat(email.html()).doesNotContain("#ffd400");
+    assertThat(email.html()).doesNotContain("#0f3b8f");
   }
 }

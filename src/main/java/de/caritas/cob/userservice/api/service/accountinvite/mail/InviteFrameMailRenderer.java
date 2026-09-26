@@ -78,7 +78,7 @@ public class InviteFrameMailRenderer {
   /** As above, with the frame wording already chosen; lets a test reach every catalogue tone. */
   BrandedEmail render(
       String subject, String bodyContent, String primaryActionUrl, Long tenantId, Labels labels) {
-    EmailBranding branding = emailBrandingResolver.resolve(tenantId);
+    EmailBranding branding = emailBrandingResolver.resolvePendingTenant(tenantId);
 
     String safeSubject = isBlank(subject) ? "" : subject.trim();
     String bodyHtml = sanitizer.toContentHtml(bodyContent, branding.linkColor());

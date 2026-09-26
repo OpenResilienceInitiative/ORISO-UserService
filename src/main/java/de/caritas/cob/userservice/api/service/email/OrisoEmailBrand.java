@@ -2,23 +2,25 @@ package de.caritas.cob.userservice.api.service.email;
 
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
+import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisation;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
+import java.net.URI;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
  * Fills the brand placeholders every ORISO mail carries.
  *
- * <p>The target contract is ADR-021: seven brand values plus a sender identity, stored per Träger
- * in TenantService. The sender identity (organisation, address, contact line) is the platform
- * owner's master data from the Admin panel, see {@link SenderOrganisationResolver}; the colour is
- * the one value per tenant that exists today — {@code emailThemeColor} on the tenant SMTP settings.
+ * <p>ADR-026 resolves every mail brand from TenantService through {@link EmailBrandingResolver}.
+ * SMTP settings do not supply design colours. The sender identity (organisation, address, contact
+ * line) is the platform owner's master data from the Admin panel, see {@link
+ * SenderOrganisationResolver}.
  *
  * <p>The sender block is never invented: what the platform owner has not entered stays out of the
  * mail (Frank, 2026-09-23). Filling the Dokument-Stammdaten is what puts a sender in the footer.
@@ -36,54 +38,64 @@ public class OrisoEmailBrand {
   private static final double MIN_CONTRAST = 4.5d;
 
   private static final String DEFAULT_PRIMARY = "#a5000a";
-  private static final String DEFAULT_ACCENT = "#cc1e1c";
-
-  @Value("${email.brand.platform-name:Online-Beratung}")
-  private String platformName;
-
-  @Value("${email.brand.logo-url:}")
-  private String logoUrl;
 
   private final SenderOrganisationResolver senderOrganisations;
+  private final EmailBrandingResolver brandingResolver;
 
-  public OrisoEmailBrand(@NonNull SenderOrganisationResolver senderOrganisations) {
+  public OrisoEmailBrand(
+      @NonNull SenderOrganisationResolver senderOrganisations,
+      @NonNull EmailBrandingResolver brandingResolver) {
     this.senderOrganisations = senderOrganisations;
+    this.brandingResolver = brandingResolver;
   }
 
-  /**
-   * @param appUrl absolute base URL of the app this mail links into
-   * @param tenantThemeColor the tenant's {@code emailThemeColor}, or null
-   */
-  public Map<String, String> values(String appUrl, String tenantThemeColor) {
-    if (!isNotBlank(appUrl)) {
-      // Fail closed: a blank base turns every link in the mail into a bare path
-      // (e.g. "/profile/settings") with no origin to resolve against. That is
-      // not a degraded mail, it is a broken one, so this must not go out.
-      throw new IllegalStateException(
-          "appUrl must not be blank: every ORISO mail links back into the app");
-    }
-    String base = trimTrailingSlash(appUrl);
-    Map<String, String> values = new LinkedHashMap<>();
+  /** Values for the catalogue renderer, resolved from the same tenant source as invitation mail. */
+  public Map<String, String> valuesForTenant(String appUrl, Long tenantId) {
+    return valuesForResolvedBrand(appUrl, brandingResolver.resolve(tenantId));
+  }
 
-    values.put("platformName", platformName);
-    // The offered-by line describes the platform; unlike platformName, no sender brands it.
-    values.put("offeringName", platformName);
+  /** Adapts branding already resolved by an invitation or DPA sender without a second lookup. */
+  public Map<String, String> valuesForResolvedBrand(String appUrl, EmailBranding branding) {
+    String base = requireAbsoluteBaseUrl(appUrl);
+    if (branding.imprintUrl() == null || branding.privacyUrl() == null) {
+      throw new IllegalStateException("Resolved email branding has no legal footer URLs");
+    }
+    Map<String, String> values = new LinkedHashMap<>();
+    values.put("platformName", branding.brandName());
+    values.put("offeringName", brandingResolver.resolve(null).brandName());
     SenderOrganisation operator = senderOrganisations.platform();
     putSender(values, operator);
-    // Y in "X ist ein Angebot von Y": always the platform operator, never a Träger that overlays
-    // the sender block (Frank, 2026-09-23). Blank when not entered, so the line is dropped.
     values.put("operatorName", orBlank(operator.name()));
-    values.put("logoUrl", logoUrl);
-    values.put("primaryColor", readablePrimary(tenantThemeColor));
-    values.put("accentColor", DEFAULT_ACCENT);
-
+    values.put("logoUrl", orBlank(branding.logoUrl()));
+    values.put("primaryColor", branding.accentColor());
+    values.put("accentColor", branding.accentColor());
     values.put("appUrl", base);
     values.put("settingsUrl", base + "/profile/settings");
-    values.put("privacyUrl", base + "/datenschutz");
-    values.put("imprintUrl", base + "/impressum");
+    values.put("privacyUrl", branding.privacyUrl());
+    values.put("imprintUrl", branding.imprintUrl());
     values.put("unsubscribeUrl", base + "/profile/settings/notifications");
-
     return values;
+  }
+
+  private static String requireAbsoluteBaseUrl(String appUrl) {
+    if (!isNotBlank(appUrl)) {
+      throw new IllegalStateException("appUrl is required for email links");
+    }
+    String base = trimTrailingSlash(appUrl);
+    try {
+      URI uri = URI.create(base);
+      String scheme = uri.getScheme();
+      if (("https".equalsIgnoreCase(scheme) || "http".equalsIgnoreCase(scheme))
+          && uri.getHost() != null
+          && uri.getUserInfo() == null
+          && uri.getRawQuery() == null
+          && uri.getRawFragment() == null) {
+        return base;
+      }
+    } catch (IllegalArgumentException ignored) {
+      // Report a configuration error without echoing a possibly sensitive URL.
+    }
+    throw new IllegalStateException("appUrl must be an absolute HTTP(S) URL for email links");
   }
 
   /**

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.emailsupplier;
 
 import static de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenantData;
+import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
@@ -10,7 +11,6 @@ import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.net.URI;
-import java.net.URISyntaxException;
 import java.util.ArrayList;
 import java.util.List;
 import lombok.NonNull;
@@ -124,13 +124,32 @@ public class TenantTemplateSupplier {
   }
 
   private String getTenantBaseUrlForStandardMultitenancyMode(String subdomain) {
-    String hostName = "";
-    try {
-      hostName = new URI(applicationBaseUrl).getHost();
-    } catch (URISyntaxException exception) {
-      log.error("Application base url not valid");
+    if (isBlank(subdomain)
+        || subdomain.length() > 63
+        || !subdomain.matches("[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")) {
+      throw new IllegalStateException("Tenant subdomain is missing or invalid for mail URL");
     }
-    return getHostnameWithSubdomainPrefix(subdomain, hostName);
+    if (isBlank(applicationBaseUrl)) {
+      throw new IllegalStateException("app.base.url is missing for tenant mail URL");
+    }
+    URI base;
+    try {
+      base = URI.create(applicationBaseUrl);
+    } catch (IllegalArgumentException exception) {
+      throw new IllegalStateException("app.base.url is invalid for tenant mail URL", exception);
+    }
+    if (base.getHost() == null
+        || !("http".equalsIgnoreCase(base.getScheme())
+            || "https".equalsIgnoreCase(base.getScheme()))
+        || base.getUserInfo() != null
+        || base.getQuery() != null
+        || base.getFragment() != null) {
+      throw new IllegalStateException("app.base.url is invalid for tenant mail URL");
+    }
+    if (subdomain.length() + 1 + base.getHost().length() > 253) {
+      throw new IllegalStateException("Tenant mail hostname exceeds the DNS length limit");
+    }
+    return getHostnameWithSubdomainPrefix(subdomain, base.getHost());
   }
 
   private String getHostnameWithSubdomainPrefix(String subdomain, String hostName) {

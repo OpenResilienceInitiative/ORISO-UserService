@@ -2,14 +2,24 @@ package de.caritas.cob.userservice.api.service.email;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
+import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
 import org.junit.jupiter.api.Test;
 
 class OrisoEmailBrandTest {
 
   private final OrisoEmailBrand brand =
-      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
+      new OrisoEmailBrand(
+          SenderOrganisationFixture.platformOwner(),
+          EmailBrandingFixture.platform("https://app.example.org"));
 
   @Test
   void keepsATenantColourThatCarriesWhiteText() {
@@ -42,7 +52,7 @@ class OrisoEmailBrandTest {
 
   @Test
   void buildsFooterLinksFromTheAppUrlWithoutDoublingTheSlash() {
-    var values = brand.values("https://app.example.org/", "#1c4f8f");
+    var values = brand.valuesForTenant("https://app.example.org/", null);
 
     assertThat(values.get("appUrl")).isEqualTo("https://app.example.org");
     assertThat(values.get("privacyUrl")).isEqualTo("https://app.example.org/datenschutz");
@@ -52,7 +62,7 @@ class OrisoEmailBrandTest {
 
   @Test
   void theSenderBlockIsThePlatformOwnersAdminMasterData() {
-    var values = brand.values("https://app.example.org", null);
+    var values = brand.valuesForTenant("https://app.example.org", null);
 
     assertThat(values)
         .containsEntry("orgName", "ORISO")
@@ -64,13 +74,64 @@ class OrisoEmailBrandTest {
   @Test
   void theSenderBlockStaysBlank_When_thePlatformOwnerEnteredNothing() {
     var values =
-        new OrisoEmailBrand(SenderOrganisationFixture.nobody())
-            .values("https://app.example.org", null);
+        new OrisoEmailBrand(
+                SenderOrganisationFixture.nobody(),
+                EmailBrandingFixture.platform("https://app.example.org"))
+            .valuesForTenant("https://app.example.org", null);
 
     assertThat(values)
         .containsEntry("orgName", "")
         .containsEntry("orgAddress", "")
         .containsEntry("contactLine", "")
         .containsEntry("offeringName", values.get("platformName"));
+  }
+
+  @Test
+  void twoTenantsGetTheirOwnFreshBrandInCatalogueMail() {
+    TenantService tenants = mock(TenantService.class);
+    TenantTemplateSupplier urls = mock(TenantTemplateSupplier.class);
+    RestrictedTenantDTO north =
+        new RestrictedTenantDTO()
+            .id(12L)
+            .name("Nord")
+            .theming(
+                new Theming()
+                    .logo("https://app.example.org/branding/nord.png")
+                    .primaryColor("#123456"));
+    RestrictedTenantDTO south =
+        new RestrictedTenantDTO()
+            .id(13L)
+            .name("Süd")
+            .theming(
+                new Theming()
+                    .logo("https://app.example.org/branding/sued.png")
+                    .primaryColor("#654321"));
+    when(tenants.getRestrictedTenantDataFresh(12L)).thenReturn(north);
+    when(tenants.getRestrictedTenantDataFresh(13L)).thenReturn(south);
+    when(tenants.getPlatformTenantDataFresh())
+        .thenReturn(new RestrictedTenantDTO().id(0L).name("Online-Beratung"));
+    when(urls.getTenantBaseUrl(north)).thenReturn("https://nord.example.org");
+    when(urls.getTenantBaseUrl(south)).thenReturn("https://sued.example.org");
+    OrisoEmailBrand realBrand =
+        new OrisoEmailBrand(
+            SenderOrganisationFixture.platformOwner(),
+            new EmailBrandingResolver(
+                tenants, urls, "Online-Beratung", "", "https://app.example.org"));
+
+    var northMail = realBrand.valuesForTenant("https://app.example.org", 12L);
+    var southMail = realBrand.valuesForTenant("https://app.example.org", 13L);
+
+    assertThat(northMail)
+        .containsEntry("platformName", "Nord")
+        .containsEntry("logoUrl", "https://app.example.org/branding/nord.png")
+        .containsEntry("primaryColor", "#123456")
+        .containsEntry("accentColor", "#123456")
+        .containsEntry("privacyUrl", "https://nord.example.org/datenschutz");
+    assertThat(southMail)
+        .containsEntry("platformName", "Süd")
+        .containsEntry("logoUrl", "https://app.example.org/branding/sued.png")
+        .containsEntry("primaryColor", "#654321")
+        .containsEntry("accentColor", "#654321")
+        .containsEntry("privacyUrl", "https://sued.example.org/datenschutz");
   }
 }
