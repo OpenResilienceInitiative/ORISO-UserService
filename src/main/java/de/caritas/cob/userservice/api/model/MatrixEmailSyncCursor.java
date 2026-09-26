@@ -17,6 +17,9 @@ import lombok.Setter;
 public class MatrixEmailSyncCursor {
   @Id private Long id;
 
-  @Column(name = "batch_token", nullable = false, columnDefinition = "TEXT")
+  @Column(name = "batch_token", columnDefinition = "TEXT")
   private String batchToken;
+
+  @Column(name = "activation_epoch_millis", nullable = false)
+  private long activationEpochMillis;
 }

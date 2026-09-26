@@ -43,7 +43,7 @@ public class ReplyEmailDeliveryWriter {
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public Optional<ReplyEmailDelivery> claim(long id) {
-    var delivery = repository.findById(id).orElse(null);
+    var delivery = repository.findByIdForUpdate(id).orElse(null);
     if (delivery == null
         || delivery.getStatus() != ReplyEmailDelivery.Status.PENDING
         || delivery.getNextAttemptAt().isAfter(LocalDateTime.now())) {
@@ -73,6 +73,11 @@ public class ReplyEmailDeliveryWriter {
             ReplyEmailDelivery.Status.SENDING, LocalDateTime.now().minus(age));
     stale.forEach(delivery -> delivery.setStatus(ReplyEmailDelivery.Status.UNCERTAIN));
     return stale.size();
+  }
+
+  @Transactional(readOnly = true)
+  public long uncertainCount() {
+    return repository.countByStatus(ReplyEmailDelivery.Status.UNCERTAIN);
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)

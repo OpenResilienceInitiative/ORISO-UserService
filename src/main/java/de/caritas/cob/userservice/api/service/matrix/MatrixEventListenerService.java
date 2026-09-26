@@ -67,6 +67,7 @@ public class MatrixEventListenerService {
 
   // Matrix sync token (updated after each sync)
   private String syncToken = null;
+  private Long firstEmailSyncStartedAtMillis;
 
   // Flag to control sync loop
   private volatile boolean running = false;
@@ -186,7 +187,9 @@ public class MatrixEventListenerService {
       try {
         if (!cursorLoaded) {
           // A transient database outage retries through the normal sync-loop backoff.
-          syncToken = emailSyncCursorStore.read();
+          var start = emailSyncCursorStore.readOrCreateActivation();
+          syncToken = start.batchToken();
+          firstEmailSyncStartedAtMillis = syncToken == null ? start.activationEpochMillis() : null;
           cursorLoaded = true;
         }
         MatrixSyncCycleResult cycleResult = executeObservedMatrixSyncCycle();
@@ -266,6 +269,7 @@ public class MatrixEventListenerService {
       if (nextBatch instanceof String token && !token.isBlank()) {
         emailSyncCursorStore.write(token);
         syncToken = token;
+        firstEmailSyncStartedAtMillis = null;
       }
       result = "success";
       return MatrixSyncCycleResult.SUCCESS;
@@ -554,7 +558,9 @@ public class MatrixEventListenerService {
 
     // Commit the mail claim before this batch's Matrix cursor advances. A failed claim makes the
     // sync loop replay the event; the recipient/event uniqueness key collapses that replay.
-    if (!"m.notice".equals(msgtype) && isConsultantMatrixUser(senderId)) {
+    if (!"m.notice".equals(msgtype)
+        && isConsultantMatrixUser(senderId)
+        && isEligibleForReplyEmail(event)) {
       replyEmailService.onConsultantReply(
           roomId, privacyEnvelope == null ? null : privacyEnvelope.getMessageId());
     }
@@ -597,6 +603,17 @@ public class MatrixEventListenerService {
         });
 
     return true;
+  }
+
+  private boolean isEligibleForReplyEmail(Map<String, Object> event) {
+    if (firstEmailSyncStartedAtMillis == null) {
+      return true;
+    }
+    // An initial /sync contains recent historical messages. The activation instant is persisted
+    // before polling, so restarts cannot turn those old messages into a burst of new mail.
+    Object timestamp = event.get("origin_server_ts");
+    return timestamp instanceof Number number
+        && number.longValue() >= firstEmailSyncStartedAtMillis;
   }
 
   private void recordMatrixEvent(String eventType, Outcome outcome) {

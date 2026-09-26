@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -80,5 +81,28 @@ class TenantSystemEmailDeliveryTest {
                 email);
 
     assertThat(accepted).isFalse();
+  }
+
+  @Test
+  void replyMailKeepsAnAmbiguousPlatformSmtpFailureVisible() {
+    var smtp =
+        new PlatformSmtpSettingsProvider.Settings(
+            "smtp.platform.example", 587, false, "account", "secret", "sender@platform.example");
+    when(platformSettings.requireConfigured()).thenReturn(smtp);
+    org.mockito.Mockito.doThrow(new IllegalStateException("SMTP acknowledgement lost"))
+        .when(platformDispatcher)
+        .sendOrThrow(smtp, "recipient@example.org", email);
+
+    assertThatThrownBy(
+            () ->
+                new TenantSystemEmailDelivery(tenantClient, platformSettings, platformDispatcher)
+                    .sendReply(
+                        40L,
+                        new TenantSystemEmailRouteService.Route(
+                            TenantSystemEmailRouteService.Mode.PLATFORM, null),
+                        "recipient@example.org",
+                        email))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("SMTP acknowledgement lost");
   }
 }

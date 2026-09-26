@@ -15,16 +15,25 @@ public class MatrixEmailSyncCursorStore {
   private static final long CURSOR_ID = 1L;
   private final @NonNull MatrixEmailSyncCursorRepository repository;
 
-  @Transactional(readOnly = true)
-  public String read() {
-    return repository.findById(CURSOR_ID).map(MatrixEmailSyncCursor::getBatchToken).orElse(null);
+  /** Freeze the activation instant before observing Matrix events for the first time. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public Start readOrCreateActivation() {
+    var cursor = repository.findById(CURSOR_ID).orElse(null);
+    if (cursor == null) {
+      cursor = new MatrixEmailSyncCursor();
+      cursor.setId(CURSOR_ID);
+      cursor.setActivationEpochMillis(System.currentTimeMillis());
+      repository.saveAndFlush(cursor);
+    }
+    return new Start(cursor.getBatchToken(), cursor.getActivationEpochMillis());
   }
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
   public void write(String token) {
-    var cursor = repository.findById(CURSOR_ID).orElseGet(MatrixEmailSyncCursor::new);
-    cursor.setId(CURSOR_ID);
+    var cursor = repository.findById(CURSOR_ID).orElseThrow();
     cursor.setBatchToken(token);
     repository.saveAndFlush(cursor);
   }
+
+  public record Start(String batchToken, long activationEpochMillis) {}
 }

@@ -19,6 +19,20 @@ public class OrisoEmailDispatcher {
       String recipient,
       OrisoEmailRenderer.RenderedEmail email) {
     try {
+      sendOrThrow(smtp, recipient, email);
+      return true;
+    } catch (RuntimeException exception) {
+      // Existing best-effort callers use a boolean; their send failure is still observable.
+      return false;
+    }
+  }
+
+  /** Preserves an ambiguous SMTP outcome for callers that must never replay blindly. */
+  public void sendOrThrow(
+      PlatformSmtpSettingsProvider.Settings smtp,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email) {
+    try {
       MimeMessage message =
           new MimeMessage(
               OrisoSmtpTransport.session(
@@ -29,13 +43,9 @@ public class OrisoEmailDispatcher {
       message.setSubject(email.subject(), "UTF-8");
       message.setContent(OrisoEmailMime.alternative(email));
       OrisoSmtpTransport.send(message);
-      return true;
     } catch (Exception exception) {
-      // A mail that cannot be sent must not fail the operation that triggered
-      // it — a registration that rolls back because the welcome mail bounced
-      // would be a far worse outcome than a missing mail.
       log.error("Platform mail send failed: {}", exception.getClass().getSimpleName());
-      return false;
+      throw new IllegalStateException("Platform SMTP outcome is uncertain", exception);
     }
   }
 }

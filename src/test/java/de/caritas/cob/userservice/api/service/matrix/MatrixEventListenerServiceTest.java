@@ -103,6 +103,9 @@ class MatrixEventListenerServiceTest {
     logAppender.start();
     logger.addAppender(logAppender);
     logger.setLevel(Level.DEBUG);
+    lenient()
+        .when(emailSyncCursorStore.readOrCreateActivation())
+        .thenReturn(new MatrixEmailSyncCursorStore.Start(null, 0L));
   }
 
   @AfterEach
@@ -1082,6 +1085,27 @@ class MatrixEventListenerServiceTest {
             anyString(), any(), anyString(), any(PrivacyEnvelope.class));
     verify(replyEmailService).onConsultantReply(MATRIX_ROOM_ID, "$evt-direct");
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
+  }
+
+  @Test
+  void firstMatrixSyncDoesNotEmailHistoricalRepliesButKeepsNewOnes() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    ReflectionTestUtils.setField(service, "firstEmailSyncStartedAtMillis", 1_000L);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    var oldReply = messageEvent(CONSULTANT_MATRIX_ID, "m.text", "old", "$old");
+    oldReply.put("origin_server_ts", 999L);
+    var newReply = messageEvent(CONSULTANT_MATRIX_ID, "m.text", "new", "$new");
+    newReply.put("origin_server_ts", 1_000L);
+
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, oldReply);
+    invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, newReply);
+
+    verify(replyEmailService, never()).onConsultantReply(MATRIX_ROOM_ID, "$old");
+    verify(replyEmailService).onConsultantReply(MATRIX_ROOM_ID, "$new");
   }
 
   @Test

@@ -20,6 +20,7 @@ public class ReplyEmailDeliveryScheduler {
   private final @NonNull ReplyEmailDeliveryWriter writer;
   private final @NonNull AdviceSeekerReplyEmailService service;
   private final @NonNull ScheduledTaskClaimService claims;
+  private long lastObservedUncertainCount = -1;
 
   @Scheduled(fixedDelayString = "${notification.reply-email.retry-delay-ms:60000}")
   public void deliverPending() {
@@ -32,6 +33,16 @@ public class ReplyEmailDeliveryScheduler {
       int uncertain = writer.markStaleSendingUncertain(Duration.ofMinutes(10));
       if (uncertain > 0) {
         log.error("{} reply-email SMTP outcomes require operator reconciliation", uncertain);
+      }
+      long outstanding = writer.uncertainCount();
+      if (outstanding != lastObservedUncertainCount) {
+        if (outstanding > 0) {
+          log.error(
+              "{} reply-email deliveries remain UNCERTAIN; reconcile before retry", outstanding);
+        } else if (lastObservedUncertainCount > 0) {
+          log.info("All uncertain reply-email deliveries have been reconciled");
+        }
+        lastObservedUncertainCount = outstanding;
       }
       writer.pendingIds().forEach(this::deliverSafely);
     } finally {

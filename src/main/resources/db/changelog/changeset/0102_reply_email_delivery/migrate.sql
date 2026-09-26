@@ -18,6 +18,7 @@ CREATE TABLE reply_email_delivery (
 
 CREATE TABLE matrix_email_sync_cursor (
   id BIGINT NOT NULL,
-  batch_token TEXT NOT NULL,
+  batch_token TEXT NULL,
+  activation_epoch_millis BIGINT NOT NULL,
   PRIMARY KEY (id)
 );

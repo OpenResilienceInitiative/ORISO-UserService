@@ -140,18 +140,8 @@ public class AdviceSeekerReplyEmailService {
     }
 
     try {
-      boolean sent =
-          delivery.sendConfirmed(
-              claim.getTenantId(),
-              route,
-              TenantSystemEmailDelivery.Purpose.NEW_MESSAGE,
-              user.getEmail(),
-              email);
-      if (sent) {
-        writer.finish(deliveryId, Status.SENT);
-      } else {
-        writer.retryLater(deliveryId);
-      }
+      delivery.sendReply(claim.getTenantId(), route, user.getEmail(), email);
+      writer.finish(deliveryId, Status.SENT);
     } catch (RuntimeException sendFailure) {
       // SMTP may have accepted the message before its acknowledgement was lost.
       writer.finish(deliveryId, Status.UNCERTAIN);

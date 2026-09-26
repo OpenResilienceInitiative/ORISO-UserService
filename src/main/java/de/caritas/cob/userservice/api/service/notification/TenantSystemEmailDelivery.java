@@ -56,4 +56,17 @@ public class TenantSystemEmailDelivery {
       return platformDispatcher.send(platformSettings.requireConfigured(), recipient, email);
     }
   }
+
+  /** For durable reply mail, any transport exception has an uncertain SMTP outcome. */
+  public void sendReply(
+      long tenantId,
+      TenantSystemEmailRouteService.Route route,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email) {
+    if (route.mode() == TenantSystemEmailRouteService.Mode.OWN) {
+      tenantClient.deliver(tenantId, Purpose.NEW_MESSAGE.name(), recipient, email);
+    } else {
+      platformDispatcher.sendOrThrow(platformSettings.requireConfigured(), recipient, email);
+    }
+  }
 }

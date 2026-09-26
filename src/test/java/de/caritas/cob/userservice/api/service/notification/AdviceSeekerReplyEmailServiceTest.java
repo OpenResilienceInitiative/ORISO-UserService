@@ -84,7 +84,6 @@ class AdviceSeekerReplyEmailServiceTest {
         .thenThrow(new DataIntegrityViolationException("duplicate"));
     when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
     when(writer.claim(2L)).thenReturn(Optional.of(claim(2L)));
-    when(delivery.sendConfirmed(anyLong(), any(), any(), anyString(), any())).thenReturn(true);
 
     service.onConsultantReply("!room", "$first");
     service.onConsultantReply("!room", "$second");
@@ -94,12 +93,7 @@ class AdviceSeekerReplyEmailServiceTest {
 
     var rendered = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
     verify(delivery, org.mockito.Mockito.times(2))
-        .sendConfirmed(
-            eq(7L),
-            any(),
-            eq(TenantSystemEmailDelivery.Purpose.NEW_MESSAGE),
-            eq("asker@example.net"),
-            rendered.capture());
+        .sendReply(eq(7L), any(), eq("asker@example.net"), rendered.capture());
     assertThat(rendered.getAllValues()).hasSize(2);
     for (var mail : rendered.getAllValues()) {
       assertThat(mail.subject()).isEqualTo("Sie haben eine neue Nachricht");
@@ -155,25 +149,15 @@ class AdviceSeekerReplyEmailServiceTest {
     service.deliverPending(1L);
 
     verify(writer).retryLater(1L);
-    verify(delivery, never()).sendConfirmed(anyLong(), any(), any(), anyString(), any());
-  }
-
-  @Test
-  void definiteSmtpRejectionRetriesTheSameClaim() {
-    prepareReadyClaim();
-    when(delivery.sendConfirmed(anyLong(), any(), any(), anyString(), any())).thenReturn(false);
-
-    service.deliverPending(1L);
-
-    verify(writer).retryLater(1L);
-    verify(writer, never()).finish(1L, Status.UNCERTAIN);
+    verify(delivery, never()).sendReply(anyLong(), any(), anyString(), any());
   }
 
   @Test
   void uncertainSmtpResultStopsAutomaticReplay() {
     prepareReadyClaim();
-    when(delivery.sendConfirmed(anyLong(), any(), any(), anyString(), any()))
-        .thenThrow(new IllegalStateException("SMTP acknowledgement lost"));
+    org.mockito.Mockito.doThrow(new IllegalStateException("SMTP acknowledgement lost"))
+        .when(delivery)
+        .sendReply(anyLong(), any(), anyString(), any());
 
     assertThatThrownBy(() -> service.deliverPending(1L))
         .isInstanceOf(IllegalStateException.class)
@@ -197,7 +181,7 @@ class AdviceSeekerReplyEmailServiceTest {
     service.deliverPending(1L);
 
     verify(writer).retryLater(1L);
-    verify(delivery, never()).sendConfirmed(anyLong(), any(), any(), anyString(), any());
+    verify(delivery, never()).sendReply(anyLong(), any(), anyString(), any());
   }
 
   @Test
