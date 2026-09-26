@@ -584,6 +584,68 @@ class TenantAdminOnboardingServiceTest {
     verify(operatorDpaContentClient, never()).fetchPublishedDpa();
   }
 
+  // --- Registration after the representative confirmed (ORISO-Admin#1065) ---
+
+  private void givenRegistrationSucceeds(AccountInvite invite) {
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdmin(any(CreateAdminDTO.class)))
+        .thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+  }
+
+  @Test
+  void registerTenantAdmin_afterExternalConfirmation_createsTheTenantOnTheConfirmedReservation() {
+    // The confirmation is stored in TenantService against the reserved id + reservation token;
+    // creating the tenant on exactly that pair is what makes it count (DpaSignatureOwnership).
+    var confirmedAt = LocalDateTime.of(2026, 9, 25, 9, 30);
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardedAt(confirmedAt.minusDays(1));
+    invite.setDpaSignedAt(confirmedAt);
+    givenRegistrationSucceeds(invite);
+
+    var result = service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance());
+
+    assertEquals(RESERVED_TENANT_ID, result.tenantId());
+    var captor = ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(captor.capture());
+    assertEquals(RESERVED_TENANT_ID, captor.getValue().getId());
+    assertEquals(RESERVATION_TOKEN, captor.getValue().getTenantIdReservationToken());
+    assertNull(captor.getValue().getOnboardingDpaAcceptance());
+    assertEquals(confirmedAt, invite.getDpaSignedAt());
+  }
+
+  @Test
+  void registerTenantAdmin_withoutOwnAcceptance_isAccepted_When_theSignatureAlreadyLanded() {
+    // A verified signature on the invite is stronger proof than the forward itself.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaSignedAt(LocalDateTime.now().minusHours(1));
+    givenRegistrationSucceeds(invite);
+
+    var result = service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance());
+
+    assertEquals(RESERVED_TENANT_ID, result.tenantId());
+    verify(operatorDpaContentClient, never()).fetchPublishedDpa();
+  }
+
+  @Test
+  void registerTenantAdmin_ownAcceptanceAfterConfirmation_keepsTheConfirmationTimestamp() {
+    var confirmedAt = LocalDateTime.of(2026, 9, 25, 9, 30);
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardedAt(confirmedAt.minusDays(1));
+    invite.setDpaSignedAt(confirmedAt);
+    givenPublishedOperatorDpa();
+    givenRegistrationSucceeds(invite);
+
+    service.registerTenantAdmin(RAW_TOKEN, validCommand());
+
+    assertEquals(confirmedAt, invite.getDpaSignedAt());
+  }
+
   // --- DPA forward from the wizard (ORISO-Admin#722) ---
 
   private static de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO
