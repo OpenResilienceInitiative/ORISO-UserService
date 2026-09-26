@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,19 +16,27 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountAccessGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteAccessPolicy;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPermissionService;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteQueueProblem;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.UnitQueue;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
@@ -53,6 +62,7 @@ class AccountInviteControllerTest {
   @Mock private InviteEmailTemplateService templateService;
   @Mock private InviteEmailDeliveryRepository deliveryRepository;
   @Mock private InviteEmailPreviewService previewService;
+  @Mock private UnitQueue unitQueue;
 
   private AccountInviteController controller;
 
@@ -64,7 +74,13 @@ class AccountInviteControllerTest {
             counsellorInviteProvisioningService,
             templateService,
             deliveryRepository,
-            previewService);
+            previewService,
+            new AccountInviteTopicPermissionService(
+                mock(AccountInviteRepository.class),
+                mock(ConsultantRepository.class),
+                mock(AccountInviteAccessPolicy.class),
+                mock(AgencyFacts.class)),
+            unitQueue);
   }
 
   @Test
@@ -113,6 +129,52 @@ class AccountInviteControllerTest {
     verify(accountInviteService).createInvite(commandCaptor.capture());
     assertEquals(IdAllocationMode.AUTO, commandCaptor.getValue().tenantIdAllocationMode());
     assertEquals(IdAllocationMode.MANUAL, commandCaptor.getValue().agencyIdAllocationMode());
+  }
+
+  @Test
+  void createInvite_Should_PassTheRoleFields_AndExposeTheQueueState() {
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.COUNSELLOR.name();
+    request.recipientEmail = "queued@example.org";
+    request.agencyId = 500L;
+    request.agencyIdAllocationMode = "MANUAL";
+
+    var invite = sampleInvite();
+    invite.setStatus(AccountInviteStatus.WAITING_FOR_UNIT);
+    invite.setWaitingForUnit(InviteUnitType.AGENCY);
+    when(accountInviteService.createInvite(any())).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
+    when(unitQueue.problemOf(invite)).thenReturn(InviteQueueProblem.NO_UNIT_ADMIN);
+
+    var body = controller.createInvite(request).getBody();
+
+    var commandCaptor =
+        ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
+    verify(accountInviteService).createInvite(commandCaptor.capture());
+    assertNotNull(body);
+    assertEquals("WAITING_FOR_UNIT", body.inviteStatus);
+    assertEquals("AGENCY", body.waitingForUnit);
+    assertEquals("NO_UNIT_ADMIN", body.queueProblem);
+  }
+
+  @Test
+  void createInvite_Should_PassAlsoCounsellor() {
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.AGENCY_ADMIN.name();
+    request.recipientEmail = "admin@example.org";
+    request.agencyId = 5L;
+    request.agencyIdAllocationMode = "EXISTING";
+    request.alsoCounsellor = false;
+    var invite = sampleInvite();
+    when(accountInviteService.createInvite(any())).thenReturn(invite);
+
+    controller.createInvite(request);
+
+    var commandCaptor =
+        ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
+    verify(accountInviteService).createInvite(commandCaptor.capture());
+    assertEquals(Boolean.FALSE, commandCaptor.getValue().alsoCounsellor());
   }
 
   @Test

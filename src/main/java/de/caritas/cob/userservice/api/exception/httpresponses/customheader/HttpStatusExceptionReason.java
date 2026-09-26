@@ -19,5 +19,11 @@ public enum HttpStatusExceptionReason {
   PASSWORD_NOT_VALID,
   CONSULTANT_IDENTITY_ALREADY_GRANTED,
   CHAT_RECOVERY_POLICY_UNAVAILABLE,
-  ROLE_NOT_FOUND
+  ROLE_NOT_FOUND,
+  /** The admin already holds the role they tried to assign themselves. */
+  SELF_ASSIGNMENT_ALREADY_EXISTS,
+  /** An invite into a not-yet-created unit needs a pending admin invite for that unit. */
+  NO_PENDING_UNIT_ADMIN,
+  /** A waiting invite cannot be sent before its unit exists. */
+  UNIT_NOT_CREATED
 }

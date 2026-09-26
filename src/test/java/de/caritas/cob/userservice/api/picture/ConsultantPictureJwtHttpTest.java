@@ -216,11 +216,11 @@ class ConsultantPictureJwtHttpTest {
 
   @ParameterizedTest
   @ValueSource(strings = {"", "/service"})
-  void spoofedHeaderIsStoppedByExistingTenantFilterBeforePictureAccess(String prefix) {
+  void spoofedHeaderIsStoppedByExistingTenantFilterBeforePictureAccess(String prefix)
+      throws Exception {
     jwt(2L, "user-admin");
-    assertThatThrownBy(
-            () -> mvc.perform(request(put(path(prefix)).contentType("image/png").content(png), 1)))
-        .isInstanceOf(org.springframework.security.access.AccessDeniedException.class);
+    mvc.perform(request(put(path(prefix)).contentType("image/png").content(png), 1))
+        .andExpect(status().isForbidden());
     verifyNoInteractions(consultants, scanner, store);
   }
 

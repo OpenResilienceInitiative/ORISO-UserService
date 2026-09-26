@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.model.ConsultantAvatars;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
@@ -87,6 +88,7 @@ public class ConsultantUpdateService {
 
     consultantTopicAgencyCompatibilityValidator.validateTopicUpdateAgainstAssignedAgencies(
         consultant.getId(), updateConsultantDTO.getTopicIds(), consultant.getTenantId());
+    rejectRemovingTheLastTopic(consultant, updateConsultantDTO.getTopicIds());
 
     boolean identityDataChanged = identityDataChanged(consultant, updateConsultantDTO);
     boolean appointmentDataChanged =
@@ -224,6 +226,7 @@ public class ConsultantUpdateService {
     consultant.setAbsenceMessage(updateConsultantDTO.getAbsenceMessage());
     applyPersonalInfo(updateConsultantDTO, consultant);
     consultant.replaceTopics(updateConsultantDTO.getTopicIds());
+    applyTopicPermission(updateConsultantDTO, consultant);
     // Always update supervisor field if provided (even if false)
     if (updateConsultantDTO.getIsSupervisor() != null) {
       consultant.setSupervisor(updateConsultantDTO.getIsSupervisor());
@@ -249,6 +252,23 @@ public class ConsultantUpdateService {
     }
 
     return this.consultantService.saveConsultant(consultant);
+  }
+
+  /** Older accounts without any topic stay editable: an empty list is then no change. */
+  private static void rejectRemovingTheLastTopic(Consultant consultant, List<Long> topicIds) {
+    if (topicIds == null || topicIds.stream().anyMatch(Objects::nonNull)) {
+      return;
+    }
+    if (consultant.getConsultantTopics() != null && !consultant.getConsultantTopics().isEmpty()) {
+      throw new BadRequestException("At least one topic is required");
+    }
+  }
+
+  /** Null leaves it untouched. The invite table reads this value; it is stored only here. */
+  private void applyTopicPermission(UpdateAdminConsultantDTO dto, Consultant consultant) {
+    if (dto.getTopicPermission() != null) {
+      consultant.setTopicPermission(TopicPermission.valueOf(dto.getTopicPermission().getValue()));
+    }
   }
 
   /**
