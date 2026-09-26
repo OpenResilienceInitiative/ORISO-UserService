@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -79,7 +80,7 @@ public class OrisoEmailRenderer {
           + "<tr><td class=\"sp\" style=\"padding:16px 40px 0px 40px;"
           + "font-family:Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif;font-size:13px;"
           + "line-height:20px;color:#5c5555;word-break:break-word;\">{{fallbackHint}}<br>"
-          + "<a href=\"{{actionUrl}}\" style=\"color:{{linkColor}};text-decoration:underline;"
+          + "<a href=\"{{actionUrl}}\" style=\"color:{{primaryColor}};text-decoration:underline;"
           + "word-break:break-all;\">{{actionUrl}}</a></td></tr>";
 
   /** The plain-text half of {@link #CTA_BLOCK_HTML}. */
@@ -139,7 +140,11 @@ public class OrisoEmailRenderer {
   public enum Tone {
     DE_FORMAL("de-sie"),
     DE_INFORMAL("de-du"),
-    EN("en");
+    EN("en"),
+    FR("fr"),
+    RU("ru"),
+    TI("ti"),
+    TR("tr");
 
     private final String directory;
 
@@ -152,7 +157,20 @@ public class OrisoEmailRenderer {
     }
 
     public static Tone of(LanguageCode languageCode) {
-      return languageCode != null && "en".equalsIgnoreCase(languageCode.name()) ? EN : DE_FORMAL;
+      if (languageCode == null) {
+        throw new IllegalArgumentException("Recipient language is missing");
+      }
+      return switch (languageCode.name().toLowerCase(Locale.ROOT)) {
+        case "de" -> DE_FORMAL;
+        case "en" -> EN;
+        case "fr" -> FR;
+        case "ru" -> RU;
+        case "ti" -> TI;
+        case "tr" -> TR;
+        default ->
+            throw new IllegalArgumentException(
+                "Recipient language has no installed e-mail template: " + languageCode);
+      };
     }
   }
 

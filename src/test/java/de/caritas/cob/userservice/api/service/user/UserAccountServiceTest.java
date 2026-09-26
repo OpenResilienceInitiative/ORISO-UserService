@@ -15,6 +15,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
@@ -218,6 +219,21 @@ public class UserAccountServiceTest {
     verify(this.consultantService, times(2)).getConsultant(any());
     verifyNoMoreInteractions(this.consultantService);
     verifyNoInteractions(userHelper);
+  }
+
+  @Test
+  public void changeUserAccountEmailAddress_Should_UseGermanNotice_WhenUserLanguageIsMissing() {
+    User user = EASY_RANDOM.nextObject(User.class);
+    user.setLanguageCode(null);
+    when(authenticatedUser.getUserId()).thenReturn("user");
+    when(userService.getUser("user")).thenReturn(Optional.of(user));
+
+    accountProvider.changeUserAccountEmailAddress(Optional.of("newMail"));
+
+    verify(identityEmailAddressUpdater).updateCurrentUserEmail("newMail");
+    verify(supervisorAddedEmailNotificationService)
+        .notifyEmailAddressChanged(
+            user.getUsername(), "newMail", user.getTenantId(), null, null, LanguageCode.de);
   }
 
   @Test

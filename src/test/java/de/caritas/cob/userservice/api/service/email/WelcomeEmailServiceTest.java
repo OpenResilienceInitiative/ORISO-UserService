@@ -8,6 +8,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.notification.SystemNotificationEmailSettingsService;
@@ -59,6 +60,7 @@ class WelcomeEmailServiceTest {
     var user = new User();
     user.setEmail(email);
     user.setTenantId(1L);
+    user.setLanguageCode(LanguageCode.de);
     return user;
   }
 
@@ -73,6 +75,18 @@ class WelcomeEmailServiceTest {
     // does not carry it is worse than no mail.
     assertThat(email.getValue().html()).contains("ruhiges-yak-1428");
     assertThat(email.getValue().text()).contains("ruhiges-yak-1428");
+    assertThat(email.getValue().subject()).isEqualTo("Willkommen bei Online-Beratung");
+  }
+
+  @Test
+  void usesGermanProductDefaultWhenWelcomeRecipientHasNoLanguage() {
+    User recipient = user("jemand@example.org");
+    recipient.setLanguageCode(null);
+
+    service.sendWelcomeEmail(recipient, "ruhiges-yak-1428");
+
+    var email = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(dispatcher).send(eq(smtp), eq("jemand@example.org"), email.capture());
     assertThat(email.getValue().subject()).isEqualTo("Willkommen bei Online-Beratung");
   }
 

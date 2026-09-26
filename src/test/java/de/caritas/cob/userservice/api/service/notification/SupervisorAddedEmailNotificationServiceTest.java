@@ -166,21 +166,21 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifyEmailAddressChanged_Should_ReturnEarly_When_EmailBlank() {
-    service.notifyEmailAddressChanged("user", "  ", 1L, null, null);
+    service.notifyEmailAddressChanged("user", "  ", 1L, null, null, LanguageCode.de);
 
     verify(emailSettingsService, never()).resolveSupervisorAddedEmailSettings(any(), any());
   }
 
   @Test
   void notifyEmailAddressChanged_Should_ReturnEarly_When_UsernameBlank() {
-    service.notifyEmailAddressChanged("", "new@example.com", 1L, null, null);
+    service.notifyEmailAddressChanged("", "new@example.com", 1L, null, null, LanguageCode.de);
 
     verify(emailSettingsService, never()).resolveSupervisorAddedEmailSettings(any(), any());
   }
 
   @Test
   void notifyEmailAddressChanged_Should_ReturnEarly_When_TenantIdNull() {
-    service.notifyEmailAddressChanged("user", "new@example.com", null, null, null);
+    service.notifyEmailAddressChanged("user", "new@example.com", null, null, null, LanguageCode.de);
 
     verify(emailSettingsService, never()).resolveSupervisorAddedEmailSettings(any(), any());
   }
@@ -190,7 +190,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(eq(2L), any()))
         .thenReturn(Optional.empty());
 
-    service.notifyEmailAddressChanged("user1", "new@example.com", 2L, null, "tok");
+    service.notifyEmailAddressChanged("user1", "new@example.com", 2L, null, "tok", LanguageCode.de);
 
     verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(2L), eq("tok"));
   }
@@ -204,7 +204,8 @@ class SupervisorAddedEmailNotificationServiceTest {
         .thenReturn(Optional.of(settings));
 
     // sendEmailSafely catches any smtp connection error — no exception should escape
-    service.notifyEmailAddressChanged("johndoe", "john@example.com", 4L, null, null);
+    service.notifyEmailAddressChanged(
+        "johndoe", "john@example.com", 4L, null, null, LanguageCode.de);
   }
 
   // ── resolveUserWithEmail ──────────────────────────────────────────────────
@@ -224,6 +225,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     User fetchedUser = new User();
     fetchedUser.setEmail("real@example.com");
+    fetchedUser.setLanguageCode(LanguageCode.de);
     when(userService.getUser("user-abc")).thenReturn(Optional.of(fetchedUser));
 
     // fetchedUser has real email → smtp attempt is made (caught by sendEmailSafely)
@@ -246,6 +248,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     User user = new User();
     user.setTenantId(1L);
     user.setEmail("real@example.com");
+    user.setLanguageCode(LanguageCode.de);
 
     // Before fix: NPE in hasValidUserEmail on emailDummySuffix == null
     assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
@@ -265,6 +268,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setTenantId(1L);
     Consultant supervisor = new Consultant();
     supervisor.setEmail("sup@example.com");
+    supervisor.setLanguageCode(LanguageCode.de);
 
     // Before fix: NPE in hasValidConsultantEmail on emailDummySuffix == null
     assertThatCode(() -> service.notifySupervisorAdded(user, supervisor, 1L, null, null))
@@ -320,7 +324,9 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     // sendEmailSafely catches SMTP connection error — no exception escapes
     assertThatCode(
-            () -> service.notifyEmailAddressChanged("johndoe", "john@example.com", 1L, null, null))
+            () ->
+                service.notifyEmailAddressChanged(
+                    "johndoe", "john@example.com", 1L, null, null, LanguageCode.de))
         .doesNotThrowAnyException();
   }
 
@@ -338,6 +344,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     user.setTenantId(1L);
     Consultant supervisor = new Consultant();
     supervisor.setEmail("supervisor@example.com");
+    supervisor.setLanguageCode(LanguageCode.de);
 
     assertThatCode(() -> service.notifySupervisorRemoved(user, supervisor, 99L, null, null))
         .doesNotThrowAnyException();
@@ -409,6 +416,24 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
+  void notifySupervisorAdded_Should_StillRenderCounsellor_WhenSeekerLanguageIsMissing() {
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(Optional.of(smtpSettings()));
+    User user = new User();
+    user.setTenantId(1L);
+    user.setEmail("user@example.com");
+    Consultant supervisor = new Consultant();
+    supervisor.setEmail("sup@example.com");
+    supervisor.setLanguageCode(LanguageCode.de);
+
+    assertThatCode(() -> service.notifySupervisorAdded(user, supervisor, 5L, null, null))
+        .doesNotThrowAnyException();
+
+    verify(emailRenderer)
+        .render(eq("team-aenderung"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
+  }
+
+  @Test
   void notifySupervisorAdded_Should_LocalizeInEnglish_When_ConsultantLanguageCodeIsEnglish() {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtpSettings()));
@@ -450,7 +475,9 @@ class SupervisorAddedEmailNotificationServiceTest {
         .thenReturn(Optional.of(smtpSettings()));
 
     assertThatCode(
-            () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
+            () ->
+                service.notifyEmailAddressChanged(
+                    "user", "user@example.com", 1L, null, null, LanguageCode.de))
         .doesNotThrowAnyException();
   }
 
@@ -461,7 +488,9 @@ class SupervisorAddedEmailNotificationServiceTest {
         .thenReturn(Optional.of(smtpSettings()));
 
     assertThatCode(
-            () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
+            () ->
+                service.notifyEmailAddressChanged(
+                    "user", "user@example.com", 1L, null, null, LanguageCode.de))
         .doesNotThrowAnyException();
   }
 
@@ -473,7 +502,9 @@ class SupervisorAddedEmailNotificationServiceTest {
         .thenReturn(Optional.of(smtpSettings()));
 
     assertThatCode(
-            () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
+            () ->
+                service.notifyEmailAddressChanged(
+                    "user", "user@example.com", 1L, null, null, LanguageCode.de))
         .doesNotThrowAnyException();
   }
 
@@ -560,7 +591,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     assertThatCode(
             () ->
                 service.notifyEmailAddressChanged(
-                    "johndoe", "john@example.com", 8L, tenantData, null))
+                    "johndoe", "john@example.com", 8L, tenantData, null, LanguageCode.de))
         .doesNotThrowAnyException();
     verify(tenantTemplateSupplier).getTemplateAttributes();
   }
@@ -596,7 +627,9 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     // sendEmailSafely catches SMTP connection error — no exception escapes
     assertThatCode(
-            () -> service.notifyEmailAddressChanged("johndoe", "john@example.com", 1L, null, null))
+            () ->
+                service.notifyEmailAddressChanged(
+                    "johndoe", "john@example.com", 1L, null, null, LanguageCode.de))
         .doesNotThrowAnyException();
   }
 
@@ -609,7 +642,9 @@ class SupervisorAddedEmailNotificationServiceTest {
         .thenReturn(Optional.of(smtpSettings()));
 
     assertThatCode(
-            () -> service.notifyEmailAddressChanged("johndoe", "john@example.com", 1L, null, null))
+            () ->
+                service.notifyEmailAddressChanged(
+                    "johndoe", "john@example.com", 1L, null, null, LanguageCode.de))
         .doesNotThrowAnyException();
   }
 

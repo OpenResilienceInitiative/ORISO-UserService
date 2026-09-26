@@ -72,9 +72,14 @@ public class WelcomeEmailService {
     values.put("username", plainUsername);
     values.put("loginUrl", values.get("appUrl"));
 
-    var email =
-        emailRenderer.render(
-            "willkommen", OrisoEmailRenderer.Tone.of(user.getLanguageCode()), values);
+    OrisoEmailRenderer.Tone tone;
+    try {
+      tone = OrisoEmailRenderer.Tone.of(user.getLanguageCode());
+    } catch (IllegalArgumentException unsupportedLanguage) {
+      log.warn("Welcome-mail language is missing or unsupported; using the German product default");
+      tone = OrisoEmailRenderer.Tone.DE_FORMAL;
+    }
+    var email = emailRenderer.render("willkommen", tone, values);
     dispatcher.send(smtp, user.getEmail(), email);
   }
 
