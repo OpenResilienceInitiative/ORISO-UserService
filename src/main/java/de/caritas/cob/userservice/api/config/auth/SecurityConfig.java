@@ -315,8 +315,9 @@ public class SecurityConfig {
                     SINGLE_TENANT_ADMIN,
                     TENANT_ADMIN,
                     RESTRICTED_AGENCY_ADMIN)
+                // Uses the platform SMTP credentials: platform admin only.
                 .requestMatchers("/users/system-notification-emails/test")
-                .hasAnyAuthority(USER_ADMIN, TECHNICAL_DEFAULT, TENANT_ADMIN, SINGLE_TENANT_ADMIN)
+                .access(this::isPlatformAdmin)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/verify")
                 .hasAnyAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers("/users/password/change")
@@ -617,7 +618,13 @@ public class SecurityConfig {
       return new AuthorizationDecision(true);
     }
 
-    if (!(authentication instanceof JwtAuthenticationToken jwtAuthentication)) {
+    return isPlatformAdmin(authenticationSupplier, requestContext);
+  }
+
+  private AuthorizationDecision isPlatformAdmin(
+      Supplier<? extends Authentication> authenticationSupplier,
+      RequestAuthorizationContext requestContext) {
+    if (!(authenticationSupplier.get() instanceof JwtAuthenticationToken jwtAuthentication)) {
       return new AuthorizationDecision(false);
     }
 
