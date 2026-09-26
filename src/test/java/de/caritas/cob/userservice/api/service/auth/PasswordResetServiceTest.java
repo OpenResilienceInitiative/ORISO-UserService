@@ -4,10 +4,13 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.PasswordResetApplication;
@@ -20,15 +23,13 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.auth.PasswordResetService.PasswordResetMailSender;
-import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.user.UserService;
-import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.BeforeEach;
@@ -39,7 +40,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
 import org.springframework.test.util.ReflectionTestUtils;
-import org.springframework.web.client.RestTemplate;
 
 @ExtendWith(MockitoExtension.class)
 class PasswordResetServiceTest {
@@ -48,11 +48,10 @@ class PasswordResetServiceTest {
   @Mock private ConsultantService consultantService;
   @Mock private AdminRepository adminRepository;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;
-  @Mock private RestTemplate restTemplate;
   @Mock private OneTimeTokenStore oneTimeTokenStore;
-  @Mock private ApplicationSettingsService applicationSettingsService;
   @Mock private OrisoEmailRenderer emailRenderer;
   @Mock private OrisoEmailBrand emailBrand;
+  @Mock private PlatformSmtpSettingsProvider platformSmtpSettings;
 
   @InjectMocks private PasswordResetService passwordResetService;
 
@@ -62,7 +61,16 @@ class PasswordResetServiceTest {
   @BeforeEach
   void setUp() {
     ReflectionTestUtils.setField(passwordResetService, "emailDummySuffix", "@beratungcaritas.de");
-    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "");
+    lenient()
+        .when(platformSmtpSettings.requireConfigured())
+        .thenReturn(
+            new PlatformSmtpSettingsProvider.Settings(
+                "deployment-smtp.example.org",
+                587,
+                false,
+                "deployment-user",
+                "deployment-pass",
+                "noreply@example.org"));
     ReflectionTestUtils.setField(
         passwordResetService, "passwordResetFrontendBaseUrl", "https://app.oriso.org");
     ReflectionTestUtils.setField(
@@ -73,11 +81,14 @@ class PasswordResetServiceTest {
     // Replace the real SMTP sender with a capturing seam — no network in tests.
     PasswordResetMailSender capturingSender =
         (recipient, locale, resetUrl, smtpSettings) ->
-            sentMails.add(new SentMail(recipient, locale, resetUrl));
+            sentMails.add(
+                new SentMail(
+                    recipient, locale, resetUrl, smtpSettings.host(), smtpSettings.from()));
     ReflectionTestUtils.setField(passwordResetService, "mailSender", capturingSender);
   }
 
-  private record SentMail(String recipient, String locale, String resetUrl) {}
+  private record SentMail(
+      String recipient, String locale, String resetUrl, String host, String from) {}
 
   // --- requestPasswordReset ---
 
@@ -129,23 +140,9 @@ class PasswordResetServiceTest {
   }
 
   @Test
-  void requestPasswordReset_Should_CompleteSilently_When_SmtpNotConfigured() {
-    User user = validUser();
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
-
-    // consultingTypeServiceApiUrl is blank (set in @BeforeEach) → SMTP not available
-    assertThatCode(() -> passwordResetService.requestPasswordReset("testuser", "de"))
-        .doesNotThrowAnyException();
-  }
-
-  @Test
   void
       requestPasswordReset_Should_SendMailWithProperRecipientLocaleAndResetUrl_When_SmtpConfigured() {
-    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
-    when(applicationSettingsService.getGlobalSmtpCredentials())
-        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset("testuser", "en");
 
@@ -153,6 +150,8 @@ class PasswordResetServiceTest {
     SentMail mail = sentMails.get(0);
     assertThat(mail.recipient()).isEqualTo("real@example.com");
     assertThat(mail.locale()).isEqualTo("en");
+    assertThat(mail.host()).isEqualTo("deployment-smtp.example.org");
+    assertThat(mail.from()).isEqualTo("noreply@example.org");
     // Reset URL must be built from the configured base URL and carry a 64-hex-char one-time token.
     assertThat(mail.resetUrl())
         .startsWith("https://app.oriso.org/password-reset/confirm?token=")
@@ -161,7 +160,6 @@ class PasswordResetServiceTest {
 
   @Test
   void requestPasswordReset_Should_SendAdminMailToAdminFrontend_When_ApplicationIsAdmin() {
-    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
     Admin admin =
         Admin.builder()
             .id("admin-keycloak-id")
@@ -174,9 +172,6 @@ class PasswordResetServiceTest {
     when(adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(
             "admin@example.com", "admin@example.com"))
         .thenReturn(Optional.of(admin));
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
-    when(applicationSettingsService.getGlobalSmtpCredentials())
-        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset(
         "admin@example.com", "en", PasswordResetApplication.ADMIN);
@@ -204,7 +199,6 @@ class PasswordResetServiceTest {
   @Test
   void requestPasswordReset_Should_NotSendAdminMail_When_AdminFrontendBaseUrlUnset() {
     ReflectionTestUtils.setField(passwordResetService, "passwordResetAdminFrontendBaseUrl", "");
-    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
     Admin admin =
         Admin.builder()
             .id("admin-keycloak-id")
@@ -220,16 +214,12 @@ class PasswordResetServiceTest {
     passwordResetService.requestPasswordReset("admin", "de", PasswordResetApplication.ADMIN);
 
     assertThat(sentMails).isEmpty();
-    verify(restTemplate, never()).getForObject(anyString(), any());
+    verifyNoInteractions(platformSmtpSettings);
   }
 
   @Test
   void requestPasswordReset_Should_FallBackToGerman_When_LocaleIsUnknown() {
-    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
-    when(restTemplate.getForObject(anyString(), any())).thenReturn(validSmtpSettings());
-    when(applicationSettingsService.getGlobalSmtpCredentials())
-        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset("testuser", "xx-unknown");
 
@@ -240,14 +230,13 @@ class PasswordResetServiceTest {
   @Test
   void requestPasswordReset_Should_NotSendMail_When_FrontendBaseUrlUnset() {
     ReflectionTestUtils.setField(passwordResetService, "passwordResetFrontendBaseUrl", "");
-    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
 
     passwordResetService.requestPasswordReset("testuser", "en");
 
-    // Fail closed: no base URL -> no mail, and restTemplate is never even consulted.
+    // Fail closed: no base URL means no token or SMTP configuration lookup.
     assertThat(sentMails).isEmpty();
-    verify(restTemplate, never()).getForObject(anyString(), any());
+    verifyNoInteractions(platformSmtpSettings);
   }
 
   @Test
@@ -263,6 +252,21 @@ class PasswordResetServiceTest {
     // SMTP not configured → completes silently, but proves consultant path was taken (no NPE)
     assertThatCode(() -> passwordResetService.requestPasswordReset("consultant1", "de"))
         .doesNotThrowAnyException();
+  }
+
+  @Test
+  void requestPasswordReset_Should_NotIssueToken_When_DeploymentSmtpIsIncomplete() {
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
+    when(platformSmtpSettings.requireConfigured())
+        .thenThrow(
+            new IllegalStateException(
+                "Platform SMTP is not configured: smtp.password (SMTP_PASSWORD)"));
+
+    passwordResetService.requestPasswordReset("testuser", "en");
+
+    assertThat(sentMails).isEmpty();
+    verify(oneTimeTokenStore, never())
+        .store(anyString(), anyString(), anyString(), any(), anyBoolean());
   }
 
   // --- confirmPasswordReset ---
@@ -353,85 +357,12 @@ class PasswordResetServiceTest {
     verify(identityPasswordUpdater, never()).updatePassword(anyString(), anyString());
   }
 
-  // The public /settings payload deliberately omits globalSmtpUsername/globalSmtpPassword since the
-  // CTS-C01 credential-leak fix. Credentials must therefore come from the authenticated source.
-  @Test
-  void
-      requestPasswordReset_Should_SendMail_When_PublicSettingsOmitCredentialsButAuthenticatedSourceHasThem() {
-    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenReturn(publicSmtpSettingsWithoutCredentials());
-    when(applicationSettingsService.getGlobalSmtpCredentials())
-        .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
-
-    passwordResetService.requestPasswordReset("testuser", "en");
-
-    assertThat(sentMails).hasSize(1);
-    assertThat(sentMails.get(0).recipient()).isEqualTo("real@example.com");
-  }
-
-  @Test
-  void requestPasswordReset_Should_NotSendMail_When_AuthenticatedCredentialsAreUnavailable() {
-    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenReturn(publicSmtpSettingsWithoutCredentials());
-    when(applicationSettingsService.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
-
-    passwordResetService.requestPasswordReset("testuser", "en");
-
-    assertThat(sentMails).isEmpty();
-  }
-
-  // Password reset is unauthenticated and dispatched off the request thread, so no user token
-  // exists and the super-admin-guarded credentials endpoint is unreachable. Operator-provided
-  // SMTP credentials (env SMTP_USER / SMTP_PASSWORD) must therefore be enough on their own.
-  @Test
-  void requestPasswordReset_Should_SendMail_When_CredentialsComeFromOperatorConfiguration() {
-    ReflectionTestUtils.setField(passwordResetService, "consultingTypeServiceApiUrl", "http://cts");
-    ReflectionTestUtils.setField(passwordResetService, "configuredSmtpUsername", "env-user");
-    ReflectionTestUtils.setField(passwordResetService, "configuredSmtpPassword", "env-pass");
-    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
-    when(restTemplate.getForObject(anyString(), any()))
-        .thenReturn(publicSmtpSettingsWithoutCredentials());
-
-    passwordResetService.requestPasswordReset("testuser", "en");
-
-    assertThat(sentMails).hasSize(1);
-    verify(applicationSettingsService, never()).getGlobalSmtpCredentials();
-  }
-
-  private Map<String, Object> publicSmtpSettingsWithoutCredentials() {
-    return Map.of(
-        "globalFeatureSystemNotificationEmailsEnabled",
-        true,
-        "globalSmtpEnabled",
-        true,
-        "globalSmtpHost",
-        "smtp.invalid",
-        "globalSmtpPort",
-        587,
-        "globalSmtpFrom",
-        "noreply@example.com");
-  }
-
-  private ApplicationSettingsSmtpCredentialsDTO smtpCredentials(String username, String password) {
-    return new ApplicationSettingsSmtpCredentialsDTO()
-        .globalSmtpUsername(username)
-        .globalSmtpPassword(password);
-  }
-
   private User validUser() {
     User user = new User();
     user.setUserId("u-1");
     user.setUsername("testuser");
     user.setEmail("real@example.com");
     return user;
-  }
-
-  private Map<String, Object> validSmtpSettings() {
-    return publicSmtpSettingsWithoutCredentials();
   }
 
   private OneTimeTokenStore.TokenClaim validClaim() {
