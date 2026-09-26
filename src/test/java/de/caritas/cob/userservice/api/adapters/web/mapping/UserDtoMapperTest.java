@@ -215,6 +215,19 @@ class UserDtoMapperTest {
   }
 
   @Test
+  void mapOf_Should_acceptThePatchWhen_onlyTheTourSwitchIsSent() {
+    // #1526: the Profile -> Help switch sends this field alone.
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    var dto = new PatchUserDTO();
+    dto.setWalkThroughEnabled(true);
+
+    var result = mapper.mapOf(dto, authenticatedUser);
+
+    assertThat(result).isPresent();
+    assertThat(result.get()).containsEntry("walkThroughEnabled", true);
+  }
+
+  @Test
   void mapOf_Should_populateAllProvidedFields() {
     when(authenticatedUser.getUserId()).thenReturn("u-1");
     var dto = new PatchUserDTO();

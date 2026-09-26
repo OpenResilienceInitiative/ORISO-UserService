@@ -2961,7 +2961,8 @@ components:
         isWalkThroughEnabled:
           type: boolean
           example: true
-          description: "Is true if the walk through is enabled for the user"
+          description: "Consultants only: product tours are switched on. Defaults to false;
+            not set for other users."
         liveChatViaSidebar:
           type: boolean
           example: false
@@ -3008,7 +3009,8 @@ components:
         walkThroughEnabled:
           type: boolean
           example: true
-          description: indicates should the walkt hrough be enabled
+          description: "Consultants only: switches product tours on or off (Profile > Help).
+            Defaults to false."
         emailToggles:
           type: array
           uniqueItems: true

@@ -339,9 +339,11 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Field
   private ConsultantStatus status = ConsultantStatus.IN_PROGRESS;
 
-  @Column(name = "walk_through_enabled", columnDefinition = "tinyint", nullable = false)
+  /** Product tours are opt-in: the counsellor switches them on under Profile -> Help (#1526). */
+  @Column(name = "walk_through_enabled", nullable = false, columnDefinition = "tinyint default 0")
   @JdbcTypeCode(SqlTypes.TINYINT)
-  private Boolean walkThroughEnabled;
+  @Builder.Default
+  private Boolean walkThroughEnabled = false;
 
   @Enumerated(EnumType.STRING)
   @Column(length = 2, nullable = false, columnDefinition = "varchar(2) default 'de'")
