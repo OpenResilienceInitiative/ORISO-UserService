@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.emailsupplier;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -148,6 +149,42 @@ class TenantTemplateSupplierTest {
     assertThat(templateAttributes.getFirst().getKey(), is("url"));
     assertThat(templateAttributes.getFirst().getValue(), is("https://onlineberatung.net"));
     verifyNoInteractions(tenantService, applicationSettingsService);
+  }
+
+  @Test
+  void getTenantBaseUrl_RejectsMissingTenantSubdomain() {
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://onlineberatung.net");
+    RestrictedTenantDTO tenantData = new RestrictedTenantDTO().subdomain(null);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenantData));
+
+    assertThat(error.getMessage(), is("Tenant subdomain is missing or invalid for mail URL"));
+  }
+
+  @Test
+  void getTenantBaseUrl_RejectsMissingApplicationBaseUrl() {
+    RestrictedTenantDTO tenantData = new RestrictedTenantDTO().subdomain(VALID_SUBDOMAIN);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenantData));
+
+    assertThat(error.getMessage(), is("app.base.url is missing for tenant mail URL"));
+  }
+
+  @Test
+  void getTenantBaseUrl_RejectsMalformedApplicationBaseUrl() {
+    ReflectionTestUtils.setField(tenantTemplateSupplier, "applicationBaseUrl", "https://");
+    RestrictedTenantDTO tenantData = new RestrictedTenantDTO().subdomain(VALID_SUBDOMAIN);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenantData));
+
+    assertThat(error.getMessage(), is("app.base.url is invalid for tenant mail URL"));
   }
 
   private void assertTemplateAttributesAreCorrectWithUrl(
