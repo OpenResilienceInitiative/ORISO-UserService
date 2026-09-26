@@ -25,6 +25,9 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.LocalDateTime;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -33,8 +36,10 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionTemplate;
 
 @SpringBootTest
 @ActiveProfiles("testing")
@@ -47,6 +52,7 @@ class GroupChatAdmissionCommitIT {
   @Autowired private GroupChatParticipantRepository participants;
   @Autowired private ChatRepository chats;
   @Autowired private ConsultantRepository consultants;
+  @Autowired private PlatformTransactionManager transactionManager;
 
   @MockitoBean private GroupChatPermissionService permissions;
   @MockitoBean private GroupChatMembershipService membership;
@@ -115,6 +121,69 @@ class GroupChatAdmissionCommitIT {
     if (requester != null) {
       requester.setMatrixUserId(oldMatrixUserId);
       consultants.save(requester);
+    }
+  }
+
+  @Test
+  void twoSimultaneousKnocksReturnTheSameRequest() throws Exception {
+    var locked = new CountDownLatch(1);
+    var releaseLock = new CountDownLatch(1);
+    var callersReady = new CountDownLatch(2);
+    var startKnocks = new CountDownLatch(1);
+    var completed = new CountDownLatch(2);
+
+    try (var executor = Executors.newFixedThreadPool(3)) {
+      var lockHolder =
+          executor.submit(
+              () ->
+                  new TransactionTemplate(transactionManager)
+                      .executeWithoutResult(
+                          ignored -> {
+                            chats.findByIdForUpdate(series.getId()).orElseThrow();
+                            locked.countDown();
+                            await(releaseLock);
+                          }));
+      assertThat(locked.await(5, TimeUnit.SECONDS)).isTrue();
+
+      var first = executor.submit(() -> knockAfterSignal(callersReady, startKnocks, completed));
+      var second = executor.submit(() -> knockAfterSignal(callersReady, startKnocks, completed));
+      assertThat(callersReady.await(5, TimeUnit.SECONDS)).isTrue();
+      startKnocks.countDown();
+      try {
+        assertThat(completed.await(250, TimeUnit.MILLISECONDS)).isFalse();
+      } finally {
+        releaseLock.countDown();
+      }
+
+      lockHolder.get(5, TimeUnit.SECONDS);
+      var firstResult = first.get(5, TimeUnit.SECONDS);
+      var secondResult = second.get(5, TimeUnit.SECONDS);
+      assertThat(firstResult.request().getId()).isEqualTo(secondResult.request().getId());
+      assertThat(firstResult.created()).isNotEqualTo(secondResult.created());
+      assertThat(
+              requests.findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
+                  java.util.Set.of(series.getId()), Status.PENDING))
+          .hasSize(1);
+    }
+  }
+
+  private GroupChatJoinRequestService.KnockResult knockAfterSignal(
+      CountDownLatch callersReady, CountDownLatch startKnocks, CountDownLatch completed) {
+    callersReady.countDown();
+    await(startKnocks);
+    try {
+      return service.knock(series.getId(), series.getInviteToken(), requester.getId());
+    } finally {
+      completed.countDown();
+    }
+  }
+
+  private static void await(CountDownLatch latch) {
+    try {
+      assertThat(latch.await(5, TimeUnit.SECONDS)).isTrue();
+    } catch (InterruptedException exception) {
+      Thread.currentThread().interrupt();
+      throw new IllegalStateException(exception);
     }
   }
 

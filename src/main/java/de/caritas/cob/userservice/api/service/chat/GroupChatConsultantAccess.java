@@ -8,6 +8,7 @@ import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import java.util.Collection;
+import java.util.List;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
@@ -35,6 +36,30 @@ public class GroupChatConsultantAccess {
     }
     return isParticipant(chat, consultant)
         || (isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant));
+  }
+
+  /** Applies the same access rule to a list with one membership query for the whole list. */
+  public List<Chat> filterAccessible(List<Chat> chats, Consultant consultant) {
+    if (chats == null || chats.isEmpty() || consultant == null) {
+      return List.of();
+    }
+    var seriesIds =
+        chats.stream().filter(Objects::nonNull).map(Chat::getId).filter(Objects::nonNull).toList();
+    var memberSeriesIds =
+        seriesIds.isEmpty()
+            ? Set.<Long>of()
+            : participantRepository
+                .findBySeriesIdInAndConsultantId(seriesIds, consultant.getId())
+                .stream()
+                .map(GroupChatParticipant::getSeriesId)
+                .collect(Collectors.toSet());
+    return chats.stream()
+        .filter(Objects::nonNull)
+        .filter(
+            chat ->
+                memberSeriesIds.contains(chat.getId())
+                    || (isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant)))
+        .toList();
   }
 
   /**

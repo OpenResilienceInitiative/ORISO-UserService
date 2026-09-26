@@ -64,7 +64,7 @@ public class GroupChatJoinRequestService {
   public KnockResult knock(Long seriesId, String inviteToken, String consultantId) {
     var series =
         chatRepository
-            .findById(seriesId)
+            .findByIdForUpdate(seriesId)
             .filter(chat -> GroupChatInviteTokens.matches(chat.getInviteToken(), inviteToken))
             .orElseThrow(() -> new ForbiddenException("The invite link is not valid"));
     requireSelfHelp(series);

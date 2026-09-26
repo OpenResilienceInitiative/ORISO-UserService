@@ -23,7 +23,6 @@ import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.lenient;
@@ -740,13 +739,25 @@ class ChatServiceTest {
   void getChatSessionsForConsultantByIds_Should_returnConsultantSessionsForGivenIds() {
     when(chatRepository.findByIdsWithChatAgencies(Set.of(CHAT_ID)))
         .thenReturn(List.of(activeChatWithAgency()));
-    when(groupChatConsultantAccess.mayAccess(any(), eq(CONSULTANT))).thenReturn(true);
+    when(groupChatConsultantAccess.filterAccessible(Mockito.anyList(), eq(CONSULTANT)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
 
     List<ConsultantSessionResponseDTO> result =
         chatService.getChatSessionsForConsultantByIds(Set.of(CHAT_ID), CONSULTANT);
 
     assertThat(result, hasSize(1));
     assertNotNull(result.get(0).getChat());
+  }
+
+  @Test
+  void getChatSessionsForConsultantByIds_Should_OmitChatsDeniedByAccessFilter() {
+    when(chatRepository.findByIdsWithChatAgencies(Set.of(CHAT_ID)))
+        .thenReturn(List.of(activeChatWithAgency()));
+    when(groupChatConsultantAccess.filterAccessible(Mockito.anyList(), eq(CONSULTANT)))
+        .thenReturn(List.of());
+
+    assertThat(
+        chatService.getChatSessionsForConsultantByIds(Set.of(CHAT_ID), CONSULTANT), hasSize(0));
   }
 
   @Test
@@ -765,12 +776,25 @@ class ChatServiceTest {
   void getChatSessionsForConsultantByGroupIds_Should_returnConsultantSessionsForGivenGroupIds() {
     when(chatRepository.findByMatrixRoomIdIn(Set.of(MATRIX_ROOM_ID)))
         .thenReturn(List.of(activeChatWithAgency()));
-    when(groupChatConsultantAccess.mayAccess(any(), eq(CONSULTANT))).thenReturn(true);
+    when(groupChatConsultantAccess.filterAccessible(Mockito.anyList(), eq(CONSULTANT)))
+        .thenAnswer(invocation -> invocation.getArgument(0));
 
     List<ConsultantSessionResponseDTO> result =
         chatService.getChatSessionsForConsultantByRoomIds(Set.of(MATRIX_ROOM_ID), CONSULTANT);
 
     assertThat(result, hasSize(1));
     assertNotNull(result.get(0).getChat());
+  }
+
+  @Test
+  void getChatSessionsForConsultantByGroupIds_Should_OmitChatsDeniedByAccessFilter() {
+    when(chatRepository.findByMatrixRoomIdIn(Set.of(MATRIX_ROOM_ID)))
+        .thenReturn(List.of(activeChatWithAgency()));
+    when(groupChatConsultantAccess.filterAccessible(Mockito.anyList(), eq(CONSULTANT)))
+        .thenReturn(List.of());
+
+    assertThat(
+        chatService.getChatSessionsForConsultantByRoomIds(Set.of(MATRIX_ROOM_ID), CONSULTANT),
+        hasSize(0));
   }
 }
