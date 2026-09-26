@@ -162,8 +162,8 @@ class GroupChatJoinRequestControllerIT {
     when(membershipService.addMemberToRoom(any(Chat.class), any())).thenReturn(true);
     when(agencyService.getAgency(OTHER_AGENCY_ID))
         .thenReturn(new AgencyDTO().id(OTHER_AGENCY_ID).name("Beratungsstelle Süd"));
-    when(tenantService.getRestrictedTenantData(OTHER_TENANT_ID))
-        .thenReturn(new RestrictedTenantDTO().id(OTHER_TENANT_ID).name("Anderer Träger"));
+    when(tenantService.getRestrictedTenantData(Set.of(OTHER_TENANT_ID)))
+        .thenReturn(List.of(new RestrictedTenantDTO().id(OTHER_TENANT_ID).name("Anderer Träger")));
   }
 
   @Test
@@ -353,7 +353,7 @@ class GroupChatJoinRequestControllerIT {
   @Test
   void unresolvableAgencyAndTenantNamesAreNullNotAnError() throws Exception {
     when(agencyService.getAgency(OTHER_AGENCY_ID)).thenThrow(new IllegalStateException("down"));
-    when(tenantService.getRestrictedTenantData(OTHER_TENANT_ID))
+    when(tenantService.getRestrictedTenantData(Set.of(OTHER_TENANT_ID)))
         .thenThrow(new IllegalStateException("down"));
     actAs(otherTraegerCounsellor);
     knock();

@@ -17,15 +17,17 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatJoinRequestService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatJoinRequestService.PendingForModerator;
-import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -60,12 +62,42 @@ public class GroupChatJoinRequestDtoMapper {
    */
   @Transactional(readOnly = true)
   public List<GroupChatJoinRequestDTO> pendingRequestsFor(String moderatorConsultantId) {
-    return joinRequestService.findPendingForModerator(moderatorConsultantId).stream()
-        .map(this::toModeratorDto)
+    var pending = joinRequestService.findPendingForModerator(moderatorConsultantId);
+    if (pending.isEmpty()) {
+      return List.of();
+    }
+    var requesterIds =
+        pending.stream().map(item -> item.request().getConsultantId()).distinct().toList();
+    var requesters =
+        consultantRepository.findAllWithAgenciesByIdIn(requesterIds).stream()
+            .collect(Collectors.toMap(Consultant::getId, consultant -> consultant));
+    var tenantIds =
+        requesters.values().stream()
+            .map(Consultant::getTenantId)
+            .filter(Objects::nonNull)
+            .collect(Collectors.toSet());
+    var tenants = new HashMap<Long, String>();
+    if (!tenantIds.isEmpty()) {
+      try {
+        tenantService.getRestrictedTenantData(tenantIds).stream()
+            .filter(Objects::nonNull)
+            .filter(tenant -> tenant.getId() != null)
+            .forEach(tenant -> tenants.put(tenant.getId(), tenant.getName()));
+      } catch (RuntimeException exception) {
+        log.warn("Could not resolve join requester tenant names: {}", exception.getMessage());
+      }
+    }
+    var agencies = new HashMap<Long, String>();
+    return pending.stream()
+        .map(item -> toModeratorDto(item, requesters, tenants, agencies))
         .toList();
   }
 
-  private GroupChatJoinRequestDTO toModeratorDto(PendingForModerator pending) {
+  private GroupChatJoinRequestDTO toModeratorDto(
+      PendingForModerator pending,
+      Map<String, Consultant> requesters,
+      Map<Long, String> tenants,
+      Map<Long, String> agencies) {
     var request = pending.request();
     var series = pending.series();
     return new GroupChatJoinRequestDTO()
@@ -77,12 +109,18 @@ public class GroupChatJoinRequestDtoMapper {
         .decidedAt(toUtc(request.getDecidedAt()))
         .via(ViaEnum.fromValue(request.getVia().name()))
         .viewerRole(ViewerRoleEnum.fromValue(pending.viewerRole().name()))
-        .requester(toRequesterDto(request.getConsultantId(), series));
+        .requester(
+            toRequesterDto(request.getConsultantId(), series, requesters, tenants, agencies));
   }
 
-  private GroupChatJoinRequesterDTO toRequesterDto(String consultantId, Chat series) {
+  private GroupChatJoinRequesterDTO toRequesterDto(
+      String consultantId,
+      Chat series,
+      Map<String, Consultant> requesters,
+      Map<Long, String> tenants,
+      Map<Long, String> agencies) {
     var dto = new GroupChatJoinRequesterDTO().consultantId(consultantId);
-    var requester = consultantRepository.findById(consultantId).orElse(null);
+    var requester = requesters.get(consultantId);
     if (requester == null) {
       return dto.displayName(null)
           .firstName(null)
@@ -95,8 +133,8 @@ public class GroupChatJoinRequestDtoMapper {
     return dto.displayName(requester.getInternalDisplayNameOrFallback())
         .firstName(requester.getFirstName())
         .lastName(requester.getLastName())
-        .agencyName(agencyNameOf(requester))
-        .tenantName(tenantNameOf(requester))
+        .agencyName(agencyNameOf(requester, agencies))
+        .tenantName(tenants.get(requester.getTenantId()))
         .sameAgency(chatPermissionVerifier.hasSameAgencyAssigned(series, requester))
         .sameTenant(
             series.getChatOwner() != null
@@ -104,7 +142,7 @@ public class GroupChatJoinRequestDtoMapper {
                 && Objects.equals(requester.getTenantId(), series.getChatOwner().getTenantId()));
   }
 
-  private String agencyNameOf(Consultant requester) {
+  private String agencyNameOf(Consultant requester, Map<Long, String> agencyNames) {
     if (requester.getConsultantAgencies() == null) {
       return null;
     }
@@ -113,30 +151,24 @@ public class GroupChatJoinRequestDtoMapper {
         .map(ConsultantAgency::getAgencyId)
         .filter(Objects::nonNull)
         .sorted(Comparator.naturalOrder())
-        .map(
-            agencyId ->
-                resolve(
-                    () ->
-                        Optional.ofNullable(agencyService.getAgency(agencyId))
-                            .map(AgencyDTO::getName)
-                            .orElse(null),
-                    agencyId))
+        .map(agencyId -> cachedAgencyName(agencyId, agencyNames))
         .filter(Objects::nonNull)
         .findFirst()
         .orElse(null);
   }
 
-  private String tenantNameOf(Consultant requester) {
-    var tenantId = requester.getTenantId();
-    if (tenantId == null) {
-      return null;
+  private String cachedAgencyName(Long agencyId, Map<Long, String> agencyNames) {
+    if (!agencyNames.containsKey(agencyId)) {
+      agencyNames.put(
+          agencyId,
+          resolve(
+              () ->
+                  Optional.ofNullable(agencyService.getAgency(agencyId))
+                      .map(AgencyDTO::getName)
+                      .orElse(null),
+              agencyId));
     }
-    return resolve(
-        () ->
-            Optional.ofNullable(tenantService.getRestrictedTenantData(tenantId))
-                .map(RestrictedTenantDTO::getName)
-                .orElse(null),
-        tenantId);
+    return agencyNames.get(agencyId);
   }
 
   private String resolve(Supplier<String> lookup, Long id) {
