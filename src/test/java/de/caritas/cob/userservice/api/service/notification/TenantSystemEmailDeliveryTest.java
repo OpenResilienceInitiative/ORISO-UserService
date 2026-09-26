@@ -106,4 +106,44 @@ class TenantSystemEmailDeliveryTest {
     verify(tenantClient).deliver(40L, purpose.name(), "recipient@example.org", email);
     verifyNoInteractions(platformSettings, platformDispatcher);
   }
+
+  @Test
+  void durableAppointmentCorrelationReachesOwnRelayWithoutPlatformCredentials() {
+    String correlation = "f7e8bbfe-7ca9-4e8e-8c55-54575ceca5a9";
+    new TenantSystemEmailDelivery(tenantClient, platformSettings, platformDispatcher)
+        .sendConfirmed(
+            40L,
+            new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.OWN, null),
+            TenantSystemEmailDelivery.Purpose.SELF_HELP_APPOINTMENT_REMINDER,
+            "recipient@example.org",
+            email,
+            correlation);
+
+    verify(tenantClient)
+        .deliver(
+            40L, "SELF_HELP_APPOINTMENT_REMINDER", "recipient@example.org", email, correlation);
+    verifyNoInteractions(platformSettings, platformDispatcher);
+  }
+
+  @Test
+  void durableAppointmentCorrelationReachesPlatformMimeDispatcher() {
+    String correlation = "f7e8bbfe-7ca9-4e8e-8c55-54575ceca5a9";
+    var smtp =
+        new PlatformSmtpSettingsProvider.Settings(
+            "smtp.platform.example", 587, false, "account", "secret", "sender@platform.example");
+    when(platformSettings.requireConfigured()).thenReturn(smtp);
+
+    new TenantSystemEmailDelivery(tenantClient, platformSettings, platformDispatcher)
+        .sendConfirmed(
+            40L,
+            new TenantSystemEmailRouteService.Route(
+                TenantSystemEmailRouteService.Mode.PLATFORM, null),
+            TenantSystemEmailDelivery.Purpose.SELF_HELP_APPOINTMENT_REMINDER,
+            "recipient@example.org",
+            email,
+            correlation);
+
+    verify(platformDispatcher).send(smtp, "recipient@example.org", email, correlation);
+    verifyNoInteractions(tenantClient);
+  }
 }

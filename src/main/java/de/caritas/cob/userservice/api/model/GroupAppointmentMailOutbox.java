@@ -83,6 +83,10 @@ public class GroupAppointmentMailOutbox {
   @Column(name = "recipient_id", nullable = false, length = 36)
   private String recipientId;
 
+  /** Opaque stable message header for reconciling an ambiguous transport handoff. */
+  @Column(name = "correlation_id", nullable = false, length = 36, unique = true)
+  private String correlationId;
+
   @Column(name = "scheduled_start_utc")
   private LocalDateTime scheduledStartUtc;
 

@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.client.ExpectedCount.once;
+import static org.springframework.test.web.client.match.MockRestRequestMatchers.content;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
@@ -17,6 +18,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import java.util.Map;
+import org.hamcrest.Matchers;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -92,6 +94,29 @@ class TenantSystemEmailClientTest {
         "SUPERVISOR_ADDED",
         "recipient@example.org",
         new OrisoEmailRenderer.RenderedEmail("Subject", "<p>Body</p>", "Body"));
+
+    server.verify();
+  }
+
+  @Test
+  void keepsThePersistedCorrelationIdInTheOwnRelayRequest() {
+    String correlation = "f7e8bbfe-7ca9-4e8e-8c55-54575ceca5a9";
+    server
+        .expect(
+            once(),
+            requestTo(
+                "http://tenantservice.internal:8081/tenant/40/internal/system-email-deliveries"))
+        .andExpect(method(HttpMethod.POST))
+        .andExpect(
+            content().string(Matchers.containsString("\"correlationId\":\"" + correlation + "\"")))
+        .andRespond(withSuccess());
+
+    client.deliver(
+        40L,
+        "SELF_HELP_APPOINTMENT_REMINDER",
+        "recipient@example.org",
+        new OrisoEmailRenderer.RenderedEmail("Subject", "<p>Body</p>", "Body"),
+        correlation);
 
     server.verify();
   }

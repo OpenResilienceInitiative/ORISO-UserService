@@ -60,16 +60,34 @@ public class TenantSystemEmailClient {
 
   public void deliver(
       long tenantId, String purpose, String recipient, OrisoEmailRenderer.RenderedEmail email) {
+    deliver(tenantId, purpose, recipient, email, UUID.randomUUID().toString());
+  }
+
+  public void deliver(
+      long tenantId,
+      String purpose,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email,
+      String correlationId) {
+    if (!UUID.fromString(correlationId).toString().equals(correlationId)) {
+      throw new IllegalArgumentException("Mail correlation ID must be a canonical UUID");
+    }
     HttpHeaders headers = technicalHeaders();
     headers.setContentType(MediaType.APPLICATION_JSON);
     Map<String, Object> request =
         Map.of(
-            "purpose", purpose,
-            "recipient", recipient,
-            "subject", email.subject(),
-            "html", email.html(),
-            "text", email.text(),
-            "correlationId", UUID.randomUUID().toString());
+            "purpose",
+            purpose,
+            "recipient",
+            recipient,
+            "subject",
+            email.subject(),
+            "html",
+            email.html(),
+            "text",
+            email.text(),
+            "correlationId",
+            correlationId);
     try {
       restTemplate.exchange(
           endpoint(tenantId, "/internal/system-email-deliveries"),

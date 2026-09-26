@@ -46,11 +46,29 @@ public class TenantSystemEmailDelivery {
       Purpose purpose,
       String recipient,
       OrisoEmailRenderer.RenderedEmail email) {
+    return sendConfirmed(tenantId, route, purpose, recipient, email, null);
+  }
+
+  /** The correlation ID is persisted by an outbox and reused for transport reconciliation. */
+  public boolean sendConfirmed(
+      long tenantId,
+      TenantSystemEmailRouteService.Route route,
+      Purpose purpose,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email,
+      String correlationId) {
     if (route.mode() == TenantSystemEmailRouteService.Mode.OWN) {
-      tenantClient.deliver(tenantId, purpose.name(), recipient, email);
+      if (correlationId == null) {
+        tenantClient.deliver(tenantId, purpose.name(), recipient, email);
+      } else {
+        tenantClient.deliver(tenantId, purpose.name(), recipient, email, correlationId);
+      }
       return true;
     } else {
-      return platformDispatcher.send(platformSettings.requireConfigured(), recipient, email);
+      var settings = platformSettings.requireConfigured();
+      return correlationId == null
+          ? platformDispatcher.send(settings, recipient, email)
+          : platformDispatcher.send(settings, recipient, email, correlationId);
     }
   }
 }

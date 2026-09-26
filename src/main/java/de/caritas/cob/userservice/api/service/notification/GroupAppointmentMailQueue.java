@@ -19,6 +19,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
 import java.util.Set;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -250,6 +251,7 @@ public class GroupAppointmentMailQueue {
             .eventType(event)
             .recipientRole(member.role())
             .recipientId(member.id())
+            .correlationId(UUID.randomUUID().toString())
             .scheduledStartUtc(displayedStart)
             .timezone(state.getTimezone())
             .dueAtUtc(dueAtUtc)

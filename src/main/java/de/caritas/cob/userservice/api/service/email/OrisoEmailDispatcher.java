@@ -18,6 +18,15 @@ public class OrisoEmailDispatcher {
       PlatformSmtpSettingsProvider.Settings smtp,
       String recipient,
       OrisoEmailRenderer.RenderedEmail email) {
+    return send(smtp, recipient, email, null);
+  }
+
+  /** Sends with an opaque, stable receipt key when the caller has a durable outbox row. */
+  public boolean send(
+      PlatformSmtpSettingsProvider.Settings smtp,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email,
+      String correlationId) {
     try {
       MimeMessage message =
           new MimeMessage(
@@ -27,6 +36,9 @@ public class OrisoEmailDispatcher {
       message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
       // UTF-8 rather than the platform default: these subjects carry umlauts.
       message.setSubject(email.subject(), "UTF-8");
+      if (correlationId != null) {
+        message.setHeader("X-ORISO-Correlation-ID", requireCorrelationId(correlationId));
+      }
       message.setContent(OrisoEmailMime.alternative(email));
       OrisoSmtpTransport.send(message);
       return true;
@@ -37,5 +49,13 @@ public class OrisoEmailDispatcher {
       log.error("Platform mail send failed: {}", exception.getClass().getSimpleName());
       return false;
     }
+  }
+
+  private static String requireCorrelationId(String correlationId) {
+    String canonical = java.util.UUID.fromString(correlationId).toString();
+    if (!canonical.equals(correlationId)) {
+      throw new IllegalArgumentException("Mail correlation ID must be a canonical UUID");
+    }
+    return canonical;
   }
 }

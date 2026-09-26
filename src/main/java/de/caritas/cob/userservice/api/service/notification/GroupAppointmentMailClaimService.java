@@ -42,6 +42,21 @@ public class GroupAppointmentMailClaimService {
     outbox.save(mail);
   }
 
+  /** Only for a change detected before any SMTP or OWN-relay handoff. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public void releaseBeforeHandoff(long mailId) {
+    GroupAppointmentMailOutbox mail =
+        outbox
+            .findById(mailId)
+            .orElseThrow(() -> new IllegalStateException("Appointment-mail claim is missing"));
+    if (mail.getStatus() != Status.SENDING) {
+      throw new IllegalStateException("Appointment-mail claim is no longer held");
+    }
+    mail.setStatus(Status.PENDING);
+    mail.setClaimedAt(null);
+    outbox.save(mail);
+  }
+
   private static LocalDateTime nowUtc() {
     return LocalDateTime.now(ZoneOffset.UTC);
   }
