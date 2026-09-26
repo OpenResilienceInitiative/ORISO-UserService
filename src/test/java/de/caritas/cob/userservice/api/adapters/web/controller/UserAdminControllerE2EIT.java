@@ -20,6 +20,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.jayway.jsonpath.JsonPath;
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.PatchAdminDTO;
@@ -33,8 +34,10 @@ import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
+import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
@@ -57,8 +60,12 @@ import de.caritas.cob.userservice.consultingtypeservice.generated.web.Consulting
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
+import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.Cookie;
 import java.util.LinkedHashMap;
+import java.util.List;
+import java.util.Set;
+import java.util.stream.Collectors;
 import net.minidev.json.JSONArray;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
@@ -110,6 +117,10 @@ class UserAdminControllerE2EIT {
   @Autowired private IdentityConfig identityConfig;
 
   @Autowired private AdminRepository adminRepository;
+
+  @Autowired private ConsultantRepository consultantRepository;
+
+  @Autowired private EntityManager entityManager;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
 
@@ -236,6 +247,50 @@ class UserAdminControllerE2EIT {
             .andReturn();
     String content = mvcResult.getResponse().getContentAsString();
     return JsonPath.read(content, "_embedded.id");
+  }
+
+  private static final String CONSULTANT_WITH_LANGUAGES_ID = "5674839f-d0a3-47e2-8f9c-bb49fc2ddbbe";
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_UPDATE})
+  void updateConsultant_Should_keepLanguages_When_adminBodyOmitsLanguages() throws Exception {
+    var consultant = consultantRepository.findById(CONSULTANT_WITH_LANGUAGES_ID).orElseThrow();
+    consultant.setLanguages(
+        Set.of(
+            new Language(consultant, LanguageCode.de), new Language(consultant, LanguageCode.en)));
+    consultantRepository.save(consultant);
+    entityManager.flush();
+
+    // The exact key set ORISO-Admin's editCounselorData.ts sends for an untouched edit form:
+    // it has no languages field at all.
+    var body = new LinkedHashMap<String, Object>();
+    body.put("firstname", consultant.getFirstName());
+    body.put("lastname", consultant.getLastName());
+    body.put("formalLanguage", consultant.isLanguageFormal());
+    body.put("email", consultant.getEmail());
+    body.put("absent", consultant.isAbsent());
+    body.put("isSupervisor", consultant.isSupervisor());
+    body.put("topicIds", List.of());
+    body.put("rejectPendingPublicSlug", false);
+
+    this.mockMvc
+        .perform(
+            put(CONSULTANT_PATH + "/" + CONSULTANT_WITH_LANGUAGES_ID)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(body)))
+        .andExpect(status().isOk());
+
+    entityManager.flush();
+    entityManager.clear();
+    assertThat(languageCodesOf(CONSULTANT_WITH_LANGUAGES_ID)).containsExactlyInAnyOrder("de", "en");
+  }
+
+  private Set<String> languageCodesOf(String consultantId) {
+    return consultantRepository.findById(consultantId).orElseThrow().getLanguages().stream()
+        .map(language -> language.getLanguageCode().name())
+        .collect(Collectors.toSet());
   }
 
   @Test
