@@ -11,9 +11,6 @@ import static org.mockito.Mockito.when;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
-import de.caritas.cob.userservice.api.service.notification.SystemNotificationEmailSettingsService;
-import de.caritas.cob.userservice.api.service.notification.SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings;
-import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -30,7 +27,7 @@ import org.springframework.test.util.ReflectionTestUtils;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class WelcomeEmailServiceTest {
 
-  @Mock private SystemNotificationEmailSettingsService emailSettingsService;
+  @Mock private PlatformSmtpSettingsProvider platformSmtpSettings;
   @Mock private OrisoEmailDispatcher dispatcher;
 
   // Real, so the test asserts that a mail comes out rather than that a method
@@ -43,17 +40,16 @@ class WelcomeEmailServiceTest {
 
   @InjectMocks private WelcomeEmailService service;
 
-  private final SupervisorAddedEmailSettings smtp =
-      new SupervisorAddedEmailSettings(
-          "smtp.example.org", 587, false, "user", "secret", "no-reply@example.org", "#a5000a");
+  private final PlatformSmtpSettingsProvider.Settings smtp =
+      new PlatformSmtpSettingsProvider.Settings(
+          "smtp.example.org", 587, false, "user", "secret", "no-reply@example.org");
 
   @BeforeEach
   void setUp() {
     ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org");
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
     ReflectionTestUtils.setField(emailBrand, "platformName", "Online-Beratung");
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtp));
+    when(platformSmtpSettings.requireConfigured()).thenReturn(smtp);
   }
 
   private static User user(String email) {
@@ -114,23 +110,20 @@ class WelcomeEmailServiceTest {
   }
 
   @Test
-  void staysSilentWhenTheTenantHasNoSmtpSettings() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.empty());
-
+  void sendsUsingPlatformEvenWhenTheTenantHasNoSmtpSettings() {
     service.sendWelcomeEmail(user("jemand@example.org"), "ruhiges-yak-1428");
 
-    verify(dispatcher, never()).send(any(), anyString(), any());
+    verify(dispatcher).send(eq(smtp), eq("jemand@example.org"), any());
   }
 
   @Test
-  void doesNotCallSmtpForAUserWithoutATenant() {
+  void sendsUsingPlatformForAUserWithoutATenant() {
     var user = user("jemand@example.org");
     user.setTenantId(null);
 
     service.sendWelcomeEmail(user, "ruhiges-yak-1428");
 
-    verify(dispatcher, never()).send(any(), anyString(), any());
+    verify(dispatcher).send(eq(smtp), eq("jemand@example.org"), any());
   }
 
   @Test
