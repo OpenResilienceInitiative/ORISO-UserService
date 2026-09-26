@@ -40,6 +40,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -100,12 +101,7 @@ public class ChatService {
 
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
 
-    return chats.stream()
-        .map(
-            chat ->
-                convertChatToConsultantSessionResponseDTO(
-                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
-        .collect(Collectors.toList());
+    return toConsultantResponses(chats, chatAgenciesByChatId);
   }
 
   private boolean isVisibleToConsultant(Chat chat, Consultant consultant) {
@@ -116,9 +112,9 @@ public class ChatService {
   }
 
   private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(
-      Chat chat, Set<ChatAgency> chatAgencies) {
+      Chat chat, Set<ChatAgency> chatAgencies, String inviteToken) {
     var userChat = createUserChat(chat, chatAgencies);
-    userChat.setInviteToken(inviteTokenOf(chat));
+    userChat.setInviteToken(inviteToken);
     return new ConsultantSessionResponseDTO()
         .chat(userChat)
         .consultant(
@@ -129,16 +125,26 @@ public class ChatService {
                 .username(chat.getChatOwner().getUsername()));
   }
 
-  /** Groups created before #1237 have no token yet; the first counsellor view mints it. */
-  private String inviteTokenOf(Chat chat) {
-    if (chat.getInviteToken() == null && chat.getId() != null) {
-      return groupChatInviteTokenService.tokenFor(chat.getId());
-    }
-    return chat.getInviteToken();
-  }
-
-  private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(Chat chat) {
-    return convertChatToConsultantSessionResponseDTO(chat, loadChatAgencies(chat.getId()));
+  /** Legacy Series tokens are minted in one locked batch before mapping any consultant response. */
+  private List<ConsultantSessionResponseDTO> toConsultantResponses(
+      List<Chat> chats, Map<Long, Set<ChatAgency>> chatAgenciesByChatId) {
+    var missingTokenIds =
+        chats.stream()
+            .filter(chat -> chat.getInviteToken() == null)
+            .map(Chat::getId)
+            .filter(Objects::nonNull)
+            .toList();
+    var mintedTokens = groupChatInviteTokenService.tokensFor(missingTokenIds);
+    return chats.stream()
+        .map(
+            chat ->
+                convertChatToConsultantSessionResponseDTO(
+                    chat,
+                    chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of()),
+                    chat.getInviteToken() != null
+                        ? chat.getInviteToken()
+                        : mintedTokens.get(chat.getId())))
+        .collect(Collectors.toList());
   }
 
   private String[] getChatModerators(Chat chat, Set<ChatAgency> chatAgencies) {
@@ -412,13 +418,7 @@ public class ChatService {
 
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
 
-    var result =
-        chats.stream()
-            .map(
-                chat ->
-                    convertChatToConsultantSessionResponseDTO(
-                        chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
-            .collect(Collectors.toList());
+    var result = toConsultantResponses(chats, chatAgenciesByChatId);
 
     log.info("🔍 ChatService: Converted to {} ConsultantSessionResponseDTO", result.size());
 
@@ -451,12 +451,7 @@ public class ChatService {
         groupChatConsultantAccess.filterAccessible(
             chatRepository.findByMatrixRoomIdIn(matrixRoomIds), consultant);
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
-    return chats.stream()
-        .map(
-            chat ->
-                convertChatToConsultantSessionResponseDTO(
-                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
-        .collect(Collectors.toList());
+    return toConsultantResponses(chats, chatAgenciesByChatId);
   }
 
   /**
