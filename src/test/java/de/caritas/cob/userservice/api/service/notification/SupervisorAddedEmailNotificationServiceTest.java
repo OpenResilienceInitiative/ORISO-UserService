@@ -323,7 +323,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     assertThatCode(
             () -> service.notifyEmailAddressChanged("johndoe", "john@example.com", 1L, null, null))
         .doesNotThrowAnyException();
-    verify(emailBrand).values(eq("http://localhost:8080"), any());
+    verify(emailBrand).valuesForTenant(eq("http://localhost:8080"), any());
   }
 
   // ── notifySupervisorRemoved — valid consultant email ─────────────────────
@@ -410,7 +410,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     assertThatThrownBy(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("tenant notification frontend URL");
-    verify(emailBrand, never()).values(any(), any());
+    verify(emailBrand, never()).valuesForTenant(any(), any());
   }
 
   // ── languageCodeOf — non-German (English) localization paths ─────────────
@@ -473,7 +473,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     assertThatCode(
             () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
         .doesNotThrowAnyException();
-    verify(emailBrand).values(eq("http://127.0.0.1:8080"), any());
+    verify(emailBrand).valuesForTenant(eq("http://127.0.0.1:8080"), any());
   }
 
   @Test
@@ -485,7 +485,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     assertThatCode(
             () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
         .doesNotThrowAnyException();
-    verify(emailBrand).values(eq("http://[::1]:8080"), any());
+    verify(emailBrand).valuesForTenant(eq("http://[::1]:8080"), any());
   }
 
   @Test
