@@ -14,7 +14,11 @@ public class TenantSystemEmailDelivery {
   public enum Purpose {
     EMAIL_ADDRESS_CHANGED,
     SUPERVISOR_ADDED,
-    SUPERVISOR_REMOVED
+    SUPERVISOR_REMOVED,
+    NEW_ENQUIRY,
+    DIRECT_ENQUIRY,
+    ENQUIRY_ASSIGNED,
+    DAILY_ENQUIRY_DIGEST
   }
 
   private final @NonNull TenantSystemEmailClient tenantClient;
@@ -27,10 +31,21 @@ public class TenantSystemEmailDelivery {
       Purpose purpose,
       String recipient,
       OrisoEmailRenderer.RenderedEmail email) {
+    sendConfirmed(tenantId, route, purpose, recipient, email);
+  }
+
+  /** Returns false only when the platform SMTP dispatcher rejected the send. */
+  public boolean sendConfirmed(
+      long tenantId,
+      TenantSystemEmailRouteService.Route route,
+      Purpose purpose,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email) {
     if (route.mode() == TenantSystemEmailRouteService.Mode.OWN) {
       tenantClient.deliver(tenantId, purpose.name(), recipient, email);
+      return true;
     } else {
-      platformDispatcher.send(platformSettings.requireConfigured(), recipient, email);
+      return platformDispatcher.send(platformSettings.requireConfigured(), recipient, email);
     }
   }
 }
