@@ -20,6 +20,8 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteAccessPolicy.InviteListScope;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient.ExistingAgency;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
@@ -28,6 +30,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdA
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -39,6 +42,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -93,6 +97,7 @@ public class AccountInviteService {
   private final @NonNull IdReservationReleaseProcessor reservationReleaseProcessor;
   private final @NonNull PlatformTransactionManager transactionManager;
   private final @NonNull AccountInviteAccessPolicy accessPolicy;
+  private final @NonNull ExistingAgencyClient existingAgencyClient;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand requestedCommand) {
@@ -108,8 +113,16 @@ public class AccountInviteService {
       throw new BadRequestException("recipientEmail is required");
     }
     validateAllocationModes(command);
+    boolean existingTenant = command.tenantIdAllocationMode() == IdAllocationMode.EXISTING;
+    if (existingTenant) {
+      verifyExistingTenant(command.tenantId());
+    }
+    if (command.agencyIdAllocationMode() == IdAllocationMode.EXISTING) {
+      command = bindToExistingAgency(command);
+    }
     verifyRecipientEmailAvailable(command.recipientEmail());
     if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
+        && !existingTenant
         && command.tenantId() != null
         && isTenantIdTaken(command.tenantId())) {
       // 409 — the admin frontend maps CONFLICT to its dedicated "tenant id taken" message.
@@ -121,11 +134,11 @@ public class AccountInviteService {
     // UI state alone grants nothing — the reservation plus the re-validation below decide.
     TenantIdReservation tenantReservation = null;
     Long reservedAgencyId = null;
-    if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN) {
+    if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN && !existingTenant) {
       tenantReservation = reserveTenantIdOrDegrade(command);
     }
     try {
-      if (command.agencyIdAllocationMode() != null) {
+      if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
         // Long.valueOf: the reservation record carries a primitive long — a bare ternary would
         // unbox command.tenantId() and NPE on invites without a tenant ID.
         Long tenantIdForAgency =
@@ -152,6 +165,8 @@ public class AccountInviteService {
               .lastName(trimToNull(command.lastName()))
               .agencyId(reservedAgencyId != null ? reservedAgencyId : command.agencyId())
               .departmentId(command.departmentId())
+              .tenantIdAllocationMode(command.tenantIdAllocationMode())
+              .agencyIdAllocationMode(command.agencyIdAllocationMode())
               .expiresAt(resolveExpiry(now, command.expiresInDays()))
               .status(AccountInviteStatus.DRAFT)
               .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
@@ -259,7 +274,8 @@ public class AccountInviteService {
                                       .build())
                               .getId());
                     }
-                    if (command.agencyIdAllocationMode() != null && invite.getAgencyId() != null) {
+                    if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
+                        && invite.getAgencyId() != null) {
                       taskIds.add(
                           reservationReleaseTaskRepository
                               .saveAndFlush(
@@ -311,7 +327,8 @@ public class AccountInviteService {
         logReservationReleaseFailure("tenant", releaseException);
       }
     }
-    if (command.agencyIdAllocationMode() != null && invite.getAgencyId() != null) {
+    if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
+        && invite.getAgencyId() != null) {
       try {
         if (!agencyIdAllocationClient.release(invite.getAgencyId())) {
           logReservationReleaseFailure("agency", new IllegalStateException("release pending"));
@@ -428,10 +445,16 @@ public class AccountInviteService {
     if (command.tenantIdAllocationMode() == IdAllocationMode.AUTO && command.tenantId() != null) {
       throw new BadRequestException("tenantId must be omitted in AUTO tenant allocation mode");
     }
-    if (command.tenantIdAllocationMode() != null
+    if (command.tenantIdAllocationMode() == IdAllocationMode.EXISTING) {
+      validateExistingTenantMode(command);
+    } else if (command.tenantIdAllocationMode() != null
         && command.targetRole() != AccountInviteTargetRole.TENANT_ADMIN) {
       throw new BadRequestException(
-          "tenantIdAllocationMode is only supported for TENANT_ADMIN invites");
+          "tenantIdAllocationMode AUTO/MANUAL is only supported for TENANT_ADMIN invites");
+    }
+    if (command.agencyIdAllocationMode() == IdAllocationMode.EXISTING
+        && IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())) {
+      throw new BadRequestException("An existing agency cannot belong to a new tenant");
     }
     if (command.agencyIdAllocationMode() == IdAllocationMode.MANUAL && command.agencyId() == null) {
       throw new BadRequestException("agencyId is required in MANUAL agency allocation mode");
@@ -439,6 +462,79 @@ public class AccountInviteService {
     if (command.agencyIdAllocationMode() == IdAllocationMode.AUTO && command.agencyId() != null) {
       throw new BadRequestException("agencyId must be omitted in AUTO agency allocation mode");
     }
+    if (command.agencyIdAllocationMode() == IdAllocationMode.EXISTING) {
+      if (command.agencyId() == null) {
+        throw new BadRequestException("agencyId is required in EXISTING agency allocation mode");
+      }
+      if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR
+          && command.targetRole() != AccountInviteTargetRole.AGENCY_ADMIN) {
+        throw new BadRequestException(
+            "EXISTING agency allocation mode is only supported for COUNSELLOR and AGENCY_ADMIN"
+                + " invites");
+      }
+    }
+  }
+
+  /** A Träger-bound caller that named no tenant already got its own stamped by the policy. */
+  private static void validateExistingTenantMode(CreateAccountInviteCommand command) {
+    if (command.targetRole() != AccountInviteTargetRole.TENANT_ADMIN
+        && command.targetRole() != AccountInviteTargetRole.AGENCY_ADMIN
+        && command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
+      throw new BadRequestException(
+          "EXISTING tenant allocation mode is only supported for TENANT_ADMIN, AGENCY_ADMIN and"
+              + " COUNSELLOR invites");
+    }
+    if (command.tenantId() == null) {
+      throw new BadRequestException("tenantId is required in EXISTING tenant allocation mode");
+    }
+    if (TenantContext.TECHNICAL_TENANT_ID.equals(command.tenantId())) {
+      throw new BadRequestException("The platform tenant cannot be the target of an invite");
+    }
+  }
+
+  /** The Träger named by an EXISTING invite has to exist (404 otherwise); nothing is reserved. */
+  private void verifyExistingTenant(Long tenantId) {
+    if (!tenantExists(tenantId)) {
+      throw new NotFoundException("tenantId " + tenantId + " does not exist");
+    }
+  }
+
+  /**
+   * Validates the existing agency and fills a missing tenant, or a missing topic when the agency
+   * offers exactly one. Only the platform admin can name a foreign tenant; the policy stamps every
+   * other caller's own.
+   */
+  private CreateAccountInviteCommand bindToExistingAgency(CreateAccountInviteCommand command) {
+    ExistingAgency agency =
+        existingAgencyClient
+            .find(command.agencyId())
+            .filter(found -> !found.deleted())
+            .orElseThrow(
+                () -> new NotFoundException("agencyId " + command.agencyId() + " does not exist"));
+    if (command.tenantId() != null && !command.tenantId().equals(agency.tenantId())) {
+      throw new BadRequestException(
+          "agencyId " + command.agencyId() + " does not belong to tenant " + command.tenantId());
+    }
+    List<Long> topicIds = agency.topicIds() == null ? List.of() : agency.topicIds();
+    Long departmentId = command.departmentId();
+    if (departmentId != null && !topicIds.contains(departmentId)) {
+      throw new BadRequestException(
+          "departmentId " + departmentId + " is not a topic of agency " + command.agencyId());
+    }
+    if (departmentId == null && topicIds.size() == 1) {
+      departmentId = topicIds.get(0);
+    }
+    return new CreateAccountInviteCommand(
+        command.targetRole(),
+        command.tenantId() != null ? command.tenantId() : agency.tenantId(),
+        command.recipientEmail(),
+        command.firstName(),
+        command.lastName(),
+        command.agencyId(),
+        departmentId,
+        command.expiresInDays(),
+        command.tenantIdAllocationMode(),
+        command.agencyIdAllocationMode());
   }
 
   /**
@@ -484,7 +580,7 @@ public class AccountInviteService {
       int size) {
     String search = normalizeSearch(query);
     PageRequest pageRequest = PageRequest.of(Math.max(page, 0), clampSize(size));
-    // Cross-Träger guard: without it an absent tenant_id listed the invites of every Träger.
+    // Cross-Träger guard: an absent tenant_id would otherwise list the invites of every Träger.
     InviteListScope scope = accessPolicy.scopeForListing(tenantId, targetRole);
     if (scope.empty()) {
       return Page.empty(pageRequest);
@@ -587,6 +683,8 @@ public class AccountInviteService {
                       .lastName(oldInvite.getLastName())
                       .agencyId(oldInvite.getAgencyId())
                       .departmentId(oldInvite.getDepartmentId())
+                      .tenantIdAllocationMode(oldInvite.getTenantIdAllocationMode())
+                      .agencyIdAllocationMode(oldInvite.getAgencyIdAllocationMode())
                       .tokenHash(hash(rawToken))
                       .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
                       .status(AccountInviteStatus.EMAIL_SENT)
@@ -867,7 +965,7 @@ public class AccountInviteService {
   }
 
   public AccountInvite waiveTwoFactor(Long inviteId, WaiveTwoFactorCommand command) {
-    return waiveTwoFactor(findInvite(inviteId), command);
+    return waiveTwoFactor(findAuthorizedInvite(inviteId), command);
   }
 
   /** Waives the 2FA gate; applies the cross-Träger guard itself, whichever overload is used. */
@@ -1036,9 +1134,16 @@ public class AccountInviteService {
 
   /** Loads an invite for an admin action and applies the cross-Träger guard. */
   private AccountInvite findAuthorizedInvite(Long inviteId) {
-    AccountInvite invite = findInvite(inviteId);
-    accessPolicy.authorizeAccess(invite);
-    return invite;
+    if (inviteId == null) {
+      throw new BadRequestException("inviteId is required");
+    }
+    Optional<AccountInvite> invite = accountInviteRepository.findById(inviteId);
+    if (invite.isEmpty()) {
+      accessPolicy.authorizeMissing(inviteId);
+      throw new NotFoundException("Account invite not found");
+    }
+    accessPolicy.authorizeAccess(invite.get());
+    return invite.get();
   }
 
   private AccountInvite findInvite(Long inviteId) {

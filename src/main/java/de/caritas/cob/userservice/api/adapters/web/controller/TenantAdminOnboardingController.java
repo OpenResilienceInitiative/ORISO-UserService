@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorOnboardingState;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.CounsellorRegistrationResult;
@@ -356,11 +357,17 @@ public class TenantAdminOnboardingController {
     public String dpaContent;
 
     /**
+     * Tenant-admin invites only: true when joining an existing Träger, so the wizard skips the
+     * organisation and DPA steps and registers with {@code account.password} alone.
+     */
+    public Boolean joinsExistingTenant;
+
+    /**
      * Why {@link #dpaContent} is absent — {@code NOT_PUBLISHED} when the platform operator has
      * published no DPA yet (a content task), {@code UPSTREAM_ERROR} when the lookup itself failed,
      * i.e. TenantService could not be read or the technical-user login was rejected (a platform
      * configuration task). Null whenever the contract text is present, and null on the counsellor
-     * variant, which has no DPA step.
+     * variant and when {@link #joinsExistingTenant} is true, neither of which has a DPA step.
      *
      * <p>Without this the Admin panel could only tell the invitee to reload the page, which once
      * hid a server-side misconfiguration on staging for hours.
@@ -380,8 +387,14 @@ public class TenantAdminOnboardingController {
       dto.recipientEmail = invite.getRecipientEmail();
       dto.firstName = invite.getFirstName();
       dto.lastName = invite.getLastName();
-      dto.reservedTenantId = invite.getTenantId();
-      dto.tenantIdReservationToken = invite.getTenantIdReservationToken();
+      boolean joinsExisting = invite.getTenantIdAllocationMode() == IdAllocationMode.EXISTING;
+      dto.joinsExistingTenant = joinsExisting;
+      if (joinsExisting) {
+        dto.tenantId = invite.getTenantId();
+      } else {
+        dto.reservedTenantId = invite.getTenantId();
+        dto.tenantIdReservationToken = invite.getTenantIdReservationToken();
+      }
       dto.expiresAt = invite.getExpiresAt();
       dto.dpaContent = state.dpaContent();
       dto.dpaUnavailableReason =

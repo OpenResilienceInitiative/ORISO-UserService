@@ -33,6 +33,7 @@ import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
+import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
@@ -69,6 +70,7 @@ class UserSessionControllerDelegateTest {
   @Mock private UserDtoMapper userDtoMapper;
   @Mock private ConsultantService consultantService;
   @Mock private SessionConsentService sessionConsentService;
+  @Mock private ConsultantAgencyService consultantAgencyService;
 
   @InjectMocks private UserSessionControllerDelegate delegate;
 
@@ -361,6 +363,7 @@ class UserSessionControllerDelegateTest {
         .thenReturn(consultantToAssign);
     when(consultantService.getConsultant("consultant-id"))
         .thenReturn(Optional.of(consultantToKeep));
+    when(sessionService.isConsultantPermittedToSession(consultantToKeep, session)).thenReturn(true);
 
     var response = delegate.assignSession(1L, "assigned-consultant-id");
 
@@ -374,6 +377,7 @@ class UserSessionControllerDelegateTest {
     var consultantMap = Map.<String, Object>of("id", consultantId.toString());
     when(accountManager.findConsultant(consultantId.toString()))
         .thenReturn(Optional.of(consultantMap));
+    when(authenticatedUser.getUserId()).thenReturn(consultantId.toString());
     when(messenger.findSession(1L)).thenReturn(Optional.of(Map.of("id", 1L)));
     when(messenger.removeConsultantFromSession(1L, consultantId.toString())).thenReturn(true);
 
@@ -398,6 +402,7 @@ class UserSessionControllerDelegateTest {
     var consultantMap = Map.<String, Object>of("id", consultantId.toString());
     when(accountManager.findConsultant(consultantId.toString()))
         .thenReturn(Optional.of(consultantMap));
+    when(authenticatedUser.getUserId()).thenReturn(consultantId.toString());
     when(messenger.findSession(1L)).thenReturn(Optional.of(Map.of("id", 1L)));
     when(messenger.removeConsultantFromSession(1L, consultantId.toString())).thenReturn(false);
 
@@ -582,11 +587,14 @@ class UserSessionControllerDelegateTest {
         .thenReturn(Set.of(AuthorityValue.ASSIGN_CONSULTANT_TO_ENQUIRY));
     when(userAccountProvider.retrieveValidatedConsultantById("assigned-consultant-id"))
         .thenReturn(consultantToAssign);
+    var caller = consultant("consultant-id");
+    when(consultantService.getConsultant("consultant-id")).thenReturn(Optional.of(caller));
+    when(sessionService.isConsultantPermittedToSession(caller, session)).thenReturn(true);
     var response = delegate.assignSession(1L, "assigned-consultant-id");
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(assignEnquiryFacade).assignRegisteredEnquiry(session, consultantToAssign);
-    verifyNoInteractions(assignSessionFacade, consultantService);
+    verifyNoInteractions(assignSessionFacade);
   }
 
   @Test

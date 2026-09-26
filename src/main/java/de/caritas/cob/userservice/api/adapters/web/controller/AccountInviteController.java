@@ -348,10 +348,17 @@ public class AccountInviteController {
 
     /**
      * TEN-INV-U3: AUTO = the owning service assigns the smallest free ID (the matching ID field
-     * must be omitted); MANUAL = the pinned ID is reserved or rejected with 409.
+     * must be omitted); MANUAL = the pinned ID is reserved or rejected with 409 (both only for
+     * TENANT_ADMIN invites, i.e. a new Träger). EXISTING: {@code tenantId} names an existing
+     * Träger, nothing is reserved (404 unknown, 403 out of scope, 400 for 0 or missing; a Träger
+     * admin who names none gets their own).
      */
     public String tenantIdAllocationMode;
 
+    /**
+     * AUTO / MANUAL as above, or EXISTING: {@code agencyId} names an existing agency that is
+     * validated, not reserved; a missing tenant or single topic is taken from the agency.
+     */
     public String agencyIdAllocationMode;
   }
 
@@ -436,6 +443,13 @@ public class AccountInviteController {
     public String lastName;
     public Long agencyId;
     public Long departmentId;
+
+    /** AUTO / MANUAL (new Träger) or EXISTING; null on older invites. */
+    public String tenantIdAllocationMode;
+
+    /** AUTO / MANUAL (new Beratungsstelle) or EXISTING; null on older invites. */
+    public String agencyIdAllocationMode;
+
     public String provisioningStatus;
     public String provisionedUserId;
     public String inviteStatus;
@@ -525,6 +539,14 @@ public class AccountInviteController {
       dto.lastName = invite.getLastName();
       dto.agencyId = invite.getAgencyId();
       dto.departmentId = invite.getDepartmentId();
+      dto.tenantIdAllocationMode =
+          invite.getTenantIdAllocationMode() == null
+              ? null
+              : invite.getTenantIdAllocationMode().name();
+      dto.agencyIdAllocationMode =
+          invite.getAgencyIdAllocationMode() == null
+              ? null
+              : invite.getAgencyIdAllocationMode().name();
       dto.provisioningStatus =
           invite.getProvisioningStatus() == null ? null : invite.getProvisioningStatus().name();
       dto.provisionedUserId = invite.getProvisionedUserId();

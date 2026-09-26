@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -22,6 +23,10 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
 
+/**
+ * Outside the tenant filter on purpose: the public wizard finds an invite by its token before any
+ * tenant is known, so admin reads are scoped by {@code AccountInviteAccessPolicy} instead.
+ */
 @Entity
 @Table(
     name = "account_invite",
@@ -84,6 +89,19 @@ public class AccountInvite {
 
   @Column(name = "department_id")
   private Long departmentId;
+
+  /**
+   * AUTO/MANUAL = a new Träger whose ID this invite reserved, EXISTING = joins an existing Träger.
+   * Null on older rows.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "tenant_id_allocation_mode", length = 16)
+  private IdAllocationMode tenantIdAllocationMode;
+
+  /** Same for the agency ID: AUTO/MANUAL = a new Beratungsstelle, EXISTING = an existing one. */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "agency_id_allocation_mode", length = 16)
+  private IdAllocationMode agencyIdAllocationMode;
 
   @Column(name = "token_hash", length = 64)
   private String tokenHash;
