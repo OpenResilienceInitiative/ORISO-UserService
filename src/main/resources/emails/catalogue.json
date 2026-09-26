@@ -1,18 +1,6 @@
 {
-  "dialects": [
-    "plain",
-    "thymeleaf",
-    "freemarker"
-  ],
-  "tones": [
-    "de-sie",
-    "de-du",
-    "en",
-    "fr",
-    "ru",
-    "ti",
-    "tr"
-  ],
+  "dialects": ["plain", "thymeleaf", "freemarker"],
+  "tones": ["de-sie", "de-du", "en", "fr", "ru", "ti", "tr"],
   "locales": {
     "de-sie": {
       "lang": "de",
