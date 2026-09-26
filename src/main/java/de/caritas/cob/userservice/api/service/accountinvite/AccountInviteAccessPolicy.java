@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -43,6 +44,9 @@ import org.springframework.stereotype.Component;
 public class AccountInviteAccessPolicy {
 
   static final String OUT_OF_SCOPE_MESSAGE = "Account invite is outside the caller's scope";
+
+  static final String TEMPLATE_DENIED_MESSAGE =
+      "Invite e-mail template is outside the caller's scope";
 
   private static final Set<AccountInviteTargetRole> TENANT_ADMIN_INVITABLE_ROLES =
       EnumSet.of(
@@ -150,6 +154,74 @@ public class AccountInviteAccessPolicy {
     }
   }
 
+  /**
+   * The Träger a template the caller creates belongs to, or {@code null} when the caller is the
+   * platform operator and the template is offered to everyone.
+   *
+   * <p>Creating a template is open to every admin who may send invites (ORISO-Admin#1026 Q30/Q31).
+   * That is only safe because the row gets an owner here: without one, a Beratungsstellen admin of
+   * Träger A would write a text Träger B sees in its list and sends to its own people.
+   */
+  public Long templateOwnerTenantId() {
+    return templateScope().tenantId();
+  }
+
+  /** Whether the caller sees every Träger's templates, not just their own and the platform's. */
+  public boolean seesEveryTemplate() {
+    return templateScope().kind() == Kind.UNRESTRICTED;
+  }
+
+  /**
+   * Whether the caller may see and send with a template owned by {@code templateTenantId}. Everyone
+   * may use a platform template ({@code null}); a Träger's own template is theirs alone.
+   */
+  public boolean canUseTemplate(Long templateTenantId) {
+    Scope scope = templateScope();
+    return scope.kind() == Kind.UNRESTRICTED
+        || templateTenantId == null
+        || templateTenantId.equals(scope.tenantId());
+  }
+
+  /**
+   * Guards reading, previewing and <b>sending with</b> a template. Hiding a foreign template from
+   * the list is not enough: its id travels in the send request, so the id has to be refused too.
+   *
+   * @throws ForbiddenException if the template belongs to another Träger
+   */
+  public void authorizeTemplateUse(Long templateTenantId) {
+    if (!canUseTemplate(templateTenantId)) {
+      throw denyTemplate("use invite e-mail template of tenant " + templateTenantId);
+    }
+  }
+
+  /**
+   * Guards changing a stored template. A Träger may change its own; a <b>platform template</b>
+   * ({@code tenantId == null}) is the text every other Träger sends, so only the platform operator
+   * may change that one (ORISO-Admin#1026, and what dev #1052 already enforces in the Admin).
+   *
+   * @throws ForbiddenException if the template is not the caller's to change
+   */
+  public void authorizeTemplateUpdate(Long templateTenantId) {
+    if (canChangeTemplate(templateTenantId)) {
+      return;
+    }
+    throw denyTemplate(
+        templateTenantId == null
+            ? "change the shared platform invite e-mail template"
+            : "change the invite e-mail template of tenant " + templateTenantId);
+  }
+
+  /**
+   * The same rule as {@link #authorizeTemplateUpdate(Long)} as a question, so the API can tell the
+   * Admin which templates are the caller's to change. The Admin greys the others out rather than
+   * hiding them (house rule "disable, don't hide").
+   */
+  public boolean canChangeTemplate(Long templateTenantId) {
+    Scope scope = templateScope();
+    return scope.kind() == Kind.UNRESTRICTED
+        || (templateTenantId != null && templateTenantId.equals(scope.tenantId()));
+  }
+
   private CreateAccountInviteCommand authorizeAgencyAdminCreate(
       CreateAccountInviteCommand command, Scope scope) {
     if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
@@ -243,12 +315,44 @@ public class AccountInviteAccessPolicy {
   }
 
   /** The caller's own tenant, or {@code null} for the platform (0) and single-tenant contexts. */
+  /** Same kind and Träger as {@link #callerScope()}; templates never need the agency ids. */
+  private Scope templateScope() {
+    Long callerTenantId = boundTenantId();
+    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
+      return new Scope(Kind.AGENCY, callerTenantId, Set.of());
+    }
+    if (authenticatedUser.isPlatformAdmin()
+        || isTechnicalUser()
+        || authenticatedUser.getTenantId() == null) {
+      return new Scope(Kind.UNRESTRICTED, null, null);
+    }
+    // Tenant 0 is nobody's Träger: without the platform-admin roles it reaches no template.
+    if (callerTenantId == null) {
+      throw denyTemplate("use invite e-mail templates from tenant 0 without platform-admin roles");
+    }
+    return new Scope(Kind.TENANT, callerTenantId, null);
+  }
+
+  private boolean isTechnicalUser() {
+    var roles = authenticatedUser.getRoles();
+    return roles != null && roles.contains(UserRole.TECHNICAL.getValue());
+  }
+
   private Long boundTenantId() {
     Long tenantId = authenticatedUser.getTenantId();
     if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
       return null;
     }
     return tenantId;
+  }
+
+  private ForbiddenException denyTemplate(String attempt) {
+    log.warn(
+        "Admin {} (tenant {}) may not {}",
+        authenticatedUser.getUserId(),
+        authenticatedUser.getTenantId(),
+        attempt);
+    return new ForbiddenException(TEMPLATE_DENIED_MESSAGE);
   }
 
   private ForbiddenException deny(String attempt) {
