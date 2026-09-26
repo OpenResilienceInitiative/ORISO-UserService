@@ -21,6 +21,7 @@ import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
@@ -32,6 +33,7 @@ import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
 import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.DateTimeException;
 import java.time.LocalDateTime;
 import java.time.ZoneId;
@@ -62,6 +64,7 @@ public class ChatService {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull GroupChatParticipantReconciliationService participantReconciliationService;
+  private final @NonNull GroupAppointmentSeriesEventProducer appointmentEvents;
 
   private final @NonNull AgencyService agencyService;
   private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
@@ -498,6 +501,12 @@ public class ChatService {
               chatId));
     }
 
+    int oldRepeatCount = appointmentEvents.seedBeforeEdit(chat);
+    Set<String> oldCounselorIds =
+        groupChatParticipantRepository.findBySeriesId(chatId).stream()
+            .map(member -> member.getConsultantId())
+            .collect(Collectors.toSet());
+
     // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
     // one when the client sends it (validated like the create path), and preserve the existing
     // zone when the DTO omits it rather than silently resetting to UTC.
@@ -541,6 +550,11 @@ public class ChatService {
 
     this.saveChat(chat);
     participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
+    appointmentEvents.recordAfterEdit(chat, oldRepeatCount);
+    groupChatParticipantRepository.findBySeriesId(chatId).stream()
+        .map(member -> member.getConsultantId())
+        .filter(id -> !oldCounselorIds.contains(id))
+        .forEach(id -> appointmentEvents.recordMemberJoined(chat, RecipientRole.COUNSELOR, id));
 
     return new UpdateChatResponseDTO().matrixRoomId(chat.getMatrixRoomId());
   }

@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultant.ConsultantChatIdentityService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -37,6 +38,7 @@ import org.springframework.stereotype.Service;
 public class CreateChatFacade {
 
   private final @NonNull ChatService chatService;
+  private final @NonNull GroupAppointmentSeriesEventProducer appointmentEvents;
   private final @NonNull SessionService sessionService;
   private final @NonNull AgencyService agencyService;
   private final @NonNull ChatConverter chatConverter;
@@ -218,6 +220,8 @@ public class CreateChatFacade {
           // Continue with other participants
         }
       }
+
+      appointmentEvents.recordCreated(chat);
 
       log.info(
           "Successfully created group chat '{}' with Session ID: {}, Chat ID: {}, Matrix room: {} and {} participants",

@@ -5,13 +5,16 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 /** Facade for capsuling to assign a user to a chat. */
 @Service
@@ -20,6 +23,7 @@ public class AssignChatFacade {
 
   private final ChatService chatService;
   private final UserService userService;
+  private final GroupAppointmentSeriesEventProducer appointmentEvents;
 
   /**
    * Assign a chat to the authenticated user.
@@ -29,6 +33,7 @@ public class AssignChatFacade {
    * @param matrixRoomId Matrix room ID
    * @param authenticatedUser authenticated user
    */
+  @Transactional
   public void assignChat(String matrixRoomId, AuthenticatedUser authenticatedUser) {
     Chat chat = getChat(matrixRoomId);
     assignChat(chat, authenticatedUser);
@@ -39,6 +44,7 @@ public class AssignChatFacade {
    * guessable, so the link's secret token must match, and only self-help groups are open to clients
    * (#1237). The link may come from any Träger.
    */
+  @Transactional
   public void assignChat(Long chatId, String inviteToken, AuthenticatedUser authenticatedUser) {
     Chat chat =
         chatService
@@ -57,6 +63,7 @@ public class AssignChatFacade {
     User user = getUser(authenticatedUser);
 
     chatService.saveUserChatRelation(UserChat.builder().user(user).chat(chat).build());
+    appointmentEvents.recordMemberJoined(chat, RecipientRole.PARTICIPANT, user.getUserId());
   }
 
   private Chat getChat(String matrixRoomId) {

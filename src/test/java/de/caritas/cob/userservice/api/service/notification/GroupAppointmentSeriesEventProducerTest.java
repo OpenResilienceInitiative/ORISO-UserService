@@ -1,0 +1,46 @@
+package de.caritas.cob.userservice.api.service.notification;
+
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
+import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
+import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
+import java.time.LocalDateTime;
+import java.util.List;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.InjectMocks;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+
+@ExtendWith(MockitoExtension.class)
+class GroupAppointmentSeriesEventProducerTest {
+  @Mock GroupAppointmentMailQueue queue;
+  @Mock ChatOccurrenceExceptionRepository exceptions;
+  @InjectMocks GroupAppointmentSeriesEventProducer producer;
+
+  @Test
+  void recordsTheLocalMorningTimeAcrossTheBerlinDstBoundary() {
+    var firstUtc = LocalDateTime.parse("2027-03-27T08:00:00");
+    var secondUtc = LocalDateTime.parse("2027-03-28T07:00:00");
+    var series =
+        Chat.builder()
+            .id(42L)
+            .topic("hidden from mail")
+            .initialStartDate(firstUtc)
+            .startDate(firstUtc)
+            .timezone("Europe/Berlin")
+            .repeatCount(2)
+            .chatInterval(ChatInterval.DAILY)
+            .conversationType(ConversationType.SELF_HELP)
+            .build();
+    when(exceptions.findBySeries_Id(42L)).thenReturn(List.of());
+
+    producer.recordCreated(series);
+
+    verify(queue).recordOccurrence(series, 0, firstUtc, firstUtc);
+    verify(queue).recordOccurrence(series, 1, secondUtc, secondUtc);
+  }
+}

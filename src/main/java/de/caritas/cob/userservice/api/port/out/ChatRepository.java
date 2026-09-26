@@ -65,6 +65,10 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<Chat> findAllByActiveIsTrue();
 
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select chat from Chat chat where chat.id = :seriesId")
+  Optional<Chat> findSeriesForAppointmentMailUpdate(@Param("seriesId") Long seriesId);
+
   List<Chat> findAllByActiveIsFalseAndStartDateBetween(
       LocalDateTime startInclusive, LocalDateTime endInclusive);
 }

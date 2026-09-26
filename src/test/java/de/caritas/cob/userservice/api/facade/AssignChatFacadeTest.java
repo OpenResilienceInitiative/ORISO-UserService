@@ -34,6 +34,10 @@ class AssignChatFacadeTest {
 
   @Mock private UserService userService;
 
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer
+      appointmentEvents;
+
   @Test
   void assignChat_Should_ThrowNotFoundException_WhenChatDoesNotExist() {
     when(chatService.getChatByMatrixRoomId(MATRIX_ROOM_ID)).thenReturn(Optional.empty());

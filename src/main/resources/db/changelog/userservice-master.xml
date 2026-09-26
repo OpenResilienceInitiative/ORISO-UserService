@@ -204,4 +204,5 @@
   <include file="db/changelog/changeset/20260922_consultant_live_chat_via_sidebar/changeSet.xml"/>
   <include file="db/changelog/changeset/20260923_chat_invite_token_1237/changeSet.xml"/>
   <include file="db/changelog/changeset/20260923_group_chat_join_request_1499/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260926_group_appointment_mail_874/changeSet.xml"/>
 </databaseChangeLog>

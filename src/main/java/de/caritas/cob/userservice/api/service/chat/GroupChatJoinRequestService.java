@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
@@ -19,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -48,6 +50,7 @@ public class GroupChatJoinRequestService {
   private final GroupChatPermissionService groupChatPermissionService;
   private final GroupChatConsultantAccess groupChatConsultantAccess;
   private final GroupChatMembershipService membershipService;
+  private final GroupAppointmentSeriesEventProducer appointmentEvents;
 
   /** Result of a knock: the request, and whether this call created it. */
   public record KnockResult(GroupChatJoinRequest request, boolean created) {}
@@ -189,6 +192,7 @@ public class GroupChatJoinRequestService {
               .consultantId(requester.getId())
               .role(admittedRole)
               .build());
+      appointmentEvents.recordMemberJoined(series, RecipientRole.COUNSELOR, requester.getId());
     }
 
     decide(request, Status.ADMITTED, actorId, admittedRole);
