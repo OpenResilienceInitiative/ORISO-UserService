@@ -35,8 +35,8 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class JoinAndLeaveChatFacadeTest {
 
   private static final long CHAT_ID = 42L;
-  private static final String MATRIX_ROOM_ID = "!group:matrix.oriso.org";
-  private static final String MATRIX_USER_ID = "@member:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!group:matrix.example.org";
+  private static final String MATRIX_USER_ID = "@member:matrix.example.org";
 
   @InjectMocks private JoinAndLeaveChatFacade facade;
 
@@ -177,11 +177,11 @@ class JoinAndLeaveChatFacadeTest {
     when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(user));
     when(chat.isRepetitive()).thenReturn(true);
     when(chat.nextStart()).thenReturn(nextStart);
-    when(chatReCreator.recreateMessengerChat(chat)).thenReturn("!next:matrix.oriso.org");
+    when(chatReCreator.recreateMessengerChat(chat)).thenReturn("!next:matrix.example.org");
 
     facade.leaveChat(CHAT_ID, authenticatedUser);
 
-    verify(chatReCreator).updateAsNextChat(chat, "!next:matrix.oriso.org");
+    verify(chatReCreator).updateAsNextChat(chat, "!next:matrix.example.org");
     verify(chatService, never()).deleteChat(chat);
   }
 

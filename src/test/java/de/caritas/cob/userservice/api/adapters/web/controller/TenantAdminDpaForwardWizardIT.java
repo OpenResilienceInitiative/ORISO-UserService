@@ -106,7 +106,7 @@ class TenantAdminDpaForwardWizardIT {
             .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
             .tenantId(RESERVED_TENANT_ID)
             .tenantIdReservationToken(reservationToken)
-            .recipientEmail("tenant.admin@oriso.org")
+            .recipientEmail("tenant.admin@example.org")
             .firstName("Erika")
             .lastName("Beispiel")
             .tokenHash(sha256(rawToken))

@@ -531,7 +531,7 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", true));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", true));
     var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
     request.recipientEmail = "legal@example.org";
 
@@ -539,7 +539,7 @@ class TenantAdminOnboardingControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
     assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
     assertTrue(response.getBody().mailSent);
   }
@@ -550,7 +550,7 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa("raw-token", "legal@example.org"))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
     var request = new TenantAdminOnboardingController.DpaForwardRequestDTO();
     request.recipientEmail = "legal@example.org";
 
@@ -558,7 +558,7 @@ class TenantAdminOnboardingControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertNotNull(response.getBody());
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
     // the validity window must survive the degraded path - a mail failure may not cost it
     assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
     assertFalse(response.getBody().mailSent);
@@ -569,14 +569,14 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa(eq("raw-token"), eq(null)))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
 
     var response = controller.forwardDpa("raw-token", null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     // the body must be complete even without a request body - status alone cannot prove that
     assertNotNull(response.getBody());
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", response.getBody().signUrl);
     assertEquals("2026-08-29T14:31:07", response.getBody().expiresAt);
     assertFalse(response.getBody().mailSent);
     verify(onboardingService).forwardDpa("raw-token", null);
@@ -592,7 +592,7 @@ class TenantAdminOnboardingControllerTest {
     when(onboardingService.forwardDpa("raw-token", null))
         .thenReturn(
             new TenantAdminOnboardingService.DpaForwardResult(
-                "https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
+                "https://app.example.org/dpa-sign/RAWSIGNTOKEN", "2026-08-29T14:31:07", false));
 
     controller.forwardDpa("raw-token", null);
 

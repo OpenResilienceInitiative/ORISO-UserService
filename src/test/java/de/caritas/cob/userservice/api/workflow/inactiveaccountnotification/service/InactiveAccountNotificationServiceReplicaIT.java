@@ -145,7 +145,7 @@ class InactiveAccountNotificationServiceReplicaIT {
             mailService);
     setField(service, "inactivityThresholdDays", 365L);
     setField(service, "emailDispatchEnabled", true);
-    setField(service, "appBaseUrl", "https://app.oriso.org");
+    setField(service, "appBaseUrl", "https://app.example.org");
     return service;
   }
 
