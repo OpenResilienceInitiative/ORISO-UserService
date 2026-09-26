@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDT
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
 import de.caritas.cob.userservice.api.admin.service.consultant.ConsultantResponseDTOBuilder;
 import de.caritas.cob.userservice.api.admin.service.consultant.TransactionalStep;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
@@ -72,6 +73,7 @@ public class GrantConsultantIdentityService {
   private final @NonNull UserHelper userHelper;
   private final @NonNull ConsultantTopicAgencyCompatibilityValidator
       consultantTopicAgencyCompatibilityValidator;
+  private final @NonNull AdminCallerScope adminCallerScope;
   private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   private final UsernameTranscoder usernameTranscoder = new UsernameTranscoder();
@@ -93,6 +95,11 @@ public class GrantConsultantIdentityService {
             .orElseThrow(
                 () ->
                     new BadRequestException(String.format("Admin with id %s not found", adminId)));
+
+    // The lookup above is by primary key, which the Hibernate tenant filter does not narrow, and
+    // the route only requires user-admin: the caller's Träger and agencies are checked here.
+    adminCallerScope.assertMayActOnAdmin(admin);
+    adminCallerScope.assertMayUseAgencies(dto.getAgencyIds());
 
     if (consultantRepository.findByIdAndDeleteDateIsNull(adminId).isPresent()) {
       throw new CustomValidationHttpStatusException(
