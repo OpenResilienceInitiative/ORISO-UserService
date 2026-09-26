@@ -102,6 +102,10 @@ public class GroupChatJoinRequestService {
     joinRequestRepository
         .findFirstBySeriesIdAndConsultantIdAndStatusOrderByIdDesc(
             seriesId, consultantId, Status.PENDING)
+        .flatMap(request -> joinRequestRepository.findByIdForUpdate(request.getId()))
+        .filter(request -> seriesId.equals(request.getSeriesId()))
+        .filter(request -> consultantId.equals(request.getConsultantId()))
+        .filter(GroupChatJoinRequest::isPending)
         .ifPresent(request -> decide(request, Status.CANCELLED, consultantId, null));
   }
 
@@ -239,7 +243,7 @@ public class GroupChatJoinRequestService {
   private GroupChatJoinRequest requirePendingRequest(Long seriesId, Long requestId) {
     var request =
         joinRequestRepository
-            .findById(requestId)
+            .findByIdForUpdate(requestId)
             .filter(candidate -> seriesId.equals(candidate.getSeriesId()))
             .orElseThrow(() -> new NotFoundException("Join request not found"));
     if (!request.isPending()) {
