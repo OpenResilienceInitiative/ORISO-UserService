@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Comparator;
 import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Objects;
@@ -69,6 +70,16 @@ public class GroupAppointmentMailQueue {
   @Transactional
   public void recordOccurrence(
       Chat series, int index, LocalDateTime originalStartUtc, LocalDateTime effectiveStartUtc) {
+    recordOccurrence(series, index, originalStartUtc, effectiveStartUtc, true);
+  }
+
+  @Transactional
+  public void recordOccurrence(
+      Chat series,
+      int index,
+      LocalDateTime originalStartUtc,
+      LocalDateTime effectiveStartUtc,
+      boolean notifyInitialDate) {
     if (!isSelfHelp(series)) {
       return;
     }
@@ -113,7 +124,9 @@ public class GroupAppointmentMailQueue {
       return;
     }
     for (var member : members(series)) {
-      enqueue(series, state, event, member, displayedStart);
+      if (previous != null || notifyInitialDate) {
+        enqueue(series, state, event, member, displayedStart);
+      }
       if (effectiveStartUtc != null) {
         enqueueReminder(series, state, member, effectiveStartUtc);
       }
@@ -127,22 +140,28 @@ public class GroupAppointmentMailQueue {
       return;
     }
     lockSeries(series.getId());
-    for (var state : states.findBySeriesId(series.getId())) {
+    boolean nextDateConfirmed = false;
+    for (var state :
+        states.findBySeriesId(series.getId()).stream()
+            .sorted(Comparator.comparingInt(GroupAppointmentOccurrenceState::getOccurrenceIndex))
+            .toList()) {
       if (state.getStatus() != GroupAppointmentOccurrenceState.Status.ACTIVE
           || state.getEffectiveStartUtc() == null
           || !state.getEffectiveStartUtc().isAfter(nowUtc())) {
         continue;
       }
-      if (!outbox
-          .existsBySeriesIdAndOccurrenceIndexAndOccurrenceRevisionAndRecipientRoleAndRecipientIdAndEventTypeIn(
-              series.getId(),
-              state.getOccurrenceIndex(),
-              state.getRevision(),
-              member.role(),
-              member.id(),
-              List.of(EventType.CONFIRMED, EventType.RESCHEDULED))) {
+      if (!nextDateConfirmed
+          && !outbox
+              .existsBySeriesIdAndOccurrenceIndexAndOccurrenceRevisionAndRecipientRoleAndRecipientIdAndEventTypeIn(
+                  series.getId(),
+                  state.getOccurrenceIndex(),
+                  state.getRevision(),
+                  member.role(),
+                  member.id(),
+                  List.of(EventType.CONFIRMED, EventType.RESCHEDULED))) {
         enqueue(series, state, EventType.CONFIRMED, member, state.getEffectiveStartUtc());
       }
+      nextDateConfirmed = true;
       enqueueReminder(series, state, member, state.getEffectiveStartUtc());
     }
   }

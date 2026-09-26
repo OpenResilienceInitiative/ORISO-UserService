@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.Map;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -25,10 +26,23 @@ public class GroupAppointmentSeriesEventProducer {
       return;
     }
     var byStart = exceptionsByOriginalStart(series);
+    int nextActiveIndex = -1;
+    for (int index = series.getCurrentOccurrenceIndex(); index < series.getRepeatCount(); index++) {
+      var original = series.occurrenceStart(index);
+      var effective = effectiveStart(original, byStart.get(original));
+      if (effective != null && effective.isAfter(LocalDateTime.now(ZoneOffset.UTC))) {
+        nextActiveIndex = index;
+        break;
+      }
+    }
     for (int index = 0; index < series.getRepeatCount(); index++) {
       var original = series.occurrenceStart(index);
       queue.recordOccurrence(
-          series, index, original, effectiveStart(original, byStart.get(original)));
+          series,
+          index,
+          original,
+          effectiveStart(original, byStart.get(original)),
+          index == nextActiveIndex);
     }
   }
 

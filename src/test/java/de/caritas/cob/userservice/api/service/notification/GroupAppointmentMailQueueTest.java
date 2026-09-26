@@ -114,6 +114,67 @@ class GroupAppointmentMailQueueTest {
     verify(outbox, never()).save(org.mockito.ArgumentMatchers.any());
   }
 
+  @Test
+  void aLaterSeriesDateGetsItsReminderWithoutFloodingTheInboxWithConfirmations() {
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(5);
+    var series = series(start);
+    when(chats.findSeriesForAppointmentMailUpdate(42L)).thenReturn(Optional.of(series));
+    when(states.findForUpdate(42L, 0)).thenReturn(Optional.empty());
+    when(counselors.findBySeriesId(42L))
+        .thenReturn(List.of(GroupChatParticipant.builder().consultantId("counselor").build()));
+
+    queue.recordOccurrence(series, 0, start, start, false);
+
+    var saved = ArgumentCaptor.forClass(GroupAppointmentMailOutbox.class);
+    verify(outbox).save(saved.capture());
+    assertThat(saved.getValue().getEventType()).isEqualTo(EventType.REMINDER);
+    assertThat(saved.getValue().getOccurrenceRevision()).isEqualTo(1);
+  }
+
+  @Test
+  void joiningARecurringSeriesConfirmsOnlyTheNextDate() {
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(5);
+    var series = series(start);
+    var first =
+        GroupAppointmentOccurrenceState.builder()
+            .seriesId(42L)
+            .occurrenceIndex(0)
+            .revision(1)
+            .effectiveStartUtc(start)
+            .timezone("Europe/Berlin")
+            .status(GroupAppointmentOccurrenceState.Status.ACTIVE)
+            .build();
+    var second =
+        GroupAppointmentOccurrenceState.builder()
+            .seriesId(42L)
+            .occurrenceIndex(1)
+            .revision(1)
+            .effectiveStartUtc(start.plusWeeks(1))
+            .timezone("Europe/Berlin")
+            .status(GroupAppointmentOccurrenceState.Status.ACTIVE)
+            .build();
+    when(chats.findSeriesForAppointmentMailUpdate(42L)).thenReturn(Optional.of(series));
+    when(states.findBySeriesId(42L)).thenReturn(List.of(second, first));
+
+    queue.recordMemberJoined(
+        series,
+        new GroupAppointmentMailQueue.Member(
+            GroupAppointmentMailOutbox.RecipientRole.PARTICIPANT, "participant"));
+
+    var saved = ArgumentCaptor.forClass(GroupAppointmentMailOutbox.class);
+    verify(outbox, org.mockito.Mockito.times(3)).save(saved.capture());
+    assertThat(saved.getAllValues())
+        .extracting(GroupAppointmentMailOutbox::getEventType)
+        .containsExactlyInAnyOrder(EventType.CONFIRMED, EventType.REMINDER, EventType.REMINDER);
+    assertThat(
+            saved.getAllValues().stream()
+                .filter(mail -> mail.getEventType() == EventType.CONFIRMED)
+                .findFirst()
+                .orElseThrow()
+                .getOccurrenceIndex())
+        .isZero();
+  }
+
   private static Chat series(LocalDateTime start) {
     return Chat.builder()
         .id(42L)

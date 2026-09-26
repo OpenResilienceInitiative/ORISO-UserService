@@ -5,6 +5,7 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
+import de.caritas.cob.userservice.api.model.ChatOccurrenceException;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import java.time.LocalDateTime;
@@ -40,7 +41,31 @@ class GroupAppointmentSeriesEventProducerTest {
 
     producer.recordCreated(series);
 
-    verify(queue).recordOccurrence(series, 0, firstUtc, firstUtc);
-    verify(queue).recordOccurrence(series, 1, secondUtc, secondUtc);
+    verify(queue).recordOccurrence(series, 0, firstUtc, firstUtc, true);
+    verify(queue).recordOccurrence(series, 1, secondUtc, secondUtc, false);
+  }
+
+  @Test
+  void aSkippedFirstDateMakesTheNextLiveDateTheOnlyImmediateConfirmation() {
+    var firstUtc = LocalDateTime.parse("2027-03-27T08:00:00");
+    var secondUtc = LocalDateTime.parse("2027-03-28T07:00:00");
+    var series =
+        Chat.builder()
+            .id(42L)
+            .topic("hidden from mail")
+            .initialStartDate(firstUtc)
+            .startDate(firstUtc)
+            .timezone("Europe/Berlin")
+            .repeatCount(2)
+            .chatInterval(ChatInterval.DAILY)
+            .conversationType(ConversationType.SELF_HELP)
+            .build();
+    when(exceptions.findBySeries_Id(42L))
+        .thenReturn(List.of(ChatOccurrenceException.skip(series, firstUtc)));
+
+    producer.recordCreated(series);
+
+    verify(queue).recordOccurrence(series, 0, firstUtc, null, false);
+    verify(queue).recordOccurrence(series, 1, secondUtc, secondUtc, true);
   }
 }
