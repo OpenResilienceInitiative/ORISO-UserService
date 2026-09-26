@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.notification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.service.email.OrisoEmailDispatcher;
@@ -10,6 +11,8 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -80,5 +83,27 @@ class TenantSystemEmailDeliveryTest {
                 email);
 
     assertThat(accepted).isFalse();
+  }
+
+  @ParameterizedTest
+  @EnumSource(
+      value = TenantSystemEmailDelivery.Purpose.class,
+      names = {
+        "SELF_HELP_APPOINTMENT_CONFIRMED",
+        "SELF_HELP_APPOINTMENT_RESCHEDULED",
+        "SELF_HELP_APPOINTMENT_CANCELLED",
+        "SELF_HELP_APPOINTMENT_REMINDER"
+      })
+  void groupAppointmentUsesOnlyOwnRelay(TenantSystemEmailDelivery.Purpose purpose) {
+    new TenantSystemEmailDelivery(tenantClient, platformSettings, platformDispatcher)
+        .sendConfirmed(
+            40L,
+            new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.OWN, null),
+            purpose,
+            "recipient@example.org",
+            email);
+
+    verify(tenantClient).deliver(40L, purpose.name(), "recipient@example.org", email);
+    verifyNoInteractions(platformSettings, platformDispatcher);
   }
 }
