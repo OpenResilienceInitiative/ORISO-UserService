@@ -10,6 +10,7 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
@@ -216,6 +217,7 @@ class SupervisorAddedEmailNotificationServiceTest {
           .when(() -> Transport.send(any(Message.class)))
           .thenThrow(new MessagingException(smtpReply));
       service.notifyEmailAddressChanged("johndoe", "john@example.com", 4L, null, null);
+      transport.verify(() -> Transport.send(any(Message.class)));
 
       assertThat(logs.events()).isNotEmpty();
       assertThat(logs.events())
@@ -233,7 +235,10 @@ class SupervisorAddedEmailNotificationServiceTest {
                           .startsWith("Failed to send system notification email"))
               .findFirst()
               .orElseThrow();
+      assertThat(failure.getLevel()).isEqualTo(Level.ERROR);
+      assertThat(failure.getFormattedMessage()).contains("(MessagingException)");
       assertThat(failure.getFormattedMessage()).doesNotContain("john@example.com", smtpReply);
+      assertThat(failure.getThrowableProxy()).isNull();
     }
   }
 
