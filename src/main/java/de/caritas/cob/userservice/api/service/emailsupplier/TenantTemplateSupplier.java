@@ -146,6 +146,9 @@ public class TenantTemplateSupplier {
         || base.getFragment() != null) {
       throw new IllegalStateException("app.base.url is invalid for tenant mail URL");
     }
+    if (subdomain.length() + 1 + base.getHost().length() > 253) {
+      throw new IllegalStateException("Tenant mail hostname exceeds the DNS length limit");
+    }
     return getHostnameWithSubdomainPrefix(subdomain, base.getHost());
   }
 

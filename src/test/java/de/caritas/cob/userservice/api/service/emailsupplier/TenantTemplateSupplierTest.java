@@ -20,6 +20,8 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -177,6 +179,38 @@ class TenantTemplateSupplierTest {
     assertThat(error.getMessage(), is("Tenant subdomain is missing or invalid for mail URL"));
   }
 
+  @ParameterizedTest
+  @ValueSource(strings = {"-bad", "a.b"})
+  void getTenantBaseUrl_RejectsMalformedTenantSubdomain(String subdomain) {
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://onlineberatung.net");
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                tenantTemplateSupplier.getTenantBaseUrl(
+                    new RestrictedTenantDTO().subdomain(subdomain)));
+
+    assertThat(error.getMessage(), is("Tenant subdomain is missing or invalid for mail URL"));
+  }
+
+  @Test
+  void getTenantBaseUrl_RejectsOverlongCombinedHostname() {
+    String baseHost = ("b".repeat(60) + ".").repeat(3) + "example.org";
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://" + baseHost);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                tenantTemplateSupplier.getTenantBaseUrl(
+                    new RestrictedTenantDTO().subdomain("a".repeat(63))));
+
+    assertThat(error.getMessage(), is("Tenant mail hostname exceeds the DNS length limit"));
+  }
+
   @Test
   void getTenantBaseUrl_RejectsMissingApplicationBaseUrl() {
     RestrictedTenantDTO tenantData = new RestrictedTenantDTO().subdomain(VALID_SUBDOMAIN);
@@ -196,6 +230,27 @@ class TenantTemplateSupplierTest {
     IllegalStateException error =
         assertThrows(
             IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenantData));
+
+    assertThat(error.getMessage(), is("app.base.url is invalid for tenant mail URL"));
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "ftp://onlineberatung.net",
+        "https://user@onlineberatung.net",
+        "https://onlineberatung.net?query=1",
+        "https://onlineberatung.net#fragment"
+      })
+  void getTenantBaseUrl_RejectsUnsupportedApplicationBaseUrl(String appBaseUrl) {
+    ReflectionTestUtils.setField(tenantTemplateSupplier, "applicationBaseUrl", appBaseUrl);
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class,
+            () ->
+                tenantTemplateSupplier.getTenantBaseUrl(
+                    new RestrictedTenantDTO().subdomain(VALID_SUBDOMAIN)));
 
     assertThat(error.getMessage(), is("app.base.url is invalid for tenant mail URL"));
   }
