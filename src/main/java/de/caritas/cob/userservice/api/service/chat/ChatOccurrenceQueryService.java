@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.chat;
 
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
 import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import java.time.LocalDateTime;
@@ -15,6 +16,7 @@ public class ChatOccurrenceQueryService {
 
   private final ChatRepository chatRepository;
   private final ChatOccurrenceExceptionRepository exceptionRepository;
+  private final ChatPermissionVerifier chatPermissionVerifier;
   private final ChatOccurrenceProjector projector = new ChatOccurrenceProjector();
 
   public List<ChatOccurrence> getOccurrences(
@@ -27,8 +29,9 @@ public class ChatOccurrenceQueryService {
     }
     var series =
         chatRepository
-            .findById(seriesId)
+            .findByIdWithPermissionRelations(seriesId)
             .orElseThrow(() -> new NotFoundException("Chat Series not found"));
+    chatPermissionVerifier.verifyPermissionForChat(series);
     return projector.project(
         series, exceptionRepository.findBySeries_Id(seriesId), from, to, limit);
   }
