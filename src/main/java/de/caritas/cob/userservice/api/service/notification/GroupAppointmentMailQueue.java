@@ -255,6 +255,8 @@ public class GroupAppointmentMailQueue {
             .scheduledStartUtc(displayedStart)
             .timezone(state.getTimezone())
             .dueAtUtc(dueAtUtc)
+            .nextAttemptAtUtc(dueAtUtc)
+            .failureCount(0)
             .status(Status.PENDING)
             .createdAt(nowUtc())
             .build());

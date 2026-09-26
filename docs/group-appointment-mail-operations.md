@@ -11,7 +11,7 @@ booking event producer is separate and deferred.
 
 | State | Meaning | Operator action |
 | --- | --- | --- |
-| `PENDING` | Due later, or not yet claimed. A configuration error leaves it here. | Fix the named configuration error; do not change its tenant or public URL silently. |
+| `PENDING` | Due later, or not yet claimed. A configuration error leaves it here with `next_attempt_at_utc` moved forward (five minutes up to one hour). | Fix the named configuration error; do not change its tenant or public URL silently. Other tenants remain selectable on the next poll. |
 | `SENDING` | Claim committed before SMTP/OWN handoff; the process may have stopped. | Reconcile its correlation ID before any manual state change. |
 | `SENT` | Transport accepted the handoff; final mailbox receipt is a separate check. | No replay. |
 | `SUPPRESSED` | Recipient, preference, occurrence or revision was no longer eligible. | No replay. |
@@ -21,7 +21,8 @@ To locate work without exposing recipient addresses, run a bounded read-only que
 
 ```text
 SELECT id, series_id, occurrence_index, occurrence_revision, event_type,
-       recipient_role, status, due_at_utc, claimed_at, sent_at, correlation_id
+       recipient_role, status, due_at_utc, next_attempt_at_utc, failure_count,
+       claimed_at, sent_at, correlation_id
 FROM group_appointment_mail_outbox
 WHERE status IN ('PENDING', 'SENDING', 'UNCERTAIN')
 ORDER BY due_at_utc, id

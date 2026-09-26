@@ -21,20 +21,41 @@ public class GroupAppointmentMailWorker {
   private final TenantSystemEmailDelivery delivery;
 
   public void dispatchDue() {
+    var now = LocalDateTime.now(ZoneOffset.UTC);
     for (var mail :
-        outbox.findTop100ByStatusAndDueAtUtcLessThanEqualOrderByDueAtUtcAsc(
-            Status.PENDING, LocalDateTime.now(ZoneOffset.UTC))) {
+        outbox
+            .findTop100ByStatusAndDueAtUtcLessThanEqualAndNextAttemptAtUtcLessThanEqualOrderByDueAtUtcAsc(
+                Status.PENDING, now, now)) {
       try {
         dispatch(mail);
       } catch (RuntimeException exception) {
         // Configuration errors remain visible to an operator, never replaced with a
         // platform SMTP or public-URL fallback. A failed terminal update may retain SENDING.
-        log.error(
-            "Self-help appointment mail {} could not be processed: {}",
-            mail.getId(),
-            exception.getClass().getSimpleName());
+        try {
+          if (claims.deferConfigurationFailure(
+              mail.getId(), now.plusSeconds(backoffSeconds(mail.getFailureCount())))) {
+            log.error(
+                "Self-help appointment mail {} could not be processed: {}",
+                mail.getId(),
+                exception.getClass().getSimpleName());
+          } else {
+            log.error(
+                "Self-help appointment mail {} could not finish its committed claim: {}",
+                mail.getId(),
+                exception.getClass().getSimpleName());
+          }
+        } catch (RuntimeException deferException) {
+          log.error(
+              "Self-help appointment mail {} could not defer a failed row: {}",
+              mail.getId(),
+              deferException.getClass().getSimpleName());
+        }
       }
     }
+  }
+
+  private static long backoffSeconds(int failures) {
+    return Math.min(3600L, 300L << Math.min(Math.max(failures, 0), 4));
   }
 
   private void dispatch(GroupAppointmentMailOutbox mail) {
@@ -52,8 +73,8 @@ public class GroupAppointmentMailWorker {
       return;
     }
 
-    // A group may have changed between the first read and the committed claim. No stale
-    // reminder, removed member, switched-off preference or old address can proceed to SMTP.
+    // Last eligibility read before handoff. A concurrent change after this read can still race
+    // with SMTP; no sender can revoke a message that is already in flight.
     java.util.Optional<GroupAppointmentMailEligibilityService.Eligible> current;
     try {
       current = eligibility.resolve(mail);

@@ -96,6 +96,12 @@ public class GroupAppointmentMailOutbox {
   @Column(name = "due_at_utc", nullable = false)
   private LocalDateTime dueAtUtc;
 
+  @Column(name = "next_attempt_at_utc", nullable = false)
+  private LocalDateTime nextAttemptAtUtc;
+
+  @Column(name = "failure_count", nullable = false)
+  private int failureCount;
+
   @Enumerated(EnumType.STRING)
   @Column(name = "status", nullable = false, length = 16)
   private Status status;

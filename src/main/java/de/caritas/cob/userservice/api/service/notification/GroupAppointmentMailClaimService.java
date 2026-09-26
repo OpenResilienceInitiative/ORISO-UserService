@@ -57,6 +57,12 @@ public class GroupAppointmentMailClaimService {
     outbox.save(mail);
   }
 
+  /** Backs off an unsent configuration failure so other tenants remain dispatchable. */
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public boolean deferConfigurationFailure(long mailId, LocalDateTime nextAttemptUtc) {
+    return outbox.deferConfigurationFailure(mailId, Status.PENDING, nextAttemptUtc) == 1;
+  }
+
   private static LocalDateTime nowUtc() {
     return LocalDateTime.now(ZoneOffset.UTC);
   }

@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.eq;
@@ -15,11 +16,13 @@ import de.caritas.cob.userservice.api.model.GroupAppointmentOccurrenceState;
 import de.caritas.cob.userservice.api.port.out.GroupAppointmentMailOutboxRepository;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -63,8 +66,9 @@ class GroupAppointmentMailWorkerTest {
             TenantSystemEmailDelivery.Purpose.SELF_HELP_APPOINTMENT_REMINDER,
             "person@example.org",
             new OrisoEmailRenderer.RenderedEmail("Date", "<p>Date</p>", "Date"));
-    when(outbox.findTop100ByStatusAndDueAtUtcLessThanEqualOrderByDueAtUtcAsc(
-            eq(Status.PENDING), any(LocalDateTime.class)))
+    when(outbox
+            .findTop100ByStatusAndDueAtUtcLessThanEqualAndNextAttemptAtUtcLessThanEqualOrderByDueAtUtcAsc(
+                eq(Status.PENDING), any(LocalDateTime.class), any(LocalDateTime.class)))
         .thenReturn(List.of(mail));
   }
 
@@ -132,6 +136,21 @@ class GroupAppointmentMailWorkerTest {
     worker.dispatchDue();
 
     verify(claims).releaseBeforeHandoff(11L);
+    verify(delivery, never()).sendConfirmed(anyLong(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void invalidTenantConfigurationIsDeferredBeforeClaim() {
+    when(eligibility.resolve(mail)).thenReturn(Optional.of(eligible));
+    when(composer.compose(mail, eligible)).thenThrow(new IllegalStateException("missing origin"));
+    when(claims.deferConfigurationFailure(eq(11L), any(LocalDateTime.class))).thenReturn(true);
+
+    worker.dispatchDue();
+
+    var nextAttempt = ArgumentCaptor.forClass(LocalDateTime.class);
+    verify(claims).deferConfigurationFailure(eq(11L), nextAttempt.capture());
+    assertTrue(nextAttempt.getValue().isAfter(LocalDateTime.now(ZoneOffset.UTC).plusMinutes(4)));
+    verify(claims, never()).claim(11L);
     verify(delivery, never()).sendConfirmed(anyLong(), any(), any(), any(), any(), any());
   }
 }

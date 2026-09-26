@@ -27,6 +27,8 @@ CREATE TABLE group_appointment_mail_outbox (
   scheduled_start_utc DATETIME NULL,
   timezone VARCHAR(64) NOT NULL,
   due_at_utc DATETIME NOT NULL,
+  next_attempt_at_utc DATETIME NOT NULL,
+  failure_count INT NOT NULL DEFAULT 0,
   status VARCHAR(16) NOT NULL,
   created_at DATETIME NOT NULL,
   claimed_at DATETIME NULL,
@@ -35,6 +37,6 @@ CREATE TABLE group_appointment_mail_outbox (
   UNIQUE KEY uq_gamo_delivery (series_id, occurrence_index, occurrence_revision,
     event_type, recipient_role, recipient_id),
   UNIQUE KEY uq_gamo_correlation (correlation_id),
-  KEY idx_gamo_due (status, due_at_utc),
+  KEY idx_gamo_due (status, next_attempt_at_utc, due_at_utc),
   CONSTRAINT fk_gamo_series FOREIGN KEY (series_id) REFERENCES chat (id) ON DELETE CASCADE
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8 COLLATE=utf8_unicode_ci;

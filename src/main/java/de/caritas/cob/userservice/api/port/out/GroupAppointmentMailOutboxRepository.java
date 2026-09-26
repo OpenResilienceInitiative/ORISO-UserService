@@ -28,8 +28,21 @@ public interface GroupAppointmentMailOutboxRepository
           String recipientId,
           List<GroupAppointmentMailOutbox.EventType> eventTypes);
 
-  List<GroupAppointmentMailOutbox> findTop100ByStatusAndDueAtUtcLessThanEqualOrderByDueAtUtcAsc(
-      GroupAppointmentMailOutbox.Status status, LocalDateTime dueAtUtc);
+  List<GroupAppointmentMailOutbox>
+      findTop100ByStatusAndDueAtUtcLessThanEqualAndNextAttemptAtUtcLessThanEqualOrderByDueAtUtcAsc(
+          GroupAppointmentMailOutbox.Status status,
+          LocalDateTime dueAtUtc,
+          LocalDateTime nextAttemptAtUtc);
+
+  @Modifying
+  @Query(
+      "update GroupAppointmentMailOutbox mail set mail.nextAttemptAtUtc = :nextAttempt, "
+          + "mail.failureCount = mail.failureCount + 1 "
+          + "where mail.id = :id and mail.status = :pending")
+  int deferConfigurationFailure(
+      @Param("id") Long id,
+      @Param("pending") GroupAppointmentMailOutbox.Status pending,
+      @Param("nextAttempt") LocalDateTime nextAttempt);
 
   @Modifying
   @Query(
