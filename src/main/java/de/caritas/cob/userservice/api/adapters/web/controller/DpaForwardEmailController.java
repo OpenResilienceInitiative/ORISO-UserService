@@ -23,7 +23,7 @@ import org.springframework.web.bind.annotation.RestController;
 
 @RestController
 @RequiredArgsConstructor
-@RequestMapping("/useradmin/dpa-invites")
+@RequestMapping({"/useradmin/dpa-invites", "/service/useradmin/dpa-invites"})
 public class DpaForwardEmailController {
 
   private static final String ADMIN_AUTH =
