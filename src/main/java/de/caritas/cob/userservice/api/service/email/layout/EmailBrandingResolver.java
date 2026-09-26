@@ -93,7 +93,14 @@ public class EmailBrandingResolver {
     this.platformName = platformName;
     this.platformLogoUrl = platformLogoUrl;
     this.applicationBaseUrl = normalizeBaseUrl(applicationBaseUrl);
-    if (firstAbsoluteUrl(this.applicationBaseUrl) == null) {
+    URI configuredBase =
+        firstAbsoluteUrl(this.applicationBaseUrl) == null
+            ? null
+            : URI.create(this.applicationBaseUrl);
+    if (configuredBase == null
+        || configuredBase.getUserInfo() != null
+        || configuredBase.getRawQuery() != null
+        || configuredBase.getRawFragment() != null) {
       throw new IllegalArgumentException(
           "app.base.url must be an absolute HTTP(S) URL for email branding");
     }

@@ -16,6 +16,8 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.web.client.HttpClientErrorException;
@@ -205,6 +207,22 @@ class EmailBrandingResolverTest {
   void constructor_Should_rejectAMissingApplicationUrl() {
     assertThatThrownBy(
             () -> new EmailBrandingResolver(tenantService, tenantTemplateSupplier, "ORISO", "", ""))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("app.base.url");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "ftp://app.oriso.org",
+        "https://user:secret@app.oriso.org",
+        "https://app.oriso.org/?mail=1",
+        "https://app.oriso.org/#mail"
+      })
+  void constructor_Should_rejectApplicationUrlsThatCannotBeSafeMailOrigins(String url) {
+    assertThatThrownBy(
+            () ->
+                new EmailBrandingResolver(tenantService, tenantTemplateSupplier, "ORISO", "", url))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("app.base.url");
   }
