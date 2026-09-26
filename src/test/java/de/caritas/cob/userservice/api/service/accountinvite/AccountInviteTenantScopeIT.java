@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.when;
 
@@ -15,14 +16,20 @@ import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.tenant.Tenants;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.time.LocalDateTime;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
-import java.util.Set;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -39,29 +46,23 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Cross-tenant ("cross-Träger") isolation of the admin invite API, run against a real database.
- *
- * <p>Rules: the platform admin (tenant 0) sees and does everything; a tenant admin only acts in
- * their own tenant and never invites a platform admin; an agency admin (restricted agency admin)
- * only acts on counsellor invites of the agencies they administer.
- *
- * <p>The caller is a real {@link AuthenticatedUser}, not a mock, so the role helpers the scoping
- * relies on ({@code isPlatformAdmin}, {@code hasRestrictedAgencyPriviliges}) run unchanged. The
- * restricted agency admin is the seeded admin {@value #AGENCY_ADMIN_ID}, who administers agency
+ * The restricted agency admin is the seeded admin {@value #AGENCY_ADMIN_ID}, who administers agency
  * {@value #OWN_AGENCY_ID} only (see {@code database/UserServiceDatabase.sql}).
  */
 @DataJpaTest
-@TestPropertySource(properties = "spring.profiles.active=testing")
+@TestPropertySource(properties = {"spring.profiles.active=testing", "multitenancy.enabled=true"})
 @AutoConfigureTestDatabase(replace = Replace.NONE)
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AccountInviteTenantScopeIT.CallerConfig.class
 })
+@WithTenant(AccountInviteTenantScopeIT.OWN_TENANT)
 class AccountInviteTenantScopeIT {
 
-  private static final long OWN_TENANT = 1L;
+  static final long OWN_TENANT = 1L;
   private static final long FOREIGN_TENANT = 2L;
   private static final String AGENCY_ADMIN_ID = "d42c2e5e-143c-4db1-a90f-7cccf82fbb15";
   private static final long OWN_AGENCY_ID = 1L;
@@ -88,6 +89,7 @@ class AccountInviteTenantScopeIT {
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
+  @MockitoBean private ExistingAgencyClient existingAgencyClient;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
@@ -98,6 +100,8 @@ class AccountInviteTenantScopeIT {
   private AccountInvite foreignTenantCounsellorInvite;
   private AccountInvite foreignAgencyCounsellorInvite;
   private AccountInvite ownAgencyAgencyAdminInvite;
+
+  private final Map<Long, AgencyDTO> knownAgencies = new HashMap<>();
 
   @BeforeEach
   void seedInvitesOfTwoTenants() {
@@ -152,10 +156,10 @@ class AccountInviteTenantScopeIT {
   void listInvites_Should_NotLeakForeignTenant_When_TenantAdminSearchesForItsNumber() {
     actAsTenantAdmin();
 
-    // The query box also matches a numeric term against the tenant ID (#479).
+    // The query box also matches a numeric term against the tenant ID.
     var page = service.listInvites(null, null, null, String.valueOf(FOREIGN_TENANT), 0, 50);
 
-    // Nothing of tenant 1 matches "2"; before the fix the tenant-2 invite came back.
+    // Nothing of tenant 1 matches "2", so the tenant-2 invite must not come back.
     assertThat(page.getContent())
         .extracting(AccountInvite::getTenantId)
         .doesNotContain(FOREIGN_TENANT);
@@ -249,6 +253,22 @@ class AccountInviteTenantScopeIT {
         .isInstanceOf(ForbiddenException.class);
     assertThat(accountInviteRepository.findById(foreignId).orElseThrow().getStatus())
         .isEqualTo(AccountInviteStatus.EMAIL_SENT);
+  }
+
+  @Test
+  void revokeInvite_Should_AnswerAsForAForeignInvite_When_TenantAdminNamesAMissingInvite() {
+    actAsTenantAdmin();
+
+    assertThatThrownBy(() -> service.revokeInvite(987654L)).isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void revokeInvite_Should_AnswerNotFound_When_PlatformAdminNamesAMissingInvite() {
+    actAsPlatformAdmin();
+
+    assertThatThrownBy(() -> service.revokeInvite(987654L))
+        .isInstanceOf(
+            de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException.class);
   }
 
   @Test
@@ -397,7 +417,8 @@ class AccountInviteTenantScopeIT {
   // --- helpers ---------------------------------------------------------------------------------
 
   private void actAsTenantAdmin() {
-    actAs(
+    Tenants.actAs(
+        caller,
         "tenant-admin-1",
         OWN_TENANT,
         UserRole.TENANT_ADMIN,
@@ -406,22 +427,18 @@ class AccountInviteTenantScopeIT {
   }
 
   private void actAsAgencyAdmin() {
-    actAs(AGENCY_ADMIN_ID, OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    Tenants.actAs(
+        caller, AGENCY_ADMIN_ID, OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
   }
 
   private void actAsPlatformAdmin() {
-    actAs("platform-admin", 0L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
-  }
-
-  private void actAs(String userId, Long tenantId, UserRole... roles) {
-    caller.setUserId(userId);
-    caller.setUsername(userId);
-    caller.setTenantId(tenantId);
-    caller.setRoles(
-        java.util.Arrays.stream(roles)
-            .map(UserRole::getValue)
-            .collect(java.util.stream.Collectors.toSet()));
-    caller.setGrantedAuthorities(Set.of());
+    Tenants.actAs(
+        caller,
+        "platform-admin",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
   }
 
   private long countInvitesOfTenant(long tenantId) {
@@ -431,8 +448,14 @@ class AccountInviteTenantScopeIT {
   }
 
   private void givenAgency(long agencyId, long tenantId) {
-    when(agencyService.getAgencyWithoutCaching(agencyId))
-        .thenReturn(new AgencyDTO().id(agencyId).tenantId(tenantId));
+    var agency = new AgencyDTO().id(agencyId).tenantId(tenantId);
+    when(agencyService.getAgencyWithoutCaching(agencyId)).thenReturn(agency);
+    knownAgencies.put(agencyId, agency);
+    when(agencyService.getAgenciesWithoutCaching(anyList()))
+        .thenAnswer(
+            call ->
+                ((List<?>) call.getArgument(0))
+                    .stream().map(knownAgencies::get).filter(Objects::nonNull).toList());
   }
 
   private static CreateAccountInviteCommand invite(

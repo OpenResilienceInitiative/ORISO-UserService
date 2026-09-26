@@ -559,12 +559,18 @@ class CounsellorOnboardingServiceTest {
   }
 
   @Test
-  void registerCounsellor_missingTopics_isRejected() {
+  void registerCounsellor_missingTopics_isRejected_whenTheCoverageOffersSeveralTopics() {
+    // Only a single-topic coverage is picked for the invitee; with two topics they must choose.
+    inviteResolves(invite());
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(EXTRA_AGENCY_TOPIC_ID)));
+    when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
     RegisterCounsellorCommand noTopics =
         new RegisterCounsellorCommand(
             "lena.b", "s3cretPassword", null, null, null, null, null, List.of(), null, null);
 
     assertThrows(BadRequestException.class, () -> service.registerCounsellor(RAW_TOKEN, noTopics));
+    verify(counsellorInviteProvisioningService, never()).acceptInvite(anyString(), any());
   }
 
   @Test

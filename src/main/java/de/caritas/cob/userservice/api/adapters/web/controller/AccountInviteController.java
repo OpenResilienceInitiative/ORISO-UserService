@@ -352,6 +352,10 @@ public class AccountInviteController {
      */
     public String tenantIdAllocationMode;
 
+    /**
+     * AUTO / MANUAL as above, or EXISTING: {@code agencyId} names an existing agency that is
+     * validated, not reserved; a missing tenant or single topic is taken from the agency.
+     */
     public String agencyIdAllocationMode;
   }
 
