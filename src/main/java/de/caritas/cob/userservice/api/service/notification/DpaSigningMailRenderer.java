@@ -65,7 +65,8 @@ public class DpaSigningMailRenderer {
   public RenderedEmail render(
       Long tenantId, String tenantName, String signLink, Instant providedAt, Instant expiresAt) {
     Map<String, String> values =
-        tenantEmailBrandValues.values(emailBrandingResolver.resolve(tenantId), OPERATOR_IS_SENDER);
+        tenantEmailBrandValues.values(
+            emailBrandingResolver.resolvePendingTenant(tenantId), OPERATOR_IS_SENDER);
     boolean named = StringUtils.isNotBlank(tenantName);
     values.put("tenantName", named ? tenantName : GENERIC_TENANT_NAME);
     values.put("tenantNameDative", named ? tenantName : GENERIC_TENANT_NAME_DATIVE);

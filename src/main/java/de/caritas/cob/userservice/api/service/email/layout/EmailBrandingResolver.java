@@ -16,9 +16,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
+import org.springframework.web.client.HttpClientErrorException;
 
 /**
- * Resolves the branding of one outgoing mail with sane fallbacks (ORISO-UserService#914).
+ * Resolves the branding of one outgoing mail under ADR-026 (ORISO-UserService#1252).
  *
  * <p>Resolution order, each step degrading independently:
  *
@@ -30,16 +31,15 @@ import org.springframework.stereotype.Component;
  *       endpoint because mail clients block {@code data:} URIs.
  *   <li><b>Accent colour</b> — tenant {@code theming.primaryColor} → {@link
  *       EmailColors#PLATFORM_ACCENT_DARK}. Contrast-safe foregrounds are derived from it in {@link
- *       EmailBranding}, so a light theme colour never yields light-on-light text. See {@link
- *       #resolveAccentColor} for why the chain is exactly two steps long.
+ *       EmailBranding}; a colour below 4.5:1 against white is rejected.
  *   <li><b>Footer</b> — the imprint/privacy URLs built from the same tenant resolved above (via
  *       {@link TenantTemplateSupplier#getTenantBaseUrl(RestrictedTenantDTO)}, never from the
- *       ambient {@link TenantContext}) → the configured application base URL.
+ *       ambient {@link TenantContext}). Platform mail uses the configured application URL. Missing
+ *       tenant URLs fail instead of changing origin.
  * </ul>
  *
- * <p>Every remote lookup is best-effort. A tenant-admin invite is sent <em>before</em> the tenant
- * exists, so a 404 from TenantService is the normal case, not an error — the mail then simply uses
- * platform branding.
+ * <p>A tenant-admin invite may be sent <em>before</em> the tenant exists, so a 404 uses platform
+ * branding. Other tenant lookup failures stop the mail; they must not change its organisation.
  */
 @Slf4j
 @Component
@@ -50,9 +50,6 @@ public class EmailBrandingResolver {
   private final String platformName;
   private final String platformLogoUrl;
   private final String applicationBaseUrl;
-
-  /** Sentinel key for the platform lookup, which has no tenant id of its own. */
-  private static final Long PLATFORM_CACHE_KEY = Long.MIN_VALUE;
 
   /** Bound on distinct keys held, so a pathological tenant id space cannot grow this unbounded. */
   private static final int MAX_CACHE_ENTRIES = 1000;
@@ -67,7 +64,9 @@ public class EmailBrandingResolver {
   private static final long MAX_CACHE_TTL_SECONDS = 300L;
 
   private final long cacheTtlNanos;
-  private final Map<Long, CachedTenant> tenantCache = new ConcurrentHashMap<>();
+  private final Map<CacheKey, CachedTenant> tenantCache = new ConcurrentHashMap<>();
+
+  private record CacheKey(Long tenantId, boolean pendingTenantAllowed) {}
 
   private record CachedTenant(RestrictedTenantDTO tenant, long storedAtNanos) {}
 
@@ -134,7 +133,16 @@ public class EmailBrandingResolver {
    * @param tenantId tenant the mail belongs to, or {@code null} when it is not (yet) known
    */
   public EmailBranding resolve(Long tenantId) {
-    RestrictedTenantDTO tenant = loadTenantQuietly(tenantId);
+    return resolveBranding(tenantId, false);
+  }
+
+  /** Only for invitations and DPA mail whose tenant may have a reserved id before creation. */
+  public EmailBranding resolvePendingTenant(Long tenantId) {
+    return resolveBranding(tenantId, true);
+  }
+
+  private EmailBranding resolveBranding(Long tenantId, boolean pendingTenantAllowed) {
+    RestrictedTenantDTO tenant = loadTenantQuietly(tenantId, pendingTenantAllowed);
     Theming theming = tenant == null ? null : tenant.getTheming();
 
     String brandName =
@@ -267,21 +275,21 @@ public class EmailBrandingResolver {
         "Tenant " + tenant.getId() + " has no valid base URL for email footer links");
   }
 
-  private RestrictedTenantDTO loadTenantQuietly(Long tenantId) {
+  private RestrictedTenantDTO loadTenantQuietly(Long tenantId, boolean pendingTenantAllowed) {
     if (cacheTtlNanos <= 0L) {
-      return loadTenantUncached(tenantId);
+      return loadTenantUncached(tenantId, pendingTenantAllowed);
     }
-    Long key =
-        (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId))
-            ? PLATFORM_CACHE_KEY
-            : tenantId;
+    CacheKey key =
+        new CacheKey(
+            TenantContext.TECHNICAL_TENANT_ID.equals(tenantId) ? null : tenantId,
+            pendingTenantAllowed);
     long now = System.nanoTime();
     CachedTenant cached = tenantCache.get(key);
     // Subtraction, not comparison of absolutes: nanoTime has no fixed epoch and may be negative.
     if (cached != null && now - cached.storedAtNanos() < cacheTtlNanos) {
       return cached.tenant();
     }
-    RestrictedTenantDTO fresh = loadTenantUncached(tenantId);
+    RestrictedTenantDTO fresh = loadTenantUncached(tenantId, pendingTenantAllowed);
     if (tenantCache.size() >= MAX_CACHE_ENTRIES) {
       tenantCache.clear();
     }
@@ -291,15 +299,19 @@ public class EmailBrandingResolver {
     return fresh;
   }
 
-  private RestrictedTenantDTO loadTenantUncached(Long tenantId) {
+  private RestrictedTenantDTO loadTenantUncached(Long tenantId, boolean pendingTenantAllowed) {
     if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
       return loadPlatformTenantQuietly();
     }
     try {
       // Mail must reflect saved branding changes, including logo removal, without cache expiry.
       return tenantService.getRestrictedTenantDataFresh(tenantId);
-    } catch (RuntimeException exception) {
-      // Expected for tenant-admin invites: the tenant is created only when the invite is accepted.
+    } catch (HttpClientErrorException.NotFound exception) {
+      if (!pendingTenantAllowed) {
+        throw exception;
+      }
+      // A tenant-admin invite may reserve an id before the tenant exists. Other lookup failures
+      // must stop the mail instead of branding and linking a known tenant as the platform.
       log.debug(
           "No tenant branding available for tenantId {} ({}) — using platform branding",
           tenantId,

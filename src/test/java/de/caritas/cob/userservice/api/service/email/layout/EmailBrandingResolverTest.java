@@ -275,17 +275,38 @@ class EmailBrandingResolverTest {
 
   /** Tenant-admin invites are sent before the tenant exists — a 404 is normal, not an error. */
   @Test
-  void resolve_Should_degradeToPlatformBranding_When_TenantLookupFails() {
+  void resolvePendingTenant_Should_usePlatformBranding_When_TenantDoesNotExistYet() {
     givenNoTemplateAttributes();
     when(tenantService.getRestrictedTenantDataFresh(anyLong()))
         .thenThrow(
             HttpClientErrorException.create(
                 org.springframework.http.HttpStatus.NOT_FOUND, "nf", null, null, null));
 
-    EmailBranding branding = resolver("").resolve(4711L);
+    EmailBranding branding = resolver("").resolvePendingTenant(4711L);
 
     assertThat(branding.brandName()).isEqualTo("ORISO");
     assertThat(branding.accentColor()).isEqualTo(EmailColors.PLATFORM_ACCENT_DARK);
+  }
+
+  @Test
+  void resolve_Should_rejectAnUnknownTenantForAnExistingAccount() {
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenThrow(
+            HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.NOT_FOUND, "nf", null, null, null));
+
+    assertThatThrownBy(() -> resolver("").resolve(7L))
+        .isInstanceOf(HttpClientErrorException.NotFound.class);
+  }
+
+  @Test
+  void resolve_Should_notReplaceATenantBrandAfterATenantServiceFailure() {
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenThrow(new IllegalStateException("tenant service unavailable"));
+
+    assertThatThrownBy(() -> resolver("").resolve(7L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("tenant service unavailable");
   }
 
   @Test

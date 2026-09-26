@@ -14,10 +14,9 @@ import org.springframework.stereotype.Component;
  * The brand placeholders of a design-system mail, with a tenant's branding laid over the platform
  * values.
  *
- * <p>{@link OrisoEmailBrand} is platform-level by contract (ADR-021); {@link EmailBrandingResolver}
- * resolves the tenant-varying half — name, absolute logo URL, accent colour, imprint and privacy
- * URLs — including "the tenant does not exist yet". Every tenant-branded mail builds its value map
- * here, so the invite and the DPA signing mail cannot brand the same tenant differently.
+ * <p>ADR-026 uses {@link EmailBrandingResolver} for the tenant brand in every mail. Invite and DPA
+ * callers already hold a resolved {@link EmailBranding}; this adapter adds their sender block
+ * without making another tenant lookup.
  */
 @Component
 public class TenantEmailBrandValues {
@@ -46,7 +45,7 @@ public class TenantEmailBrandValues {
    */
   public Map<String, String> values(EmailBranding branding, Long senderTenantId) {
     Map<String, String> values =
-        new LinkedHashMap<>(orisoEmailBrand.values(applicationBaseUrl, branding.accentColor()));
+        new LinkedHashMap<>(orisoEmailBrand.valuesForResolvedBrand(applicationBaseUrl, branding));
 
     // Header wordmark only: the offered-by line keeps offeringName, the platform's own name, so
     // it never reads "<Träger> ist ein Angebot von <operator>". brandName falls back to the

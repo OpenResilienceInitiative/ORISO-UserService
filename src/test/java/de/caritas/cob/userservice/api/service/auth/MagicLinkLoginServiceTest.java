@@ -539,7 +539,7 @@ class MagicLinkLoginServiceTest {
         .thenReturn(Optional.of(credentials));
     Map<String, String> brandValues = new HashMap<>();
     brandValues.put("appUrl", "https://app.oriso.org");
-    when(emailBrand.values(eq("https://app.oriso.org"), any())).thenReturn(brandValues);
+    when(emailBrand.valuesForTenant(eq("https://app.oriso.org"), eq(42L))).thenReturn(brandValues);
     when(emailRenderer.render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("subject", "<html></html>", "text"));
 
@@ -547,6 +547,7 @@ class MagicLinkLoginServiceTest {
         .doesNotThrowAnyException();
 
     verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
+    verify(emailBrand).valuesForTenant("https://app.oriso.org", 42L);
   }
 
   // ── consumeMagicLink — happy path returns provider-neutral session ────────
@@ -746,6 +747,7 @@ class MagicLinkLoginServiceTest {
     user.setUserId("u-1");
     user.setUsername("testuser");
     user.setEmail("real@example.com");
+    user.setTenantId(42L);
     user.setMagicLinkLoginEnabled(Boolean.TRUE);
     return user;
   }

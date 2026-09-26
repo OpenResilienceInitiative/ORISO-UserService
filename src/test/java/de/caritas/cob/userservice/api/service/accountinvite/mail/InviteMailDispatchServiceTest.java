@@ -11,7 +11,6 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
-import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import java.time.Instant;
@@ -72,7 +71,10 @@ class InviteMailDispatchServiceTest {
   }
 
   private void givenNeutralBranding() {
-    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture
+                .neutralWithLinks(InviteFrameMailRendererFixture.APP_BASE_URL));
   }
 
   @Test
@@ -140,7 +142,7 @@ class InviteMailDispatchServiceTest {
 
     service("u", "p").send("to@example.org", "s", "b", null, 42L, null);
 
-    verify(emailBrandingResolver).resolve(42L);
+    verify(emailBrandingResolver).resolvePendingTenant(42L);
     ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
     verify(inviteMailTransport).send(any(), any(), any(), html.capture(), anyString());
     assertThat(html.getValue())
@@ -446,7 +448,7 @@ class InviteMailDispatchServiceTest {
   @Test
   void send_Should_markUnexpectedRenderingFailureAsConfirmedNotSent() {
     when(restTemplate.getForObject(anyString(), any())).thenReturn(completeSettingsPayload());
-    when(emailBrandingResolver.resolve(any()))
+    when(emailBrandingResolver.resolvePendingTenant(any()))
         .thenThrow(new IllegalStateException("branding unavailable"));
 
     assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))

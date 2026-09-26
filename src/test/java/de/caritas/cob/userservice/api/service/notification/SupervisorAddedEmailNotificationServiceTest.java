@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.user.UserService;
@@ -47,7 +48,8 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Spy
   private OrisoEmailBrand emailBrand =
-      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
+      new OrisoEmailBrand(
+          SenderOrganisationFixture.platformOwner(), EmailBrandingFixture.platform());
 
   @InjectMocks private SupervisorAddedEmailNotificationService service;
 
@@ -640,12 +642,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     // and check the full output, not just the hand-authored sentence.
     var email =
         service.renderTeamChange(
-            LanguageCode.de,
-            statement,
-            "https://app.oriso.org",
-            "https://app.oriso.org",
-            null,
-            "#1c4f8f");
+            LanguageCode.de, statement, "https://app.oriso.org", "https://app.oriso.org", null, 1L);
 
     assertThat(email.html())
         .doesNotContain("#4711")
@@ -665,7 +662,7 @@ class SupervisorAddedEmailNotificationServiceTest {
             "https://app.oriso.org",
             "https://app.oriso.org/sessions/consultant/sessionView/session/4711",
             4711L,
-            "#1c4f8f");
+            1L);
 
     assertThat(email.subject()).isEqualTo("Änderung in Ihrem Team");
     assertThat(email.html())
@@ -684,7 +681,7 @@ class SupervisorAddedEmailNotificationServiceTest {
             "https://app.oriso.org",
             "https://app.oriso.org",
             1L,
-            "#1c4f8f");
+            1L);
 
     // The old inline card: a 620px table on #f6f7fb with an #e5e7eb border, in
     // Arial. Checked by its own fingerprints — "620" on its own is no use,
@@ -697,7 +694,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void aTenantColourThatCannotCarryWhiteTextDoesNotReachTheButton() {
+  void theLegacySmtpBlueDoesNotReachTheButton() {
     var email =
         service.renderTeamChange(
             LanguageCode.de,
@@ -705,8 +702,8 @@ class SupervisorAddedEmailNotificationServiceTest {
             "https://app.oriso.org",
             "https://app.oriso.org",
             1L,
-            "#ffd400");
+            1L);
 
-    assertThat(email.html()).doesNotContain("#ffd400");
+    assertThat(email.html()).doesNotContain("#0f3b8f");
   }
 }
