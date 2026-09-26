@@ -39,6 +39,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -484,7 +485,7 @@ public class AccountInviteService {
       int size) {
     String search = normalizeSearch(query);
     PageRequest pageRequest = PageRequest.of(Math.max(page, 0), clampSize(size));
-    // Cross-Träger guard: without it an absent tenant_id listed the invites of every Träger.
+    // Cross-Träger guard: an absent tenant_id would otherwise list the invites of every Träger.
     InviteListScope scope = accessPolicy.scopeForListing(tenantId, targetRole);
     if (scope.empty()) {
       return Page.empty(pageRequest);
@@ -867,7 +868,7 @@ public class AccountInviteService {
   }
 
   public AccountInvite waiveTwoFactor(Long inviteId, WaiveTwoFactorCommand command) {
-    return waiveTwoFactor(findInvite(inviteId), command);
+    return waiveTwoFactor(findAuthorizedInvite(inviteId), command);
   }
 
   /** Waives the 2FA gate; applies the cross-Träger guard itself, whichever overload is used. */
@@ -1036,9 +1037,16 @@ public class AccountInviteService {
 
   /** Loads an invite for an admin action and applies the cross-Träger guard. */
   private AccountInvite findAuthorizedInvite(Long inviteId) {
-    AccountInvite invite = findInvite(inviteId);
-    accessPolicy.authorizeAccess(invite);
-    return invite;
+    if (inviteId == null) {
+      throw new BadRequestException("inviteId is required");
+    }
+    Optional<AccountInvite> invite = accountInviteRepository.findById(inviteId);
+    if (invite.isEmpty()) {
+      accessPolicy.authorizeMissing(inviteId);
+      throw new NotFoundException("Account invite not found");
+    }
+    accessPolicy.authorizeAccess(invite.get());
+    return invite.get();
   }
 
   private AccountInvite findInvite(Long inviteId) {
