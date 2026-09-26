@@ -93,6 +93,18 @@ public class CaseHandoverService {
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
   private static final String CO_ACCESS_EXPIRY_TASK = "case-handover-co-access-expiry";
 
+  /**
+   * Session rooms are created with the private_chat preset, so events_default is 0 and every member
+   * may post. A co-access requester sits below that for the lifetime of the grant: they read the
+   * case, Synapse refuses anything they send (#200, ADR-002 "read-only co-access").
+   */
+  private static final int CO_ACCESS_POWER_LEVEL = -1;
+
+  private static final int MEMBER_POWER_LEVEL = 0;
+
+  /** The level an assigned counsellor gets on assignment (AssignEnquiryFacade). */
+  private static final int OWNER_POWER_LEVEL = 100;
+
   private record ClientHandoverCopy(
       String grantedTitle,
       String grantedDescription,
@@ -645,7 +657,8 @@ public class CaseHandoverService {
     CaseHandoverRequest saved;
     if (hasGrantedAccess(status)) {
       request.setMatrixMembershipAdded(
-          ensureRequesterJoinedMatrixRoom(session, requester, session.getConsultant()));
+          ensureRequesterJoinedMatrixRoom(
+              session, requester, session.getConsultant(), request.getAccessType()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
         session.setConsultant(requester);
         session.setUpdateDate(now);
@@ -719,7 +732,10 @@ public class CaseHandoverService {
       }
       request.setMatrixMembershipAdded(
           ensureRequesterJoinedMatrixRoom(
-              session, request.getRequesterConsultant(), request.getPreviousConsultant()));
+              session,
+              request.getRequesterConsultant(),
+              request.getPreviousConsultant(),
+              request.getAccessType()));
       if (request.getAccessType() == AccessType.TAKEOVER) {
         session.setConsultant(request.getRequesterConsultant());
         session.setUpdateDate(now);
@@ -1608,9 +1624,7 @@ public class CaseHandoverService {
   }
 
   private boolean removeCoAccessRequesterFromMatrixRoom(CaseHandoverRequest request) {
-    if (!Boolean.TRUE.equals(request.getMatrixMembershipAdded())) {
-      return true;
-    }
+    boolean membershipAdded = Boolean.TRUE.equals(request.getMatrixMembershipAdded());
     try {
       Session accessSession = request.getSession();
       Consultant requester = request.getRequesterConsultant();
@@ -1622,14 +1636,11 @@ public class CaseHandoverService {
       }
       String roomId = accessSession.getMatrixRoomId();
       String requesterId = requester.getMatrixUserId();
-      if (transferMembershipOwnershipToAnotherActiveGrant(request)) {
-        return true;
-      }
-      var membersBefore = matrixSynapseService.getRoomMembers(roomId);
-      if (membersBefore.isEmpty()) {
-        return false;
-      }
-      if (!membersBefore.get().contains(requesterId)) {
+      boolean anotherGrantStillNeedsAccess =
+          membershipAdded
+              ? transferMembershipOwnershipToAnotherActiveGrant(request)
+              : findAnotherActiveGrant(request).isPresent();
+      if (anotherGrantStillNeedsAccess) {
         return true;
       }
       Consultant operator =
@@ -1643,6 +1654,22 @@ public class CaseHandoverService {
           matrixSynapseService.loginAsUserAccessToken(operator.getMatrixUserId());
       if (isBlank(operatorToken)) {
         return false;
+      }
+      // Undo the read-only level first, also for a requester who is removed below: a stale -1
+      // would silence them again whenever they rejoin, even as the case owner.
+      if (!matrixSynapseService.setUserPowerLevel(
+          roomId, requesterId, MEMBER_POWER_LEVEL, operatorToken)) {
+        return false;
+      }
+      if (!membershipAdded) {
+        return true;
+      }
+      var membersBefore = matrixSynapseService.getRoomMembers(roomId);
+      if (membersBefore.isEmpty()) {
+        return false;
+      }
+      if (!membersBefore.get().contains(requesterId)) {
+        return true;
       }
       if (matrixSynapseService.removeUserFromRoom(roomId, requesterId, operatorToken)) {
         return restoreIfAnotherGrantBecameActive(request, roomId, requesterId);
@@ -1827,7 +1854,7 @@ public class CaseHandoverService {
   }
 
   private boolean ensureRequesterJoinedMatrixRoom(
-      Session session, Consultant requester, Consultant previousConsultant) {
+      Session session, Consultant requester, Consultant previousConsultant, AccessType accessType) {
     if (session == null || isBlank(session.getMatrixRoomId())) {
       return false;
     }
@@ -1890,6 +1917,25 @@ public class CaseHandoverService {
         previousConsultant.getMatrixUserId(),
         previousConsultantToken,
         wasMemberBefore);
+
+    // Fail closed: a co-access that could write to the advice seeker must not be granted at all.
+    if (accessType == AccessType.CO_ACCESS
+        && !matrixSynapseService.setUserPowerLevel(
+            roomId, requester.getMatrixUserId(), CO_ACCESS_POWER_LEVEL, previousConsultantToken)) {
+      throw new InternalServerErrorException("Case handover co-access could not be made read-only");
+    }
+    // The new owner needs the owner's room rights: later co-access grants on this case lower and
+    // restore levels and remove members with the owner's token. Never block an absence cover over
+    // this, though: at level 0 the new owner can still post.
+    if (accessType == AccessType.TAKEOVER
+        && !matrixSynapseService.setUserPowerLevel(
+            roomId, requester.getMatrixUserId(), OWNER_POWER_LEVEL, previousConsultantToken)) {
+      log.warn(
+          "Could not give the new owner {} of session {} the owner power level in room {}",
+          requester.getUsername(),
+          session.getId(),
+          roomId);
+    }
 
     // The previous counsellor deliberately keeps their membership. ADR-002's reveal lifecycle has
     // a takeover re-hide the original counsellor while they stay a member, so they can reclaim the
