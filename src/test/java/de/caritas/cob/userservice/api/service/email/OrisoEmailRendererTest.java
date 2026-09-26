@@ -93,11 +93,17 @@ class OrisoEmailRendererTest {
   }
 
   @Test
-  void picksTheEnglishTemplateForEnglishSpeakers() {
-    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.en)).isEqualTo(OrisoEmailRenderer.Tone.EN);
+  void selectsEveryStoredLanguageWithoutGermanFallback() {
     assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.de))
         .isEqualTo(OrisoEmailRenderer.Tone.DE_FORMAL);
-    assertThat(OrisoEmailRenderer.Tone.of(null)).isEqualTo(OrisoEmailRenderer.Tone.DE_FORMAL);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.en)).isEqualTo(OrisoEmailRenderer.Tone.EN);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.fr)).isEqualTo(OrisoEmailRenderer.Tone.FR);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.ru)).isEqualTo(OrisoEmailRenderer.Tone.RU);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.ti)).isEqualTo(OrisoEmailRenderer.Tone.TI);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.tr)).isEqualTo(OrisoEmailRenderer.Tone.TR);
+    assertThatThrownBy(() -> OrisoEmailRenderer.Tone.of(null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("language");
   }
 
   @Test
