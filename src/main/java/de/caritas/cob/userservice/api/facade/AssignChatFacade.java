@@ -50,7 +50,7 @@ public class AssignChatFacade {
         chatService
             .getChat(chatId)
             .orElseThrow(() -> new NotFoundException("Chat with id %s not found", chatId));
-    if (chat.getConversationType() != ConversationType.SELF_HELP) {
+    if (ChatConverter.conversationTypeOf(chat) != ConversationType.SELF_HELP) {
       throw new ForbiddenException("Only self-help groups can be joined through an invite link");
     }
     if (!GroupChatInviteTokens.matches(chat.getInviteToken(), inviteToken)) {
