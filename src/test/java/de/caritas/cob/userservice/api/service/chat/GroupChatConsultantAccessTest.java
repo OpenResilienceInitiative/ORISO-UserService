@@ -31,15 +31,7 @@ class GroupChatConsultantAccessTest {
 
   @Test
   void filtersMultipleCrossTenantGroupsWithOneMembershipLookup() {
-    var consultant =
-        Consultant.builder()
-            .id("counselor")
-            .username("counselor")
-            .firstName("Counselor")
-            .lastName("One")
-            .email("counselor@example.org")
-            .tenantId(1L)
-            .build();
+    var consultant = consultant("counselor", 1L, 100L);
     var otherTenantOwner =
         Consultant.builder()
             .id("owner")
@@ -66,15 +58,16 @@ class GroupChatConsultantAccessTest {
             .startDate(start)
             .chatOwner(otherTenantOwner)
             .build();
-    when(participants.findBySeriesIdInAndConsultantId(List.of(11L, 12L), "counselor"))
+    var sharedAgency = series(13L, consultant("same-tenant-owner", 1L, 100L), 100L);
+    when(participants.findBySeriesIdInAndConsultantId(List.of(11L, 12L, 13L), "counselor"))
         .thenReturn(
             List.of(
                 GroupChatParticipant.builder().seriesId(11L).consultantId("counselor").build()));
 
-    assertThat(access.filterAccessible(List.of(admitted, denied), consultant))
-        .containsExactly(admitted);
+    assertThat(access.filterAccessible(List.of(admitted, denied, sharedAgency), consultant))
+        .containsExactly(admitted, sharedAgency);
 
-    verify(participants).findBySeriesIdInAndConsultantId(List.of(11L, 12L), "counselor");
+    verify(participants).findBySeriesIdInAndConsultantId(List.of(11L, 12L, 13L), "counselor");
     verify(participants, never()).findBySeriesIdAndConsultantId(any(), any());
   }
 
