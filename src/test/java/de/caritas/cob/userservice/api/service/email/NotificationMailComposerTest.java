@@ -51,7 +51,10 @@ class NotificationMailComposerTest {
         .contains("Träger Sieben", "https://tenant.example.org/sessions/consultant/");
     assertThat(result.html()).doesNotContain("{{", ">—<");
     assertThat(result.text()).doesNotContain("{{", "—");
-    assertThat(result.html()).contains("mail=" + designTemplate);
+    assertThat(result.html())
+        .contains("https://tenant.example.org/profile/einstellungen/email?mail=" + designTemplate);
+    assertThat(result.text())
+        .contains("https://tenant.example.org/profile/einstellungen/email?mail=" + designTemplate);
   }
 
   @Test
@@ -131,10 +134,10 @@ class NotificationMailComposerTest {
     values.put("primaryColor", "#1c4f8f");
     values.put("accentColor", "#1c4f8f");
     values.put("appUrl", "https://tenant.example.org");
-    values.put("settingsUrl", "https://tenant.example.org/profile/settings");
+    values.put("settingsUrl", "https://tenant.example.org/profile/einstellungen");
     values.put("privacyUrl", "https://tenant.example.org/datenschutz");
     values.put("imprintUrl", "https://tenant.example.org/impressum");
-    values.put("unsubscribeUrl", "https://tenant.example.org/profile/settings/notifications");
+    values.put("unsubscribeUrl", "https://tenant.example.org/profile/einstellungen/email");
     when(brandValues.values(branding, tenantId)).thenReturn(values);
   }
 
