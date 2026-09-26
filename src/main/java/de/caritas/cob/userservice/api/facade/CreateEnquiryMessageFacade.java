@@ -158,10 +158,7 @@ public class CreateEnquiryMessageFacade {
   private void sendEnquiryNotifications(Session session, List<ConsultantAgency> agencyList) {
     if (session.getIsConsultantDirectlySet()) {
       emailNotificationFacade.sendNewDirectEnquiryEmailNotification(
-          session.getConsultant().getId(),
-          session.getAgencyId(),
-          session.getPostcode(),
-          TenantContext.getCurrentTenantData());
+          session, TenantContext.getCurrentTenantData());
     } else {
       emailNotificationFacade.sendNewEnquiryEmailNotification(
           session, TenantContext.getCurrentTenantData());

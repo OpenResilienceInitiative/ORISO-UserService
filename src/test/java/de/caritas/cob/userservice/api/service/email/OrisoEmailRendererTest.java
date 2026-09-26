@@ -72,6 +72,24 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void requestedContactSheetOmitsUnmaintainedFieldsInEveryLanguage() {
+    for (var tone : OrisoEmailRenderer.Tone.values()) {
+      Map<String, String> values = brand();
+      values.put("consultantName", "Centre");
+      values.put("consultantPhone", "+49 30 123");
+      values.put("consultantHours", "");
+      values.put("consultantEmail", "");
+      values.put("messageUrl", "https://example.org/sessions/user/view/session/42");
+
+      var email = renderer.render("beraterin-kontakt", tone, values);
+
+      assertThat(email.html()).contains("+49 30 123").doesNotContain("{{", "bookingUrl");
+      assertThat(email.text()).contains("+49 30 123").doesNotContain("{{", "bookingUrl");
+      assertThat(email.html().split("class=\"row-value\"", -1)).hasSize(3);
+    }
+  }
+
+  @Test
   void keepsAnUnsuppliedPlaceholderVisibleRatherThanBlankingIt() {
     // A visible {{expiryMinutes}} in a sent mail is a bug report. A silent blank
     // is a mail that quietly says the link expires in "" minutes.
@@ -93,11 +111,17 @@ class OrisoEmailRendererTest {
   }
 
   @Test
-  void picksTheEnglishTemplateForEnglishSpeakers() {
-    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.en)).isEqualTo(OrisoEmailRenderer.Tone.EN);
+  void selectsEveryStoredLanguageWithoutGermanFallback() {
     assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.de))
         .isEqualTo(OrisoEmailRenderer.Tone.DE_FORMAL);
-    assertThat(OrisoEmailRenderer.Tone.of(null)).isEqualTo(OrisoEmailRenderer.Tone.DE_FORMAL);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.en)).isEqualTo(OrisoEmailRenderer.Tone.EN);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.fr)).isEqualTo(OrisoEmailRenderer.Tone.FR);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.ru)).isEqualTo(OrisoEmailRenderer.Tone.RU);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.ti)).isEqualTo(OrisoEmailRenderer.Tone.TI);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.tr)).isEqualTo(OrisoEmailRenderer.Tone.TR);
+    assertThatThrownBy(() -> OrisoEmailRenderer.Tone.of(null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("language");
   }
 
   @Test

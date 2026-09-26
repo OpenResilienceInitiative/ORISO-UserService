@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite.mail;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -31,6 +32,30 @@ class InviteFrameMailRendererTest {
   private static final String ACCEPT_URL = "https://admin.oriso.org/onboarding/accept?token=tok";
 
   @Mock private EmailBrandingResolver emailBrandingResolver;
+
+  @ParameterizedTest
+  @CsvSource({
+    "fr,Accepter l’invitation",
+    "ru,Принять приглашение",
+    "ti,ዕድመ ተቐበሉ",
+    "tr,Daveti kabul et"
+  })
+  void usesTheRequestedLanguageForTheInvitationFrame(String language, String actionLabel) {
+    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    BrandedEmail mail =
+        InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver)
+            .render("Invitation", "Body", ACCEPT_URL, 42L, language);
+
+    assertThat(mail.html()).contains("<html lang=\"" + language + "\">").contains(actionLabel);
+    assertThat(mail.plainText()).contains(actionLabel);
+  }
+
+  @Test
+  void rejectsAnUnknownInvitationLanguage() {
+    assertThatThrownBy(() -> InviteFrameMailRenderer.Labels.forLanguage("uk"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("uk");
+  }
 
   private BrandedEmail render(EmailBranding branding, String subject, String body, String action) {
     when(emailBrandingResolver.resolve(any())).thenReturn(branding);
