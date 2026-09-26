@@ -411,6 +411,22 @@
       "status": "blocker"
     },
     {
+      "id": "group-appointment-mail-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/groupchatreminder/scheduler/GroupAppointmentMailScheduler.java",
+      "kind": "scheduler",
+      "owner": "notifications",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "deliverDueMail"
+      ],
+      "decision": "Use a committed database claim for each recipient and occurrence revision before transport handoff; reconcile ambiguous outcomes instead of replaying them.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "inactive-account-notification-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/inactiveaccountnotification/scheduler/InactiveAccountNotificationScheduler.java",
       "kind": "scheduler",
@@ -552,6 +568,17 @@
       "risk": "correctness",
       "components": ["retryPendingRepairs"],
       "decision": "A shared lease serializes retries; the durable task survives the rolled-back handover transaction, Matrix operations are idempotent, and successful reconciliation deletes the task.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "bounded"
+    },
+    {
+      "id": "group-chat-admission-retry",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/chat/GroupChatAdmissionScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-group-chat",
+      "risk": "duplicate-side-effect",
+      "components": ["retryPendingAdmissions"],
+      "decision": "A shared lease serializes retry batches; each ADMITTING row is durable, Matrix join is retried idempotently, and the participant row is committed only after Matrix confirms membership.",
       "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
       "status": "bounded"
     },
