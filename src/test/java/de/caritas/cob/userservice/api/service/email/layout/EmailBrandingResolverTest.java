@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.email.layout;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.HttpClientErrorException;
 
 /** Branding resolution and its fallbacks (ORISO-UserService#914). */
@@ -38,6 +40,32 @@ class EmailBrandingResolverTest {
     tenant.setName(name);
     tenant.setTheming(theming);
     return tenant;
+  }
+
+  @Test
+  void notificationBrandingRequiresTheExactTenantUrl() {
+    var resolved = tenant("Nord", null);
+    resolved.setSubdomain("nord");
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolved);
+    when(tenantTemplateSupplier.getTenantBaseUrl(resolved))
+        .thenReturn("https://nord.app.oriso.org");
+    var subject = resolver("");
+    ReflectionTestUtils.setField(subject, "multitenancyEnabled", true);
+
+    var branding = subject.resolveNotification(7L, "https://nord.app.oriso.org");
+
+    assertThat(branding.imprintUrl()).isEqualTo("https://nord.app.oriso.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://nord.app.oriso.org/datenschutz");
+    assertThatThrownBy(() -> subject.resolveNotification(7L, "https://other.app.oriso.org"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("does not match");
+  }
+
+  @Test
+  void notificationBrandingDoesNotUsePlatformWhenTenantIsUnavailable() {
+    assertThatThrownBy(() -> resolver("").resolveNotification(7L, "https://app.oriso.org"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tenant is unavailable");
   }
 
   // --- logo -----------------------------------------------------------------------------

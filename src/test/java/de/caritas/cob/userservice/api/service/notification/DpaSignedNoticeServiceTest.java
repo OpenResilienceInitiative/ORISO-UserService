@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertDoesNotThrow;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -174,17 +175,79 @@ class DpaSignedNoticeServiceTest {
             eq(TENANT_ID),
             eq("en"));
     // the account language wins
-    assertTrue(subject.getValue().contains("Data processing agreement signed"));
+    assertTrue(subject.getValue().contains("Contract documents signed"));
     // tenant, version, timestamp and signer as recorded
     assertTrue(body.getValue().contains("Träger Nord e.V."));
     assertTrue(body.getValue().contains("2026-07-01 12:00"));
-    assertTrue(body.getValue().contains("2026-08-14 09:15"));
+    // signedAt 09:15 UTC is German summer time 11:15; the version is date-formatted like the
+    // Admin's version label but never zone-shifted, so both show the same text for one version
+    assertTrue(body.getValue().contains("2026-08-14 11:15"));
     assertTrue(body.getValue().contains("Erika Mustermann"));
     assertTrue(body.getValue().contains("Geschäftsführerin"));
     // the Admin link is not lost by dropping the primary action — it lives inline in the prose
     assertTrue(body.getValue().contains("https://admin.example.org/admin"));
     // no raw sign token can leak into the mail — the signature carries none
     assertTrue(!body.getValue().contains("/dpa-sign/"));
+  }
+
+  /** Frank, 2026-09-23: "Vertragsunterlagen", never "AVV" or "Auftragsverarbeitungsvertrag". */
+  @Test
+  void onSignatureHint_saysVertragsunterlagen_inTheGermanSubjectAndBody() {
+    givenSignatures(forwardedSignature("kc-admin-1"));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+
+    service.onSignatureHint(TENANT_ID);
+
+    var subject = ArgumentCaptor.forClass(String.class);
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(inviteMailDispatchService)
+        .send(
+            eq("toni@example.org"),
+            subject.capture(),
+            body.capture(),
+            isNull(),
+            eq(TENANT_ID),
+            eq("de"));
+    assertThat(subject.getValue()).isEqualTo("Vertragsunterlagen unterzeichnet – Träger Nord e.V.");
+    assertThat(body.getValue())
+        .contains("die Vertragsunterlagen für Träger Nord e.V. wurden unterzeichnet.")
+        .doesNotContain("AVV")
+        .doesNotContain("Auftragsverarbeitungsvertrag");
+  }
+
+  /** The English default follows: "contract documents", not "data processing agreement". */
+  @Test
+  void defaultCopy_saysContractDocuments_inEnglish() {
+    assertThat(DpaSignedNoticeService.defaultSubject("en"))
+        .isEqualTo("Contract documents signed – {{tenantName}}");
+    assertThat(DpaSignedNoticeService.defaultBody("en"))
+        .contains("the contract documents for {{tenantName}} have been signed.")
+        .doesNotContainIgnoringCase("data processing agreement");
+  }
+
+  /** Measured on dev 2026-09-23: signed at 00:45 German time, mailed as "22.09.2026 22:45 Uhr". */
+  @Test
+  void onSignatureHint_rendersTheSummerSignatureTimeInGermanLocalTime() {
+    assertThat(germanNoticeBodyForSignedAt("2026-09-22T22:45:00"))
+        .contains("Unterzeichnet am: 23.09.2026 00:45 Uhr");
+  }
+
+  @Test
+  void onSignatureHint_rendersTheWinterSignatureTimeInGermanLocalTime() {
+    assertThat(germanNoticeBodyForSignedAt("2027-01-15T22:45:00"))
+        .contains("Unterzeichnet am: 15.01.2027 23:45 Uhr");
+  }
+
+  private String germanNoticeBodyForSignedAt(String utcSignedAt) {
+    givenSignatures(forwardedSignature("kc-admin-1").signedAt(utcSignedAt));
+    when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
+
+    service.onSignatureHint(TENANT_ID);
+
+    var body = ArgumentCaptor.forClass(String.class);
+    verify(inviteMailDispatchService)
+        .send(eq("toni@example.org"), any(), body.capture(), isNull(), eq(TENANT_ID), eq("de"));
+    return body.getValue();
   }
 
   @Test

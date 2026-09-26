@@ -47,6 +47,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
+import de.caritas.cob.userservice.api.service.email.NotificationRequestFacts;
 import de.caritas.cob.userservice.api.service.emailsupplier.AssignEnquiryEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.NewDirectEnquiryEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.NewEnquiryEmailSupplier;
@@ -63,6 +64,7 @@ import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.Team
 import de.caritas.cob.userservice.consultingtypeservice.generated.web.model.WelcomeMessageDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
+import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.Arrays;
 import java.util.Collections;
@@ -74,6 +76,7 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
@@ -346,6 +349,7 @@ class EmailNotificationFacadeTest {
       new ConsultantDisplayNameResolver();
 
   @Mock private MailService mailService;
+  @Mock private NotificationRequestFacts notificationRequestFacts;
 
   @Mock SessionService sessionService;
   @Mock ConsultantService consultantService;
@@ -363,6 +367,7 @@ class EmailNotificationFacadeTest {
   @BeforeEach
   void setup() throws SecurityException {
     when(identityClientConfig.getEmailDummySuffix()).thenReturn(FIELD_VALUE_EMAIL_DUMMY_SUFFIX);
+    when(notificationRequestFacts.forSession(any())).thenReturn(List.of());
     ReflectionTestUtils.setField(
         emailNotificationFacade, APPLICATION_BASE_URL_FIELD_NAME, APPLICATION_BASE_URL);
     ReflectionTestUtils.setField(
@@ -455,7 +460,8 @@ class EmailNotificationFacadeTest {
   void sendAssignEnquiryEmailNotification_Should_LogError_When_MailServiceHelperThrowsException() {
     doThrow(new RuntimeException("unexpected")).when(mailService).sendEmailNotification(any());
     when(consultantService.getConsultant(any())).thenReturn(Optional.of(CONSULTANT));
-    emailNotificationFacade.sendAssignEnquiryEmailNotification(CONSULTANT, USER_ID, NAME, null);
+    emailNotificationFacade.sendAssignEnquiryEmailNotification(
+        givenEnquirySession(), CONSULTANT, USER_ID, NAME, null);
     org.assertj.core.api.Assertions.assertThat(
             facadeLogCaptor.contains(Level.ERROR, "EmailNotificationFacade error:"))
         .isTrue();
@@ -604,18 +610,31 @@ class EmailNotificationFacadeTest {
   void sendNewDirectEnquiryEmailNotification_Should_SendEmail_When_MailsGenerated() {
     when(newDirectEnquiryEmailSupplier.generateEmails()).thenReturn(getMailDTOS());
 
-    emailNotificationFacade.sendNewDirectEnquiryEmailNotification(
-        CONSULTANT_ID, AGENCY_ID, "88045", null);
+    emailNotificationFacade.sendNewDirectEnquiryEmailNotification(SESSION, null);
 
     verify(mailService).sendEmailNotification(Mockito.any(MailsDTO.class));
+  }
+
+  @Test
+  void sendNewDirectEnquiryEmailNotification_ForwardsRequestFactsToTransport() {
+    when(newDirectEnquiryEmailSupplier.generateEmails()).thenReturn(getMailDTOS());
+    when(notificationRequestFacts.forSession(SESSION))
+        .thenReturn(List.of(new TemplateDataDTO().key("requestTopic").value("Housing")));
+
+    emailNotificationFacade.sendNewDirectEnquiryEmailNotification(SESSION, null);
+
+    var sent = ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(sent.capture());
+    assertThat(sent.getValue().getMails().getFirst().getTemplateData())
+        .extracting(TemplateDataDTO::getKey)
+        .contains("requestTopic");
   }
 
   @Test
   void sendNewDirectEnquiryEmailNotification_ShouldNot_SendEmail_When_MailListIsEmpty() {
     when(newDirectEnquiryEmailSupplier.generateEmails()).thenReturn(List.of());
 
-    emailNotificationFacade.sendNewDirectEnquiryEmailNotification(
-        CONSULTANT_ID, AGENCY_ID, "88045", null);
+    emailNotificationFacade.sendNewDirectEnquiryEmailNotification(SESSION, null);
 
     verify(mailService, times(0)).sendEmailNotification(Mockito.any(MailsDTO.class));
   }
@@ -625,8 +644,7 @@ class EmailNotificationFacadeTest {
     when(newDirectEnquiryEmailSupplier.generateEmails())
         .thenThrow(new EmailNotificationException(new Exception()));
 
-    emailNotificationFacade.sendNewDirectEnquiryEmailNotification(
-        CONSULTANT_ID, AGENCY_ID, "88045", null);
+    emailNotificationFacade.sendNewDirectEnquiryEmailNotification(SESSION, null);
 
     org.assertj.core.api.Assertions.assertThat(
             facadeLogCaptor.contains(

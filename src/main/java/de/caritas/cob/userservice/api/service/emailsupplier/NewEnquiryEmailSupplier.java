@@ -156,6 +156,12 @@ public class NewEnquiryEmailSupplier implements EmailSupplier {
     templateAttributes.add(new TemplateDataDTO().key("name").value(consultant.getFullName()));
     templateAttributes.add(new TemplateDataDTO().key("plz").value(postCode));
     templateAttributes.add(new TemplateDataDTO().key("beratungsstelle").value(agency));
+    if (consultant.getTenantId() != null) {
+      templateAttributes.add(
+          new TemplateDataDTO()
+              .key("recipientTenantId")
+              .value(consultant.getTenantId().toString()));
+    }
 
     if (!multiTenancyEnabled) {
       templateAttributes.add(new TemplateDataDTO().key("url").value(applicationBaseUrl));

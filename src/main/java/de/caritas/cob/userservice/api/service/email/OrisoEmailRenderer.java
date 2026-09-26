@@ -9,6 +9,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
@@ -48,22 +49,24 @@ public class OrisoEmailRenderer {
    * design system places the logo, and this is the markup that token expands to when a logo URL is
    * configured. When {@code logoUrl} is blank the token expands to nothing at all: an {@code <img
    * src="">} renders as a broken-image icon next to the platform name, so the text wordmark has to
-   * carry the header alone. The dialect has no conditional syntax — this constant is one of the two
-   * conditionals the mails need, and it stays in the renderer so the markup remains e-mail-client
-   * table markup reviewed together with the templates.
+   * carry the header alone. The platform name always stands in the next cell, so the logo is
+   * decorative ({@code alt=""}): a logo that fails to load must not repeat the name beside itself.
+   * The dialect has no conditional syntax — this constant is one of the conditionals the mails
+   * need, and it stays in the renderer so the markup remains e-mail-client table markup reviewed
+   * together with the templates.
    */
   private static final String LOGO_CELL =
       "<td width=\"36\" valign=\"middle\" style=\"width:36px;padding-right:12px;\">"
-          + "<img src=\"{{logoUrl}}\" width=\"36\" height=\"36\" alt=\"{{platformName}}\""
+          + "<img src=\"{{logoUrl}}\" width=\"36\" height=\"36\" alt=\"\""
           + " style=\"display:block;width:36px;height:36px;border:0;border-radius:8px;\"></td>";
 
   /**
    * The call-to-action button plus the visible copy-paste fallback line, for templates whose action
    * is supplied by the caller rather than fixed in the document (today: {@code
-   * einladung-freitext}). The second conditional, and the last one: a mail whose action URL is
-   * absent must not ship a button pointing nowhere, and the dialect cannot express that. Templates
-   * with a fixed action — {@code einladung-traeger}, {@code anmeldelink} — carry their own button
-   * markup and never see this token.
+   * einladung-freitext}). The second conditional: a mail whose action URL is absent must not ship a
+   * button pointing nowhere, and the dialect cannot express that. Templates with a fixed action —
+   * {@code einladung-traeger}, {@code anmeldelink} — carry their own button markup and never see
+   * this token.
    */
   private static final String CTA_BLOCK_HTML =
       "<tr><td class=\"sp btn\" align=\"left\" style=\"padding:20px 40px 0px 40px;\">"
@@ -77,11 +80,59 @@ public class OrisoEmailRenderer {
           + "<tr><td class=\"sp\" style=\"padding:16px 40px 0px 40px;"
           + "font-family:Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif;font-size:13px;"
           + "line-height:20px;color:#5c5555;word-break:break-word;\">{{fallbackHint}}<br>"
-          + "<a href=\"{{actionUrl}}\" style=\"color:{{linkColor}};text-decoration:underline;"
+          + "<a href=\"{{actionUrl}}\" style=\"color:{{primaryColor}};text-decoration:underline;"
           + "word-break:break-all;\">{{actionUrl}}</a></td></tr>";
 
   /** The plain-text half of {@link #CTA_BLOCK_HTML}. */
   private static final String CTA_BLOCK_TEXT = "{{actionLabel}}:\n{{actionUrl}}";
+
+  /**
+   * The closing fine print inside the card — divider plus the {@code {{assurance}}} line — for
+   * templates whose action is optional ({@code einladung-freitext}). It rides on the same condition
+   * as {@link #CTA_BLOCK_HTML}: the line tells the recipient to keep the link to themselves, and a
+   * mail without an action has no link to keep. The markup is the design system's {@code
+   * emailAssurance} molecule, byte for byte.
+   */
+  private static final String ASSURANCE_BLOCK_HTML =
+      "<tr><td class=\"sp\" style=\"padding:28px 40px 0px 40px;\">"
+          + "<table role=\"presentation\" width=\"100%\" cellpadding=\"0\" cellspacing=\"0\""
+          + " border=\"0\"><tr><td height=\"1\" bgcolor=\"#e0dada\""
+          + " style=\"height:1px;line-height:1px;font-size:0;\">&nbsp;</td></tr></table></td></tr>"
+          + "<tr><td class=\"sp\" style=\"padding:16px 40px 32px 40px;"
+          + "font-family:Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif;font-size:12px;"
+          + "line-height:18px;color:#5c5555;\">{{assurance}}</td></tr>";
+
+  /** The plain-text half of {@link #ASSURANCE_BLOCK_HTML}, divider included like the HTML. */
+  private static final String ASSURANCE_BLOCK_TEXT = "-".repeat(64) + "\n{{assurance}}";
+
+  /**
+   * The sender organisation's footer values plus the operator's name in the offered-by line. Each
+   * is entered in the Admin panel or not at all, and one nobody entered takes its whole line with
+   * it (see {@link #withoutBlankSenderLines}).
+   */
+  private static final String SENDER_KEYS = "orgName|orgAddress|contactLine|operatorName";
+
+  /** A footer element holding only text with a sender placeholder in it. */
+  private static final Pattern SENDER_ELEMENT =
+      Pattern.compile("<(div|td)(\\s[^>]*)?>([^<]*\\{\\{(?:" + SENDER_KEYS + ")}}[^<]*)</\\1>");
+
+  private static final Pattern SENDER_LINE =
+      Pattern.compile("(?m)^[^\\n]*\\{\\{(?:" + SENDER_KEYS + ")}}[^\\n]*(?:\\n|$)");
+
+  private static final Pattern SENDER_PLACEHOLDER =
+      Pattern.compile("\\{\\{(" + SENDER_KEYS + ")}}");
+
+  private static final String OPTIONAL_CONTACT_KEYS =
+      "consultantPhone|consultantHours|consultantEmail";
+
+  private static final Pattern CONTACT_ROW_HTML =
+      Pattern.compile(
+          "<tr><td class=\"row-label\"[^>]*>[^<]*</td><td class=\"row-value\"[^>]*>\\{\\{("
+              + OPTIONAL_CONTACT_KEYS
+              + ")}}</td></tr>");
+
+  private static final Pattern CONTACT_ROW_TEXT =
+      Pattern.compile("(?m)^[^\\n]*\\{\\{(" + OPTIONAL_CONTACT_KEYS + ")}}[^\\n]*(?:\\n|$)");
 
   private final Map<String, String> templateCache = new ConcurrentHashMap<>();
 
@@ -101,7 +152,11 @@ public class OrisoEmailRenderer {
   public enum Tone {
     DE_FORMAL("de-sie"),
     DE_INFORMAL("de-du"),
-    EN("en");
+    EN("en"),
+    FR("fr"),
+    RU("ru"),
+    TI("ti"),
+    TR("tr");
 
     private final String directory;
 
@@ -114,7 +169,20 @@ public class OrisoEmailRenderer {
     }
 
     public static Tone of(LanguageCode languageCode) {
-      return languageCode != null && "en".equalsIgnoreCase(languageCode.name()) ? EN : DE_FORMAL;
+      if (languageCode == null) {
+        throw new IllegalArgumentException("Recipient language is missing");
+      }
+      return switch (languageCode.name().toLowerCase(Locale.ROOT)) {
+        case "de" -> DE_FORMAL;
+        case "en" -> EN;
+        case "fr" -> FR;
+        case "ru" -> RU;
+        case "ti" -> TI;
+        case "tr" -> TR;
+        default ->
+            throw new IllegalArgumentException(
+                "Recipient language has no installed e-mail template: " + languageCode);
+      };
     }
   }
 
@@ -149,10 +217,28 @@ public class OrisoEmailRenderer {
     values = withOccasionOnUnsubscribeLink(templateId, values);
     String html =
         substitute(
-            withConditionalBlocks(read(templateId, tone, "html"), values, true), values, true);
+            withoutBlankSenderLines(
+                withoutBlankContactRows(
+                    templateId,
+                    withConditionalBlocks(read(templateId, tone, "html"), values, true),
+                    values,
+                    true),
+                values,
+                true),
+            values,
+            true);
     String text =
         substitute(
-            withConditionalBlocks(read(templateId, tone, "txt"), values, false), values, false);
+            withoutBlankSenderLines(
+                withoutBlankContactRows(
+                    templateId,
+                    withConditionalBlocks(read(templateId, tone, "txt"), values, false),
+                    values,
+                    false),
+                values,
+                false),
+            values,
+            false);
     String subject = substitute(subjectOf(templateId, tone), values, false);
     return new RenderedEmail(
         insertFragments(subject, fragments),
@@ -231,16 +317,78 @@ public class OrisoEmailRenderer {
   }
 
   /**
-   * Expands the two conditional tokens — {@code {{logoCell}}} and {@code {{ctaBlock}}} — to their
-   * markup, or to nothing when the value they depend on is absent. Runs before {@link #substitute},
-   * so the placeholders inside the expanded markup are filled — and escaped — like any other.
+   * Expands the conditional tokens — {@code {{logoCell}}}, {@code {{ctaBlock}}} and {@code
+   * {{assuranceBlock}}} — to their markup, or to nothing when the value they depend on is absent.
+   * Runs before {@link #substitute}, so the placeholders inside the expanded markup are filled —
+   * and escaped — like any other.
    */
   private String withConditionalBlocks(String template, Map<String, String> values, boolean html) {
+    boolean hasAction = isNotBlank(values.get("actionUrl"));
     return template
         .replace("{{logoCell}}", isNotBlank(values.get("logoUrl")) ? LOGO_CELL : "")
+        .replace("{{ctaBlock}}", hasAction ? (html ? CTA_BLOCK_HTML : CTA_BLOCK_TEXT) : "")
         .replace(
-            "{{ctaBlock}}",
-            isNotBlank(values.get("actionUrl")) ? (html ? CTA_BLOCK_HTML : CTA_BLOCK_TEXT) : "");
+            "{{assuranceBlock}}",
+            hasAction ? (html ? ASSURANCE_BLOCK_HTML : ASSURANCE_BLOCK_TEXT) : "");
+  }
+
+  private static String withoutBlankContactRows(
+      String templateId, String template, Map<String, String> values, boolean html) {
+    if (!"beraterin-kontakt".equals(templateId)) {
+      return template;
+    }
+    Matcher matcher = (html ? CONTACT_ROW_HTML : CONTACT_ROW_TEXT).matcher(template);
+    StringBuilder result = new StringBuilder();
+    boolean dropped = false;
+    while (matcher.find()) {
+      String value = values.get(matcher.group(1));
+      boolean omit = value != null && value.isBlank();
+      matcher.appendReplacement(result, omit ? "" : Matcher.quoteReplacement(matcher.group()));
+      dropped |= omit;
+    }
+    matcher.appendTail(result);
+    return dropped && !html ? result.toString().replaceAll("\\n{3,}", "\n\n") : result.toString();
+  }
+
+  /**
+   * Drops every footer line that names a sender value nobody entered (Frank, 2026-09-23): no
+   * address means no address line, no organisation means neither its name nor "… ist ein Angebot
+   * von …" — never an empty line and never a sample. A {@code div} goes entirely; a {@code td}
+   * keeps its cell, because the table around it needs it, and loses its sentence. A value that is
+   * missing from {@code values} altogether is left alone, so the placeholder stays visible as a bug
+   * report.
+   */
+  private static String withoutBlankSenderLines(
+      String template, Map<String, String> values, boolean html) {
+    Matcher matcher = (html ? SENDER_ELEMENT : SENDER_LINE).matcher(template);
+    StringBuilder out = new StringBuilder();
+    boolean dropped = false;
+    while (matcher.find()) {
+      if (!namesABlankSenderValue(matcher.group(), values)) {
+        matcher.appendReplacement(out, Matcher.quoteReplacement(matcher.group()));
+        continue;
+      }
+      dropped = true;
+      String replacement =
+          html && "td".equals(matcher.group(1))
+              ? "<td" + (matcher.group(2) == null ? "" : matcher.group(2)) + "></td>"
+              : "";
+      matcher.appendReplacement(out, Matcher.quoteReplacement(replacement));
+    }
+    matcher.appendTail(out);
+    String result = out.toString();
+    return dropped && !html ? result.replaceAll("\n{3,}", "\n\n") : result;
+  }
+
+  private static boolean namesABlankSenderValue(String line, Map<String, String> values) {
+    Matcher placeholder = SENDER_PLACEHOLDER.matcher(line);
+    while (placeholder.find()) {
+      String value = values.get(placeholder.group(1));
+      if (value != null && value.isBlank()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Inserts already-finished fragments verbatim; see {@link #render(String, Tone, Map, Map)}. */
@@ -265,16 +413,23 @@ public class OrisoEmailRenderer {
   private String substitute(String source, Map<String, String> values, boolean escape) {
     Matcher matcher = PLACEHOLDER.matcher(source);
     StringBuilder out = new StringBuilder();
+    int tail = 0;
     while (matcher.find()) {
+      out.append(source, tail, matcher.start());
+      tail = matcher.end();
       String replacement = values.get(matcher.group(1));
       if (replacement == null) {
-        matcher.appendReplacement(out, Matcher.quoteReplacement(matcher.group()));
+        out.append(matcher.group());
         continue;
       }
-      matcher.appendReplacement(
-          out, Matcher.quoteReplacement(escape ? escapeHtml(replacement) : replacement));
+      out.append(escape ? escapeHtml(replacement) : replacement);
+      // A value ending in an abbreviation ("… e.V.") at the end of a sentence: its dot is the
+      // full stop too, so the template's own one would print "e.V..".
+      if (replacement.endsWith(".") && source.startsWith(".", tail)) {
+        tail++;
+      }
     }
-    matcher.appendTail(out);
+    out.append(source, tail, source.length());
     return out.toString();
   }
 
