@@ -10,12 +10,14 @@ import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.UserAccountInputValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -56,6 +58,7 @@ class CreateAdminServiceTest {
   @Mock private AdminRepository adminRepository;
 
   @Mock private AuthenticatedUser authenticatedUser;
+  @Mock private AdminScope adminScope;
 
   private final EasyRandom easyRandom = new EasyRandom();
 
@@ -127,28 +130,25 @@ class CreateAdminServiceTest {
     // given a tenant admin of tenant 9 trying to create an agency admin for tenant 7
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(authenticatedUser.getTenantId()).thenReturn(9L);
+    doThrow(new ForbiddenException("out of reach"))
+        .when(adminScope)
+        .assertMay(AdminScope.Target.tenant(7L));
 
     CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(7);
 
     // when, then
-    ForbiddenException exception =
-        assertThrows(
-            ForbiddenException.class,
-            () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
+    assertThrows(
+        ForbiddenException.class, () -> createAdminService.createNewAgencyAdmin(createAdminDTO));
 
-    assertThat(exception.getMessage())
-        .isEqualTo("Admin accounts can only be created for the tenant of the calling admin");
     verifyNoInteractions(identityClient);
     verifyNoInteractions(adminRepository);
   }
 
   @Test
-  void createNewAgencyAdmin_Should_KeepOwnTenantId_WhenCallerIsTenantScoped() {
+  void createNewAgencyAdmin_Should_CheckTheNamedTenantFirst_And_KeepIt_When_ScopeAllows() {
     // given
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(authenticatedUser.getTenantId()).thenReturn(9L);
     givenKeycloakCreatesUser();
 
     CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(9);
@@ -158,24 +158,10 @@ class CreateAdminServiceTest {
 
     // then
     assertThat(admin.getTenantId()).isEqualTo(9L);
+    var order = inOrder(adminScope, identityClient);
+    order.verify(adminScope).assertMay(AdminScope.Target.tenant(9L));
+    order.verify(identityClient).createUser(any(), anyString(), anyString());
     verify(identityAccountRemover, never()).rollbackUser(anyString());
-  }
-
-  @Test
-  void createNewAgencyAdmin_Should_AllowForeignTenantId_WhenCallerIsPlatformAdmin() {
-    // given
-    ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
-    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
-    givenKeycloakCreatesUser();
-
-    CreateAdminDTO createAdminDTO = givenValidCreateAdminDTO(7);
-
-    // when
-    Admin admin = createAdminService.createNewAgencyAdmin(createAdminDTO);
-
-    // then
-    assertThat(admin.getTenantId()).isEqualTo(7L);
   }
 
   private CreateAdminDTO givenValidCreateAdminDTO(Integer tenantId) {

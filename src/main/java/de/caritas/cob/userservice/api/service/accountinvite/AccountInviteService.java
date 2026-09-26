@@ -1,44 +1,32 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
-import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
-import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
-import de.caritas.cob.userservice.api.model.IdReservationReleaseTask;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
-import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
-import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteAccessPolicy.InviteListScope;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteDelivery.Prepared;
+import de.caritas.cob.userservice.api.service.accountinvite.ReservationLedger.Held;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseType;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
-import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
-import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.security.SecureRandom;
 import java.time.LocalDateTime;
-import java.time.ZoneId;
-import java.util.Base64;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
+import java.util.function.Supplier;
 import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -46,14 +34,18 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.data.domain.Pageable;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.TransactionDefinition;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.transaction.support.TransactionTemplate;
-import org.springframework.web.client.HttpClientErrorException;
 
+/**
+ * The invite lifecycle: create, send, resend, revoke, expire, accept. Targets, reserved IDs and the
+ * queue live in {@link InviteTargetResolver}, {@link ReservationLedger} and {@link UnitQueue}.
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -61,38 +53,34 @@ public class AccountInviteService {
 
   private static final String ACTIVE_RECIPIENT_CONSTRAINT = "idx_account_invite_active_recipient";
 
-  private static final int TOKEN_BYTES = 32;
-  private static final long DEFAULT_EXPIRY_DAYS = 30L;
-  private static final SecureRandom RANDOM = new SecureRandom();
-  private static final List<AccountInviteStatus> ACTIVE_TENANT_INVITE_STATUSES =
-      List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
+  static final long DEFAULT_EXPIRY_DAYS = 30L;
 
   /**
-   * The invite states in which a recipient can still redeem the invite, and in which its address is
-   * therefore taken. Everything else in {@link AccountInviteStatus} is terminal and must leave the
-   * address free again: {@code ACCEPTED} is already covered by the identity probe (and must not be
-   * blocked here as well, or deleting the identity would leave the address permanently
-   * un-invitable), while {@code EXPIRED}, {@code REVOKED} and {@code SUPERSEDED} are exactly the
-   * cases in which an admin needs to invite the same person once more.
+   * An address is taken while its invite can still be redeemed. ACCEPTED is covered by the identity
+   * probe; blocking it here too would make a deleted identity's address un-invitable.
    */
   private static final List<AccountInviteStatus> ADDRESS_HOLDING_INVITE_STATUSES =
+      List.of(
+          AccountInviteStatus.WAITING_FOR_UNIT,
+          AccountInviteStatus.DRAFT,
+          AccountInviteStatus.EMAIL_SENT);
+
+  private static final List<AccountInviteStatus> EXPIRABLE_STATUSES =
       List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT);
+
+  private static final int EXPIRY_SWEEP_BATCH = 100;
 
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull InviteEmailTemplateRepository templateRepository;
-  private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
   private final @NonNull AuthenticatedUser authenticatedUser;
-  private final @NonNull TenantService tenantService;
-  private final @NonNull TenantIdAllocationClient tenantIdAllocationClient;
-  private final @NonNull AgencyIdAllocationClient agencyIdAllocationClient;
-  private final @NonNull InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
-  private final @NonNull InviteMailDispatchService inviteMailDispatchService;
-  private final @NonNull InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
   private final @NonNull IdentityEmailOwnerLookup identityEmailOwnerLookup;
-  private final @NonNull IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
-  private final @NonNull IdReservationReleaseProcessor reservationReleaseProcessor;
   private final @NonNull PlatformTransactionManager transactionManager;
   private final @NonNull AccountInviteAccessPolicy accessPolicy;
+  private final @NonNull AgencyFacts agencyFacts;
+  private final @NonNull InviteTargetResolver targets;
+  private final @NonNull ReservationLedger ledger;
+  private final @NonNull UnitQueue unitQueue;
+  private final @NonNull InviteDelivery delivery;
 
   @Transactional
   public AccountInvite createInvite(CreateAccountInviteCommand requestedCommand) {
@@ -102,80 +90,36 @@ public class AccountInviteService {
     if (requestedCommand.targetRole() == null) {
       throw new BadRequestException("targetRole is required");
     }
+    Supplier<Optional<AgencyFacts.Agency>> agency = oneLookupOf(requestedCommand);
     // Cross-Träger guard: the target tenant, agency and role come from the request body.
     CreateAccountInviteCommand command = accessPolicy.authorizeCreate(requestedCommand);
     if (isBlank(command.recipientEmail())) {
       throw new BadRequestException("recipientEmail is required");
     }
-    validateAllocationModes(command);
+    InviteTarget target = targets.resolve(command, agency);
     verifyRecipientEmailAvailable(command.recipientEmail());
-    if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN
-        && command.tenantId() != null
-        && isTenantIdTaken(command.tenantId())) {
-      // 409 — the admin frontend maps CONFLICT to its dedicated "tenant id taken" message.
-      throw new ConflictException("tenantId " + command.tenantId() + " is already taken");
+    TopicPermission topicPermission =
+        TopicPermissionPolicy.decide(
+            command.targetRole(),
+            agencyForTopics(command, target, agency),
+            target.newAgency(),
+            target.departmentId(),
+            command.topicPermission());
+    LocalDateTime now = LocalDateTime.now();
+    AccountInvite invite = newInvite(command, target, topicPermission, now);
+    if (target.waitsFor() != null) {
+      return save(unitQueue.enqueue(invite, target, command.expiresInDays()));
     }
-
-    // TEN-INV-U3 (#889): tenant-admin invites hold an authoritative TenantService reservation;
-    // agency IDs are reserved in AgencyService's own ID space (U2 decision, AS#214). The green
-    // UI state alone grants nothing — the reservation plus the re-validation below decide.
-    TenantIdReservation tenantReservation = null;
-    Long reservedAgencyId = null;
-    if (command.targetRole() == AccountInviteTargetRole.TENANT_ADMIN) {
-      tenantReservation = reserveTenantIdOrDegrade(command);
-    }
+    Held held = ledger.reserve(target);
     try {
-      if (command.agencyIdAllocationMode() != null) {
-        // Long.valueOf: the reservation record carries a primitive long — a bare ternary would
-        // unbox command.tenantId() and NPE on invites without a tenant ID.
-        Long tenantIdForAgency =
-            tenantReservation != null
-                ? Long.valueOf(tenantReservation.tenantId())
-                : command.tenantId();
-        reservedAgencyId = agencyIdAllocationClient.reserve(command.agencyId(), tenantIdForAgency);
-      }
-      revalidateReservations(tenantReservation, reservedAgencyId);
-
-      LocalDateTime now = LocalDateTime.now();
-      AccountInvite invite =
-          AccountInvite.builder()
-              .targetRole(command.targetRole())
-              .tenantId(
-                  tenantReservation != null
-                      ? Long.valueOf(tenantReservation.tenantId())
-                      : command.tenantId())
-              .tenantIdReservationToken(
-                  tenantReservation != null ? tenantReservation.token() : null)
-              .recipientEmail(command.recipientEmail().trim())
-              .activeRecipientKey(normalizeEmail(command.recipientEmail()))
-              .firstName(trimToNull(command.firstName()))
-              .lastName(trimToNull(command.lastName()))
-              .agencyId(reservedAgencyId != null ? reservedAgencyId : command.agencyId())
-              .departmentId(command.departmentId())
-              .expiresAt(resolveExpiry(now, command.expiresInDays()))
-              .status(AccountInviteStatus.DRAFT)
-              .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
-              .emailVerificationStatus(EmailVerificationStatus.PENDING)
-              .twoFactorStatus(defaultTwoFactorStatus(command.targetRole()))
-              .createdByUserId(authenticatedUser.getUserId())
-              .createdByUsername(authenticatedUser.getUsername())
-              .createDate(now)
-              .updateDate(now)
-              .build();
-      AccountInvite saved = accountInviteRepository.save(invite);
-      accountInviteRepository.flush();
-      return saved;
+      invite.setTenantId(held.tenantId());
+      invite.setTenantIdReservationToken(held.tenantToken());
+      invite.setAgencyId(held.agencyId());
+      invite.setExpiresAt(resolveExpiry(now, command.expiresInDays()));
+      invite.setStatus(AccountInviteStatus.DRAFT);
+      return save(invite);
     } catch (RuntimeException exception) {
-      // Compensation: a failed creation must not leave orphaned reservations behind.
-      if (reservedAgencyId != null) {
-        agencyIdAllocationClient.release(reservedAgencyId);
-      }
-      if (tenantReservation != null) {
-        tenantIdAllocationClient.release(tenantReservation.tenantId());
-      }
-      if (isActiveRecipientConflict(exception)) {
-        throw emailNotAvailable(exception);
-      }
+      ledger.undo(held);
       throw exception;
     }
   }
@@ -185,49 +129,145 @@ public class AccountInviteService {
    * compensated; ambiguous transport failures retain the claim so a retry cannot duplicate mail.
    */
   public InviteSendResult createAndSendInvite(CreateAccountInviteCommand command, Long templateId) {
-    DirectInviteDispatch dispatch;
-    AccountInvite[] claimedInvite = new AccountInvite[1];
+    Prepared prepared;
     try {
-      dispatch =
+      prepared =
           requiresNewTransaction()
               .execute(
                   transaction -> {
                     AccountInvite invite = createInvite(command);
-                    claimedInvite[0] = invite;
                     InviteEmailTemplate template = findTemplate(templateId);
+                    if (invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
+                      // Stored, not sent: the template goes out with the release.
+                      invite.setQueuedTemplateId(template.getId());
+                      return new Prepared(
+                          accountInviteRepository.saveAndFlush(invite),
+                          null,
+                          null,
+                          null,
+                          null,
+                          null,
+                          null);
+                    }
                     LocalDateTime now = LocalDateTime.now();
-                    String rawToken = generateToken();
-                    String acceptUrl =
-                        inviteAcceptUrlBuilder.buildAcceptUrl(invite.getTargetRole(), rawToken);
-                    String subject = render(template.getSubject(), invite, acceptUrl);
-                    String body = renderBody(template.getBody(), invite, acceptUrl);
-
-                    invite.setTokenHash(hash(rawToken));
+                    Prepared mail = delivery.prepare(invite, template, now);
+                    invite.setTokenHash(mail.tokenHash());
                     if (invite.getExpiresAt() == null || invite.getExpiresAt().isBefore(now)) {
                       invite.setExpiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS));
                     }
                     invite.setStatus(AccountInviteStatus.EMAIL_SENT);
                     invite.setUpdateDate(now);
-                    invite = accountInviteRepository.saveAndFlush(invite);
-                    claimedInvite[0] = invite;
-                    return new DirectInviteDispatch(
-                        invite, template, rawToken, acceptUrl, subject, body, now);
+                    return mail.withInvite(accountInviteRepository.saveAndFlush(invite));
                   });
     } catch (RuntimeException claimFailure) {
-      if (claimedInvite[0] != null) {
-        releaseDirectInviteReservations(claimedInvite[0], command);
-      }
+      // The rollback already gave the reserved IDs back (ReservationLedger#reserve).
       if (isActiveRecipientConflict(claimFailure)) {
         throw emailNotAvailable(claimFailure);
       }
       throw claimFailure;
     }
-
-    return deliverPreparedInvite(
-        dispatch,
-        dispatch.invite().getId(),
+    if (prepared.template() == null) {
+      return new InviteSendResult(prepared.invite(), null, null, null);
+    }
+    return delivery.deliver(
+        prepared,
+        prepared.invite().getId(),
         false,
-        sendFailure -> releaseDirectInviteClaim(dispatch.invite(), command, sendFailure));
+        sendFailure -> discardUnsentInvite(prepared.invite(), sendFailure));
+  }
+
+  /** At most one AgencyService call per request, and only when a rule needs the agency. */
+  private Supplier<Optional<AgencyFacts.Agency>> oneLookupOf(CreateAccountInviteCommand command) {
+    if (command.agencyId() == null
+        || IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
+      return Optional::empty;
+    }
+    Optional<AgencyFacts.Agency>[] cached = new Optional[1];
+    return () -> {
+      if (cached[0] == null) {
+        cached[0] = agencyFacts.find(command.agencyId());
+      }
+      return cached[0];
+    };
+  }
+
+  private static AgencyFacts.Agency agencyForTopics(
+      CreateAccountInviteCommand command,
+      InviteTarget target,
+      Supplier<Optional<AgencyFacts.Agency>> agency) {
+    if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR || target.newAgency()) {
+      return null;
+    }
+    return agency.get().orElse(null);
+  }
+
+  private AccountInvite newInvite(
+      CreateAccountInviteCommand command,
+      InviteTarget target,
+      TopicPermission topicPermission,
+      LocalDateTime now) {
+    return AccountInvite.builder()
+        .targetRole(command.targetRole())
+        .tenantId(target.tenantId())
+        .recipientEmail(command.recipientEmail().trim())
+        .activeRecipientKey(normalizeEmail(command.recipientEmail()))
+        .firstName(trimToNull(command.firstName()))
+        .lastName(trimToNull(command.lastName()))
+        .agencyId(target.agencyId())
+        .departmentId(target.departmentId())
+        .tenantIdAllocationMode(command.tenantIdAllocationMode())
+        .agencyIdAllocationMode(command.agencyIdAllocationMode())
+        .alsoCounsellor(alsoCounsellorOf(command))
+        .topicPermission(topicPermission)
+        .status(AccountInviteStatus.DRAFT)
+        .provisioningStatus(AccountInviteProvisioningStatus.PENDING)
+        .emailVerificationStatus(EmailVerificationStatus.PENDING)
+        .twoFactorStatus(defaultTwoFactorStatus(command.targetRole()))
+        .createdByUserId(authenticatedUser.getUserId())
+        .createdByUsername(authenticatedUser.getUsername())
+        .createDate(now)
+        .updateDate(now)
+        .build();
+  }
+
+  private AccountInvite save(AccountInvite invite) {
+    try {
+      AccountInvite saved = accountInviteRepository.save(invite);
+      accountInviteRepository.flush();
+      return saved;
+    } catch (RuntimeException exception) {
+      if (isActiveRecipientConflict(exception)) {
+        throw emailNotAvailable(exception);
+      }
+      throw exception;
+    }
+  }
+
+  private static Boolean alsoCounsellorOf(CreateAccountInviteCommand command) {
+    if (command.targetRole() != AccountInviteTargetRole.AGENCY_ADMIN) {
+      return null;
+    }
+    return !Boolean.FALSE.equals(command.alsoCounsellor());
+  }
+
+  /** SMTP confirmed nothing went out: drop the invite and give back the IDs only it needed. */
+  private void discardUnsentInvite(AccountInvite invite, SmtpSendException sendFailure) {
+    try {
+      requiresNewTransaction()
+          .executeWithoutResult(
+              transaction -> {
+                AccountInvite stored = findInvite(invite.getId());
+                ledger.releaseUnneeded(stored, LocalDateTime.now());
+                accountInviteRepository.deleteById(stored.getId());
+                accountInviteRepository.flush();
+              });
+    } catch (RuntimeException compensationFailure) {
+      log.error(
+          "Direct invite {} failed before dispatch and its claim cleanup could not be recorded",
+          invite.getId(),
+          compensationFailure);
+      sendFailure.addSuppressed(compensationFailure);
+    }
   }
 
   private TransactionTemplate requiresNewTransaction() {
@@ -236,131 +276,10 @@ public class AccountInviteService {
     return transaction;
   }
 
-  private void releaseDirectInviteClaim(
-      AccountInvite invite, CreateAccountInviteCommand command, RuntimeException sendFailure) {
-    List<Long> releaseTaskIds;
-    try {
-      releaseTaskIds =
-          requiresNewTransaction()
-              .execute(
-                  transaction -> {
-                    List<Long> taskIds = new java.util.ArrayList<>();
-                    LocalDateTime now = LocalDateTime.now();
-                    if (invite.getTenantIdReservationToken() != null
-                        && invite.getTenantId() != null) {
-                      taskIds.add(
-                          reservationReleaseTaskRepository
-                              .saveAndFlush(
-                                  IdReservationReleaseTask.builder()
-                                      .allocationType(IdReservationReleaseType.TENANT)
-                                      .reservedId(invite.getTenantId())
-                                      .tenantContextId(invite.getTenantId())
-                                      .createDate(now)
-                                      .build())
-                              .getId());
-                    }
-                    if (command.agencyIdAllocationMode() != null && invite.getAgencyId() != null) {
-                      taskIds.add(
-                          reservationReleaseTaskRepository
-                              .saveAndFlush(
-                                  IdReservationReleaseTask.builder()
-                                      .allocationType(IdReservationReleaseType.AGENCY)
-                                      .reservedId(invite.getAgencyId())
-                                      .tenantContextId(invite.getTenantId())
-                                      .createDate(now)
-                                      .build())
-                              .getId());
-                    }
-                    accountInviteRepository.deleteById(invite.getId());
-                    accountInviteRepository.flush();
-                    return List.copyOf(taskIds);
-                  });
-    } catch (RuntimeException compensationFailure) {
-      log.error(
-          "Direct invite {} failed before dispatch and its claim cleanup could not be recorded",
-          invite.getId(),
-          compensationFailure);
-      sendFailure.addSuppressed(compensationFailure);
-      return;
-    }
-
-    for (Long taskId : releaseTaskIds) {
-      try {
-        reservationReleaseProcessor.process(taskId);
-      } catch (RuntimeException releaseFailure) {
-        // The durable task remains for the scheduler. Keep the SMTP exception primary.
-        logReservationReleaseFailure("scheduled", releaseFailure);
-      }
-    }
-  }
-
   /**
-   * External ID reservations do not participate in the database transaction. A failed direct send
-   * must release the holds that {@link #createInvite(CreateAccountInviteCommand)} acquired before
-   * the transaction rolls its database row back. A failed compensation is logged but never masks
-   * the original request failure.
-   */
-  private void releaseDirectInviteReservations(
-      AccountInvite invite, CreateAccountInviteCommand command) {
-    if (invite.getTenantIdReservationToken() != null && invite.getTenantId() != null) {
-      try {
-        if (!tenantIdAllocationClient.release(invite.getTenantId())) {
-          logReservationReleaseFailure("tenant", new IllegalStateException("release pending"));
-        }
-      } catch (RuntimeException releaseException) {
-        logReservationReleaseFailure("tenant", releaseException);
-      }
-    }
-    if (command.agencyIdAllocationMode() != null && invite.getAgencyId() != null) {
-      try {
-        if (!agencyIdAllocationClient.release(invite.getAgencyId())) {
-          logReservationReleaseFailure("agency", new IllegalStateException("release pending"));
-        }
-      } catch (RuntimeException releaseException) {
-        logReservationReleaseFailure("agency", releaseException);
-      }
-    }
-  }
-
-  private void logReservationReleaseFailure(String allocationType, RuntimeException exception) {
-    log.warn(
-        "Could not release direct-invite {} ID reservation after failed send ({})",
-        allocationType,
-        exception.getClass().getSimpleName());
-  }
-
-  /**
-   * P3: refuses an invite whose recipient address already belongs to a registered identity.
-   *
-   * <p>Before this guard the collision only surfaced at redemption time — the invitee filled in the
-   * whole registration, signed and forwarded the contract and only then hit the dead-end
-   * "invitation already used" page, with all that work lost. The check therefore belongs at the
-   * front of the funnel, on the admin's create call.
-   *
-   * <p>Role-agnostic on purpose: counsellor and tenant-admin invites both run through {@code
-   * createInvite}, and so do both creation paths ("send directly" posts a templateId, "add to list"
-   * does not). One guard covers all four combinations.
-   *
-   * <p>No separate availability endpoint is exposed: the check rides on the existing, admin-only
-   * create call, so it never becomes an unauthenticated user-enumeration oracle.
-   *
-   * <p>The address is normalized the same way {@link CounsellorInviteProvisioningService}
-   * normalizes it when it later creates the identity, so the guard tests exactly the value that
-   * would collide.
-   *
-   * <p>Two sources have to be consulted, because neither sees the other's half of the funnel:
-   *
-   * <ol>
-   *   <li>the identity provider, which owns every address that already has an account, and
-   *   <li>the invite table, which owns every address that is merely <em>promised</em> to somebody.
-   *       An identity is created only at accept time, so an invite sitting in {@code DRAFT} or
-   *       {@code EMAIL_SENT} is invisible to the identity probe — which is how a second invite for
-   *       the same address used to be created without complaint. To the admin, and to the owner's
-   *       wording of the rule, such an address is just as "already there" as a registered one.
-   * </ol>
-   *
-   * <p>The count provides the user-friendly conflict. New active rows additionally carry a unique
-   * normalized claim so concurrent requests on different replicas cannot both pass this read.
+   * The address must be free in both halves of the funnel: the identity provider (accounts) and the
+   * invite table (promised addresses). Checked on the admin-only create call, so it is no
+   * enumeration oracle; the unique active-recipient key closes the race between replicas.
    */
   private void verifyRecipientEmailAvailable(String recipientEmail) {
     String normalized = normalizeEmail(recipientEmail);
@@ -368,17 +287,24 @@ public class AccountInviteService {
       throw emailNotAvailable(null);
     }
     LocalDateTime now = LocalDateTime.now();
-    accountInviteRepository.expireElapsedRecipientClaims(
-        normalized, ADDRESS_HOLDING_INVITE_STATUSES, now);
+    expireElapsedRecipientClaims(normalized, now);
     if (accountInviteRepository.countNonTerminalInvitesForRecipientEmail(
             normalized, ADDRESS_HOLDING_INVITE_STATUSES, now)
         > 0) {
-      // 409 + X-Reason: EMAIL_NOT_AVAILABLE — distinguishable from the bare 400 of a malformed
-      // address and from the reason-less 409 of a taken tenant ID. Both sources answer with the
-      // SAME reason on purpose: the admin renders one inline field error for it, and a second
-      // code would degrade to a generic toast.
+      // Same reason as the identity hit: the Admin renders one inline field error for both.
       throw emailNotAvailable(null);
     }
+  }
+
+  /** Each elapsed claim gives its reserved number back, like the expiry sweep. */
+  private void expireElapsedRecipientClaims(String normalizedEmail, LocalDateTime now) {
+    for (AccountInvite elapsed :
+        accountInviteRepository.findElapsedRecipientClaims(
+            normalizedEmail, ADDRESS_HOLDING_INVITE_STATUSES, now)) {
+      expireAndReleaseNumbers(elapsed, now);
+    }
+    accountInviteRepository.expireElapsedRecipientClaims(
+        normalizedEmail, ADDRESS_HOLDING_INVITE_STATUSES, now);
   }
 
   private void verifyRecipientEmailAvailableExcluding(
@@ -387,90 +313,11 @@ public class AccountInviteService {
     if (identityEmailOwnerLookup.findByEmail(normalized).isPresent()) {
       throw emailNotAvailable(null);
     }
-    accountInviteRepository.expireElapsedRecipientClaims(
-        normalized, ADDRESS_HOLDING_INVITE_STATUSES, now);
+    expireElapsedRecipientClaims(normalized, now);
     if (accountInviteRepository.countNonTerminalInvitesForRecipientEmailExcludingId(
             normalized, excludedInviteId, ADDRESS_HOLDING_INVITE_STATUSES, now)
         > 0) {
       throw emailNotAvailable(null);
-    }
-  }
-
-  /**
-   * Reserves the tenant ID with graceful degradation for the deployment-order gap (ORISO-Admin#569
-   * hardening, U3 verify finding): a TenantService that does not yet expose the TEN-INV-U1
-   * allocation endpoints answers 404. Legacy requests (no explicit allocation mode) then fall back
-   * to the pre-U3 duplicate checks — already performed by {@code isTenantIdTaken} — instead of
-   * failing with an unmapped 500. Requests that explicitly demand AUTO/MANUAL allocation cannot be
-   * honored without the authoritative ledger and fail loudly.
-   */
-  private TenantIdReservation reserveTenantIdOrDegrade(CreateAccountInviteCommand command) {
-    try {
-      return tenantIdAllocationClient.reserve(command.tenantId());
-    } catch (HttpClientErrorException.NotFound exception) {
-      if (command.tenantIdAllocationMode() == null) {
-        log.warn(
-            "TenantService does not expose the tenant-ID allocation endpoints yet (deploy"
-                + " TEN-INV-U1 before U3) — creating a legacy invite without an authoritative"
-                + " reservation");
-        return null;
-      }
-      throw new InternalServerErrorException(
-          "Tenant-ID allocation was requested but TenantService does not expose the allocation"
-              + " endpoints (deployment-order gap: deploy TEN-INV-U1 before U3)");
-    }
-  }
-
-  private static void validateAllocationModes(CreateAccountInviteCommand command) {
-    if (command.tenantIdAllocationMode() == IdAllocationMode.MANUAL && command.tenantId() == null) {
-      throw new BadRequestException("tenantId is required in MANUAL tenant allocation mode");
-    }
-    if (command.tenantIdAllocationMode() == IdAllocationMode.AUTO && command.tenantId() != null) {
-      throw new BadRequestException("tenantId must be omitted in AUTO tenant allocation mode");
-    }
-    if (command.tenantIdAllocationMode() != null
-        && command.targetRole() != AccountInviteTargetRole.TENANT_ADMIN) {
-      throw new BadRequestException(
-          "tenantIdAllocationMode is only supported for TENANT_ADMIN invites");
-    }
-    if (command.agencyIdAllocationMode() == IdAllocationMode.MANUAL && command.agencyId() == null) {
-      throw new BadRequestException("agencyId is required in MANUAL agency allocation mode");
-    }
-    if (command.agencyIdAllocationMode() == IdAllocationMode.AUTO && command.agencyId() != null) {
-      throw new BadRequestException("agencyId must be omitted in AUTO agency allocation mode");
-    }
-  }
-
-  /**
-   * Re-validates the reservations immediately before saving: the owning services must still report
-   * RESERVED for the held IDs. The server-side check is authoritative — a stale UI state or a lost
-   * reservation never produces a duplicate ID.
-   */
-  private void revalidateReservations(
-      TenantIdReservation tenantReservation, Long reservedAgencyId) {
-    if (tenantReservation != null
-        && reservationReleaseTaskRepository.existsByAllocationTypeAndReservedId(
-            IdReservationReleaseType.TENANT, tenantReservation.tenantId())) {
-      throw new ConflictException(
-          "tenantId " + tenantReservation.tenantId() + " still has a pending reservation cleanup");
-    }
-    if (reservedAgencyId != null
-        && reservationReleaseTaskRepository.existsByAllocationTypeAndReservedId(
-            IdReservationReleaseType.AGENCY, reservedAgencyId)) {
-      throw new ConflictException(
-          "agencyId " + reservedAgencyId + " still has a pending reservation cleanup");
-    }
-    if (tenantReservation != null
-        && tenantIdAllocationClient.getAvailability(tenantReservation.tenantId())
-            != IdAllocationStatus.RESERVED) {
-      throw new ConflictException(
-          "tenantId " + tenantReservation.tenantId() + " is no longer reserved for this invite");
-    }
-    if (reservedAgencyId != null
-        && agencyIdAllocationClient.getAvailability(reservedAgencyId)
-            != IdAllocationStatus.RESERVED) {
-      throw new ConflictException(
-          "agencyId " + reservedAgencyId + " is no longer reserved for this invite");
     }
   }
 
@@ -482,12 +329,28 @@ public class AccountInviteService {
       String query,
       int page,
       int size) {
-    String search = normalizeSearch(query);
     PageRequest pageRequest = PageRequest.of(Math.max(page, 0), clampSize(size));
-    // Cross-Träger guard: without it an absent tenant_id listed the invites of every Träger.
+    return findInScope(targetRole, status, tenantId, query, pageRequest);
+  }
+
+  /** Every invite in the caller's scope that matches, unpaged, newest first; for the tiles. */
+  @Transactional(readOnly = true)
+  public List<AccountInvite> listAllInvites(
+      AccountInviteTargetRole targetRole, Long tenantId, String query) {
+    return findInScope(targetRole, null, tenantId, query, Pageable.unpaged()).getContent();
+  }
+
+  private Page<AccountInvite> findInScope(
+      AccountInviteTargetRole targetRole,
+      AccountInviteStatus status,
+      Long tenantId,
+      String query,
+      Pageable pageable) {
+    String search = normalizeSearch(query);
+    // Cross-Träger guard: an absent tenant_id would otherwise list the invites of every Träger.
     InviteListScope scope = accessPolicy.scopeForListing(tenantId, targetRole);
     if (scope.empty()) {
-      return Page.empty(pageRequest);
+      return pageable.isPaged() ? Page.empty(pageable) : Page.empty();
     }
     if (scope.restrictedToAgencies()) {
       return accountInviteRepository.findAllByFiltersWithinAgencies(
@@ -497,15 +360,10 @@ public class AccountInviteService {
           search,
           parseNumericSearch(search),
           scope.agencyIds(),
-          pageRequest);
+          pageable);
     }
     return accountInviteRepository.findAllByFilters(
-        scope.tenantId(),
-        scope.targetRole(),
-        status,
-        search,
-        parseNumericSearch(search),
-        pageRequest);
+        scope.tenantId(), scope.targetRole(), status, search, parseNumericSearch(search), pageable);
   }
 
   /**
@@ -532,19 +390,52 @@ public class AccountInviteService {
     }
   }
 
-  @Transactional
+  /**
+   * A waiting invite can be sent by hand only once its unit exists (409 before). An SMTP failure
+   * leaves at most a FAILED audit row behind.
+   */
+  @Transactional(noRollbackFor = SmtpSendException.class)
   public InviteSendResult sendInvite(SendInviteCommand command) {
     AccountInvite invite = findAuthorizedInvite(command.inviteId());
     InviteEmailTemplate template = findTemplate(command.templateId());
-    // The invite was committed by an earlier createInvite transaction, so its id is a safe
-    // audit anchor for a FAILED delivery row written in an independent transaction.
-    return sendInvite(invite, template, invite.getId());
+    if (invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
+      return unitQueue.sendByHand(invite, template);
+    }
+    if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
+      throw new BadRequestException("Accepted invites cannot be sent");
+    }
+    if (invite.getStatus() == AccountInviteStatus.REVOKED
+        || invite.getStatus() == AccountInviteStatus.SUPERSEDED) {
+      throw new BadRequestException("Inactive invites cannot be sent");
+    }
+    LocalDateTime now = LocalDateTime.now();
+    Prepared prepared = delivery.prepare(invite, template, now);
+    InviteEmailDelivery sent =
+        delivery.sendNow(
+            prepared,
+            invite.getId(),
+            () -> {
+              invite.setTokenHash(prepared.tokenHash());
+              if (invite.getExpiresAt() == null || invite.getExpiresAt().isBefore(now)) {
+                invite.setExpiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS));
+              }
+              invite.setStatus(AccountInviteStatus.EMAIL_SENT);
+              invite.setUpdateDate(now);
+              accountInviteRepository.save(invite);
+            });
+    return new InviteSendResult(invite, sent, prepared.rawToken(), prepared.acceptUrl());
   }
 
   public InviteSendResult resendInvite(SendInviteCommand command) {
+    AccountInvite current =
+        requiresNewTransaction().execute(transaction -> findAuthorizedInvite(command.inviteId()));
+    if (current != null && current.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT) {
+      // A waiting invite was never sent: "resend" is its first send (release), same rules.
+      return sendInvite(command);
+    }
     ResendDispatch resend = prepareResend(command);
-    return deliverPreparedInvite(
-        resend.dispatch(),
+    return delivery.deliver(
+        resend.prepared(),
         resend.oldInviteId(),
         true,
         sendFailure -> restoreResendAfterConfirmedFailure(resend, sendFailure));
@@ -569,11 +460,7 @@ public class AccountInviteService {
               // durable handover.
               AccountInvite oldInvite = findInvite(command.inviteId());
               InviteEmailTemplate template = findTemplate(command.templateId());
-              String rawToken = generateToken();
-              String acceptUrl =
-                  inviteAcceptUrlBuilder.buildAcceptUrl(oldInvite.getTargetRole(), rawToken);
-              String subject = render(template.getSubject(), oldInvite, acceptUrl);
-              String body = renderBody(template.getBody(), oldInvite, acceptUrl);
+              Prepared prepared = delivery.prepare(oldInvite, template, now);
 
               ResendState oldState = ResendState.from(oldInvite);
               AccountInvite replacement =
@@ -587,7 +474,12 @@ public class AccountInviteService {
                       .lastName(oldInvite.getLastName())
                       .agencyId(oldInvite.getAgencyId())
                       .departmentId(oldInvite.getDepartmentId())
-                      .tokenHash(hash(rawToken))
+                      .tenantIdAllocationMode(oldInvite.getTenantIdAllocationMode())
+                      .agencyIdAllocationMode(oldInvite.getAgencyIdAllocationMode())
+                      .alsoCounsellor(oldInvite.getAlsoCounsellor())
+                      .topicPermission(oldInvite.getTopicPermission())
+                      .unitCreatedAt(oldInvite.getUnitCreatedAt())
+                      .tokenHash(prepared.tokenHash())
                       .expiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS))
                       .status(AccountInviteStatus.EMAIL_SENT)
                       .emailVerificationStatus(oldInvite.getEmailVerificationStatus())
@@ -616,10 +508,7 @@ public class AccountInviteService {
               accountInviteRepository.saveAndFlush(oldInvite);
 
               return new ResendDispatch(
-                  new DirectInviteDispatch(
-                      replacement, template, rawToken, acceptUrl, subject, body, now),
-                  oldInvite.getId(),
-                  oldState);
+                  prepared.withInvite(replacement), oldInvite.getId(), oldState);
             });
   }
 
@@ -629,7 +518,7 @@ public class AccountInviteService {
       requiresNewTransaction()
           .executeWithoutResult(
               transaction -> {
-                accountInviteRepository.deleteById(resend.dispatch().invite().getId());
+                accountInviteRepository.deleteById(resend.prepared().invite().getId());
                 accountInviteRepository.flush();
                 AccountInvite oldInvite = findInvite(resend.oldInviteId());
                 resend.oldState().restore(oldInvite);
@@ -638,73 +527,31 @@ public class AccountInviteService {
     } catch (RuntimeException compensationFailure) {
       log.error(
           "Resend {} failed before dispatch and its committed claim handover could not be restored",
-          resend.dispatch().invite().getId(),
+          resend.prepared().invite().getId(),
           compensationFailure);
       sendFailure.addSuppressed(compensationFailure);
     }
   }
 
-  private InviteSendResult deliverPreparedInvite(
-      DirectInviteDispatch dispatch,
-      Long failureAuditInviteId,
-      boolean auditConfirmedNotSent,
-      ConfirmedSendFailureHandler confirmedFailureHandler) {
-    InviteMailSendReceipt receipt;
-    try {
-      receipt =
-          inviteMailDispatchService.send(
-              dispatch.invite().getRecipientEmail(),
-              dispatch.subject(),
-              dispatch.body(),
-              dispatch.acceptUrl(),
-              dispatch.invite().getTenantId(),
-              dispatch.template().getLanguage());
-    } catch (SmtpSendException sendFailure) {
-      recordDeliveryFailureSafely(
-          sendFailure.isConfirmedNotSent() && !auditConfirmedNotSent ? null : failureAuditInviteId,
-          dispatch.template(),
-          dispatch.invite(),
-          dispatch.subject(),
-          dispatch.body(),
-          sendFailure);
-      if (sendFailure.isConfirmedNotSent()) {
-        confirmedFailureHandler.compensate(sendFailure);
-      } else {
-        log.warn(
-            "Prepared invite {} has an uncertain SMTP delivery outcome; keeping the claim to"
-                + " prevent"
-                + " a duplicate send",
-            dispatch.invite().getId(),
-            sendFailure);
-      }
-      throw sendFailure;
+  /**
+   * Expires elapsed invites that still hold a Träger or Beratungsstelle number; run by {@link
+   * ExpiredInviteReservationSweep}.
+   *
+   * @return how many invites were expired
+   */
+  @Transactional
+  public int expireElapsedInvites() {
+    LocalDateTime now = LocalDateTime.now();
+    List<AccountInvite> elapsed =
+        accountInviteRepository.findElapsedHoldingANumber(
+            EXPIRABLE_STATUSES,
+            ReservationLedger.RESERVING_MODES,
+            now,
+            PageRequest.of(0, EXPIRY_SWEEP_BATCH));
+    for (AccountInvite invite : elapsed) {
+      expireAndReleaseNumbers(invite, now);
     }
-
-    InviteEmailDelivery pendingDelivery =
-        InviteEmailDelivery.builder()
-            .accountInviteId(dispatch.invite().getId())
-            .templateId(dispatch.template().getId())
-            .templateKind(dispatch.template().getKind())
-            .recipientSnapshot(dispatch.invite().getRecipientEmail())
-            .subjectSnapshot(dispatch.subject())
-            .bodySnapshot(dispatch.body())
-            .status(InviteEmailDeliveryStatus.SENT)
-            .sentAt(LocalDateTime.ofInstant(receipt.sentAt(), ZoneId.systemDefault()))
-            .createDate(dispatch.createdAt())
-            .build();
-    InviteEmailDelivery delivery = pendingDelivery;
-    try {
-      delivery =
-          requiresNewTransaction()
-              .execute(transaction -> deliveryRepository.saveAndFlush(pendingDelivery));
-    } catch (RuntimeException auditFailure) {
-      log.error(
-          "Prepared invite {} was sent but its delivery audit could not be recorded",
-          dispatch.invite().getId(),
-          auditFailure);
-    }
-    return new InviteSendResult(
-        dispatch.invite(), delivery, dispatch.rawToken(), dispatch.acceptUrl());
+    return elapsed.size();
   }
 
   @Transactional
@@ -719,7 +566,17 @@ public class AccountInviteService {
     invite.setRevokedAt(now);
     invite.setRevokedByUserId(authenticatedUser.getUserId());
     invite.setUpdateDate(now);
-    return accountInviteRepository.save(invite);
+    AccountInvite saved = accountInviteRepository.save(invite);
+    ledger.releaseUnneeded(saved, now);
+    return saved;
+  }
+
+  private void expireAndReleaseNumbers(AccountInvite invite, LocalDateTime now) {
+    invite.setStatus(AccountInviteStatus.EXPIRED);
+    invite.setActiveRecipientKey(null);
+    invite.setUpdateDate(now);
+    accountInviteRepository.save(invite);
+    ledger.releaseUnneeded(invite, now);
   }
 
   @Transactional(noRollbackFor = AccountInviteLinkException.class)
@@ -737,10 +594,7 @@ public class AccountInviteService {
       return resolveAlreadyProcessedInvite(invite, now);
     }
     if (invite.getExpiresAt() != null && invite.getExpiresAt().isBefore(now)) {
-      invite.setStatus(AccountInviteStatus.EXPIRED);
-      invite.setActiveRecipientKey(null);
-      invite.setUpdateDate(now);
-      accountInviteRepository.save(invite);
+      expireAndReleaseNumbers(invite, now);
       throw new AccountInviteLinkException(AccountInviteLinkException.Reason.EXPIRED);
     }
 
@@ -867,7 +721,7 @@ public class AccountInviteService {
   }
 
   public AccountInvite waiveTwoFactor(Long inviteId, WaiveTwoFactorCommand command) {
-    return waiveTwoFactor(findInvite(inviteId), command);
+    return waiveTwoFactor(findAuthorizedInvite(inviteId), command);
   }
 
   /** Waives the 2FA gate; applies the cross-Träger guard itself, whichever overload is used. */
@@ -914,131 +768,26 @@ public class AccountInviteService {
     invites.forEach(
         invite -> {
           invite.setTwoFactorStatus(to);
+          if (to == TwoFactorGateStatus.ACTIVE) {
+            invite.setTwoFactorActivatedAt(now);
+          }
           invite.setUpdateDate(now);
         });
     accountInviteRepository.saveAll(invites);
   }
 
-  /**
-   * Renders and delivers the invite mail, then persists the send. SENT semantics (TEN-INV-U6,
-   * #890): the EMAIL_SENT status and the SENT delivery row are written only after the SMTP server
-   * confirmed acceptance of the message — a transport failure propagates as {@link
-   * SmtpSendException} (502), rolls back every pending state change and leaves at most a FAILED
-   * audit row behind.
-   *
-   * @param failureAuditInviteId id of an already-committed invite the FAILED audit row may
-   *     reference
-   */
-  private InviteSendResult sendInvite(
-      AccountInvite invite, InviteEmailTemplate template, Long failureAuditInviteId) {
-    if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
-      throw new BadRequestException("Accepted invites cannot be sent");
-    }
-    if (invite.getStatus() == AccountInviteStatus.REVOKED
-        || invite.getStatus() == AccountInviteStatus.SUPERSEDED) {
-      throw new BadRequestException("Inactive invites cannot be sent");
-    }
-
-    LocalDateTime now = LocalDateTime.now();
-    String rawToken = generateToken();
-    // The link target is decided server-side from the invite's role — tenant admins onboard on
-    // the public Admin route, everyone else accepts on the public App route.
-    String acceptUrl = inviteAcceptUrlBuilder.buildAcceptUrl(invite.getTargetRole(), rawToken);
-    String subject = render(template.getSubject(), invite, acceptUrl);
-    String body = renderBody(template.getBody(), invite, acceptUrl);
-
-    InviteMailSendReceipt receipt;
-    try {
-      // #914: the dispatcher wraps the authored body in the canonical branded layout and renders
-      // the accept URL as a button plus a visible copy-paste fallback line. The link target itself
-      // is unchanged — it stays the server-decided acceptUrl from TEN-INV-U6.
-      receipt =
-          inviteMailDispatchService.send(
-              invite.getRecipientEmail(),
-              subject,
-              body,
-              acceptUrl,
-              invite.getTenantId(),
-              template.getLanguage());
-    } catch (SmtpSendException exception) {
-      recordDeliveryFailureSafely(failureAuditInviteId, template, invite, subject, body, exception);
-      throw exception;
-    }
-
-    invite.setTokenHash(hash(rawToken));
-    if (invite.getExpiresAt() == null || invite.getExpiresAt().isBefore(now)) {
-      invite.setExpiresAt(resolveExpiry(now, DEFAULT_EXPIRY_DAYS));
-    }
-    invite.setStatus(AccountInviteStatus.EMAIL_SENT);
-    invite.setUpdateDate(now);
-    invite = accountInviteRepository.save(invite);
-
-    InviteEmailDelivery delivery =
-        InviteEmailDelivery.builder()
-            .accountInviteId(invite.getId())
-            .templateId(template.getId())
-            .templateKind(template.getKind())
-            .recipientSnapshot(invite.getRecipientEmail())
-            .subjectSnapshot(subject)
-            .bodySnapshot(body)
-            .status(InviteEmailDeliveryStatus.SENT)
-            .sentAt(LocalDateTime.ofInstant(receipt.sentAt(), ZoneId.systemDefault()))
-            .createDate(now)
-            .build();
-    delivery = deliveryRepository.save(delivery);
-    return new InviteSendResult(invite, delivery, rawToken, acceptUrl);
-  }
-
-  /** Best-effort FAILED audit row in an independent transaction; never masks the send failure. */
-  private void recordDeliveryFailureSafely(
-      Long failureAuditInviteId,
-      InviteEmailTemplate template,
-      AccountInvite invite,
-      String subject,
-      String body,
-      SmtpSendException exception) {
-    if (failureAuditInviteId == null) {
-      return;
-    }
-    try {
-      deliveryFailureRecorder.recordFailure(
-          failureAuditInviteId,
-          template,
-          invite.getRecipientEmail(),
-          subject,
-          body,
-          exception.getMessage());
-    } catch (RuntimeException auditFailure) {
-      log.warn(
-          "Could not persist FAILED invite delivery audit row ({})",
-          auditFailure.getClass().getSimpleName());
-    }
-  }
-
-  private boolean isTenantIdTaken(Long tenantId) {
-    if (tenantExists(tenantId)) {
-      return true;
-    }
-    return accountInviteRepository.existsByTenantIdAndTargetRoleAndStatusIn(
-        tenantId, AccountInviteTargetRole.TENANT_ADMIN, ACTIVE_TENANT_INVITE_STATUSES);
-  }
-
-  private boolean tenantExists(Long tenantId) {
-    try {
-      return tenantService.getRestrictedTenantData(tenantId) != null;
-    } catch (HttpClientErrorException exception) {
-      if (HttpStatus.NOT_FOUND.equals(exception.getStatusCode())) {
-        return false;
-      }
-      throw exception;
-    }
-  }
-
   /** Loads an invite for an admin action and applies the cross-Träger guard. */
   private AccountInvite findAuthorizedInvite(Long inviteId) {
-    AccountInvite invite = findInvite(inviteId);
-    accessPolicy.authorizeAccess(invite);
-    return invite;
+    if (inviteId == null) {
+      throw new BadRequestException("inviteId is required");
+    }
+    Optional<AccountInvite> invite = accountInviteRepository.findById(inviteId);
+    if (invite.isEmpty()) {
+      accessPolicy.authorizeMissing(inviteId);
+      throw new NotFoundException("Account invite not found");
+    }
+    accessPolicy.authorizeAccess(invite.get());
+    return invite.get();
   }
 
   private AccountInvite findInvite(Long inviteId) {
@@ -1060,13 +809,15 @@ public class AccountInviteService {
   }
 
   /**
-   * Counsellors and tenant admins carry a mandatory TOTP setup (ORISO-Admin#569: "account,
-   * password, 2FA" is one coherent onboarding flow). Their gate starts at {@code PENDING_SETUP},
-   * which also keeps the consumed invite link resumable until the OTP credential exists — see
-   * {@link #resumeConsumedInviteOrThrow(AccountInvite, LocalDateTime)}.
+   * Counsellors, agency admins (they onboard through the same wizard) and tenant admins carry a
+   * mandatory TOTP setup (ORISO-Admin#569: "account, password, 2FA" is one coherent onboarding
+   * flow). Their gate starts at {@code PENDING_SETUP}, which also keeps the consumed invite link
+   * resumable until the OTP credential exists — see {@link
+   * #resumeConsumedInviteOrThrow(AccountInvite, LocalDateTime)}.
    */
   private static TwoFactorGateStatus defaultTwoFactorStatus(AccountInviteTargetRole targetRole) {
     return targetRole == AccountInviteTargetRole.COUNSELLOR
+            || targetRole == AccountInviteTargetRole.AGENCY_ADMIN
             || targetRole == AccountInviteTargetRole.TENANT_ADMIN
         ? TwoFactorGateStatus.PENDING_SETUP
         : TwoFactorGateStatus.NOT_REQUIRED;
@@ -1086,11 +837,15 @@ public class AccountInviteService {
   }
 
   private static LocalDateTime resolveExpiry(LocalDateTime now, Long expiresInDays) {
+    return now.plusDays(validExpiryDays(expiresInDays));
+  }
+
+  static long validExpiryDays(Long expiresInDays) {
     long days = expiresInDays == null ? DEFAULT_EXPIRY_DAYS : expiresInDays;
     if (days < 1 || days > 365) {
       throw new BadRequestException("expiresInDays must be between 1 and 365");
     }
-    return now.plusDays(days);
+    return days;
   }
 
   private static int clampSize(int size) {
@@ -1175,12 +930,6 @@ public class AccountInviteService {
     }
   }
 
-  private static String generateToken() {
-    byte[] token = new byte[TOKEN_BYTES];
-    RANDOM.nextBytes(token);
-    return Base64.getUrlEncoder().withoutPadding().encodeToString(token);
-  }
-
   private static boolean isBlank(String value) {
     return value == null || value.trim().isEmpty();
   }
@@ -1230,7 +979,95 @@ public class AccountInviteService {
       Long departmentId,
       Long expiresInDays,
       IdAllocationMode tenantIdAllocationMode,
-      IdAllocationMode agencyIdAllocationMode) {
+      IdAllocationMode agencyIdAllocationMode,
+      /** AGENCY_ADMIN only; null = true. Any other role must leave it null. */
+      Boolean alsoCounsellor,
+      /** The admin's choice; null = SELECT_EXISTING (TopicPermissionPolicy). */
+      TopicPermission topicPermission) {
+
+    public CreateAccountInviteCommand(
+        AccountInviteTargetRole targetRole,
+        Long tenantId,
+        String recipientEmail,
+        String firstName,
+        String lastName,
+        Long agencyId,
+        Long departmentId,
+        Long expiresInDays,
+        IdAllocationMode tenantIdAllocationMode,
+        IdAllocationMode agencyIdAllocationMode,
+        Boolean alsoCounsellor) {
+      this(
+          targetRole,
+          tenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          departmentId,
+          expiresInDays,
+          tenantIdAllocationMode,
+          agencyIdAllocationMode,
+          alsoCounsellor,
+          null);
+    }
+
+    public CreateAccountInviteCommand(
+        AccountInviteTargetRole targetRole,
+        Long tenantId,
+        String recipientEmail,
+        String firstName,
+        String lastName,
+        Long agencyId,
+        Long departmentId,
+        Long expiresInDays,
+        IdAllocationMode tenantIdAllocationMode,
+        IdAllocationMode agencyIdAllocationMode) {
+      this(
+          targetRole,
+          tenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          departmentId,
+          expiresInDays,
+          tenantIdAllocationMode,
+          agencyIdAllocationMode,
+          null);
+    }
+
+    public CreateAccountInviteCommand withTenantId(Long newTenantId) {
+      return new CreateAccountInviteCommand(
+          targetRole,
+          newTenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          departmentId,
+          expiresInDays,
+          tenantIdAllocationMode,
+          agencyIdAllocationMode,
+          alsoCounsellor,
+          topicPermission);
+    }
+
+    public CreateAccountInviteCommand withDepartmentId(Long newDepartmentId) {
+      return new CreateAccountInviteCommand(
+          targetRole,
+          tenantId,
+          recipientEmail,
+          firstName,
+          lastName,
+          agencyId,
+          newDepartmentId,
+          expiresInDays,
+          tenantIdAllocationMode,
+          agencyIdAllocationMode,
+          alsoCounsellor,
+          topicPermission);
+    }
 
     /** Convenience for callers without ID-allocation semantics (no reservation modes). */
     public CreateAccountInviteCommand(
@@ -1265,17 +1102,7 @@ public class AccountInviteService {
   public record InviteSendResult(
       AccountInvite invite, InviteEmailDelivery delivery, String rawToken, String acceptUrl) {}
 
-  private record DirectInviteDispatch(
-      AccountInvite invite,
-      InviteEmailTemplate template,
-      String rawToken,
-      String acceptUrl,
-      String subject,
-      String body,
-      LocalDateTime createdAt) {}
-
-  private record ResendDispatch(
-      DirectInviteDispatch dispatch, Long oldInviteId, ResendState oldState) {}
+  private record ResendDispatch(Prepared prepared, Long oldInviteId, ResendState oldState) {}
 
   private record ResendState(
       AccountInviteStatus status,
@@ -1303,11 +1130,6 @@ public class AccountInviteService {
       invite.setSupersededByInviteId(supersededByInviteId);
       invite.setUpdateDate(updateDate);
     }
-  }
-
-  @FunctionalInterface
-  private interface ConfirmedSendFailureHandler {
-    void compensate(SmtpSendException sendFailure);
   }
 
   public record WaiveTwoFactorCommand(String reason) {}

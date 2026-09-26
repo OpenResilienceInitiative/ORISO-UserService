@@ -12,6 +12,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.AdminFilterService;
@@ -37,6 +39,7 @@ public class AdminUserFacade {
   private final @NonNull AdminFilterService adminFilterService;
 
   private final @NonNull AuthenticatedUser authenticatedUser;
+  private final @NonNull AdminScope adminScope;
 
   public AdminResponseDTO createNewTenantAdmin(final CreateAdminDTO createTenantAdminDTO) {
     return this.tenantAdminUserService.createNewTenantAdmin(createTenantAdminDTO);
@@ -74,6 +77,11 @@ public class AdminUserFacade {
 
   public List<Long> findAdminUserAgencyIds(String userId) {
     return this.agencyAdminUserService.findAgenciesOfAdmin(userId);
+  }
+
+  public List<Long> findAgencyIdsOfAdminInCallerScope(String adminId) {
+    adminScope.assertMay(Target.admin(adminId));
+    return this.agencyAdminUserService.findAgenciesOfAdmin(adminId);
   }
 
   public void createNewAdminAgencyRelation(

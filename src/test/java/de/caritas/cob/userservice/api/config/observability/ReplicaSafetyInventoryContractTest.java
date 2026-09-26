@@ -36,6 +36,7 @@ class ReplicaSafetyInventoryContractTest {
           "platform-operator-organisation-cache",
           "traeger-organisation-cache",
           "account-invite-reservation-release-scheduler",
+          "account-invite-expiry-number-release-scheduler",
           "case-handover-policy-cache-refresh",
           "case-handover-co-access-expiry",
           "case-handover-matrix-repair",

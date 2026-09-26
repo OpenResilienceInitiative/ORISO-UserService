@@ -30,9 +30,13 @@ class InviteAcceptUrlBuilderTest {
   }
 
   @Test
-  void buildAcceptUrl_Should_targetPublicAppRoute_ForOtherRoles() {
+  void buildAcceptUrl_Should_targetTheCounsellorWizardRoute_ForAgencyAdmins() {
     assertThat(builder.buildAcceptUrl(AccountInviteTargetRole.AGENCY_ADMIN, "t"))
-        .isEqualTo("https://app.example.org/account-invite/t");
+        .isEqualTo("https://admin.example.org/admin/counsellor-onboarding/t");
+  }
+
+  @Test
+  void buildAcceptUrl_Should_targetPublicAppRoute_ForOtherRoles() {
     assertThat(builder.buildAcceptUrl(AccountInviteTargetRole.PLATFORM_ADMIN, "t"))
         .isEqualTo("https://app.example.org/account-invite/t");
     assertThat(builder.buildAcceptUrl(AccountInviteTargetRole.ADVICE_SEEKER, "t"))

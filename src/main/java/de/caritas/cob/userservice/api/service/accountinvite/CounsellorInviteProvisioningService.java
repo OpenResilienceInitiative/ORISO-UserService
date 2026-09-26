@@ -4,15 +4,13 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
-import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -34,14 +32,21 @@ public class CounsellorInviteProvisioningService {
   private final @NonNull ConsultantAdminFacade consultantAdminFacade;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull CreateConsultantSaga createConsultantSaga;
-  private final @NonNull IdentityAuthentication identityAuthentication;
-  private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService;
+  private final @NonNull ConsultantAgencyRelationCreatorService
+      consultantAgencyRelationCreatorService;
+  private final @NonNull AcceptTimeAgencyCheck acceptTimeAgencyCheck;
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
     AccountInvite invite = accountInviteService.findInviteByToken(rawToken);
-    if (invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR) {
+    // A counselling agency admin comes here only via the wizard, which asks for the admin grant.
+    boolean agencyAdminAlsoCounselling =
+        invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN
+            && command != null
+            && Boolean.TRUE.equals(command.grantAgencyAdmin());
+    if (invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR
+        && !agencyAdminAlsoCounselling) {
       return accountInviteService.acceptInvite(
           rawToken, command == null ? null : command.acceptedByUserId());
     }
@@ -70,7 +75,8 @@ public class CounsellorInviteProvisioningService {
     try {
       // Inside the try: a failed service login must mark the invite FAILED (retryable) instead of
       // leaving it IN_PROGRESS, which would answer every retry with 409.
-      technicalAccessToken = loginTechnicalUser();
+      technicalAccessToken = acceptTimeAgencyCheck.serviceToken();
+      acceptTimeAgencyCheck.requireLiveAgency(invite, technicalAccessToken);
       // The service identity is ambient ONLY around the remote calls that need it: consultant
       // creation and agency assignment reach TenantService/AgencyService/ConsultingTypeService
       // through the shared admin services, which read the bearer from the header supplier.
@@ -92,7 +98,7 @@ public class CounsellorInviteProvisioningService {
       TechnicalAccessTokenContext.runWith(
           technicalAccessToken,
           () ->
-              consultantAdminFacade.createNewConsultantAgency(
+              consultantAgencyRelationCreatorService.createNewConsultantAgency(
                   createdConsultantId,
                   new CreateConsultantAgencyDTO()
                       .agencyId(invite.getAgencyId())
@@ -106,6 +112,9 @@ public class CounsellorInviteProvisioningService {
       }
 
       AccountInvite accepted = accountInviteService.acceptInvite(rawToken, consultantId);
+      if (agencyAdminAlsoCounselling) {
+        accepted.setAlsoCounsellor(true);
+      }
       accepted.setProvisionedUserId(consultantId);
       accepted.setProvisioningStatus(AccountInviteProvisioningStatus.COMPLETED);
       accepted.setProvisioningFailureReason(null);
@@ -122,22 +131,6 @@ public class CounsellorInviteProvisioningService {
     } finally {
       restoreTenantContext(requestTenant);
     }
-  }
-
-  private String loginTechnicalUser() {
-    var technicalUser = identityClientConfig.getTechnicalUser();
-    IdentityLogin login;
-    try {
-      login =
-          identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
-    } catch (RuntimeException exception) {
-      // The failure reason is persisted on the invite; keep identity-provider text out of it.
-      throw new IllegalStateException("Service authentication unavailable", exception);
-    }
-    if (login == null || login.accessToken() == null || login.accessToken().isBlank()) {
-      throw new IllegalStateException("Service authentication unavailable");
-    }
-    return login.accessToken();
   }
 
   private static TenantData snapshotTenantContext() {
@@ -158,20 +151,24 @@ public class CounsellorInviteProvisioningService {
   /**
    * Undoes the two create-path defaults that only hold when an administrator chose the credentials.
    * The invite already tracks the second-factor requirement, including {@code WAIVED}, and the
-   * counsellor typed their own password seconds ago.
+   * counsellor typed their own password seconds ago. Also copies the invite's topic permission.
    */
   private void alignRequirementsWithInvite(String consultantId, AccountInvite invite) {
     var stillOwed = !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());
+    // The one-time hand-over: from here on the counsellor's value is the only one.
+    var topicPermission = TopicPermissionPolicy.effective(invite);
     consultantRepository
         .findByIdAndDeleteDateIsNull(consultantId)
         .filter(
             consultant ->
                 !Boolean.valueOf(stillOwed).equals(consultant.getTwoFactorRequired())
-                    || Boolean.TRUE.equals(consultant.getPasswordChangeRequired()))
+                    || Boolean.TRUE.equals(consultant.getPasswordChangeRequired())
+                    || consultant.getTopicPermission() != topicPermission)
         .ifPresent(
             consultant -> {
               consultant.setTwoFactorRequired(stillOwed);
               consultant.setPasswordChangeRequired(false);
+              consultant.setTopicPermission(topicPermission);
               consultantRepository.save(consultant);
             });
   }

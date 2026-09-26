@@ -4,7 +4,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisi
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -22,6 +24,10 @@ import lombok.NoArgsConstructor;
 import lombok.Setter;
 import lombok.ToString;
 
+/**
+ * Outside the tenant filter on purpose: the public wizard finds an invite by its token before any
+ * tenant is known, so admin reads are scoped by {@code AccountInviteAccessPolicy} instead.
+ */
 @Entity
 @Table(
     name = "account_invite",
@@ -85,6 +91,36 @@ public class AccountInvite {
   @Column(name = "department_id")
   private Long departmentId;
 
+  /**
+   * AUTO/MANUAL = a new Träger whose ID this invite reserved, EXISTING = joins an existing Träger.
+   * Null on older rows.
+   */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "tenant_id_allocation_mode", length = 16)
+  private IdAllocationMode tenantIdAllocationMode;
+
+  /** Same for the agency ID: AUTO/MANUAL = a new Beratungsstelle, EXISTING = an existing one. */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "agency_id_allocation_mode", length = 16)
+  private IdAllocationMode agencyIdAllocationMode;
+
+  /** AGENCY_ADMIN only: the inviter's proposal, the invitee may change it; null for other roles. */
+  @Column(name = "also_counsellor")
+  private Boolean alsoCounsellor;
+
+  /** Whether agencyId (AGENCY) or tenantId (TENANT) names the missing unit; cleared on release. */
+  @Enumerated(EnumType.STRING)
+  @Column(name = "waiting_for_unit", length = 16)
+  private InviteUnitType waitingForUnit;
+
+  /** Template to send a waiting invite with once its unit exists; null = release as DRAFT. */
+  @Column(name = "queued_template_id")
+  private Long queuedTemplateId;
+
+  /** Validity of a waiting invite in days, counted from the actual send (not from creation). */
+  @Column(name = "queued_expiry_days")
+  private Long queuedExpiryDays;
+
   @Column(name = "token_hash", length = 64)
   private String tokenHash;
 
@@ -145,8 +181,16 @@ public class AccountInvite {
   @Column(name = "dpa_signed_at", columnDefinition = "datetime")
   private LocalDateTime dpaSignedAt;
 
+  /** When the unit a WAITING_FOR_UNIT invite needed was created, i.e. the invite was released. */
+  @Column(name = "unit_created_at", columnDefinition = "datetime")
+  private LocalDateTime unitCreatedAt;
+
   @Column(name = "accepted_at", columnDefinition = "datetime")
   private LocalDateTime acceptedAt;
+
+  /** Latest 2FA activation of the invitee; with the gate status it dates the "completed" step. */
+  @Column(name = "two_factor_activated_at", columnDefinition = "datetime")
+  private LocalDateTime twoFactorActivatedAt;
 
   @Column(name = "accepted_by_user_id", length = 36)
   private String acceptedByUserId;
@@ -189,6 +233,16 @@ public class AccountInvite {
 
   @Column(name = "created_by_username")
   private String createdByUsername;
+
+  /** Column default CREATE keeps the old behaviour for invites created before the setting. */
+  @Enumerated(EnumType.STRING)
+  @Column(
+      name = "topic_permission",
+      nullable = false,
+      length = 32,
+      columnDefinition = "varchar(32) default 'CREATE'")
+  @Builder.Default
+  private TopicPermission topicPermission = TopicPermission.CREATE;
 
   @Column(name = "create_date", nullable = false, columnDefinition = "datetime")
   private LocalDateTime createDate;
