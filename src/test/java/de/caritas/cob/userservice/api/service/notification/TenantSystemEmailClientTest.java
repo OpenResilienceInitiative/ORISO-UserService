@@ -142,4 +142,26 @@ class TenantSystemEmailClientTest {
         .hasMessageContaining("OWN tenant SMTP");
     server.verify();
   }
+
+  @Test
+  void disabledOwnTransportIsNotReportedAsASentMail() {
+    server
+        .expect(
+            once(),
+            requestTo(
+                "http://tenantservice.internal:8081/tenant/40/internal/system-email-deliveries"))
+        .andExpect(method(HttpMethod.POST))
+        .andRespond(withStatus(HttpStatus.NO_CONTENT));
+
+    assertThatThrownBy(
+            () ->
+                client.deliver(
+                    40L,
+                    "NEW_MESSAGE",
+                    "recipient@example.org",
+                    new OrisoEmailRenderer.RenderedEmail("Subject", "<p>Body</p>", "Body")))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
+        .hasMessageContaining("disabled");
+    server.verify();
+  }
 }

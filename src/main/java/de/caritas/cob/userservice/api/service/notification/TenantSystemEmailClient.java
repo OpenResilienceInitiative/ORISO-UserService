@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
@@ -80,11 +81,16 @@ public class TenantSystemEmailClient {
             "text", email.text(),
             "correlationId", correlationId.toString());
     try {
-      restTemplate.exchange(
-          endpoint(tenantId, "/internal/system-email-deliveries"),
-          HttpMethod.POST,
-          new HttpEntity<>(request, headers),
-          Void.class);
+      var response =
+          restTemplate.exchange(
+              endpoint(tenantId, "/internal/system-email-deliveries"),
+              HttpMethod.POST,
+              new HttpEntity<>(request, headers),
+              Void.class);
+      if (response.getStatusCode() == HttpStatus.NO_CONTENT) {
+        throw new TenantSystemEmailRouteService.ConfigurationException(
+            "OWN tenant SMTP delivery is disabled");
+      }
     } catch (HttpClientErrorException.UnprocessableEntity ex) {
       throw new TenantSystemEmailRouteService.ConfigurationException(
           "OWN tenant SMTP configuration is invalid");
