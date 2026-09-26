@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.mobilepushmessage.MobilePushNotificationService;
+import de.caritas.cob.userservice.api.service.notification.AdviceSeekerReplyEmailService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -45,6 +46,7 @@ public class MatrixEventListenerService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull ConsultantMessageStatService consultantMessageStatService;
+  private final @NonNull AdviceSeekerReplyEmailService replyEmailService;
 
   private OutboundHttpMetrics outboundHttpMetrics;
   private LiveChatDiagnosticMetrics diagnosticMetrics;
@@ -558,7 +560,16 @@ public class MatrixEventListenerService {
           } catch (Exception e) {
             recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
             log.error("❌ Failed to create event notification from room", e);
-            return;
+          }
+
+          if (!"m.notice".equals(msgtype) && isConsultantMatrixUser(senderId)) {
+            try {
+              replyEmailService.onConsultantReply(
+                  roomId, privacyEnvelope == null ? null : privacyEnvelope.getMessageId());
+            } catch (Exception failure) {
+              // Keep the Matrix sync and in-app notification independent of SMTP failures.
+              log.error("Failed to dispatch advice-seeker reply email");
+            }
           }
 
           if (mappedSessionId != null

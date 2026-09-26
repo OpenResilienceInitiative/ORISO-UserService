@@ -1,0 +1,209 @@
+package de.caritas.cob.userservice.api.service.notification;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
+
+import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.Status;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
+import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import java.util.LinkedHashMap;
+import java.util.Map;
+import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
+import org.mockito.Mock;
+import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.test.util.ReflectionTestUtils;
+
+@ExtendWith(MockitoExtension.class)
+class AdviceSeekerReplyEmailServiceTest {
+  @Mock private SessionRepository sessions;
+  @Mock private TenantService tenants;
+  @Mock private TenantTemplateSupplier tenantTemplates;
+  @Mock private EmailBrandingResolver branding;
+  @Mock private OrisoEmailBrand emailBrand;
+  @Mock private TenantSystemEmailRouteService routes;
+  @Mock private TenantSystemEmailDelivery delivery;
+  @Mock private ReplyEmailDeliveryWriter writer;
+
+  private AdviceSeekerReplyEmailService service;
+
+  @BeforeEach
+  void setUp() {
+    service =
+        new AdviceSeekerReplyEmailService(
+            sessions,
+            tenants,
+            tenantTemplates,
+            branding,
+            emailBrand,
+            new OrisoEmailRenderer(),
+            routes,
+            delivery,
+            writer);
+    ReflectionTestUtils.setField(service, "multitenancyEnabled", true);
+  }
+
+  @Test
+  void twoRepliesSendTwoNeutralMailsButAReplayedEventDoesNotSendAgain() {
+    User asker = asker(true, "asker@example.net");
+    Session session = session(asker);
+    when(sessions.findByMatrixRoomId("!room")).thenReturn(Optional.of(session));
+    var tenant = new RestrictedTenantDTO().id(7L).subdomain("tenant");
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
+    when(tenantTemplates.getTenantBaseUrl(tenant)).thenReturn("https://tenant.example.net");
+    when(routes.resolve(7L))
+        .thenReturn(
+            Optional.of(
+                new TenantSystemEmailRouteService.Route(
+                    TenantSystemEmailRouteService.Mode.PLATFORM, null)));
+    when(emailBrand.values("https://tenant.example.net", null)).thenReturn(neutralBrand());
+    when(writer.reserve(eq("asker"), anyString(), eq(7L)))
+        .thenReturn(1L, 2L)
+        .thenThrow(new DataIntegrityViolationException("duplicate"));
+    when(delivery.sendConfirmed(anyLong(), any(), any(), anyString(), any())).thenReturn(true);
+
+    service.onConsultantReply("!room", "$first");
+    service.onConsultantReply("!room", "$second");
+    service.onConsultantReply("!room", "$first");
+
+    var rendered = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(delivery, org.mockito.Mockito.times(2))
+        .sendConfirmed(
+            eq(7L),
+            any(),
+            eq(TenantSystemEmailDelivery.Purpose.NEW_MESSAGE),
+            eq("asker@example.net"),
+            rendered.capture());
+    assertThat(rendered.getAllValues()).hasSize(2);
+    for (var mail : rendered.getAllValues()) {
+      assertThat(mail.subject()).isEqualTo("Sie haben eine neue Nachricht");
+      assertThat(mail.html()).contains("https://tenant.example.net/sessions/user/view/session/42");
+      assertThat(mail.html()).contains("mail=neue-nachricht");
+      assertThat(mail.html()).doesNotContain("Counselling Centre", "Counsellor Real Name", "{{");
+      assertThat(mail.text()).doesNotContain("Counselling Centre", "Counsellor Real Name", "{{");
+    }
+    verify(writer).finish(1L, Status.SENT);
+    verify(writer).finish(2L, Status.SENT);
+  }
+
+  @Test
+  void disabledEmailChoiceDoesNotReserveOrSend() {
+    var session = session(asker(false, "asker@example.net"));
+    when(sessions.findByMatrixRoomId("!room")).thenReturn(Optional.of(session));
+
+    service.onConsultantReply("!room", "$first");
+
+    verifyNoInteractions(writer, delivery);
+  }
+
+  @Test
+  void absentAddressDoesNotReserveOrSend() {
+    var session = session(asker(true, ""));
+    when(sessions.findByMatrixRoomId("!room")).thenReturn(Optional.of(session));
+
+    service.onConsultantReply("!room", "$first");
+
+    verifyNoInteractions(writer, delivery);
+  }
+
+  @Test
+  void eventWithoutIdNeverClaimsAnUnrepeatableDelivery() {
+    service.onConsultantReply("!room", null);
+    verifyNoInteractions(sessions, writer, delivery);
+  }
+
+  @Test
+  void invalidTenantUrlFailsBeforeReservingAnEmail() {
+    when(sessions.findByMatrixRoomId("!room"))
+        .thenReturn(Optional.of(session(asker(true, "asker@example.net"))));
+    var tenant = new RestrictedTenantDTO().id(7L).subdomain("tenant");
+    when(tenants.getRestrictedTenantDataFresh(7L)).thenReturn(tenant);
+    when(tenantTemplates.getTenantBaseUrl(tenant)).thenReturn("not-a-public-url");
+    when(routes.resolve(7L))
+        .thenReturn(
+            Optional.of(
+                new TenantSystemEmailRouteService.Route(
+                    TenantSystemEmailRouteService.Mode.PLATFORM, null)));
+
+    assertThatThrownBy(() -> service.onConsultantReply("!room", "$first"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Reply email app URL is invalid");
+    verifyNoInteractions(writer, delivery);
+  }
+
+  @Test
+  void roomCannotRouteMailThroughAnotherRecipientsTenant() {
+    var session = session(asker(true, "asker@example.net"));
+    session.setTenantId(8L);
+    when(sessions.findByMatrixRoomId("!room")).thenReturn(Optional.of(session));
+
+    assertThatThrownBy(() -> service.onConsultantReply("!room", "$first"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Reply email recipient tenant is missing or inconsistent");
+    verifyNoInteractions(routes, writer, delivery);
+  }
+
+  private static Session session(User asker) {
+    return Session.builder()
+        .id(42L)
+        .tenantId(7L)
+        .user(asker)
+        .registrationType(Session.RegistrationType.REGISTERED)
+        .postcode("10000")
+        .status(Session.SessionStatus.IN_PROGRESS)
+        .build();
+  }
+
+  private static User asker(boolean enabled, String address) {
+    var user =
+        User.builder()
+            .userId("asker")
+            .username("anonymous")
+            .email(address)
+            .tenantId(7L)
+            .languageCode(LanguageCode.de)
+            .languageFormal(true)
+            .notificationsEnabled(true)
+            .notificationsSettings("{\"newChatMessageNotificationEnabled\":" + enabled + "}")
+            .build();
+    return user;
+  }
+
+  private static Map<String, String> neutralBrand() {
+    return new LinkedHashMap<>(
+        Map.ofEntries(
+            Map.entry("platformName", "ORISO"),
+            Map.entry("offeringName", "ORISO"),
+            Map.entry("operatorName", ""),
+            Map.entry("orgName", ""),
+            Map.entry("orgAddress", ""),
+            Map.entry("contactLine", ""),
+            Map.entry("logoUrl", ""),
+            Map.entry("primaryColor", "#a5000a"),
+            Map.entry("accentColor", "#cc1e1c"),
+            Map.entry("appUrl", "https://tenant.example.net"),
+            Map.entry("settingsUrl", "https://tenant.example.net/profile/einstellungen"),
+            Map.entry("unsubscribeUrl", "https://tenant.example.net/profile/einstellungen/email"),
+            Map.entry("privacyUrl", "https://tenant.example.net/datenschutz"),
+            Map.entry("imprintUrl", "https://tenant.example.net/impressum")));
+  }
+}
