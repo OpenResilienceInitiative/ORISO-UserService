@@ -38,6 +38,24 @@ public interface AgencyInviteLinkRepository extends JpaRepository<AgencyInviteLi
       @Param("status") String status,
       Pageable pageable);
 
+  @Query(
+      "SELECT l FROM AgencyInviteLink l"
+          + " WHERE l.tenantId = :tenantId"
+          + " AND l.agencyId IN :agencyIds"
+          + " AND (:linkKind IS NULL OR l.linkKind = :linkKind)"
+          + " AND (:topicId  IS NULL OR l.topicId  = :topicId)"
+          + " AND (:chatType IS NULL OR l.chatType = :chatType)"
+          + " AND (:status   IS NULL OR l.status   = :status)"
+          + " ORDER BY l.createDate DESC")
+  Page<AgencyInviteLink> findAllByTenantIdAndAgencyIdsAndFilters(
+      @Param("tenantId") Long tenantId,
+      @Param("agencyIds") java.util.Collection<Long> agencyIds,
+      @Param("linkKind") String linkKind,
+      @Param("topicId") Long topicId,
+      @Param("chatType") String chatType,
+      @Param("status") String status,
+      Pageable pageable);
+
   /**
    * Cross-tenant variant used by super-admins (tenant-super). {@code tenantId} is optional — pass
    * {@code null} to span every tenant.

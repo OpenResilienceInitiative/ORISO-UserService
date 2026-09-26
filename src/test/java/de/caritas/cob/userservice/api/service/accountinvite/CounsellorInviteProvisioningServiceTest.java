@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -27,6 +28,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProv
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -45,10 +47,18 @@ class CounsellorInviteProvisioningServiceTest {
   private final CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService =
       mock(CounsellorAgencyAdminGrantService.class);
 
+  private final ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService =
+      mock(ConsultantAgencyRelationCreatorService.class);
+  private final AgencyFacts agencyFacts = mock(AgencyFacts.class);
+
   private CounsellorInviteProvisioningService service;
 
   @BeforeEach
   void setUp() {
+    // The row is still in the status the test put it in (no racing revoke here).
+    org.mockito.Mockito.lenient()
+        .when(accountInviteRepository.holdInStatus(any(), any(), any()))
+        .thenReturn(1);
     service =
         new CounsellorInviteProvisioningService(
             accountInviteService,
@@ -56,9 +66,11 @@ class CounsellorInviteProvisioningServiceTest {
             consultantAdminFacade,
             consultantRepository,
             createConsultantSaga,
-            identityAuthentication,
-            identityClientConfig,
-            counsellorAgencyAdminGrantService);
+            counsellorAgencyAdminGrantService,
+            consultantAgencyRelationCreatorService,
+            new AcceptTimeAgencyCheck(agencyFacts, identityAuthentication, identityClientConfig));
+    when(agencyFacts.find(275L))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(275L, 79L, false, List.of())));
     var technicalUser = new TechnicalUserConfig();
     technicalUser.setUsername("technical-user");
     technicalUser.setPassword("technical-password");
@@ -81,7 +93,7 @@ class CounsellorInviteProvisioningServiceTest {
     when(consultantRepository.findById("partially-created-consultant"))
         .thenReturn(Optional.of(partiallyCreatedConsultant));
     doThrow(new IllegalStateException("agency assignment failed"))
-        .when(consultantAdminFacade)
+        .when(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(
             org.mockito.ArgumentMatchers.eq("partially-created-consultant"),
             any(CreateConsultantAgencyDTO.class));
@@ -218,7 +230,7 @@ class CounsellorInviteProvisioningServiceTest {
               ambientDuringAgencyAssignment.add(TechnicalAccessTokenContext.get());
               return null;
             })
-        .when(consultantAdminFacade)
+        .when(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(
             org.mockito.ArgumentMatchers.eq("created-consultant"),
             any(CreateConsultantAgencyDTO.class));
@@ -293,7 +305,7 @@ class CounsellorInviteProvisioningServiceTest {
     when(consultantRepository.findById("partially-created-consultant"))
         .thenReturn(Optional.of(partiallyCreatedConsultant));
     doThrow(new IllegalStateException("agency assignment failed"))
-        .when(consultantAdminFacade)
+        .when(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(
             org.mockito.ArgumentMatchers.eq("partially-created-consultant"),
             any(CreateConsultantAgencyDTO.class));

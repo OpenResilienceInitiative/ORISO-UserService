@@ -5,6 +5,7 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,19 +16,31 @@ import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
+import de.caritas.cob.userservice.api.port.out.AdminRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.InviteEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountAccessGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteAccessPolicy;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPermissionService;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteAccountRoles;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteBoard;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailPreviewService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateService;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteQueueProblem;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteRoleChange;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.UnitQueue;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
@@ -39,9 +52,6 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
-import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageImpl;
-import org.springframework.data.domain.PageRequest;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.prepost.PreAuthorize;
 
@@ -53,6 +63,7 @@ class AccountInviteControllerTest {
   @Mock private InviteEmailTemplateService templateService;
   @Mock private InviteEmailDeliveryRepository deliveryRepository;
   @Mock private InviteEmailPreviewService previewService;
+  @Mock private UnitQueue unitQueue;
 
   private AccountInviteController controller;
 
@@ -64,7 +75,16 @@ class AccountInviteControllerTest {
             counsellorInviteProvisioningService,
             templateService,
             deliveryRepository,
-            previewService);
+            previewService,
+            new AccountInviteTopicPermissionService(
+                mock(AccountInviteRepository.class),
+                mock(ConsultantRepository.class),
+                mock(AccountInviteAccessPolicy.class),
+                mock(AgencyFacts.class)),
+            unitQueue,
+            new InviteBoard(accountInviteService, deliveryRepository, unitQueue),
+            new InviteAccountRoles(mock(ConsultantRepository.class), mock(AdminRepository.class)),
+            mock(InviteRoleChange.class));
   }
 
   @Test
@@ -113,6 +133,52 @@ class AccountInviteControllerTest {
     verify(accountInviteService).createInvite(commandCaptor.capture());
     assertEquals(IdAllocationMode.AUTO, commandCaptor.getValue().tenantIdAllocationMode());
     assertEquals(IdAllocationMode.MANUAL, commandCaptor.getValue().agencyIdAllocationMode());
+  }
+
+  @Test
+  void createInvite_Should_PassTheRoleFields_AndExposeTheQueueState() {
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.COUNSELLOR.name();
+    request.recipientEmail = "queued@example.org";
+    request.agencyId = 500L;
+    request.agencyIdAllocationMode = "MANUAL";
+
+    var invite = sampleInvite();
+    invite.setStatus(AccountInviteStatus.WAITING_FOR_UNIT);
+    invite.setWaitingForUnit(InviteUnitType.AGENCY);
+    when(accountInviteService.createInvite(any())).thenReturn(invite);
+    when(accountInviteService.calculateAccessGate(invite))
+        .thenReturn(AccountAccessGateStatus.BLOCKED_INVITE);
+    when(unitQueue.problemOf(invite)).thenReturn(InviteQueueProblem.NO_UNIT_ADMIN);
+
+    var body = controller.createInvite(request).getBody();
+
+    var commandCaptor =
+        ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
+    verify(accountInviteService).createInvite(commandCaptor.capture());
+    assertNotNull(body);
+    assertEquals("WAITING_FOR_UNIT", body.inviteStatus);
+    assertEquals("AGENCY", body.waitingForUnit);
+    assertEquals("NO_UNIT_ADMIN", body.queueProblem);
+  }
+
+  @Test
+  void createInvite_Should_PassAlsoCounsellor() {
+    var request = new AccountInviteController.CreateAccountInviteRequestDTO();
+    request.targetRole = AccountInviteTargetRole.AGENCY_ADMIN.name();
+    request.recipientEmail = "admin@example.org";
+    request.agencyId = 5L;
+    request.agencyIdAllocationMode = "EXISTING";
+    request.alsoCounsellor = false;
+    var invite = sampleInvite();
+    when(accountInviteService.createInvite(any())).thenReturn(invite);
+
+    controller.createInvite(request);
+
+    var commandCaptor =
+        ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
+    verify(accountInviteService).createInvite(commandCaptor.capture());
+    assertEquals(Boolean.FALSE, commandCaptor.getValue().alsoCounsellor());
   }
 
   @Test
@@ -308,30 +374,28 @@ class AccountInviteControllerTest {
 
   @Test
   void listInvites_Should_delegateWithDefaults_When_paramsNull() {
-    Page<AccountInvite> page = new PageImpl<>(List.of(sampleInvite()), PageRequest.of(0, 20), 1);
-    when(accountInviteService.listInvites(null, null, null, null, 0, 20)).thenReturn(page);
+    when(accountInviteService.listAllInvites(null, null, null)).thenReturn(List.of(sampleInvite()));
     when(accountInviteService.calculateAccessGate(any())).thenReturn(AccountAccessGateStatus.READY);
-    when(deliveryRepository.findFirstByAccountInviteIdOrderByCreateDateDesc(10L))
-        .thenReturn(Optional.empty());
 
-    var response = controller.listInvites(null, null, null, null, null, null);
+    var response = controller.listInvites(null, null, null, null, null, null, null, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(1, response.getBody().totalElements);
     assertEquals(1, response.getBody().content.size());
+    assertEquals(20, response.getBody().size);
   }
 
   @Test
   void listInvites_Should_parseEnumsAndPagination() {
-    Page<AccountInvite> page = new PageImpl<>(List.of(), PageRequest.of(1, 5), 0);
-    when(accountInviteService.listInvites(
-            AccountInviteTargetRole.COUNSELLOR, AccountInviteStatus.DRAFT, 7L, null, 1, 5))
-        .thenReturn(page);
+    when(accountInviteService.listAllInvites(AccountInviteTargetRole.COUNSELLOR, 7L, null))
+        .thenReturn(List.of());
 
     var response =
         controller.listInvites(
+            null,
             AccountInviteTargetRole.COUNSELLOR.name(),
             AccountInviteStatus.DRAFT.name(),
+            "NEEDS_ACTION",
             7L,
             null,
             1,
@@ -339,24 +403,31 @@ class AccountInviteControllerTest {
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(0, response.getBody().content.size());
+    assertEquals(1, response.getBody().page);
+    assertEquals(5, response.getBody().size);
   }
 
   @Test
   void listInvites_Should_passSearchQueryThrough() {
-    Page<AccountInvite> page = new PageImpl<>(List.of(), PageRequest.of(0, 20), 0);
-    when(accountInviteService.listInvites(null, null, null, "Jane", 0, 20)).thenReturn(page);
+    when(accountInviteService.listAllInvites(null, null, "Jane")).thenReturn(List.of());
 
-    var response = controller.listInvites(null, null, null, "Jane", null, null);
+    var response = controller.listInvites(null, null, null, null, null, "Jane", null, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(accountInviteService).listInvites(null, null, null, "Jane", 0, 20);
+    verify(accountInviteService).listAllInvites(null, null, "Jane");
   }
 
   @Test
   void listInvites_Should_throwBadRequest_When_unknownEnum() {
     assertThrows(
         BadRequestException.class,
-        () -> controller.listInvites("BOGUS", null, null, null, null, null));
+        () -> controller.listInvites(null, "BOGUS", null, null, null, null, null, null));
+    assertThrows(
+        BadRequestException.class,
+        () -> controller.listInvites(null, null, null, "SOMEWHERE", null, null, null, null));
+    assertThrows(
+        BadRequestException.class,
+        () -> controller.listInvites("NOWHERE", null, null, null, null, null, null, null));
   }
 
   @Test
@@ -516,6 +587,8 @@ class AccountInviteControllerTest {
         "listInvites",
         String.class,
         String.class,
+        String.class,
+        String.class,
         Long.class,
         String.class,
         Integer.class,
@@ -525,6 +598,8 @@ class AccountInviteControllerTest {
     assertHasPreAuthorize(
         "resendInvite", Long.class, AccountInviteController.SendInviteRequestDTO.class);
     assertHasPreAuthorize("revokeInvite", Long.class);
+    assertHasPreAuthorize(
+        "changeRole", Long.class, AccountInviteController.ChangeRoleRequestDTO.class);
     assertHasPreAuthorize("createTemplate", AccountInviteController.TemplateRequestDTO.class);
     assertHasPreAuthorize(
         "updateTemplate", Long.class, AccountInviteController.TemplateRequestDTO.class);
