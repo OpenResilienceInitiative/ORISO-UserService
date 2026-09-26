@@ -6,9 +6,12 @@ import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER_ID;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Chat;
@@ -114,5 +117,64 @@ class AssignChatFacadeTest {
 
     verify(chatService)
         .saveUserChatRelation(UserChat.builder().user(USER).chat(legacySelfHelpGroup).build());
+  }
+
+  @Test
+  void assignChatBySeriesId_Should_RejectWrongInviteTokenWithoutAssigning() {
+    var selfHelpGroup = chatWithToken(ConversationType.SELF_HELP, "valid-token");
+    when(chatService.getChat(selfHelpGroup.getId())).thenReturn(Optional.of(selfHelpGroup));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> assignChatFacade.assignChat(selfHelpGroup.getId(), "wrong-token", authenticatedUser));
+
+    verify(chatService, never()).saveUserChatRelation(any());
+  }
+
+  @Test
+  void assignChatBySeriesId_Should_RejectMissingInviteTokenWithoutAssigning() {
+    var selfHelpGroup = chatWithToken(ConversationType.SELF_HELP, "valid-token");
+    when(chatService.getChat(selfHelpGroup.getId())).thenReturn(Optional.of(selfHelpGroup));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> assignChatFacade.assignChat(selfHelpGroup.getId(), null, authenticatedUser));
+
+    verify(chatService, never()).saveUserChatRelation(any());
+  }
+
+  @Test
+  void assignChatBySeriesId_Should_RejectChatWithoutInviteToken() {
+    var selfHelpGroup = chatWithToken(ConversationType.SELF_HELP, null);
+    when(chatService.getChat(selfHelpGroup.getId())).thenReturn(Optional.of(selfHelpGroup));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> assignChatFacade.assignChat(selfHelpGroup.getId(), "token", authenticatedUser));
+
+    verify(chatService, never()).saveUserChatRelation(any());
+  }
+
+  @Test
+  void assignChatBySeriesId_Should_RejectNonSelfHelpChatEvenWithMatchingToken() {
+    var internalGroup = chatWithToken(ConversationType.INTERNAL_GROUP, "link-token");
+    when(chatService.getChat(internalGroup.getId())).thenReturn(Optional.of(internalGroup));
+
+    assertThrows(
+        ForbiddenException.class,
+        () -> assignChatFacade.assignChat(internalGroup.getId(), "link-token", authenticatedUser));
+
+    verify(chatService, never()).saveUserChatRelation(any());
+  }
+
+  private Chat chatWithToken(ConversationType conversationType, String inviteToken) {
+    return Chat.builder()
+        .id(ACTIVE_CHAT.getId())
+        .topic("group")
+        .initialStartDate(ACTIVE_CHAT.getStartDate())
+        .startDate(ACTIVE_CHAT.getStartDate())
+        .conversationType(conversationType)
+        .inviteToken(inviteToken)
+        .build();
   }
 }
