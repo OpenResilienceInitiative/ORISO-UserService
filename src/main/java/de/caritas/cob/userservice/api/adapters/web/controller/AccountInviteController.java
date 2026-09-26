@@ -74,7 +74,8 @@ public class AccountInviteController {
             parseOptionalEnum(
                 IdAllocationMode.class, safe.tenantIdAllocationMode, "tenantIdAllocationMode"),
             parseOptionalEnum(
-                IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"));
+                IdAllocationMode.class, safe.agencyIdAllocationMode, "agencyIdAllocationMode"),
+            safe.alsoCounsellor);
 
     if (safe.templateId != null) {
       InviteSendResult result = accountInviteService.createAndSendInvite(command, safe.templateId);
@@ -348,11 +349,21 @@ public class AccountInviteController {
 
     /**
      * TEN-INV-U3: AUTO = the owning service assigns the smallest free ID (the matching ID field
-     * must be omitted); MANUAL = the pinned ID is reserved or rejected with 409.
+     * must be omitted); MANUAL = the pinned ID is reserved or rejected with 409 (both only for
+     * TENANT_ADMIN invites, i.e. a new Träger). EXISTING: {@code tenantId} names an existing
+     * Träger, nothing is reserved (404 unknown, 403 out of scope, 400 for 0 or missing; a Träger
+     * admin who names none gets their own).
      */
     public String tenantIdAllocationMode;
 
+    /**
+     * AUTO / MANUAL as above, or EXISTING: {@code agencyId} names an existing agency that is
+     * validated, not reserved; a missing tenant or single topic is taken from the agency.
+     */
     public String agencyIdAllocationMode;
+
+    /** AGENCY_ADMIN invites only; omitted = true. Set for any other role → 400. */
+    public Boolean alsoCounsellor;
   }
 
   public static class SendInviteRequestDTO {
@@ -436,6 +447,16 @@ public class AccountInviteController {
     public String lastName;
     public Long agencyId;
     public Long departmentId;
+
+    /** AUTO / MANUAL (new Träger) or EXISTING; null on older invites. */
+    public String tenantIdAllocationMode;
+
+    /** AUTO / MANUAL (new Beratungsstelle) or EXISTING; null on older invites. */
+    public String agencyIdAllocationMode;
+
+    /** AGENCY_ADMIN invites: whether the person also counsels; null for every other role. */
+    public Boolean alsoCounsellor;
+
     public String provisioningStatus;
     public String provisionedUserId;
     public String inviteStatus;
@@ -525,6 +546,15 @@ public class AccountInviteController {
       dto.lastName = invite.getLastName();
       dto.agencyId = invite.getAgencyId();
       dto.departmentId = invite.getDepartmentId();
+      dto.tenantIdAllocationMode =
+          invite.getTenantIdAllocationMode() == null
+              ? null
+              : invite.getTenantIdAllocationMode().name();
+      dto.agencyIdAllocationMode =
+          invite.getAgencyIdAllocationMode() == null
+              ? null
+              : invite.getAgencyIdAllocationMode().name();
+      dto.alsoCounsellor = invite.getAlsoCounsellor();
       dto.provisioningStatus =
           invite.getProvisioningStatus() == null ? null : invite.getProvisioningStatus().name();
       dto.provisionedUserId = invite.getProvisionedUserId();

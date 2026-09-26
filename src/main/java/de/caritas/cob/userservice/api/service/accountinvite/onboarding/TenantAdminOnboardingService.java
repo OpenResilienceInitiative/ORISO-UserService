@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService;
 import de.caritas.cob.userservice.api.service.accountinvite.DpaForwardEmailService.DpaForwardEmailCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.Licensing;
@@ -128,6 +129,10 @@ public class TenantAdminOnboardingService {
     if (resolved.pendingTwoFactorResume()) {
       return new OnboardingInviteState(resolved.invite(), true, null, null);
     }
+    if (joinsExistingTenant(resolved.invite())) {
+      // The Träger already has its own DPA; the invitee signs nothing on its behalf.
+      return new OnboardingInviteState(resolved.invite(), false, null, null);
+    }
     var lookup = operatorDpaContentClient.lookupPublishedDpa();
     return new OnboardingInviteState(resolved.invite(), false, lookup.content(), lookup.reason());
   }
@@ -189,6 +194,12 @@ public class TenantAdminOnboardingService {
     if (expired != null) {
       // noRollbackFor (see above) keeps the EXPIRED transition this just persisted.
       throw expired;
+    }
+    if (joinsExistingTenant(invite)) {
+      return joinExistingTenant(invite, command, now);
+    }
+    if (isBlank(command.organisationName())) {
+      throw new BadRequestException("organisation.name is required");
     }
     if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
       // Legacy invite created while TenantService lacked the TEN-INV-U1 allocation endpoints —
@@ -295,6 +306,57 @@ public class TenantAdminOnboardingService {
       identityAccountRemover.rollbackUser(admin.getId());
       throw exception;
     }
+  }
+
+  /**
+   * No Träger, reservation or DPA here, but the same single-use claim, Keycloak compensation and
+   * TOTP resume contract as the new-Träger path.
+   */
+  private TenantAdminRegistrationResult joinExistingTenant(
+      AccountInvite invite, RegisterTenantAdminCommand command, LocalDateTime now) {
+    if (invite.getTenantId() == null) {
+      throw new InternalServerErrorException("Invite into an existing tenant carries no tenant");
+    }
+    int claimed = accountInviteRepository.claimForAcceptance(invite.getId(), null, now);
+    if (claimed == 0) {
+      AccountInvite current =
+          accountInviteRepository
+              .findById(invite.getId())
+              .orElseThrow(() -> new NotFoundException("Account invite not found"));
+      throw linkDeathException(current);
+    }
+
+    var admin = createAdminService.createNewTenantAdmin(buildAdminDto(invite, command));
+    try {
+      IdentityOtpCredential otpInfo =
+          identitySecondFactor.getOtpCredential(
+              usernameTranscoder.encodeUsername(admin.getUsername()));
+      if (otpInfo == null || isBlank(otpInfo.secret())) {
+        throw new InternalServerErrorException(
+            "Keycloak issued no TOTP setup material for the onboarding account");
+      }
+      AccountInvite claimedInvite =
+          accountInviteRepository
+              .findById(invite.getId())
+              .orElseThrow(() -> new NotFoundException("Account invite not found"));
+      claimedInvite.setAcceptedByUserId(admin.getId());
+      claimedInvite.setTotpPendingSecret(otpInfo.secret());
+      claimedInvite.setUpdateDate(now);
+      accountInviteRepository.save(claimedInvite);
+      log.info(
+          "Tenant-admin onboarding of invite {} joined the existing tenant {}",
+          invite.getId(),
+          invite.getTenantId());
+      return new TenantAdminRegistrationResult(
+          invite.getTenantId(), otpInfo.secret(), otpInfo.secretQrCode());
+    } catch (RuntimeException exception) {
+      identityAccountRemover.rollbackUser(admin.getId());
+      throw exception;
+    }
+  }
+
+  static boolean joinsExistingTenant(AccountInvite invite) {
+    return invite.getTenantIdAllocationMode() == IdAllocationMode.EXISTING;
   }
 
   /**
@@ -424,6 +486,11 @@ public class TenantAdminOnboardingService {
             // Returned, not thrown: the EXPIRED transition this just persisted must commit before
             // the link-death exception leaves the flow.
             return ReservedDpaForward.dead(expired);
+          }
+          if (joinsExistingTenant(invite)) {
+            throw new BadRequestException(
+                "This invitation joins an existing tenant; its data processing agreement is not"
+                    + " part of the onboarding");
           }
           if (invite.getTenantId() == null || isBlank(invite.getTenantIdReservationToken())) {
             throw new InternalServerErrorException(
@@ -669,9 +736,7 @@ public class TenantAdminOnboardingService {
     if (command == null) {
       throw new BadRequestException("Request body is required");
     }
-    if (isBlank(command.organisationName())) {
-      throw new BadRequestException("organisation.name is required");
-    }
+    // organisation.name is checked in registerTenantAdmin: an EXISTING-Träger invite has none.
     if (isBlank(command.password()) || command.password().length() < MIN_PASSWORD_LENGTH) {
       throw new BadRequestException(
           "account.password must be at least " + MIN_PASSWORD_LENGTH + " characters long");
