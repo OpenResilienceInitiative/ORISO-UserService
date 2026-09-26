@@ -196,7 +196,20 @@ class TenantTemplateSupplierTest {
   }
 
   @Test
-  void getTenantBaseUrl_RejectsOverlongCombinedHostname() {
+  void getTenantBaseUrl_AcceptsCombinedHostnameAtDnsLimit() {
+    String baseHost = ("b".repeat(60) + ".").repeat(3) + "example.org";
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://" + baseHost);
+
+    String url =
+        tenantTemplateSupplier.getTenantBaseUrl(
+            new RestrictedTenantDTO().subdomain("a".repeat(58)));
+
+    assertThat(url, is("https://" + "a".repeat(58) + "." + baseHost));
+  }
+
+  @Test
+  void getTenantBaseUrl_RejectsCombinedHostnameAboveDnsLimit() {
     String baseHost = ("b".repeat(60) + ".").repeat(3) + "example.org";
     ReflectionTestUtils.setField(
         tenantTemplateSupplier, "applicationBaseUrl", "https://" + baseHost);
@@ -206,7 +219,7 @@ class TenantTemplateSupplierTest {
             IllegalStateException.class,
             () ->
                 tenantTemplateSupplier.getTenantBaseUrl(
-                    new RestrictedTenantDTO().subdomain("a".repeat(63))));
+                    new RestrictedTenantDTO().subdomain("a".repeat(59))));
 
     assertThat(error.getMessage(), is("Tenant mail hostname exceeds the DNS length limit"));
   }
