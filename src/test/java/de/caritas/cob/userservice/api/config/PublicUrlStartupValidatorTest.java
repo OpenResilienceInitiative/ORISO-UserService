@@ -116,6 +116,19 @@ class PublicUrlStartupValidatorTest {
   }
 
   @Test
+  void rejectsLoopbackHostsInDeployedProfiles() {
+    environment.setProperty("app.base.url", "https://localhost");
+    environment.setProperty("magic.link.frontend.base-url", "https://127.0.0.1");
+    environment.setProperty("password.reset.frontend.base-url", "https://app.localhost");
+
+    assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+        .hasMessageContaining("APP_BASE_URL")
+        .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL")
+        .hasMessageContaining("PASSWORD_RESET_FRONTEND_BASE_URL")
+        .hasMessageContaining("loopback");
+  }
+
+  @Test
   void allowsExampleHostsInTheLocalAndTestingProfiles() {
     environment.setActiveProfiles("testing");
     environment.setProperty("dpa.sign.frontend.base-url", "https://app.example.com");
@@ -125,8 +138,8 @@ class PublicUrlStartupValidatorTest {
   }
 
   @Test
-  void keepsLocalhostWorkingForTheLocalComposeStackOnTheDevProfile() {
-    environment.setActiveProfiles("dev");
+  void keepsLocalhostWorkingForTheLocalComposeStackOnTheLocalProfile() {
+    environment.setActiveProfiles("local");
     environment.setProperty("app.base.url", "http://localhost:9002");
 
     assertThatCode(() -> PublicUrlStartupValidator.validate(environment))
