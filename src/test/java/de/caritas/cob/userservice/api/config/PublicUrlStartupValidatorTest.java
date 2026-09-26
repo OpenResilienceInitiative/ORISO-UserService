@@ -129,6 +129,25 @@ class PublicUrlStartupValidatorTest {
   }
 
   @Test
+  void rejectsIpv6LoopbackAndUnspecifiedHostsInDeployedProfiles() {
+    for (String host : new String[] {"[::1]", "[0:0:0:0:0:0:0:1]", "[::ffff:127.0.0.1]", "[::]"}) {
+      environment.setProperty("magic.link.frontend.base-url", "https://" + host);
+
+      assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+          .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL")
+          .hasMessageContaining("loopback");
+    }
+  }
+
+  @Test
+  void allowsPublicIpv6Hosts() {
+    environment.setProperty("magic.link.frontend.base-url", "https://[2001:4860:4860::8888]");
+
+    assertThatCode(() -> PublicUrlStartupValidator.validate(environment))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
   void rejectsIntegerIpv4AliasThatBrowsersInterpretAsLoopback() {
     environment.setProperty("magic.link.frontend.base-url", "https://2130706433");
 
