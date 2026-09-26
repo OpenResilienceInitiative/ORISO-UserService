@@ -42,6 +42,7 @@ class ReplicaSafetyInventoryContractTest {
           "appointment-cleanup-scheduler",
           "enquiry-notification-scheduler",
           "group-chat-deactivation-scheduler",
+          "group-chat-admission-retry",
           "anonymous-deactivation-scheduler",
           "group-chat-reminder-scheduler",
           "inactive-account-notification-scheduler",

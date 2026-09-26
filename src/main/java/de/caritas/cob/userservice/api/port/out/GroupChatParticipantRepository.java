@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.port.out;
 
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import jakarta.persistence.LockModeType;
+import java.util.Collection;
 import java.util.List;
 import java.util.Optional;
 import org.springframework.data.jpa.repository.Lock;
@@ -32,6 +33,9 @@ public interface GroupChatParticipantRepository extends CrudRepository<GroupChat
   List<GroupChatParticipant> findByChatId(Long chatId);
 
   List<GroupChatParticipant> findBySeriesId(Long seriesId);
+
+  List<GroupChatParticipant> findBySeriesIdInAndConsultantId(
+      Collection<Long> seriesIds, String consultantId);
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   @Query(
