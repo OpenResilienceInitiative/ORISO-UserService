@@ -45,9 +45,6 @@ public class SupervisorAddedEmailNotificationService {
   private final @NonNull OrisoEmailRenderer emailRenderer;
   private final @NonNull OrisoEmailBrand emailBrand;
 
-  @Value("${app.base.url}")
-  private String applicationBaseUrl;
-
   @Value("${system.notification.frontend.base-url}")
   private String publicFrontendBaseUrl;
 
@@ -246,7 +243,7 @@ public class SupervisorAddedEmailNotificationService {
 
   private String resolveAppFrontendUrl(TenantData tenantData) {
     if (tenantData == null) {
-      return sanitizeFrontendUrl(applicationBaseUrl);
+      return requireFrontendUrl(publicFrontendBaseUrl, "system.notification.frontend.base-url");
     }
     try {
       TenantContext.setCurrentTenantData(tenantData);
@@ -260,32 +257,35 @@ public class SupervisorAddedEmailNotificationService {
                       ::getValue)
               .filter(value -> isNotBlank(value))
               .findFirst()
-              .orElse(applicationBaseUrl);
-      return sanitizeFrontendUrl(resolved);
-    } catch (Exception ex) {
-      return sanitizeFrontendUrl(applicationBaseUrl);
+              .orElseThrow(
+                  () ->
+                      new IllegalStateException(
+                          "Tenant notification frontend URL is missing for tenant "
+                              + tenantData.getTenantId()));
+      return requireFrontendUrl(resolved, "tenant notification frontend URL");
     } finally {
       TenantContext.clear();
     }
   }
 
-  private String sanitizeFrontendUrl(String url) {
-    if (!isNotBlank(url) || isLocalUrl(url)) {
-      return publicFrontendBaseUrl;
+  private String requireFrontendUrl(String url, String setting) {
+    if (!isNotBlank(url)) {
+      throw new IllegalStateException(setting + " must be configured for notification mail");
     }
-    return url;
-  }
-
-  private boolean isLocalUrl(String url) {
     try {
       URI uri = URI.create(url.trim());
       String host = uri.getHost();
-      return host == null
-          || "localhost".equalsIgnoreCase(host)
-          || "127.0.0.1".equals(host)
-          || "::1".equals(host);
-    } catch (Exception ex) {
-      return true;
+      if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+          || host == null
+          || uri.getUserInfo() != null
+          || uri.getQuery() != null
+          || uri.getFragment() != null) {
+        throw new IllegalStateException(setting + " must be an absolute http(s) URL");
+      }
+      String base = url.trim();
+      return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
+    } catch (IllegalArgumentException ex) {
+      throw new IllegalStateException(setting + " must be an absolute http(s) URL", ex);
     }
   }
 
@@ -328,7 +328,7 @@ public class SupervisorAddedEmailNotificationService {
   }
 
   private String buildSessionUrl(String baseUrl, Long sessionId, boolean consultantView) {
-    String safeBase = baseUrl == null ? "" : baseUrl.trim();
+    String safeBase = requireFrontendUrl(baseUrl, "notification frontend URL");
     if (safeBase.endsWith("/")) {
       safeBase = safeBase.substring(0, safeBase.length() - 1);
     }
