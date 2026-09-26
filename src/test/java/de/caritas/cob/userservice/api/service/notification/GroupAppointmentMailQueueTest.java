@@ -176,6 +176,36 @@ class GroupAppointmentMailQueueTest {
   }
 
   @Test
+  void aLegacyRepeatingGroupQueuesTheNewMembersNextDate() {
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(5);
+    var series = series(start);
+    series.setConversationType(null);
+    series.setRepeatCount(2);
+    var next =
+        GroupAppointmentOccurrenceState.builder()
+            .seriesId(42L)
+            .occurrenceIndex(0)
+            .revision(1)
+            .effectiveStartUtc(start)
+            .timezone("Europe/Berlin")
+            .status(GroupAppointmentOccurrenceState.Status.ACTIVE)
+            .build();
+    when(chats.findSeriesForAppointmentMailUpdate(42L)).thenReturn(Optional.of(series));
+    when(states.findBySeriesId(42L)).thenReturn(List.of(next));
+
+    queue.recordMemberJoined(
+        series,
+        new GroupAppointmentMailQueue.Member(
+            GroupAppointmentMailOutbox.RecipientRole.COUNSELOR, "counselor"));
+
+    var saved = ArgumentCaptor.forClass(GroupAppointmentMailOutbox.class);
+    verify(outbox, org.mockito.Mockito.times(2)).save(saved.capture());
+    assertThat(saved.getAllValues())
+        .extracting(GroupAppointmentMailOutbox::getEventType)
+        .containsExactlyInAnyOrder(EventType.CONFIRMED, EventType.REMINDER);
+  }
+
+  @Test
   void joiningConfirmsTheEarliestEffectiveDateAfterAnOverrideReordersTheSeries() {
     var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(5);
     var series = series(start);

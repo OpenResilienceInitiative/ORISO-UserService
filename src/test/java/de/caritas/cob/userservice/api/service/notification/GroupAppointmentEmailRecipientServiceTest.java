@@ -66,6 +66,8 @@ class GroupAppointmentEmailRecipientServiceTest {
   @Test
   void resolvesAnInvitedCounselorEvenWhenTheirTenantDiffers() {
     Chat group = group();
+    group.setConversationType(null);
+    group.setRepeatCount(2);
     Consultant counselor = new Consultant();
     counselor.setId("counselor-1");
     counselor.setTenantId(99L);

@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ChatOccurrenceException;
 import de.caritas.cob.userservice.api.model.ChatOccurrenceException.ExceptionType;
@@ -116,6 +117,6 @@ public class GroupAppointmentSeriesEventProducer {
   private static boolean isSelfHelp(Chat series) {
     return series != null
         && series.getId() != null
-        && series.getConversationType() == ConversationType.SELF_HELP;
+        && ChatConverter.conversationTypeOf(series) == ConversationType.SELF_HELP;
   }
 }

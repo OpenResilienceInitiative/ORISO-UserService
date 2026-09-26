@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox;
@@ -33,7 +34,8 @@ public class GroupAppointmentMailEligibilityService {
       return Optional.empty();
     }
     var series = chats.findById(mail.getSeriesId());
-    if (series.isEmpty() || series.get().getConversationType() != ConversationType.SELF_HELP) {
+    if (series.isEmpty()
+        || ChatConverter.conversationTypeOf(series.get()) != ConversationType.SELF_HELP) {
       return Optional.empty();
     }
     var occurrence =

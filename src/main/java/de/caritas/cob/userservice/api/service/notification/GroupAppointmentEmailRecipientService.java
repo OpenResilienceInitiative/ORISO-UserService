@@ -4,6 +4,7 @@ import static de.caritas.cob.userservice.api.helper.EmailNotificationUtils.deser
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.NotificationsAware;
@@ -48,7 +49,7 @@ public class GroupAppointmentEmailRecipientService {
   public Optional<Recipient> resolve(Chat series, Role role, String userId) {
     if (series == null
         || series.getId() == null
-        || series.getConversationType() != ConversationType.SELF_HELP
+        || ChatConverter.conversationTypeOf(series) != ConversationType.SELF_HELP
         || role == null
         || isBlank(userId)) {
       return Optional.empty();

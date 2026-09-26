@@ -67,6 +67,8 @@ class GroupAppointmentMailEligibilityServiceTest {
 
   @Test
   void currentRevisionAndCurrentMemberAreEligible() {
+    series.setConversationType(null);
+    series.setRepeatCount(2);
     when(chats.findById(42L)).thenReturn(Optional.of(series));
     when(occurrences.findBySeriesIdAndOccurrenceIndex(42L, 2)).thenReturn(Optional.of(occurrence));
     var recipient =

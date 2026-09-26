@@ -3,14 +3,12 @@ package de.caritas.cob.userservice.api.service.chat;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
-import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
-import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
@@ -19,8 +17,6 @@ import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
-import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
-import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -31,6 +27,8 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /**
  * Knock-to-join for self-help groups: a consultant who holds the invite link asks to join, and a
@@ -49,8 +47,7 @@ public class GroupChatJoinRequestService {
   private final ConsultantRepository consultantRepository;
   private final GroupChatPermissionService groupChatPermissionService;
   private final GroupChatConsultantAccess groupChatConsultantAccess;
-  private final GroupChatMembershipService membershipService;
-  private final GroupAppointmentSeriesEventProducer appointmentEvents;
+  private final GroupChatAdmissionProcessor admissionProcessor;
 
   /** Result of a knock: the request, and whether this call created it. */
   public record KnockResult(GroupChatJoinRequest request, boolean created) {}
@@ -76,6 +73,18 @@ public class GroupChatJoinRequestService {
       throw new ConflictException("Consultant already has access to this Series");
     }
 
+    var participants = participantRepository.findBySeriesId(seriesId);
+    if (participants.stream().noneMatch(participant -> isModeratorRole(participant.getRole()))
+        || participants.stream().noneMatch(participant -> participant.getChatId() != null)) {
+      throw new ConflictException("Chat Series is not ready to moderate join requests");
+    }
+
+    var admitting =
+        joinRequestRepository.findFirstBySeriesIdAndConsultantIdAndStatusOrderByIdDesc(
+            seriesId, consultantId, Status.ADMITTING);
+    if (admitting.isPresent()) {
+      return new KnockResult(admitting.get(), false);
+    }
     var pending =
         joinRequestRepository.findFirstBySeriesIdAndConsultantIdAndStatusOrderByIdDesc(
             seriesId, consultantId, Status.PENDING);
@@ -102,10 +111,26 @@ public class GroupChatJoinRequestService {
 
   @Transactional
   public void cancelOwn(Long seriesId, String consultantId) {
+    var latest =
+        joinRequestRepository.findFirstBySeriesIdAndConsultantIdOrderByIdDesc(
+            seriesId, consultantId);
+    if (latest.isPresent() && latest.get().getStatus() == Status.ADMITTING) {
+      throw new ConflictException("Join request admission is already in progress");
+    }
     joinRequestRepository
         .findFirstBySeriesIdAndConsultantIdAndStatusOrderByIdDesc(
             seriesId, consultantId, Status.PENDING)
-        .ifPresent(request -> decide(request, Status.CANCELLED, consultantId, null));
+        .flatMap(request -> joinRequestRepository.findByIdForUpdate(request.getId()))
+        .filter(request -> seriesId.equals(request.getSeriesId()))
+        .filter(request -> consultantId.equals(request.getConsultantId()))
+        .filter(GroupChatJoinRequest::isPending)
+        .ifPresent(
+            request -> {
+              if (request.getAdmissionRequestedAt() != null) {
+                throw new ConflictException("Join request admission is already in progress");
+              }
+              decide(request, Status.CANCELLED, consultantId, null);
+            });
   }
 
   /** Pending requests of every Series in which the caller is Owner or Co-Moderator. */
@@ -135,6 +160,7 @@ public class GroupChatJoinRequestService {
                 false)
             .collect(Collectors.toMap(Chat::getId, chat -> chat));
     return pending.stream()
+        .filter(request -> request.getAdmissionRequestedAt() == null)
         .filter(request -> seriesById.containsKey(request.getSeriesId()))
         .filter(request -> isSelfHelp(seriesById.get(request.getSeriesId())))
         .map(
@@ -172,27 +198,42 @@ public class GroupChatJoinRequestService {
         participants.stream()
             .anyMatch(participant -> requester.getId().equals(participant.getConsultantId()));
     if (!alreadyParticipant) {
-      var sessionId =
-          participants.stream()
-              .map(GroupChatParticipant::getChatId)
-              .filter(Objects::nonNull)
-              .findFirst()
-              .orElseThrow(
-                  () ->
-                      new ConflictException(
-                          "Chat Series has no participations and cannot admit members"));
-      if (!membershipService.addMemberToRoom(series, requester.getMatrixUserId())) {
-        throw new InternalServerErrorException(
-            "Join request " + requestId + " could not be admitted to the Matrix room");
-      }
-      participantRepository.save(
-          GroupChatParticipant.builder()
-              .chatId(sessionId)
-              .seriesId(seriesId)
-              .consultantId(requester.getId())
-              .role(admittedRole)
-              .build());
-      appointmentEvents.recordMemberJoined(series, RecipientRole.COUNSELOR, requester.getId());
+      participants.stream()
+          .map(GroupChatParticipant::getChatId)
+          .filter(Objects::nonNull)
+          .findFirst()
+          .orElseThrow(
+              () ->
+                  new ConflictException(
+                      "Chat Series has no participations and cannot admit members"));
+      request.setAdmissionRequestedAt(CustomLocalDateTime.nowInUtc());
+      request.setStatus(Status.ADMITTING);
+      request.setAdmittedRole(admittedRole);
+      request.setDecidedBy(actorId);
+      joinRequestRepository.save(request);
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCommit() {
+              try {
+                admissionProcessor.process(requestId);
+              } catch (RuntimeException exception) {
+                try {
+                  admissionProcessor.recordFailure(requestId);
+                } catch (RuntimeException retryFailure) {
+                  log.warn(
+                      "Could not record failed group admission {} ({})",
+                      requestId,
+                      retryFailure.getClass().getSimpleName());
+                }
+                log.warn(
+                    "Queued group admission {} could not run immediately ({})",
+                    requestId,
+                    exception.getClass().getSimpleName());
+              }
+            }
+          });
+      return;
     }
 
     decide(request, Status.ADMITTED, actorId, admittedRole);
@@ -243,11 +284,14 @@ public class GroupChatJoinRequestService {
   private GroupChatJoinRequest requirePendingRequest(Long seriesId, Long requestId) {
     var request =
         joinRequestRepository
-            .findById(requestId)
+            .findByIdForUpdate(requestId)
             .filter(candidate -> seriesId.equals(candidate.getSeriesId()))
             .orElseThrow(() -> new NotFoundException("Join request not found"));
     if (!request.isPending()) {
       throw new ConflictException("Join request is no longer pending");
+    }
+    if (request.getAdmissionRequestedAt() != null) {
+      throw new ConflictException("Join request admission is already in progress");
     }
     return request;
   }

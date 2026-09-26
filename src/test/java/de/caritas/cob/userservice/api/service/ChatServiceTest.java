@@ -52,6 +52,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
+import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.LocalDate;
@@ -83,6 +84,8 @@ class ChatServiceTest {
   @Mock private ConsultantService consultantService;
 
   @Mock private GroupChatConsultantAccess groupChatConsultantAccess;
+
+  @Mock private GroupChatInviteTokenService groupChatInviteTokenService;
 
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
 

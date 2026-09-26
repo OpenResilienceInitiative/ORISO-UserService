@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox;
@@ -275,7 +276,7 @@ public class GroupAppointmentMailQueue {
   private static boolean isSelfHelp(Chat series) {
     return series != null
         && series.getId() != null
-        && series.getConversationType() == ConversationType.SELF_HELP;
+        && ChatConverter.conversationTypeOf(series) == ConversationType.SELF_HELP;
   }
 
   private static void requireIndex(Chat series, int index) {

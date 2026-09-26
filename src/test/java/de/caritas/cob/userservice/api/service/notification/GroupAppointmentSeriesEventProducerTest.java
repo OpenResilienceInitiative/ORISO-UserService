@@ -47,6 +47,33 @@ class GroupAppointmentSeriesEventProducerTest {
   }
 
   @Test
+  void aLegacyRepeatingGroupStillProducesItsAppointmentDates() {
+    var firstUtc = LocalDateTime.parse("2027-03-27T08:00:00");
+    var series =
+        Chat.builder()
+            .id(42L)
+            .topic("Legacy circle")
+            .initialStartDate(firstUtc)
+            .startDate(firstUtc)
+            .timezone("Europe/Berlin")
+            .repeatCount(2)
+            .chatInterval(ChatInterval.DAILY)
+            .build();
+    when(exceptions.findBySeries_Id(42L)).thenReturn(List.of());
+
+    producer.recordCreated(series);
+
+    verify(queue).recordOccurrence(series, 0, firstUtc, firstUtc, true);
+    verify(queue)
+        .recordOccurrence(
+            series,
+            1,
+            LocalDateTime.parse("2027-03-28T07:00:00"),
+            LocalDateTime.parse("2027-03-28T07:00:00"),
+            false);
+  }
+
+  @Test
   void aSkippedFirstDateMakesTheNextLiveDateTheOnlyImmediateConfirmation() {
     var firstUtc = LocalDateTime.parse("2027-03-27T08:00:00");
     var secondUtc = LocalDateTime.parse("2027-03-28T07:00:00");
