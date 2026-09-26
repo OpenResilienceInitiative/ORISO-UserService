@@ -138,6 +138,22 @@ class PublicUrlStartupValidatorTest {
   }
 
   @Test
+  void rejectsTrailingDotLocalhost() {
+    environment.setProperty("app.base.url", "https://localhost.");
+
+    assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+        .hasMessageContaining("APP_BASE_URL");
+  }
+
+  @Test
+  void rejectsHexIpv4Alias() {
+    environment.setProperty("magic.link.frontend.base-url", "https://0x7f000001");
+
+    assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+        .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL");
+  }
+
+  @Test
   void allowsExampleHostsInTheLocalAndTestingProfiles() {
     environment.setActiveProfiles("testing");
     environment.setProperty("dpa.sign.frontend.base-url", "https://app.example.com");
