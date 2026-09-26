@@ -165,6 +165,19 @@ class TenantTemplateSupplierTest {
   }
 
   @Test
+  void getTenantBaseUrl_RejectsOverlongTenantSubdomain() {
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://onlineberatung.net");
+    RestrictedTenantDTO tenantData = new RestrictedTenantDTO().subdomain("a".repeat(64));
+
+    IllegalStateException error =
+        assertThrows(
+            IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenantData));
+
+    assertThat(error.getMessage(), is("Tenant subdomain is missing or invalid for mail URL"));
+  }
+
+  @Test
   void getTenantBaseUrl_RejectsMissingApplicationBaseUrl() {
     RestrictedTenantDTO tenantData = new RestrictedTenantDTO().subdomain(VALID_SUBDOMAIN);
 

@@ -124,7 +124,9 @@ public class TenantTemplateSupplier {
   }
 
   private String getTenantBaseUrlForStandardMultitenancyMode(String subdomain) {
-    if (isBlank(subdomain) || !subdomain.matches("[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")) {
+    if (isBlank(subdomain)
+        || subdomain.length() > 63
+        || !subdomain.matches("[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?")) {
       throw new IllegalStateException("Tenant subdomain is missing or invalid for mail URL");
     }
     if (isBlank(applicationBaseUrl)) {
