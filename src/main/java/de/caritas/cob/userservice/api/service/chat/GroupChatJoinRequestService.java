@@ -73,6 +73,12 @@ public class GroupChatJoinRequestService {
       throw new ConflictException("Consultant already has access to this Series");
     }
 
+    var participants = participantRepository.findBySeriesId(seriesId);
+    if (participants.stream().noneMatch(participant -> isModeratorRole(participant.getRole()))
+        || participants.stream().noneMatch(participant -> participant.getChatId() != null)) {
+      throw new ConflictException("Chat Series is not ready to moderate join requests");
+    }
+
     var admitting =
         joinRequestRepository.findFirstBySeriesIdAndConsultantIdAndStatusOrderByIdDesc(
             seriesId, consultantId, Status.ADMITTING);

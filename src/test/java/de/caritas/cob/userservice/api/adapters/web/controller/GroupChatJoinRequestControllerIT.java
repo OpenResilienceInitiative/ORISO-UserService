@@ -193,6 +193,41 @@ class GroupChatJoinRequestControllerIT {
   }
 
   @Test
+  void knockingOnASeriesWithoutParticipantRowsDoesNotCreateAnUnmoderatableRequest()
+      throws Exception {
+    participantRepository.deleteBySeriesId(group.getId());
+    entityManager.flush();
+    actAs(otherTraegerCounsellor);
+
+    knock().andExpect(status().isConflict());
+
+    assertThat(
+            joinRequestRepository.findFirstBySeriesIdAndConsultantIdOrderByIdDesc(
+                group.getId(), otherTraegerCounsellor.getId()))
+        .isEmpty();
+  }
+
+  @Test
+  void knockingOnASeriesWithoutAModeratorDoesNotCreateAnUnmoderatableRequest() throws Exception {
+    participantRepository
+        .findBySeriesId(group.getId())
+        .forEach(
+            participation -> {
+              participation.setRole(ParticipantRole.PARTICIPANT);
+              participantRepository.save(participation);
+            });
+    entityManager.flush();
+    actAs(otherTraegerCounsellor);
+
+    knock().andExpect(status().isConflict());
+
+    assertThat(
+            joinRequestRepository.findFirstBySeriesIdAndConsultantIdOrderByIdDesc(
+                group.getId(), otherTraegerCounsellor.getId()))
+        .isEmpty();
+  }
+
+  @Test
   void counsellorWhoAlreadyHasAccessCannotKnock() throws Exception {
     actAs(sameAgencyCounsellor);
     knock().andExpect(status().isConflict());
