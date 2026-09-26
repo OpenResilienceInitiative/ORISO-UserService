@@ -29,7 +29,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
-import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
+import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
 import java.time.DateTimeException;
 import java.time.LocalDate;
@@ -66,6 +66,7 @@ public class ChatService {
 
   private final @NonNull AgencyService agencyService;
   private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
+  private final @NonNull GroupChatInviteTokenService groupChatInviteTokenService;
 
   /**
    * Returns a list of current chats for the provided {@link Consultant}
@@ -131,8 +132,7 @@ public class ChatService {
   /** Groups created before #1237 have no token yet; the first counsellor view mints it. */
   private String inviteTokenOf(Chat chat) {
     if (chat.getInviteToken() == null && chat.getId() != null) {
-      chat.setInviteToken(GroupChatInviteTokens.newToken());
-      chatRepository.save(chat);
+      return groupChatInviteTokenService.tokenFor(chat.getId());
     }
     return chat.getInviteToken();
   }

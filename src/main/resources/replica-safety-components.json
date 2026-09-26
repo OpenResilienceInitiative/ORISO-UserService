@@ -526,6 +526,17 @@
       "status": "bounded"
     },
     {
+      "id": "group-chat-admission-retry",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/chat/GroupChatAdmissionScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-group-chat",
+      "risk": "duplicate-side-effect",
+      "components": ["retryPendingAdmissions"],
+      "decision": "A shared lease serializes retry batches; each ADMITTING row is durable, Matrix join is retried idempotently, and the participant row is committed only after Matrix confirms membership.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "bounded"
+    },
+    {
       "id": "event-notification-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/notificationretention/scheduler/EventNotificationRetentionScheduler.java",
       "kind": "scheduler",
