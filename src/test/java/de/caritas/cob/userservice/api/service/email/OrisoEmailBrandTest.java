@@ -125,11 +125,13 @@ class OrisoEmailBrandTest {
         .containsEntry("platformName", "Nord")
         .containsEntry("logoUrl", "https://app.example.org/branding/nord.png")
         .containsEntry("primaryColor", "#123456")
+        .containsEntry("accentColor", "#123456")
         .containsEntry("privacyUrl", "https://nord.example.org/datenschutz");
     assertThat(southMail)
         .containsEntry("platformName", "Süd")
         .containsEntry("logoUrl", "https://app.example.org/branding/sued.png")
         .containsEntry("primaryColor", "#654321")
+        .containsEntry("accentColor", "#654321")
         .containsEntry("privacyUrl", "https://sued.example.org/datenschutz");
   }
 }

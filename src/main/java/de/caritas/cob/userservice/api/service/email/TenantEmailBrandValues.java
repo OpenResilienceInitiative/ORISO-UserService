@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.service.email;
 
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
-import de.caritas.cob.userservice.api.service.email.layout.EmailColors;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
 import java.util.LinkedHashMap;
 import java.util.Map;
@@ -56,13 +55,8 @@ public class TenantEmailBrandValues {
     // <img src=""> next to the wordmark is a broken-image icon in every mail client.
     values.put("logoUrl", branding.logoUrl() == null ? "" : branding.logoUrl());
 
-    // The button fill is contrast-guarded (its label is white in the template); the 4px accent bar
-    // only follows the tenant when the tenant actually configured a colour — otherwise the
-    // platform's two-tone header (lighter bar, darker button) would collapse into one flat red.
+    // The button fill is contrast-guarded (its label is white in the template).
     values.put("primaryColor", orisoEmailBrand.readablePrimary(branding.accentColor()));
-    if (!EmailColors.PLATFORM_ACCENT_DARK.equals(branding.accentColor())) {
-      values.put("accentColor", branding.accentColor());
-    }
 
     if (branding.imprintUrl() != null) {
       values.put("imprintUrl", branding.imprintUrl());

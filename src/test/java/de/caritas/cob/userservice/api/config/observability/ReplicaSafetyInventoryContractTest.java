@@ -29,6 +29,7 @@ class ReplicaSafetyInventoryContractTest {
           "agency-cache",
           "consulting-type-cache",
           "application-settings-cache",
+          "email-branding-cache",
           "tenant-cache",
           "tenant-admin-cache",
           "topics-cache",

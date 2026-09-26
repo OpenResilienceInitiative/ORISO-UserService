@@ -38,7 +38,6 @@ public class OrisoEmailBrand {
   private static final double MIN_CONTRAST = 4.5d;
 
   private static final String DEFAULT_PRIMARY = "#a5000a";
-  private static final String DEFAULT_ACCENT = "#cc1e1c";
 
   private final SenderOrganisationResolver senderOrganisations;
   private final EmailBrandingResolver brandingResolver;
@@ -69,7 +68,7 @@ public class OrisoEmailBrand {
     values.put("operatorName", orBlank(operator.name()));
     values.put("logoUrl", orBlank(branding.logoUrl()));
     values.put("primaryColor", branding.accentColor());
-    values.put("accentColor", DEFAULT_ACCENT);
+    values.put("accentColor", branding.accentColor());
     values.put("appUrl", base);
     values.put("settingsUrl", base + "/profile/settings");
     values.put("privacyUrl", branding.privacyUrl());
