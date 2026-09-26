@@ -1466,6 +1466,30 @@ class MatrixEventListenerServiceTest {
   }
 
   @Test
+  void processMatrixEvent_shouldNotEmailAnEncryptedEditOrReactionAsANewReply() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(31L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+
+    for (String relationType : List.of("m.replace", "m.annotation")) {
+      var event = new HashMap<String, Object>();
+      event.put("type", "m.room.encrypted");
+      event.put("sender", CONSULTANT_MATRIX_ID);
+      event.put("event_id", "$" + relationType);
+      event.put(
+          "content",
+          Map.of(
+              "algorithm", "m.megolm.v1.aes-sha2",
+              "ciphertext", "opaque-payload",
+              "m.relates_to", Map.of("rel_type", relationType, "event_id", "$original")));
+
+      invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, event);
+    }
+
+    verifyNoInteractions(
+        replyEmailService, eventNotificationService, mobilePushNotificationService);
+  }
+
+  @Test
   void processMatrixEvent_shouldIgnoreEncryptedEvent_whenContentIsNull() {
     var service = newServiceWithSyncExecutor();
     service.registerRoom(32L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));

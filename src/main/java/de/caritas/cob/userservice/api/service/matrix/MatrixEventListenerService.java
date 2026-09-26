@@ -488,6 +488,16 @@ public class MatrixEventListenerService {
       return false;
     }
 
+    // Matrix keeps relation metadata outside the encrypted payload so homeservers can
+    // aggregate edits and reactions. They are not new replies and must not send mail.
+    Object relation = content.get("m.relates_to");
+    if (relation instanceof Map<?, ?> relationFields) {
+      Object relationType = relationFields.get("rel_type");
+      if ("m.replace".equals(relationType) || "m.annotation".equals(relationType)) {
+        return false;
+      }
+    }
+
     String msgtype = (String) content.get("msgtype");
     String senderDomainUserId = resolveDomainUserIdFromMatrixUserId(senderId);
     String threadRootId = extractThreadRootId(content);
