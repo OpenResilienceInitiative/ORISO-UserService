@@ -80,7 +80,7 @@ class DpaSignedNoticeServiceTest {
     when(transactionManager.getTransaction(any())).thenReturn(transactionStatus);
     when(noticeRepository.save(any(DpaSignedNotice.class)))
         .thenAnswer(invocation -> invocation.getArgument(0));
-    when(templateRepository.findByKindAndActiveTrueOrderByCreateDateDesc(
+    when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenReturn(List.of());
     when(identityLocaleLookup.findLocaleById(anyString())).thenReturn(Optional.empty());
@@ -277,7 +277,7 @@ class DpaSignedNoticeServiceTest {
     // it would make every later hint lose the race and the notice would never be sent
     givenSignatures(forwardedSignature("kc-admin-1"));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
-    when(templateRepository.findByKindAndActiveTrueOrderByCreateDateDesc(
+    when(templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE))
         .thenThrow(new IllegalStateException("template store unavailable"));
 

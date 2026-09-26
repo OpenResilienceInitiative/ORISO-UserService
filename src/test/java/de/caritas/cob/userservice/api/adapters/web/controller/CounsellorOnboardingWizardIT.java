@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.identity.IdentityOtpCredential;
 import de.caritas.cob.userservice.api.identity.IdentityOtpType;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -30,6 +31,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import jakarta.servlet.http.Cookie;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -62,6 +65,7 @@ import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilde
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@WithTenant(1L)
 class CounsellorOnboardingWizardIT {
 
   private static final String CONSULTANT_ID = "wizard-counsellor-id";
@@ -80,11 +84,21 @@ class CounsellorOnboardingWizardIT {
 
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
 
+  /** The public route resolves to the main tenant, as on the single-domain deployment. */
+  @MockitoBean private TenantResolverService tenantResolverService;
+
+  @MockitoBean private TenantService tenantService;
+
   @Autowired private MockMvc mockMvc;
 
   @Autowired private AccountInviteRepository accountInviteRepository;
 
   @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
+          .ConsultantAgencyRelationCreatorService
+      consultantAgencyRelationCreatorService;
 
   /**
    * The single {@code keycloakService} bean implements ALL identity ports (authentication, second
@@ -214,7 +228,7 @@ class CounsellorOnboardingWizardIT {
 
     ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
         ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
-    verify(consultantAdminFacade)
+    verify(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(eq(CONSULTANT_ID), agencyCaptor.capture());
     assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
     assertThat(agencyCaptor.getValue().getRoleSetKey()).isEqualTo("CONSULTANT_DEFAULT");
