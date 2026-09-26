@@ -122,6 +122,18 @@ public class OrisoEmailRenderer {
   private static final Pattern SENDER_PLACEHOLDER =
       Pattern.compile("\\{\\{(" + SENDER_KEYS + ")}}");
 
+  private static final String OPTIONAL_CONTACT_KEYS =
+      "consultantPhone|consultantHours|consultantEmail";
+
+  private static final Pattern CONTACT_ROW_HTML =
+      Pattern.compile(
+          "<tr><td class=\"row-label\"[^>]*>[^<]*</td><td class=\"row-value\"[^>]*>\\{\\{("
+              + OPTIONAL_CONTACT_KEYS
+              + ")}}</td></tr>");
+
+  private static final Pattern CONTACT_ROW_TEXT =
+      Pattern.compile("(?m)^[^\\n]*\\{\\{(" + OPTIONAL_CONTACT_KEYS + ")}}[^\\n]*(?:\\n|$)");
+
   private final Map<String, String> templateCache = new ConcurrentHashMap<>();
 
   private final JsonNode catalogue;
@@ -206,13 +218,25 @@ public class OrisoEmailRenderer {
     String html =
         substitute(
             withoutBlankSenderLines(
-                withConditionalBlocks(read(templateId, tone, "html"), values, true), values, true),
+                withoutBlankContactRows(
+                    templateId,
+                    withConditionalBlocks(read(templateId, tone, "html"), values, true),
+                    values,
+                    true),
+                values,
+                true),
             values,
             true);
     String text =
         substitute(
             withoutBlankSenderLines(
-                withConditionalBlocks(read(templateId, tone, "txt"), values, false), values, false),
+                withoutBlankContactRows(
+                    templateId,
+                    withConditionalBlocks(read(templateId, tone, "txt"), values, false),
+                    values,
+                    false),
+                values,
+                false),
             values,
             false);
     String subject = substitute(subjectOf(templateId, tone), values, false);
@@ -306,6 +330,24 @@ public class OrisoEmailRenderer {
         .replace(
             "{{assuranceBlock}}",
             hasAction ? (html ? ASSURANCE_BLOCK_HTML : ASSURANCE_BLOCK_TEXT) : "");
+  }
+
+  private static String withoutBlankContactRows(
+      String templateId, String template, Map<String, String> values, boolean html) {
+    if (!"beraterin-kontakt".equals(templateId)) {
+      return template;
+    }
+    Matcher matcher = (html ? CONTACT_ROW_HTML : CONTACT_ROW_TEXT).matcher(template);
+    StringBuilder result = new StringBuilder();
+    boolean dropped = false;
+    while (matcher.find()) {
+      String value = values.get(matcher.group(1));
+      boolean omit = value != null && value.isBlank();
+      matcher.appendReplacement(result, omit ? "" : Matcher.quoteReplacement(matcher.group()));
+      dropped |= omit;
+    }
+    matcher.appendTail(result);
+    return dropped && !html ? result.toString().replaceAll("\\n{3,}", "\n\n") : result.toString();
   }
 
   /**

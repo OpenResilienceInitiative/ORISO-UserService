@@ -72,6 +72,24 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void requestedContactSheetOmitsUnmaintainedFieldsInEveryLanguage() {
+    for (var tone : OrisoEmailRenderer.Tone.values()) {
+      Map<String, String> values = brand();
+      values.put("consultantName", "Centre");
+      values.put("consultantPhone", "+49 30 123");
+      values.put("consultantHours", "");
+      values.put("consultantEmail", "");
+      values.put("messageUrl", "https://example.org/sessions/user/view/session/42");
+
+      var email = renderer.render("beraterin-kontakt", tone, values);
+
+      assertThat(email.html()).contains("+49 30 123").doesNotContain("{{", "bookingUrl");
+      assertThat(email.text()).contains("+49 30 123").doesNotContain("{{", "bookingUrl");
+      assertThat(email.html().split("class=\"row-value\"", -1)).hasSize(3);
+    }
+  }
+
+  @Test
   void keepsAnUnsuppliedPlaceholderVisibleRatherThanBlankingIt() {
     // A visible {{expiryMinutes}} in a sent mail is a bug report. A silent blank
     // is a mail that quietly says the link expires in "" minutes.

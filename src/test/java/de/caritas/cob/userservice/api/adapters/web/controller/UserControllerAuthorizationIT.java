@@ -103,6 +103,7 @@ import de.caritas.cob.userservice.api.service.LogService;
 import de.caritas.cob.userservice.api.service.SessionDataService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.archive.SessionArchiveService;
+import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentService;
@@ -209,6 +210,7 @@ class UserControllerAuthorizationIT {
   @MockitoBean private SessionDataService sessionDataService;
   @MockitoBean private SessionArchiveService sessionArchiveService;
   @MockitoBean private SessionConsentService sessionConsentService;
+  @MockitoBean private RequestedContactSheetService requestedContactSheetService;
   @MockitoBean private ConsultantUpdateService consultantUpdateService;
   @MockitoBean private ConsultantService consultantService;
   @MockitoBean private ConsultantPublicSlugService consultantPublicSlugService;
@@ -2413,6 +2415,39 @@ class UserControllerAuthorizationIT {
         .andExpect(status().isUnauthorized());
 
     verifyNoMoreInteractions(sessionConsentService);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.ANONYMOUS_DEFAULT})
+  void contactSheetRequestAllowsTheAuthenticatedSeeker() throws Exception {
+    when(authenticatedUser.getUserId()).thenReturn("asker");
+    mvc.perform(
+            post("/users/sessions/123/contact-sheet-email")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isNoContent());
+    verify(requestedContactSheetService).send(123L, "asker");
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void contactSheetRequestRejectsConsultants() throws Exception {
+    mvc.perform(
+            post("/users/sessions/123/contact-sheet-email")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isForbidden());
+    verifyNoMoreInteractions(requestedContactSheetService);
+  }
+
+  @Test
+  void contactSheetRequestRequiresAuthentication() throws Exception {
+    mvc.perform(
+            post("/users/sessions/123/contact-sheet-email")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE))
+        .andExpect(status().isUnauthorized());
+    verifyNoMoreInteractions(requestedContactSheetService);
   }
 
   @Test
