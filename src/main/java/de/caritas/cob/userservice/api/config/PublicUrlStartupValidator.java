@@ -2,7 +2,9 @@ package de.caritas.cob.userservice.api.config;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import java.net.InetAddress;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -147,7 +149,9 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
     }
     String host = uri.getHost().toLowerCase(Locale.ROOT);
     if (deployed && isPlaceholder(host)) {
-      return "uses a reserved example or template host (example.com/.org/.net, your-domain),"
+      return "uses a reserved example or template host (example.com/.org/.net,"
+          + " your-domain), loopback host (localhost, 127.0.0.1, [::1]), numeric IP alias"
+          + " or noncanonical trailing dot,"
           + " which cannot be this environment's public host";
     }
     return null;
@@ -155,6 +159,26 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
 
   private static boolean isPlaceholder(String host) {
     return host.contains("your-domain")
+        || host.equals("localhost")
+        || host.endsWith(".localhost")
+        || host.endsWith(".")
+        || host.equals("0.0.0.0")
+        || isNonPublicIpv6(host)
+        // Browsers interpret single decimal/hex labels as IPv4 addresses.
+        || host.matches("[0-9]+|0x[0-9a-f]+")
+        || host.matches("127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}")
         || EXAMPLE_DOMAINS.stream().anyMatch(d -> host.equals(d) || host.endsWith("." + d));
+  }
+
+  private static boolean isNonPublicIpv6(String host) {
+    if (!host.startsWith("[") || !host.endsWith("]")) {
+      return false;
+    }
+    try {
+      var address = InetAddress.getByName(host);
+      return address.isLoopbackAddress() || address.isAnyLocalAddress();
+    } catch (UnknownHostException invalidLiteral) {
+      return true;
+    }
   }
 }
