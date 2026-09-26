@@ -396,9 +396,8 @@ public class ChatService {
     log.info("🔍 ChatService.getChatSessionsForConsultantByIds - chatIds: {}", chatIds);
 
     var chats =
-        chatRepository.findByIdsWithChatAgencies(chatIds).stream()
-            .filter(chat -> groupChatConsultantAccess.mayAccess(chat, consultant))
-            .toList();
+        groupChatConsultantAccess.filterAccessible(
+            chatRepository.findByIdsWithChatAgencies(chatIds), consultant);
 
     log.info("🔍 ChatService: Found {} chats in database", chats.size());
     chats.forEach(
@@ -449,9 +448,8 @@ public class ChatService {
   public List<ConsultantSessionResponseDTO> getChatSessionsForConsultantByRoomIds(
       Set<String> matrixRoomIds, Consultant consultant) {
     var chats =
-        chatRepository.findByMatrixRoomIdIn(matrixRoomIds).stream()
-            .filter(chat -> groupChatConsultantAccess.mayAccess(chat, consultant))
-            .toList();
+        groupChatConsultantAccess.filterAccessible(
+            chatRepository.findByMatrixRoomIdIn(matrixRoomIds), consultant);
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
     return chats.stream()
         .map(
