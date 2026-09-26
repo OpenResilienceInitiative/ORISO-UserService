@@ -42,7 +42,8 @@ public class NotificationMailComposer {
 
     String baseUrl = requireBaseUrl(attributes);
     var values =
-        new LinkedHashMap<>(brandValues.values(brandingResolver.resolve(tenantId), tenantId));
+        new LinkedHashMap<>(
+            brandValues.values(brandingResolver.resolveNotification(tenantId, baseUrl), tenantId));
     values.put("appUrl", baseUrl);
     values.put("settingsUrl", baseUrl + "/profile/settings");
     values.put("unsubscribeUrl", baseUrl + "/profile/settings/notifications");

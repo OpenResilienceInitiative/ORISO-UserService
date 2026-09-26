@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTe
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
 import java.net.URI;
 import java.util.Locale;
+import java.util.Objects;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -48,6 +49,9 @@ public class EmailBrandingResolver {
   private final String platformLogoUrl;
   private final String applicationBaseUrl;
 
+  @Value("${multitenancy.enabled}")
+  private boolean multitenancyEnabled;
+
   public EmailBrandingResolver(
       @NonNull TenantService tenantService,
       @NonNull TenantTemplateSupplier tenantTemplateSupplier,
@@ -79,6 +83,51 @@ public class EmailBrandingResolver {
         resolveAccentColor(theming),
         resolveFooterUrl(tenant, "/impressum"),
         resolveFooterUrl(tenant, "/datenschutz"));
+  }
+
+  /** Notification links must belong to the exact existing recipient tenant. */
+  public EmailBranding resolveNotification(long tenantId, String mailBaseUrl) {
+    if (tenantId <= 0) {
+      throw new IllegalArgumentException("Notification tenant id is missing");
+    }
+    RestrictedTenantDTO tenant = tenantService.getRestrictedTenantData(tenantId);
+    if (tenant == null || !Objects.equals(tenant.getId(), tenantId)) {
+      throw new IllegalArgumentException("Notification tenant is unavailable");
+    }
+    String configuredBase =
+        multitenancyEnabled ? tenantTemplateSupplier.getTenantBaseUrl(tenant) : applicationBaseUrl;
+    String expected = requireBaseUrl(configuredBase);
+    if (!expected.equals(requireBaseUrl(mailBaseUrl))) {
+      throw new IllegalArgumentException("Notification URL does not match recipient tenant");
+    }
+    Theming theming = tenant.getTheming();
+    String brandName = isBlank(tenant.getName()) ? platformName : tenant.getName();
+    return new EmailBranding(
+        brandName,
+        resolveLogoUrl(tenant, theming),
+        resolveAccentColor(theming),
+        expected + "/impressum",
+        expected + "/datenschutz");
+  }
+
+  private static String requireBaseUrl(String value) {
+    if (isBlank(value)) {
+      throw new IllegalArgumentException("Notification URL is missing");
+    }
+    String url = normalizeBaseUrl(value);
+    try {
+      URI uri = URI.create(url);
+      if (!("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+          || uri.getHost() == null
+          || uri.getUserInfo() != null
+          || uri.getQuery() != null
+          || uri.getFragment() != null) {
+        throw new IllegalArgumentException("Notification URL is invalid");
+      }
+      return url;
+    } catch (IllegalArgumentException invalid) {
+      throw new IllegalArgumentException("Notification URL is invalid", invalid);
+    }
   }
 
   private String resolveLogoUrl(RestrictedTenantDTO tenant, Theming theming) {

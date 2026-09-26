@@ -120,7 +120,8 @@ class NotificationMailComposerTest {
 
   private void brand(long tenantId, String name) {
     var branding = new EmailBranding(name, null, "#1c4f8f", null, null);
-    when(brandingResolver.resolve(tenantId)).thenReturn(branding);
+    when(brandingResolver.resolveNotification(tenantId, "https://tenant.example.org"))
+        .thenReturn(branding);
     Map<String, String> values = new LinkedHashMap<>();
     values.put("platformName", name);
     values.put("orgName", name);
