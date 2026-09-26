@@ -559,6 +559,7 @@ public class MatrixEventListenerService {
     // Commit the mail claim before this batch's Matrix cursor advances. A failed claim makes the
     // sync loop replay the event; the recipient/event uniqueness key collapses that replay.
     if (!"m.notice".equals(msgtype)
+        && (messageBody == null || !messageBody.startsWith("[SYSTEM_NOTIFICATION]"))
         && isConsultantMatrixUser(senderId)
         && isEligibleForReplyEmail(event)) {
       replyEmailService.onConsultantReply(

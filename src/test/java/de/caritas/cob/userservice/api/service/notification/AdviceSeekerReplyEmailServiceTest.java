@@ -127,6 +127,23 @@ class AdviceSeekerReplyEmailServiceTest {
   }
 
   @Test
+  void pendingDeletionNeitherReservesNorDeliversReplyMail() {
+    var asker = asker(true, "asker@example.net");
+    asker.setDeleteDate(java.time.LocalDateTime.now());
+    var session = session(asker);
+    when(sessions.findByMatrixRoomId("!room")).thenReturn(Optional.of(session));
+    when(sessions.findById(42L)).thenReturn(Optional.of(session));
+    when(writer.claim(1L)).thenReturn(Optional.of(claim(1L)));
+
+    service.onConsultantReply("!room", "$first");
+    service.deliverPending(1L);
+
+    verify(writer, never()).reserve(anyString(), anyString(), anyLong(), anyLong());
+    verify(writer).finish(1L, Status.REJECTED);
+    verifyNoInteractions(delivery);
+  }
+
+  @Test
   void eventWithoutIdNeverClaimsAnUnrepeatableDelivery() {
     service.onConsultantReply("!room", null);
     verifyNoInteractions(sessions, writer, delivery);
@@ -165,6 +182,20 @@ class AdviceSeekerReplyEmailServiceTest {
 
     verify(writer).finish(1L, Status.UNCERTAIN);
     verify(writer, never()).retryLater(1L);
+  }
+
+  @Test
+  void tenantConfigurationRejectionRetriesAfterRepair() {
+    prepareReadyClaim();
+    org.mockito.Mockito.doThrow(
+            new TenantSystemEmailRouteService.ConfigurationException("OWN route invalid"))
+        .when(delivery)
+        .sendReply(anyLong(), any(), anyString(), any());
+
+    service.deliverPending(1L);
+
+    verify(writer).retryLater(1L);
+    verify(writer, never()).finish(1L, Status.UNCERTAIN);
   }
 
   @Test

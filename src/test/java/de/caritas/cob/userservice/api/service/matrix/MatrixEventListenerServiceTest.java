@@ -1088,6 +1088,24 @@ class MatrixEventListenerServiceTest {
   }
 
   @Test
+  void processMatrixSyncEvents_shouldNotEmailConsultantAuthoredSystemCard() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    var event =
+        messageEvent(
+            CONSULTANT_MATRIX_ID,
+            "m.text",
+            "[SYSTEM_NOTIFICATION]{\"type\":\"CASE_HANDOVER_GRANTED\"}",
+            "$handover");
+
+    invokeProcessMatrixSyncEvents(service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(event)));
+
+    verify(replyEmailService, never()).onConsultantReply(anyString(), anyString());
+  }
+
+  @Test
   void firstMatrixSyncDoesNotEmailHistoricalRepliesButKeepsNewOnes() {
     var service = newServiceWithSyncExecutor();
     service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));

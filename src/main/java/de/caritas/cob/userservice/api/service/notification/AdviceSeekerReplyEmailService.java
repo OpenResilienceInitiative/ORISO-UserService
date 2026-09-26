@@ -65,7 +65,7 @@ public class AdviceSeekerReplyEmailService {
       return;
     }
     User user = session.getUser();
-    if (!hasUsableAddress(user) || !wantsReplyEmail(user)) {
+    if (user.getDeleteDate() != null || !hasUsableAddress(user) || !wantsReplyEmail(user)) {
       return;
     }
     Long tenantId = user.getTenantId();
@@ -98,6 +98,7 @@ public class AdviceSeekerReplyEmailService {
         || !Objects.equals(user.getTenantId(), claim.getTenantId())
         || (session.getTenantId() != null
             && !Objects.equals(session.getTenantId(), claim.getTenantId()))
+        || user.getDeleteDate() != null
         || !hasUsableAddress(user)
         || !wantsReplyEmail(user)) {
       writer.finish(deliveryId, Status.REJECTED);
@@ -142,6 +143,10 @@ public class AdviceSeekerReplyEmailService {
     try {
       delivery.sendReply(claim.getTenantId(), route, user.getEmail(), email);
       writer.finish(deliveryId, Status.SENT);
+    } catch (TenantSystemEmailRouteService.ConfigurationException configurationFailure) {
+      // TenantService rejected the route before any SMTP attempt.
+      writer.retryLater(deliveryId);
+      log.warn("Reply email route unavailable for delivery {}", deliveryId);
     } catch (RuntimeException sendFailure) {
       // SMTP may have accepted the message before its acknowledgement was lost.
       writer.finish(deliveryId, Status.UNCERTAIN);
