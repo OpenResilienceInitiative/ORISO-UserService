@@ -25,6 +25,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -77,29 +78,37 @@ public class SupervisorAddedEmailNotificationService {
     if (hasValidUserEmail(recipientUser)) {
       // Neither the case reference nor a session-specific route reaches the advice seeker's
       // copy: both name what happened as precisely as the anonymised statement text refuses to.
-      sendEmailSafely(
+      renderAndSendTeamChange(
           smtpSettings,
           recipientUser.getEmail(),
-          renderTeamChange(
-              languageCodeOf(recipientUser),
-              askerStatementSupervisorJoined(languageCodeOf(recipientUser)),
-              appUrl,
-              appUrl,
-              null,
-              themeColor));
+          "advice seeker",
+          () -> {
+            LanguageCode language = languageCodeOf(recipientUser);
+            return renderTeamChange(
+                language,
+                askerStatementSupervisorJoined(language),
+                appUrl,
+                appUrl,
+                null,
+                themeColor);
+          });
     }
 
     if (hasValidConsultantEmail(supervisor)) {
-      sendEmailSafely(
+      renderAndSendTeamChange(
           smtpSettings,
           supervisor.getEmail(),
-          renderTeamChange(
-              languageCodeOf(supervisor),
-              staffStatementSupervisorAdded(languageCodeOf(supervisor)),
-              appUrl,
-              consultantChatUrl,
-              sessionId,
-              themeColor));
+          "counsellor",
+          () -> {
+            LanguageCode language = languageCodeOf(supervisor);
+            return renderTeamChange(
+                language,
+                staffStatementSupervisorAdded(language),
+                appUrl,
+                consultantChatUrl,
+                sessionId,
+                themeColor);
+          });
     }
   }
 
@@ -122,29 +131,32 @@ public class SupervisorAddedEmailNotificationService {
 
     User recipientUser = resolveUserWithEmail(sessionUser);
     if (hasValidUserEmail(recipientUser)) {
-      sendEmailSafely(
+      renderAndSendTeamChange(
           smtpSettings,
           recipientUser.getEmail(),
-          renderTeamChange(
-              languageCodeOf(recipientUser),
-              askerStatementSupervisorLeft(languageCodeOf(recipientUser)),
-              appUrl,
-              appUrl,
-              null,
-              themeColor));
+          "advice seeker",
+          () -> {
+            LanguageCode language = languageCodeOf(recipientUser);
+            return renderTeamChange(
+                language, askerStatementSupervisorLeft(language), appUrl, appUrl, null, themeColor);
+          });
     }
 
     if (hasValidConsultantEmail(supervisor)) {
-      sendEmailSafely(
+      renderAndSendTeamChange(
           smtpSettings,
           supervisor.getEmail(),
-          renderTeamChange(
-              languageCodeOf(supervisor),
-              staffStatementSupervisorRemoved(languageCodeOf(supervisor)),
-              appUrl,
-              consultantChatUrl,
-              sessionId,
-              themeColor));
+          "counsellor",
+          () -> {
+            LanguageCode language = languageCodeOf(supervisor);
+            return renderTeamChange(
+                language,
+                staffStatementSupervisorRemoved(language),
+                appUrl,
+                consultantChatUrl,
+                sessionId,
+                themeColor);
+          });
     }
   }
 
@@ -207,6 +219,18 @@ public class SupervisorAddedEmailNotificationService {
           recipientEmail,
           email.subject(),
           ex);
+    }
+  }
+
+  private void renderAndSendTeamChange(
+      SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings smtpSettings,
+      String recipientEmail,
+      String recipientRole,
+      Supplier<OrisoEmailRenderer.RenderedEmail> render) {
+    try {
+      sendEmailSafely(smtpSettings, recipientEmail, render.get());
+    } catch (Exception ex) {
+      log.error("Failed to render team-change notification for {}", recipientRole, ex);
     }
   }
 

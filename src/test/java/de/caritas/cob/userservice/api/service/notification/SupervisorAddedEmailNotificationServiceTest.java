@@ -416,6 +416,24 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
+  void notifySupervisorAdded_Should_StillRenderCounsellor_WhenSeekerLanguageIsMissing() {
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
+        .thenReturn(Optional.of(smtpSettings()));
+    User user = new User();
+    user.setTenantId(1L);
+    user.setEmail("user@example.com");
+    Consultant supervisor = new Consultant();
+    supervisor.setEmail("sup@example.com");
+    supervisor.setLanguageCode(LanguageCode.de);
+
+    assertThatCode(() -> service.notifySupervisorAdded(user, supervisor, 5L, null, null))
+        .doesNotThrowAnyException();
+
+    verify(emailRenderer)
+        .render(eq("team-aenderung"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
+  }
+
+  @Test
   void notifySupervisorAdded_Should_LocalizeInEnglish_When_ConsultantLanguageCodeIsEnglish() {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtpSettings()));

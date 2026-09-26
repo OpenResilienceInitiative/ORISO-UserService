@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.appointment.AppointmentService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.notification.SupervisorAddedEmailNotificationService;
 import de.caritas.cob.userservice.api.service.statistics.StatisticsService;
 import de.caritas.cob.userservice.api.service.statistics.event.DeleteAccountStatisticsEvent;
@@ -134,28 +135,30 @@ public class UserAccountService {
    */
   public void changeUserAccountEmailAddress(Optional<String> optionalEmail) {
     ensureCurrentAccountIsWritable();
+    var userId = authenticatedUser.getUserId();
+    var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
+    Optional<Consultant> consultantOpt = consultantService.getConsultant(userId);
+    Optional<User> userOpt = userService.getUser(userId);
+    LanguageCode notificationLanguage =
+        userOpt
+            .map(User::getLanguageCode)
+            .orElseGet(() -> consultantOpt.map(Consultant::getLanguageCode).orElse(null));
+    if (optionalEmail.isPresent()) {
+      try {
+        OrisoEmailRenderer.Tone.of(notificationLanguage);
+      } catch (IllegalArgumentException unsupportedLanguage) {
+        log.warn(
+            "Email-change language is missing or unsupported; using the German product default");
+        notificationLanguage = LanguageCode.de;
+      }
+    }
+    LanguageCode validatedNotificationLanguage = notificationLanguage;
+
     optionalEmail.ifPresentOrElse(
         identityEmailAddressUpdater::updateCurrentUserEmail,
         identityEmailAddressUpdater::deleteCurrentUserEmail);
-
-    var userId = authenticatedUser.getUserId();
-    var email = optionalEmail.orElseGet(() -> userHelper.getDummyEmail(userId));
-    Optional<Consultant> consultantOpt =
-        consultantService
-            .getConsultant(userId)
-            .map(
-                consultant -> {
-                  updateConsultantEmail(consultant, email);
-                  return consultant;
-                });
-    Optional<User> userOpt =
-        userService
-            .getUser(userId)
-            .map(
-                user -> {
-                  updateUserEmail(user, email);
-                  return user;
-                });
+    consultantOpt.ifPresent(consultant -> updateConsultantEmail(consultant, email));
+    userOpt.ifPresent(user -> updateUserEmail(user, email));
 
     optionalEmail.ifPresent(
         updatedEmail -> {
@@ -167,17 +170,13 @@ public class UserAccountService {
               userOpt
                   .map(User::getUsername)
                   .orElse(consultantOpt.map(Consultant::getUsername).orElse(userId));
-          LanguageCode language =
-              userOpt
-                  .map(User::getLanguageCode)
-                  .orElseGet(() -> consultantOpt.map(Consultant::getLanguageCode).orElse(null));
           supervisorAddedEmailNotificationService.notifyEmailAddressChanged(
               username,
               updatedEmail,
               tenantId,
               TenantContext.getCurrentTenantData(),
               authenticatedUser.getAccessToken(),
-              language);
+              validatedNotificationLanguage);
         });
   }
 

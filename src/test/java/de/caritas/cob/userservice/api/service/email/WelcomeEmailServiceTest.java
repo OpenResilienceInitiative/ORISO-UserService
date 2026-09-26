@@ -79,6 +79,18 @@ class WelcomeEmailServiceTest {
   }
 
   @Test
+  void usesGermanProductDefaultWhenWelcomeRecipientHasNoLanguage() {
+    User recipient = user("jemand@example.org");
+    recipient.setLanguageCode(null);
+
+    service.sendWelcomeEmail(recipient, "ruhiges-yak-1428");
+
+    var email = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(dispatcher).send(eq(smtp), eq("jemand@example.org"), email.capture());
+    assertThat(email.getValue().subject()).isEqualTo("Willkommen bei Online-Beratung");
+  }
+
+  @Test
   void staysSilentWhenAnAnonymousAccountHasNoRealAddress() {
     // The normal case for an anonymous registration, not an error: the user
     // name is shown on screen at the end of registration either way.
