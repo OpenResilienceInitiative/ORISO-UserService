@@ -80,7 +80,7 @@ public class OrisoEmailRenderer {
           + "<tr><td class=\"sp\" style=\"padding:16px 40px 0px 40px;"
           + "font-family:Inter, 'Helvetica Neue', Helvetica, Arial, sans-serif;font-size:13px;"
           + "line-height:20px;color:#5c5555;word-break:break-word;\">{{fallbackHint}}<br>"
-          + "<a href=\"{{actionUrl}}\" style=\"color:{{linkColor}};text-decoration:underline;"
+          + "<a href=\"{{actionUrl}}\" style=\"color:{{primaryColor}};text-decoration:underline;"
           + "word-break:break-all;\">{{actionUrl}}</a></td></tr>";
 
   /** The plain-text half of {@link #CTA_BLOCK_HTML}. */
