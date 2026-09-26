@@ -2059,6 +2059,13 @@ components:
         consultantId:
           type: string
           description: UUID
+        temporary:
+          type: boolean
+          description: >-
+            "Join without an account" from a self-help group invite link. The browser holds the
+            only login, so the account is deleted once no login can still be alive
+            (`user.temporary.deleteWorkflow.maxAge`, default 24 hours). Default false.
+          example: false
         mainTopicId:
           type: integer
           example: 15

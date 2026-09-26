@@ -10,7 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
-/** Deletes one anonymous user in a transaction of its own. */
+/** Deletes one asker account (anonymous or temporary) in a transaction of its own. */
 @Service
 @RequiredArgsConstructor
 public class AnonymousUserDeletionUnit {
