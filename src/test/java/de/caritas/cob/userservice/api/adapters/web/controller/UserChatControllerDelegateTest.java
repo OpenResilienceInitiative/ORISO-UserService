@@ -31,6 +31,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
+import de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -58,6 +59,7 @@ class UserChatControllerDelegateTest {
   @Mock private UserDtoMapper userDtoMapper;
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private GroupChatFeatureGate groupChatFeatureGate;
+  @Mock private GroupChatPermissionService groupChatPermissionService;
 
   @InjectMocks private UserChatControllerDelegate delegate;
 
@@ -125,7 +127,7 @@ class UserChatControllerDelegateTest {
 
   @Test
   void assignChatShouldDelegateAndReturnOk() {
-    var response = delegate.assignChat("!group:matrix.example");
+    var response = delegate.assignChat("!group:matrix.example", null);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     verify(assignChatFacade).assignChat("!group:matrix.example", authenticatedUser);
@@ -133,18 +135,18 @@ class UserChatControllerDelegateTest {
 
   @Test
   void assignChatDelegatesStableNumericSeriesIdentifier() {
-    var response = delegate.assignChat("1013");
+    var response = delegate.assignChat("1013", "link-token");
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(assignChatFacade).assignChat(1013L, authenticatedUser);
+    verify(assignChatFacade).assignChat(1013L, "link-token", authenticatedUser);
   }
 
   @Test
   void assignChatRejectsNumericSeriesIdentifierAboveLongRange() {
-    assertThatThrownBy(() -> delegate.assignChat("9223372036854775808"))
+    assertThatThrownBy(() -> delegate.assignChat("9223372036854775808", null))
         .isInstanceOf(BadRequestException.class);
 
-    verify(assignChatFacade, never()).assignChat(anyLong(), any());
+    verify(assignChatFacade, never()).assignChat(anyLong(), any(), any());
   }
 
   @Test
@@ -221,7 +223,7 @@ class UserChatControllerDelegateTest {
     var adviceSeeker = adviceSeeker();
     when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker));
-    when(messenger.existsChat(1L)).thenReturn(true);
+    when(chatService.getChat(1L)).thenReturn(Optional.of(chat()));
     when(messenger.banUserFromChat("advice-seeker-id", 1L)).thenReturn(true);
 
     var response = delegate.banFromChat("chat-user-id", 1L);
@@ -243,7 +245,7 @@ class UserChatControllerDelegateTest {
   void banFromChatShouldThrowNotFoundWhenChatDoesNotExist() {
     when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker()));
-    when(messenger.existsChat(1L)).thenReturn(false);
+    when(chatService.getChat(1L)).thenReturn(Optional.empty());
 
     assertThatThrownBy(() -> delegate.banFromChat("chat-user-id", 1L))
         .isInstanceOf(NotFoundException.class);
@@ -253,7 +255,7 @@ class UserChatControllerDelegateTest {
   void banFromChatShouldThrowNotFoundWhenBanFails() {
     when(accountManager.findAdviceSeekerByMatrixUserId("chat-user-id"))
         .thenReturn(Optional.of(adviceSeeker()));
-    when(messenger.existsChat(1L)).thenReturn(true);
+    when(chatService.getChat(1L)).thenReturn(Optional.of(chat()));
     when(messenger.banUserFromChat(any(), anyLong())).thenReturn(false);
 
     assertThatThrownBy(() -> delegate.banFromChat("chat-user-id", 1L))

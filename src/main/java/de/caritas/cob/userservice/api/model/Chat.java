@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
 import jakarta.persistence.EnumType;
@@ -12,6 +13,7 @@ import jakarta.persistence.Id;
 import jakarta.persistence.JoinColumn;
 import jakarta.persistence.ManyToOne;
 import jakarta.persistence.OneToMany;
+import jakarta.persistence.PrePersist;
 import jakarta.persistence.SequenceGenerator;
 import jakarta.persistence.Table;
 import jakarta.validation.constraints.Size;
@@ -161,6 +163,19 @@ public class Chat {
   @JdbcTypeCode(SqlTypes.JSON)
   @Column(name = "group_chat_rules_translations", columnDefinition = "json")
   private Map<String, List<String>> groupChatRulesTranslations;
+
+  /** Secret part of the invite link (#1237); never serialised. */
+  @JsonIgnore
+  @Exclude
+  @Column(name = "invite_token", length = 64)
+  private String inviteToken;
+
+  @PrePersist
+  void ensureInviteToken() {
+    if (inviteToken == null) {
+      inviteToken = GroupChatInviteTokens.newToken();
+    }
+  }
 
   @Override
   public boolean equals(Object o) {
