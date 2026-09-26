@@ -203,6 +203,7 @@ class ChatPermissionVerifierTest {
         ForbiddenException.class,
         () -> {
           Consultant consultant = new Consultant();
+          consultant.setTenantId(1L);
           ConsultantAgency consultantAgency = new ConsultantAgency();
           consultantAgency.setAgencyId(1L);
           consultant.setConsultantAgencies(asSet(consultantAgency));
@@ -210,6 +211,9 @@ class ChatPermissionVerifierTest {
           chatAgency.setAgencyId(2L);
           Chat chat = new Chat();
           chat.setChatAgencies(asSet(chatAgency));
+          Consultant owner = new Consultant();
+          owner.setTenantId(1L);
+          chat.setChatOwner(owner);
           when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.CONSULTANT.getValue()));
           when(consultantService.getConsultantViaAuthenticatedUser(authenticatedUser))
               .thenReturn(Optional.of(consultant));
@@ -268,6 +272,7 @@ class ChatPermissionVerifierTest {
         ForbiddenException.class,
         () -> {
           Consultant consultant = new Consultant();
+          consultant.setTenantId(1L);
           ConsultantAgency consultantAgency = new ConsultantAgency();
           consultantAgency.setAgencyId(2L);
           consultant.setConsultantAgencies(asSet(consultantAgency));
@@ -275,6 +280,9 @@ class ChatPermissionVerifierTest {
           chatAgency.setAgencyId(1L);
           Chat chat = new Chat();
           chat.setChatAgencies(asSet(chatAgency));
+          Consultant owner = new Consultant();
+          owner.setTenantId(1L);
+          chat.setChatOwner(owner);
           when(authenticatedUser.getRoles()).thenReturn(asSet(UserRole.CONSULTANT.getValue()));
           when(consultantService.getConsultantViaAuthenticatedUser(authenticatedUser))
               .thenReturn(Optional.of(consultant));
