@@ -5,7 +5,8 @@ occasion. The worker is disabled by default with `group.appointment.mail.enabled
 only after the Frontend `login?seriesId=<id>` return path, UserService sender, TenantService four
 `SELF_HELP_APPOINTMENT_*` relay purposes and public tenant origins are deployed together. The
 worker polls every minute by default (`group.appointment.mail.poll-delay-ms=60000`). The general
-booking event producer is separate and deferred.
+booking event producer is separate and deferred; its required input and delivery invariants are
+recorded in [the booking adapter contract](appointment-mail-event-contract.md).
 
 ## Delivery states
 
