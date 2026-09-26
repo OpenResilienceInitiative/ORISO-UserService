@@ -94,4 +94,25 @@ class AssignChatFacadeTest {
     verify(chatService)
         .saveUserChatRelation(UserChat.builder().user(USER).chat(selfHelpGroup).build());
   }
+
+  @Test
+  void assignChatBySeriesId_Should_AcceptLegacyRepeatingSelfHelpGroup() {
+    var legacySelfHelpGroup =
+        Chat.builder()
+            .id(ACTIVE_CHAT.getId())
+            .topic("group")
+            .initialStartDate(ACTIVE_CHAT.getStartDate())
+            .startDate(ACTIVE_CHAT.getStartDate())
+            .repetitive(true)
+            .inviteToken("link-token")
+            .build();
+    when(chatService.getChat(legacySelfHelpGroup.getId()))
+        .thenReturn(Optional.of(legacySelfHelpGroup));
+    when(userService.getUserViaAuthenticatedUser(authenticatedUser)).thenReturn(Optional.of(USER));
+
+    assignChatFacade.assignChat(legacySelfHelpGroup.getId(), "link-token", authenticatedUser);
+
+    verify(chatService)
+        .saveUserChatRelation(UserChat.builder().user(USER).chat(legacySelfHelpGroup).build());
+  }
 }
