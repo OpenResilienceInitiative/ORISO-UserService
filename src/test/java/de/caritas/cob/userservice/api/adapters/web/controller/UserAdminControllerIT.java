@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.admin.facade.AskerUserAdminFacade;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.report.service.ViolationReportGenerator;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
+import de.caritas.cob.userservice.api.admin.service.listpreference.AdminListPreferenceService;
 import de.caritas.cob.userservice.api.admin.service.session.SessionAdminService;
 import de.caritas.cob.userservice.api.config.auth.RoleAuthorizationAuthorityMapper;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -120,6 +121,7 @@ class UserAdminControllerIT {
   @MockitoBean private GrantConsultantIdentityService grantConsultantIdentityService;
 
   @MockitoBean private UserIdentitiesService userIdentitiesService;
+  @MockitoBean private AdminListPreferenceService adminListPreferenceService;
 
   @Test
   void getSessions_Should_returnBadRequest_When_requiredPaginationParamsAreMissing()
