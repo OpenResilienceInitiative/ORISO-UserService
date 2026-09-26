@@ -52,11 +52,16 @@ public class CreateAdminService {
 
   public Admin createNewAgencyAdmin(CreateAdminDTO createAdminDTO) {
     setTenantId(createAdminDTO);
-    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY);
+    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY, true);
   }
 
   public Admin createNewTenantAdmin(CreateAdminDTO createAdminDTO) {
-    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT);
+    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT, true);
+  }
+
+  /** The invited person chose this password themselves during redemption. */
+  public Admin createNewTenantAdminFromInvite(CreateAdminDTO createAdminDTO) {
+    return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT, false);
   }
 
   List<UserRole> getDefaultRoles(Admin.AdminType adminType) {
@@ -98,14 +103,19 @@ public class CreateAdminService {
     }
   }
 
-  private Admin createNewAdmin(final CreateAdminDTO createAdminDTO, Admin.AdminType adminType) {
+  private Admin createNewAdmin(
+      final CreateAdminDTO createAdminDTO, Admin.AdminType adminType, boolean temporaryPassword) {
     final String keycloakUserId = createUser(createAdminDTO);
     final String password =
         StringUtils.isNotBlank(createAdminDTO.getPassword())
             ? createAdminDTO.getPassword()
             : userHelper.getRandomPassword();
     try {
-      identityPasswordUpdater.updatePassword(keycloakUserId, password);
+      if (temporaryPassword) {
+        identityPasswordUpdater.updateTemporaryPassword(keycloakUserId, password);
+      } else {
+        identityPasswordUpdater.updatePassword(keycloakUserId, password);
+      }
       getDefaultRoles(adminType).forEach(role -> identityClient.updateRole(keycloakUserId, role));
       return adminRepository.save(buildAdmin(createAdminDTO, adminType, keycloakUserId));
     } catch (CustomValidationHttpStatusException e) {
