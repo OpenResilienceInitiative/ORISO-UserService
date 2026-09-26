@@ -175,6 +175,51 @@ class TenantAdminOnboardingControllerTest {
     assertTrue(json.contains("\"dpaUnavailableReason\":\"UPSTREAM_ERROR\""), json);
   }
 
+  // --- Forward / confirmation resume (ORISO-Admin#1065) ---
+
+  @Test
+  void resolveOnboardingInvite_untouchedInvite_reportsNeitherForwardNorConfirmation() {
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new OnboardingInviteState(invite(), false, OPERATOR_DPA_JSON, null));
+
+    var body = controller.resolveOnboardingInvite("tok").getBody();
+
+    assertNotNull(body);
+    assertNull(body.dpaForwardedAt);
+    assertNull(body.dpaSignedAt);
+  }
+
+  @Test
+  void resolveOnboardingInvite_forwardedInvite_reportsWhenItWasForwarded() {
+    AccountInvite forwarded = invite();
+    forwarded.setDpaForwardedAt(LocalDateTime.of(2026, 9, 24, 16, 5, 30));
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new OnboardingInviteState(forwarded, false, OPERATOR_DPA_JSON, null));
+
+    var body = controller.resolveOnboardingInvite("tok").getBody();
+
+    assertNotNull(body);
+    assertEquals("2026-09-24T16:05:30", body.dpaForwardedAt);
+    assertNull(body.dpaSignedAt);
+  }
+
+  @Test
+  void resolveOnboardingInvite_confirmedInvite_reportsTheConfirmation() throws Exception {
+    AccountInvite confirmed = invite();
+    confirmed.setDpaForwardedAt(LocalDateTime.of(2026, 9, 24, 16, 5, 30));
+    confirmed.setDpaSignedAt(LocalDateTime.of(2026, 9, 25, 9, 12));
+    when(onboardingService.resolveOnboardingInvite("tok"))
+        .thenReturn(new OnboardingInviteState(confirmed, false, OPERATOR_DPA_JSON, null));
+
+    String json =
+        new ObjectMapper()
+            .findAndRegisterModules()
+            .writeValueAsString(controller.resolveOnboardingInvite("tok").getBody());
+
+    assertTrue(json.contains("\"dpaForwardedAt\":\"2026-09-24T16:05:30\""), json);
+    assertTrue(json.contains("\"dpaSignedAt\":\"2026-09-25T09:12:00\""), json);
+  }
+
   @Test
   void resolveOnboardingInvite_counsellorVariant_leavesTheDpaUnavailableReasonNull() {
     probeAnswersCounsellor();
