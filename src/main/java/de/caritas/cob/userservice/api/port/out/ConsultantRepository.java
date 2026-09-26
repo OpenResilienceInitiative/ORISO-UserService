@@ -77,7 +77,7 @@ public interface ConsultantRepository
   @Query(
       value =
           "SELECT c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email, "
-              + "c.updateDate as updateDate "
+              + "c.updateDate as updateDate, COALESCE(c.updateDate, c.createDate) as lastUpdated "
               + "FROM Consultant c "
               + "WHERE "
               + "  c.deleteDate IS NULL "
@@ -99,7 +99,7 @@ public interface ConsultantRepository
   @Query(
       value =
           "SELECT distinct c.id as id, c.firstName as firstName, c.lastName as lastName, "
-              + "c.email as email, c.updateDate as updateDate "
+              + "c.email as email, c.updateDate as updateDate, COALESCE(c.updateDate, c.createDate) as lastUpdated "
               + "FROM Consultant c "
               + "INNER JOIN ConsultantAgency ca ON c.id = ca.consultant.id "
               + "WHERE "

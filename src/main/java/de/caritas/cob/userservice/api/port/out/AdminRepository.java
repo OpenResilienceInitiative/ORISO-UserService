@@ -19,7 +19,7 @@ public interface AdminRepository
   @Query(
       value =
           "SELECT a.id as id, a.firstName as firstName, a.lastName as lastName, a.email as email, a.tenantId as tenantId "
-              + ", a.type as type, a.updateDate as updateDate "
+              + ", a.type as type, a.updateDate as updateDate, COALESCE(a.updateDate, a.createDate) as lastUpdated "
               + "FROM Admin a "
               + "WHERE"
               + "  type = ?2 "
@@ -43,7 +43,7 @@ public interface AdminRepository
   @Query(
       value =
           "SELECT a.id as id, a.firstName as firstName, a.lastName as lastName, a.email as email, a.tenantId as tenantId "
-              + ", a.type as type, a.updateDate as updateDate "
+              + ", a.type as type, a.updateDate as updateDate, COALESCE(a.updateDate, a.createDate) as lastUpdated "
               + "FROM Admin a "
               + "WHERE"
               + "  type = ?2 "
@@ -69,7 +69,7 @@ public interface AdminRepository
   @Query(
       value =
           "SELECT a.id as id, a.firstName as firstName, a.lastName as lastName, a.email as email, a.tenantId as tenantId "
-              + ", a.type as type, a.updateDate as updateDate "
+              + ", a.type as type, a.updateDate as updateDate, COALESCE(a.updateDate, a.createDate) as lastUpdated "
               + "FROM Admin a "
               + "WHERE"
               + "  type = ?2 "
