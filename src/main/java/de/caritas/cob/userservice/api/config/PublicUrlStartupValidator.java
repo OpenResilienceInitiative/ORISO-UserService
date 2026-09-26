@@ -148,7 +148,7 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
     String host = uri.getHost().toLowerCase(Locale.ROOT);
     if (deployed && isPlaceholder(host)) {
       return "uses a reserved example or template host (example.com/.org/.net,"
-          + " your-domain) or loopback host (localhost, 127.0.0.1),"
+          + " your-domain), loopback host (localhost, 127.0.0.1) or numeric IP alias,"
           + " which cannot be this environment's public host";
     }
     return null;
@@ -159,6 +159,8 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
         || host.equals("localhost")
         || host.endsWith(".localhost")
         || host.equals("0.0.0.0")
+        // Browsers interpret a single decimal label such as 2130706433 as an IPv4 address.
+        || host.matches("[0-9]+")
         || host.matches("127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}")
         || EXAMPLE_DOMAINS.stream().anyMatch(d -> host.equals(d) || host.endsWith("." + d));
   }
