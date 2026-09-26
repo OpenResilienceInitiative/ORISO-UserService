@@ -105,6 +105,12 @@ public class AssignEnquiryEmailSupplier implements EmailSupplier {
     templateAttributes.add(new TemplateDataDTO().key("name_sender").value(nameSender));
     templateAttributes.add(new TemplateDataDTO().key("name_recipient").value(nameRecipient));
     templateAttributes.add(new TemplateDataDTO().key("name_user").value(nameUser));
+    if (receiverConsultant.getTenantId() != null) {
+      templateAttributes.add(
+          new TemplateDataDTO()
+              .key("recipientTenantId")
+              .value(receiverConsultant.getTenantId().toString()));
+    }
 
     if (!multiTenancyEnabled) {
       templateAttributes.add(new TemplateDataDTO().key("url").value(applicationBaseUrl));
@@ -120,6 +126,7 @@ public class AssignEnquiryEmailSupplier implements EmailSupplier {
         .template(TEMPLATE_ASSIGN_ENQUIRY_NOTIFICATION)
         .email(email)
         .language(language)
-        .templateData(templateAttributes);
+        .templateData(templateAttributes)
+        .dialect(receiverConsultant.getDialect());
   }
 }

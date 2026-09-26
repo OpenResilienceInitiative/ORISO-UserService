@@ -6,16 +6,20 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.service.email.NotificationMailSender;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.mailservice.generated.ApiClient;
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
 import de.caritas.cob.userservice.mailservice.generated.web.model.ErrorMailDTO;
+import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -37,11 +41,15 @@ public class MailServiceTest {
 
   @Mock MailServiceApiControllerFactory mailServiceApiControllerFactory;
 
+  @Mock NotificationMailSender notificationMailSender;
+
   @InjectMocks private MailService mailService;
 
   @BeforeEach
   public void setup() throws NoSuchFieldException, SecurityException {
-    when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
+    lenient()
+        .when(mailServiceApiControllerFactory.createControllerApi())
+        .thenReturn(mailsControllerApi);
     lenient().when(this.mailsControllerApi.getApiClient()).thenReturn(this.apiClient);
   }
 
@@ -53,6 +61,65 @@ public class MailServiceTest {
 
     verify(mailsControllerApi, times(1)).sendMails(any());
     assertThat(accepted).isTrue();
+  }
+
+  @Test
+  void counsellingNotificationsUseTheNewSenderWithoutCallingUpstream() {
+    var mail =
+        new MailDTO().template("enquiry-notification-consultant").email("recipient@example.org");
+    var batch = new MailsDTO().mails(List.of(mail));
+
+    assertThat(mailService.sendEmailNotification(batch)).isTrue();
+
+    verify(notificationMailSender).send(mail);
+    verifyNoInteractions(mailsControllerApi);
+  }
+
+  @Test
+  void unrelatedMailsStillUseUpstreamInAMixedBatch() {
+    when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(getCsrfHttpHeaders());
+    var notification = new MailDTO().template("daily-enquiry-notification");
+    var unrelated = new MailDTO().template("free-text");
+
+    assertThat(
+            mailService.sendEmailNotification(
+                new MailsDTO().mails(List.of(notification, unrelated))))
+        .isTrue();
+
+    verify(notificationMailSender).send(notification);
+    var sent = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailsControllerApi).sendMails(sent.capture());
+    assertThat(sent.getValue().getMails()).containsExactly(unrelated);
+  }
+
+  @Test
+  void failedNotificationNeverFallsBackToUpstream() {
+    var notification = new MailDTO().template("assign-enquiry-notification");
+    org.mockito.Mockito.doThrow(new IllegalStateException("SMTP failed"))
+        .when(notificationMailSender)
+        .send(notification);
+
+    assertThat(mailService.sendEmailNotification(new MailsDTO().mails(List.of(notification))))
+        .isFalse();
+
+    verifyNoInteractions(mailsControllerApi);
+  }
+
+  @Test
+  void oneFailedRecipientDoesNotSuppressAnotherTenantRecipient() {
+    var failed =
+        new MailDTO().template("enquiry-notification-consultant").email("first@example.org");
+    var later =
+        new MailDTO().template("enquiry-notification-consultant").email("second@example.org");
+    org.mockito.Mockito.doThrow(new IllegalStateException("missing tenant URL"))
+        .when(notificationMailSender)
+        .send(failed);
+
+    assertThat(mailService.sendEmailNotification(new MailsDTO().mails(List.of(failed, later))))
+        .isFalse();
+
+    verify(notificationMailSender).send(later);
+    verifyNoInteractions(mailsControllerApi);
   }
 
   @Test
