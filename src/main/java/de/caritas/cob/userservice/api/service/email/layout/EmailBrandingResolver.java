@@ -9,8 +9,11 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTe
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
 import java.net.URI;
 import java.util.Locale;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
@@ -48,17 +51,83 @@ public class EmailBrandingResolver {
   private final String platformLogoUrl;
   private final String applicationBaseUrl;
 
+  /** Sentinel key for the platform lookup, which has no tenant id of its own. */
+  private static final Long PLATFORM_CACHE_KEY = Long.MIN_VALUE;
+
+  /** Bound on distinct keys held, so a pathological tenant id space cannot grow this unbounded. */
+  private static final int MAX_CACHE_ENTRIES = 1000;
+
+  /**
+   * The supported maximum for {@code email.branding.cache-ttl-seconds}. This is the configuration
+   * contract, not an arithmetic guard: the cache exists to collapse one batch, and source 2606d840
+   * removed the previous 24-hour cache because a logo change stayed invisible until it expired.
+   * Anything beyond a few minutes walks back that fix, so a larger configured value is clamped and
+   * reported rather than honoured. It also keeps the nanosecond conversion far below overflow.
+   */
+  private static final long MAX_CACHE_TTL_SECONDS = 300L;
+
+  private final long cacheTtlNanos;
+  private final Map<Long, CachedTenant> tenantCache = new ConcurrentHashMap<>();
+
+  private record CachedTenant(RestrictedTenantDTO tenant, long storedAtNanos) {}
+
+  /**
+   * @param cacheTtlSeconds collapses the per-recipient lookups of one batch into a single remote
+   *     call. Must stay short: source 2606d840 removed the 24-hour tenant cache precisely because a
+   *     logo change stayed invisible in mail until it expired. A few seconds keeps a branding save
+   *     effectively immediate while a digest run of N consultants costs one call instead of N. Set
+   *     to 0 to disable caching entirely. Values above {@link #MAX_CACHE_TTL_SECONDS} are clamped
+   *     to it, so a mis-typed TTL (milliseconds pasted into a seconds field, say) can neither
+   *     overflow the nanosecond conversion into a negative value - which silently disabled the
+   *     cache - nor pin stale branding for hours.
+   */
+  @Autowired
   public EmailBrandingResolver(
       @NonNull TenantService tenantService,
       @NonNull TenantTemplateSupplier tenantTemplateSupplier,
       @Value("${email.branding.name:ORISO}") String platformName,
       @Value("${email.branding.logo-url:}") String platformLogoUrl,
-      @Value("${app.base.url}") String applicationBaseUrl) {
+      @Value("${app.base.url:}") String applicationBaseUrl,
+      @Value("${email.branding.cache-ttl-seconds:10}") long cacheTtlSeconds) {
     this.tenantService = tenantService;
     this.tenantTemplateSupplier = tenantTemplateSupplier;
     this.platformName = platformName;
     this.platformLogoUrl = platformLogoUrl;
     this.applicationBaseUrl = normalizeBaseUrl(applicationBaseUrl);
+    if (firstAbsoluteUrl(this.applicationBaseUrl) == null) {
+      throw new IllegalArgumentException(
+          "app.base.url must be an absolute HTTP(S) URL for email branding");
+    }
+    this.cacheTtlNanos = boundedTtlSeconds(cacheTtlSeconds) * 1_000_000_000L;
+  }
+
+  /** Clamp before scaling, so the conversion below can never overflow into a negative TTL. */
+  private static long boundedTtlSeconds(long configuredSeconds) {
+    if (configuredSeconds > MAX_CACHE_TTL_SECONDS) {
+      log.warn(
+          "email.branding.cache-ttl-seconds={} exceeds the supported maximum of {}s and was clamped."
+              + " A longer branding cache delays tenant logo and colour changes in outgoing mail.",
+          configuredSeconds,
+          MAX_CACHE_TTL_SECONDS);
+      return MAX_CACHE_TTL_SECONDS;
+    }
+    return Math.max(0L, configuredSeconds);
+  }
+
+  /** Caching disabled: every resolve performs its own lookup. */
+  public EmailBrandingResolver(
+      @NonNull TenantService tenantService,
+      @NonNull TenantTemplateSupplier tenantTemplateSupplier,
+      String platformName,
+      String platformLogoUrl,
+      String applicationBaseUrl) {
+    this(
+        tenantService,
+        tenantTemplateSupplier,
+        platformName,
+        platformLogoUrl,
+        applicationBaseUrl,
+        0L);
   }
 
   /**
@@ -83,32 +152,53 @@ public class EmailBrandingResolver {
 
   private String resolveLogoUrl(RestrictedTenantDTO tenant, Theming theming) {
     if (theming != null) {
-      String tenantLogo = firstAbsoluteUrl(theming.getLogo(), theming.getAssociationLogo());
+      String tenantLogo = firstPartyLogo(theming.getLogo(), theming.getAssociationLogo());
       if (tenantLogo != null) {
         return tenantLogo;
       }
-      if (!isBlank(theming.getLogo()) || !isBlank(theming.getAssociationLogo())) {
-        String tenantPinnedLogo = tenantPinnedLogoUrl(tenant);
-        if (tenantPinnedLogo != null) {
-          return tenantPinnedLogo;
+      if (isStoredImage(theming.getLogo()) || isStoredImage(theming.getAssociationLogo())) {
+        String baseUrl = firstAbsoluteUrl(applicationBaseUrl);
+        if (!isBlank(baseUrl) && tenant != null && tenant.getId() != null) {
+          Long assetTenantId = tenant.getId();
+          return baseUrl + "/service/tenant/public/branding/" + assetTenantId + "/logo";
         }
       }
     }
-    return firstAbsoluteUrl(platformLogoUrl);
+    return firstPartyLogo(platformLogoUrl);
+  }
+
+  private boolean isStoredImage(String value) {
+    return !isBlank(value) && firstAbsoluteUrl(value) == null;
   }
 
   /**
-   * A stored logo is served by TenantService's tenant-pinned public route on the application
-   * origin. The id in the path selects the tenant, so neither a tenant subdomain (empty on
-   * single-domain installations, and dependent on DNS where set) nor the host-based tenant
-   * resolution of {@code /tenant/public/branding/logo} can hand out another tenant's image.
+   * Mail images stay on the configured application origin, without third-party tracking fetches.
    */
-  private String tenantPinnedLogoUrl(RestrictedTenantDTO tenant) {
-    String baseUrl = firstAbsoluteUrl(applicationBaseUrl);
-    if (baseUrl == null || tenant == null || tenant.getId() == null) {
+  private String firstPartyLogo(String... candidates) {
+    String configuredBase = firstAbsoluteUrl(applicationBaseUrl);
+    if (configuredBase == null) {
       return null;
     }
-    return baseUrl + "/service/tenant/public/branding/" + tenant.getId() + "/logo";
+    URI origin = URI.create(configuredBase);
+    for (String candidate : candidates) {
+      String absolute = firstAbsoluteUrl(candidate);
+      if (absolute == null) {
+        continue;
+      }
+      try {
+        URI image = URI.create(absolute);
+        if (image.getUserInfo() == null
+            && origin.getHost() != null
+            && origin.getHost().equalsIgnoreCase(image.getHost())
+            && origin.getScheme().equalsIgnoreCase(image.getScheme())
+            && effectivePort(origin) == effectivePort(image)) {
+          return absolute;
+        }
+      } catch (IllegalArgumentException ignored) {
+        // Invalid stored URL cannot become an outgoing image reference.
+      }
+    }
+    return null;
   }
 
   /**
@@ -146,27 +236,68 @@ public class EmailBrandingResolver {
    */
   private String resolveAccentColor(Theming theming) {
     String color = theming == null ? null : EmailColors.firstValid(theming.getPrimaryColor());
-    return color == null ? EmailColors.PLATFORM_ACCENT_DARK : color;
+    if (color == null) {
+      return EmailColors.PLATFORM_ACCENT_DARK;
+    }
+    double contrast = EmailColors.contrastRatio(color, "#ffffff");
+    if (contrast < 4.5d) {
+      log.warn(
+          "Tenant email primary color {} has insufficient contrast with white ({}); using the"
+              + " platform primary",
+          color,
+          String.format(Locale.ROOT, "%.2f", contrast));
+      return EmailColors.PLATFORM_ACCENT_DARK;
+    }
+    return color;
   }
 
   private String resolveFooterUrl(RestrictedTenantDTO tenant, String fallbackPath) {
-    if (tenant != null) {
-      String tenantBaseUrl = tenantTemplateSupplier.getTenantBaseUrl(tenant);
-      String tenantUrl = isBlank(tenantBaseUrl) ? null : tenantBaseUrl + fallbackPath;
-      String absolute = firstAbsoluteUrl(tenantUrl);
-      if (absolute != null) {
-        return absolute;
-      }
+    // Platform mail uses the explicitly configured application origin. A missing tenant URL must
+    // never silently switch to that origin, because it could point recipients at another tenant.
+    if (tenant == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenant.getId())) {
+      return applicationBaseUrl + fallbackPath;
     }
-    return isBlank(applicationBaseUrl) ? null : firstAbsoluteUrl(applicationBaseUrl + fallbackPath);
+    String tenantBaseUrl = tenantTemplateSupplier.getTenantBaseUrl(tenant);
+    String tenantUrl = isBlank(tenantBaseUrl) ? null : tenantBaseUrl + fallbackPath;
+    String absolute = firstAbsoluteUrl(tenantUrl);
+    if (absolute != null) {
+      return absolute;
+    }
+    throw new IllegalStateException(
+        "Tenant " + tenant.getId() + " has no valid base URL for email footer links");
   }
 
   private RestrictedTenantDTO loadTenantQuietly(Long tenantId) {
+    if (cacheTtlNanos <= 0L) {
+      return loadTenantUncached(tenantId);
+    }
+    Long key =
+        (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId))
+            ? PLATFORM_CACHE_KEY
+            : tenantId;
+    long now = System.nanoTime();
+    CachedTenant cached = tenantCache.get(key);
+    // Subtraction, not comparison of absolutes: nanoTime has no fixed epoch and may be negative.
+    if (cached != null && now - cached.storedAtNanos() < cacheTtlNanos) {
+      return cached.tenant();
+    }
+    RestrictedTenantDTO fresh = loadTenantUncached(tenantId);
+    if (tenantCache.size() >= MAX_CACHE_ENTRIES) {
+      tenantCache.clear();
+    }
+    // A null result is cached too: tenant-admin invites resolve to "no tenant yet", and that 404
+    // is the normal case, not an error worth repeating once per recipient.
+    tenantCache.put(key, new CachedTenant(fresh, now));
+    return fresh;
+  }
+
+  private RestrictedTenantDTO loadTenantUncached(Long tenantId) {
     if (tenantId == null || TenantContext.TECHNICAL_TENANT_ID.equals(tenantId)) {
       return loadPlatformTenantQuietly();
     }
     try {
-      return tenantService.getRestrictedTenantData(tenantId);
+      // Mail must reflect saved branding changes, including logo removal, without cache expiry.
+      return tenantService.getRestrictedTenantDataFresh(tenantId);
     } catch (RuntimeException exception) {
       // Expected for tenant-admin invites: the tenant is created only when the invite is accepted.
       log.debug(
@@ -179,7 +310,7 @@ public class EmailBrandingResolver {
 
   private RestrictedTenantDTO loadPlatformTenantQuietly() {
     try {
-      return tenantService.getPlatformTenantData();
+      return tenantService.getPlatformTenantDataFresh();
     } catch (RuntimeException exception) {
       log.debug(
           "No platform branding available ({}) — using configured fallbacks",
@@ -188,11 +319,7 @@ public class EmailBrandingResolver {
     }
   }
 
-  /**
-   * Returns the first candidate that is an absolute http(s) URL with a real host, else {@code
-   * null}. A scheme prefix alone is not enough: a tenant with an empty subdomain yields {@code
-   * https://.<host>}, which {@link URI} parses without a host.
-   */
+  /** Returns the first candidate that is an absolute http(s) URL, else {@code null}. */
   static String firstAbsoluteUrl(String... candidates) {
     if (candidates == null) {
       return null;
@@ -205,20 +332,27 @@ public class EmailBrandingResolver {
       String lower = trimmed.toLowerCase(Locale.ROOT);
       if ((lower.startsWith("http://") || lower.startsWith("https://"))
           && trimmed.indexOf(' ') < 0
-          && trimmed.indexOf('"') < 0
-          && hasHost(trimmed)) {
-        return trimmed;
+          && trimmed.indexOf('"') < 0) {
+        try {
+          // Validate before any caller uses URI.create or builds an asset/footer from this base.
+          // A scheme prefix alone still accepts malformed escapes, brackets and missing hosts.
+          URI uri = URI.create(trimmed);
+          if (uri.getHost() != null) {
+            return trimmed;
+          }
+        } catch (IllegalArgumentException ignored) {
+          // Malformed configuration or stored links degrade to the text-only mail layout.
+        }
       }
     }
     return null;
   }
 
-  private static boolean hasHost(String url) {
-    try {
-      return URI.create(url).getHost() != null;
-    } catch (IllegalArgumentException malformed) {
-      return false;
+  private static int effectivePort(URI uri) {
+    if (uri.getPort() != -1) {
+      return uri.getPort();
     }
+    return "https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80;
   }
 
   private static String normalizeBaseUrl(String value) {
