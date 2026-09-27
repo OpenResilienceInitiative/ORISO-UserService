@@ -374,6 +374,19 @@ class MultiTenantRegistrationIT {
   }
 
   @Test
+  void acceptCounsellorInvite_Should_BeRefused_When_TheAgencyBelongsToAnotherTenant()
+      throws Exception {
+    when(agencyFacts.find(AGENCY))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, TENANT + 1, false, List.of())));
+    var token = persistAccountInvite(AccountInviteTargetRole.COUNSELLOR);
+
+    var result = mockMvc.perform(acceptCounsellorInvite(token)).andReturn();
+
+    assertStatus(result, 404);
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+  }
+
+  @Test
   void registerTenantAdminFromInvite_Should_CreateTheAdminInTheInvitesTenant() throws Exception {
     when(operatorDpaContentClient.fetchPublishedDpa())
         .thenReturn(new OperatorDpaContentClient.OperatorDpa("dpa", "1"));
