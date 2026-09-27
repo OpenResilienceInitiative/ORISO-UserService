@@ -587,13 +587,75 @@ class TenantAdminOnboardingServiceTest {
     verify(operatorDpaContentClient, never()).fetchPublishedDpa();
   }
 
+  // --- Registration after the representative confirmed (ORISO-Admin#1065) ---
+
+  private void givenRegistrationSucceeds(AccountInvite invite) {
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+    when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
+    when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
+    when(createAdminService.createNewTenantAdmin(any(CreateAdminDTO.class)))
+        .thenReturn(onboardedAdmin());
+    when(identitySecondFactor.getOtpCredential(anyString()))
+        .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));
+    when(tenantCreationClient.createTenant(any()))
+        .thenReturn(new MultilingualTenantDTO().id(RESERVED_TENANT_ID));
+  }
+
+  @Test
+  void registerTenantAdmin_afterExternalConfirmation_createsTheTenantOnTheConfirmedReservation() {
+    // The confirmation is stored in TenantService against the reserved id + reservation token;
+    // creating the tenant on exactly that pair is what makes it count (DpaSignatureOwnership).
+    var confirmedAt = LocalDateTime.of(2026, 9, 25, 9, 30);
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardedAt(confirmedAt.minusDays(1));
+    invite.setDpaSignedAt(confirmedAt);
+    givenRegistrationSucceeds(invite);
+
+    var result = service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance());
+
+    assertEquals(RESERVED_TENANT_ID, result.tenantId());
+    var captor = ArgumentCaptor.forClass(MultilingualTenantDTO.class);
+    verify(tenantCreationClient).createTenant(captor.capture());
+    assertEquals(RESERVED_TENANT_ID, captor.getValue().getId());
+    assertEquals(RESERVATION_TOKEN, captor.getValue().getTenantIdReservationToken());
+    assertNull(captor.getValue().getOnboardingDpaAcceptance());
+    assertEquals(confirmedAt, invite.getDpaSignedAt());
+  }
+
+  @Test
+  void registerTenantAdmin_withoutOwnAcceptance_isAccepted_When_theSignatureAlreadyLanded() {
+    // A verified signature on the invite is stronger proof than the forward itself.
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaSignedAt(LocalDateTime.now().minusHours(1));
+    givenRegistrationSucceeds(invite);
+
+    var result = service.registerTenantAdmin(RAW_TOKEN, commandWithoutAcceptance());
+
+    assertEquals(RESERVED_TENANT_ID, result.tenantId());
+    verify(operatorDpaContentClient, never()).fetchPublishedDpa();
+  }
+
+  @Test
+  void registerTenantAdmin_ownAcceptanceAfterConfirmation_keepsTheConfirmationTimestamp() {
+    var confirmedAt = LocalDateTime.of(2026, 9, 25, 9, 30);
+    var invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setDpaForwardedAt(confirmedAt.minusDays(1));
+    invite.setDpaSignedAt(confirmedAt);
+    givenPublishedOperatorDpa();
+    givenRegistrationSucceeds(invite);
+
+    service.registerTenantAdmin(RAW_TOKEN, validCommand());
+
+    assertEquals(confirmedAt, invite.getDpaSignedAt());
+  }
+
   // --- DPA forward from the wizard (ORISO-Admin#722) ---
 
   private static de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO
       signInvite() {
     return new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
         .token("RAWSIGNTOKEN")
-        .signLink("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN")
+        .signLink("https://app.example.org/dpa-sign/RAWSIGNTOKEN")
         .expiresAt("2026-08-29T14:31:07");
   }
 
@@ -609,7 +671,7 @@ class TenantAdminOnboardingServiceTest {
     var result = service.forwardDpa(RAW_TOKEN, "legal@example.org");
 
     // then
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
     assertEquals("2026-08-29T14:31:07", result.expiresAt());
     // the forward is proven server-side, which is what unlocks registration without acceptance
     assertNotNull(invite.getDpaForwardedAt());
@@ -622,7 +684,7 @@ class TenantAdminOnboardingServiceTest {
     verify(dpaForwardEmailService).sendSigningLink(captor.capture());
     assertEquals("legal@example.org", captor.getValue().recipientEmail());
     assertEquals(RESERVED_TENANT_ID, captor.getValue().tenantId());
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", captor.getValue().signLink());
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", captor.getValue().signLink());
   }
 
   @Test
@@ -636,7 +698,7 @@ class TenantAdminOnboardingServiceTest {
         .thenReturn(
             new de.caritas.cob.userservice.tenantservice.generated.web.model.DpaSignInviteDTO()
                 .token("RAWSIGNTOKEN")
-                .signLink("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN")
+                .signLink("https://app.example.org/dpa-sign/RAWSIGNTOKEN")
                 .expiresAt(null));
 
     assertThrows(
@@ -703,11 +765,11 @@ class TenantAdminOnboardingServiceTest {
                 .signLink("/dpa-sign/RAWSIGNTOKEN")
                 .expiresAt("2026-08-29T14:31:07"));
     when(dpaForwardEmailService.toAbsoluteSignLink("/dpa-sign/RAWSIGNTOKEN"))
-        .thenReturn("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN");
+        .thenReturn("https://app.example.org/dpa-sign/RAWSIGNTOKEN");
 
     var result = service.forwardDpa(RAW_TOKEN, null);
 
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
   }
 
   @Test
@@ -747,7 +809,7 @@ class TenantAdminOnboardingServiceTest {
     var result = service.forwardDpa(RAW_TOKEN, "legal@example.org");
 
     // then the caller still gets the link, marked as undelivered
-    assertEquals("https://app.oriso.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
+    assertEquals("https://app.example.org/dpa-sign/RAWSIGNTOKEN", result.signUrl());
     assertFalse(result.mailSent());
     // and the forward is RECORDED: the link is live, so the proof of it must survive the failure
     assertNotNull(invite.getDpaForwardedAt());
