@@ -83,6 +83,17 @@ class AdminScopeTest {
   }
 
   @Test
+  void multitenancyFlag_Should_FailClosed_When_ThePropertyIsMissing() throws Exception {
+    // A missing property must keep the Träger boundary, as the tenant filter does.
+    var value =
+        AdminScope.class
+            .getDeclaredField("multitenancyEnabled")
+            .getAnnotation(org.springframework.beans.factory.annotation.Value.class);
+
+    assertThat(value.value()).isEqualTo("${multitenancy.enabled:true}");
+  }
+
+  @Test
   void current_Should_BePlatform_When_PlatformAdmin() {
     actAs(0L, UserRole.TENANT_ADMIN, UserRole.AGENCY_ADMIN, UserRole.USER_ADMIN);
 
