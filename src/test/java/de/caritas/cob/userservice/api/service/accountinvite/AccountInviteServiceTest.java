@@ -1142,6 +1142,29 @@ class AccountInviteServiceTest {
   }
 
   @Test
+  void resendInvite_Should_throwBadRequest_When_oldInviteSuperseded() {
+    // A superseded invite already has a live replacement; resending it would mint a second one.
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("counsellor@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.SUPERSEDED)
+            .expiresAt(LocalDateTime.now().plusDays(1))
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    givenAResendWouldOtherwiseGoThrough();
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(1L, 20L)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be resent");
+
+    verifyNoInteractions(inviteMailDispatchService);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
+  }
+
+  @Test
   void resendInvite_Should_throwBadRequest_When_recipientCleanupExpiresTheOldInvite() {
     AccountInvite invite =
         AccountInvite.builder()
