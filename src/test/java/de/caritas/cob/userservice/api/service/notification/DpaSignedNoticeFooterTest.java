@@ -46,7 +46,7 @@ import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.web.client.RestTemplate;
 
 /**
- * The footer of the "Vertragsunterlagen unterzeichnet" notice, observed on the wire: the notice
+ * The footer of the "Vertragsunterlagen bestätigt" notice, observed on the wire: the notice
  * service, the invite frame, the brand values and the dispatcher are the production objects; only
  * the lookups, the SMTP settings read and the transport are stubbed.
  */
