@@ -184,13 +184,18 @@ public class ReservationLedger {
     }
   }
 
-  /** AgencyService cannot reserve under a Träger that did not exist while the invite waited. */
+  /**
+   * AgencyService cannot reserve under a Träger that did not exist while the invite waited. A
+   * rollback of the surrounding transaction gives back what this call reserved.
+   */
   public Long reserveAgencyOnRelease(AccountInvite invite) {
     if (!IdAllocationMode.reservesAnId(invite.getAgencyIdAllocationMode())
         || sharesAgencyReservation(invite.getAgencyId(), invite.getTenantId(), invite.getId())) {
       return invite.getAgencyId();
     }
-    return agencyIdAllocationClient.reserve(invite.getAgencyId(), invite.getTenantId());
+    Long agencyId = agencyIdAllocationClient.reserve(invite.getAgencyId(), invite.getTenantId());
+    undoOnRollback(new Held(invite.getTenantId(), null, agencyId, false, true));
+    return agencyId;
   }
 
   /**

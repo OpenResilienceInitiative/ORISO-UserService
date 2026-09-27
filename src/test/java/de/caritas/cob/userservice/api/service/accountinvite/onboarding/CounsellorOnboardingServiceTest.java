@@ -34,6 +34,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.AgencyAdminInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.RegisterCounsellorCommand;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -382,6 +384,9 @@ class CounsellorOnboardingServiceTest {
     verify(counsellorInviteProvisioningService)
         .acceptInvite(
             eq(RAW_TOKEN), argThat(cmd -> Boolean.TRUE.equals(cmd.grantAgencyAdmin())), any());
+    // ...which releases the invites queued for this agency
+    verify(eventPublisher)
+        .publishEvent(new InviteUnitCreatedEvent(InviteUnitType.AGENCY, AGENCY_ID, TENANT_ID));
   }
 
   @Test
@@ -419,6 +424,7 @@ class CounsellorOnboardingServiceTest {
     verify(counsellorInviteProvisioningService)
         .acceptInvite(
             eq(RAW_TOKEN), argThat(cmd -> !Boolean.TRUE.equals(cmd.grantAgencyAdmin())), any());
+    verify(eventPublisher, never()).publishEvent(any(InviteUnitCreatedEvent.class));
   }
 
   @Test

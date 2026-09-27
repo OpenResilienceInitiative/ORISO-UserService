@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -17,6 +18,7 @@ import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
@@ -30,8 +32,12 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 class CounsellorInviteProvisioningServiceTest {
@@ -111,6 +117,35 @@ class CounsellorInviteProvisioningServiceTest {
     assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
     assertThat(invite.getProvisionedUserId()).isNull();
     verify(createConsultantSaga).rollbackCreateNewConsultant(partiallyCreatedConsultant);
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("agenciesThatMayNotAccept")
+  void acceptInvite_Should_RefuseBeforeCreatingTheConsultant_When_TheAgencyIsGoneOrForeign(
+      String why, Optional<AgencyFacts.Agency> agency) {
+    AccountInvite invite = activeCounsellorInvite();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(agencyFacts.find(275L)).thenReturn(agency);
+
+    assertThatThrownBy(
+            () ->
+                service.acceptInvite(
+                    "raw-token",
+                    new ProvisionCounsellorCommand(
+                        "invited-counsellor", "test-password", true, null)))
+        .isInstanceOf(NotFoundException.class);
+
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+    assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
+  }
+
+  // A 403 from AgencyService also surfaces as an empty result.
+  static Stream<Arguments> agenciesThatMayNotAccept() {
+    return Stream.of(
+        Arguments.of("not found or forbidden", Optional.empty()),
+        Arguments.of("deleted", Optional.of(new AgencyFacts.Agency(275L, 79L, true, List.of()))),
+        Arguments.of(
+            "of another tenant", Optional.of(new AgencyFacts.Agency(275L, 80L, false, List.of()))));
   }
 
   @Test

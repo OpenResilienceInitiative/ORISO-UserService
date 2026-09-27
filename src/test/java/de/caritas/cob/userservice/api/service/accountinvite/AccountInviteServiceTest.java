@@ -1282,6 +1282,110 @@ class AccountInviteServiceTest {
         .isInstanceOf(BadRequestException.class);
   }
 
+  @Test
+  void resendInvite_Should_throwBadRequest_When_oldInviteExpired() {
+    // Expiry already released the address claim and the reserved numbers; a replacement would
+    // carry a dead reservation token.
+    AccountInvite invite = expiredInvite();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    givenAResendWouldOtherwiseGoThrough();
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(1L, 20L)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be resent");
+
+    verifyNoInteractions(inviteMailDispatchService);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+  }
+
+  @Test
+  void resendInvite_Should_throwBadRequest_When_oldInviteSuperseded() {
+    // A superseded invite already has a live replacement; resending it would mint a second one.
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("counsellor@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.SUPERSEDED)
+            .expiresAt(LocalDateTime.now().plusDays(1))
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    givenAResendWouldOtherwiseGoThrough();
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(1L, 20L)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be resent");
+
+    verifyNoInteractions(inviteMailDispatchService);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
+  }
+
+  @Test
+  void resendInvite_Should_throwBadRequest_When_recipientCleanupExpiresTheOldInvite() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("counsellor@example.org")
+            .activeRecipientKey("counsellor@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .expiresAt(LocalDateTime.now().minusMinutes(1))
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    // The elapsed claim is the invite itself: the cleanup expires it mid-preparation.
+    when(accountInviteRepository.findElapsedRecipientClaims(
+            eq("counsellor@example.org"), any(), any()))
+        .thenReturn(List.of(invite));
+    givenAResendWouldOtherwiseGoThrough();
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(1L, 20L)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be resent");
+
+    verifyNoInteractions(inviteMailDispatchService);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+  }
+
+  /** Lenient: without the guard these stubs let the resend run through to the mail dispatch. */
+  private void givenAResendWouldOtherwiseGoThrough() {
+    lenient()
+        .when(templateRepository.findById(20L))
+        .thenReturn(
+            Optional.of(
+                InviteEmailTemplate.builder()
+                    .id(20L)
+                    .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+                    .subject("Again")
+                    .body("Use {{inviteLink}}")
+                    .active(true)
+                    .build()));
+    lenient()
+        .when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
+        .thenReturn("https://app.oriso.org/account-invite/token");
+    lenient()
+        .when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+        .thenAnswer(
+            invocation ->
+                new InviteMailSendReceipt(
+                    invocation.getArgument(0), Instant.parse("2026-07-28T10:15:30Z")));
+  }
+
+  private static AccountInvite expiredInvite() {
+    return AccountInvite.builder()
+        .id(1L)
+        .recipientEmail("counsellor@example.org")
+        .targetRole(AccountInviteTargetRole.COUNSELLOR)
+        .status(AccountInviteStatus.EXPIRED)
+        .expiresAt(LocalDateTime.now().minusDays(1))
+        .build();
+  }
+
   // --- sendInvite (private, via public entry point) guards ---
 
   @Test
@@ -1319,6 +1423,22 @@ class AccountInviteServiceTest {
 
     assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(1L, 20L)))
         .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void sendInvite_Should_throwBadRequest_When_inviteExpired() {
+    // Expiry cleared the address claim; sending would hand out a link for an unprotected address.
+    AccountInvite invite = expiredInvite();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    givenAResendWouldOtherwiseGoThrough();
+    lenient().when(accountInviteRepository.save(any())).thenAnswer(call -> call.getArgument(0));
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(1L, 20L)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be sent");
+
+    verifyNoInteractions(inviteMailDispatchService);
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
   }
 
   @Test
