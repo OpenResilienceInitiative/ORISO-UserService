@@ -111,15 +111,7 @@ public class MatrixEventListenerService {
       return;
     }
     log.info("🔷 Initializing Matrix Event Listener Service...");
-    // Sync loop and notification jobs serve every Träger, so they read in the technical tenant.
-    executorService =
-        Executors.newFixedThreadPool(
-            2,
-            task ->
-                new Thread(
-                    tenantContextProvider == null
-                        ? task
-                        : tenantContextProvider.inTechnicalContext(task)));
+    executorService = Executors.newFixedThreadPool(2);
 
     // Start Matrix sync loop in background
     executorService.submit(this::startMatrixSyncLoop);
@@ -256,6 +248,24 @@ public class MatrixEventListenerService {
    * values must never become observation attributes.
    */
   private MatrixSyncCycleResult executeObservedMatrixSyncCycle() {
+    var outcome = new java.util.concurrent.atomic.AtomicReference<MatrixSyncCycleResult>();
+    inTechnicalTenant(() -> outcome.set(observedMatrixSyncCycle()));
+    return outcome.get();
+  }
+
+  /**
+   * Sync cycles and notifications serve every Träger. The technical tenant is set per unit of work,
+   * so a tenant another call leaves on the pooled thread never reaches the next one.
+   */
+  private void inTechnicalTenant(Runnable work) {
+    if (tenantContextProvider == null) {
+      work.run();
+    } else {
+      tenantContextProvider.inTechnicalContext(work).run();
+    }
+  }
+
+  private MatrixSyncCycleResult observedMatrixSyncCycle() {
     Observation observation =
         Observation.createNotStarted("userservice.matrix.sync", observationRegistry).start();
     String result = "exception";
@@ -551,41 +561,45 @@ public class MatrixEventListenerService {
 
     // Notify asynchronously so the Matrix sync loop is not blocked.
     executorService.submit(
-        () -> {
-          try {
-            mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
-            recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.SUCCESS);
-          } catch (Exception e) {
-            recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.FAILURE);
-            log.error("❌ Failed to send mobile push notification", e);
-          }
-          // The persisted feed entry is the source of truth for the notification timeline.
-          // Isolate the failure domains so a push failure cannot swallow the notification row.
-          try {
-            if (threadRootId != null && !threadRootId.isBlank()) {
-              eventNotificationService.createThreadReplyNotificationFromRoom(
-                  roomId, senderDomainUserId, threadRootId, privacyEnvelope);
-            } else {
-              eventNotificationService.createMessageNotificationFromRoom(
-                  roomId, senderDomainUserId, privacyEnvelope);
-            }
-            recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
-          } catch (Exception e) {
-            recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
-            log.error("❌ Failed to create event notification from room", e);
-            return;
-          }
+        () ->
+            inTechnicalTenant(
+                () -> {
+                  try {
+                    mobilePushNotificationService.triggerMobilePushNotification(recipientIds);
+                    recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.SUCCESS);
+                  } catch (Exception e) {
+                    recordSideEffect(SideEffect.MOBILE_PUSH, Outcome.FAILURE);
+                    log.error("❌ Failed to send mobile push notification", e);
+                  }
+                  // The persisted feed entry is the source of truth for the notification timeline.
+                  // Isolate the failure domains so a push failure cannot swallow the notification
+                  // row.
+                  try {
+                    if (threadRootId != null && !threadRootId.isBlank()) {
+                      eventNotificationService.createThreadReplyNotificationFromRoom(
+                          roomId, senderDomainUserId, threadRootId, privacyEnvelope);
+                    } else {
+                      eventNotificationService.createMessageNotificationFromRoom(
+                          roomId, senderDomainUserId, privacyEnvelope);
+                    }
+                    recordSideEffect(SideEffect.NOTIFICATION, Outcome.SUCCESS);
+                  } catch (Exception e) {
+                    recordSideEffect(SideEffect.NOTIFICATION, Outcome.FAILURE);
+                    log.error("❌ Failed to create event notification from room", e);
+                    return;
+                  }
 
-          if (mappedSessionId != null
-              && senderDomainUserId != null
-              && isConsultantMatrixUser(senderId)) {
-            try {
-              consultantMessageStatService.recordMessageSent(senderDomainUserId, mappedSessionId);
-            } catch (Exception e) {
-              log.error("Failed to record consultant message statistic", e);
-            }
-          }
-        });
+                  if (mappedSessionId != null
+                      && senderDomainUserId != null
+                      && isConsultantMatrixUser(senderId)) {
+                    try {
+                      consultantMessageStatService.recordMessageSent(
+                          senderDomainUserId, mappedSessionId);
+                    } catch (Exception e) {
+                      log.error("Failed to record consultant message statistic", e);
+                    }
+                  }
+                }));
 
     return true;
   }

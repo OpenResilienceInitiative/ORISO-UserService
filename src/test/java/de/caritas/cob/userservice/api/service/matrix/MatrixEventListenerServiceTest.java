@@ -977,6 +977,77 @@ class MatrixEventListenerServiceTest {
         .hasMessage("repository unavailable");
   }
 
+  // ── tenant of each unit of work ───────────────────────────────────────────
+
+  @Test
+  void syncCycle_Should_RunInTheTechnicalTenant_When_TheWorkerThreadCarriesAnotherOne() {
+    var service = newServiceWithSyncExecutor();
+    service.setTenantContextProvider(multiTenantProvider());
+    ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
+    when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
+    var tenantInCycle = new AtomicReference<Long>();
+    when(matrixSynapseService.makeMatrixRequest(
+            anyString(), eq("GET"), eq("admin-token"), eq(null)))
+        .thenAnswer(
+            ignored -> {
+              tenantInCycle.set(
+                  de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant());
+              return new HashMap<String, Object>(Map.of("next_batch", "batch-1"));
+            });
+    // Something earlier on this pooled thread left a Träger behind.
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(5L);
+    try {
+      ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle");
+
+      assertThat(tenantInCycle.get())
+          .isEqualTo(de.caritas.cob.userservice.api.tenant.TenantContext.TECHNICAL_TENANT_ID);
+      assertThat(de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant())
+          .isEqualTo(5L);
+    } finally {
+      de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+    }
+  }
+
+  @Test
+  void notificationTask_Should_RunInTheTechnicalTenant_When_TheWorkerThreadCarriesAnotherOne() {
+    var service = newServiceWithSyncExecutor();
+    service.setTenantContextProvider(multiTenantProvider());
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.empty());
+    when(consultantRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
+        .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
+    var tenantInTask = new AtomicReference<Long>();
+    doAnswer(
+            ignored -> {
+              tenantInTask.set(
+                  de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenant());
+              return null;
+            })
+        .when(eventNotificationService)
+        .createMessageNotificationFromRoom(
+            eq(MATRIX_ROOM_ID), eq(CONSULTANT_DOMAIN_ID), any(PrivacyEnvelope.class));
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(5L);
+    try {
+      invokeProcessMatrixSyncEvents(
+          service,
+          syncResultWithEvents(
+              MATRIX_ROOM_ID,
+              List.of(messageEvent(CONSULTANT_MATRIX_ID, "m.text", "hello", "$evt-tenant"))));
+
+      assertThat(tenantInTask.get())
+          .isEqualTo(de.caritas.cob.userservice.api.tenant.TenantContext.TECHNICAL_TENANT_ID);
+    } finally {
+      de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+    }
+  }
+
+  private static de.caritas.cob.userservice.api.tenant.TenantContextProvider multiTenantProvider() {
+    var provider = new de.caritas.cob.userservice.api.tenant.TenantContextProvider();
+    ReflectionTestUtils.setField(provider, "multiTenancyEnabled", true);
+    return provider;
+  }
+
   // ── processMatrixSyncEvents ────────────────────────────────────────────────
 
   @Test

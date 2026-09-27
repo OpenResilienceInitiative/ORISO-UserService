@@ -417,10 +417,8 @@ class TenantAdminUserServiceTest {
   }
 
   /**
-   * Fail-closed: if the caller has no resolvable tenant (getTenantId() returns null), the search
-   * must still route through the scoped call and return an empty page — never fall back to the
-   * unscoped repository query. Prevents any future change to the branching logic from silently
-   * re-opening #968.
+   * Fail-closed: a caller without a resolvable tenant is refused with 403 before any admin lookup,
+   * never served by an unscoped query. Keeps a future branching change from re-opening #968.
    */
   @Test
   void findTenantAdminsByInfix_Should_Refuse_WhenCallerTenantIsNull() {
