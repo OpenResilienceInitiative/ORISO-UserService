@@ -151,7 +151,7 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
     if (deployed && isPlaceholder(host)) {
       return "uses a reserved example or template host (example.com/.org/.net,"
           + " your-domain), loopback or private host (localhost, 127.0.0.1, [::1],"
-          + " private IPv6), numeric IP alias"
+          + " private/documentation/multicast IPv6), numeric IP alias"
           + " or noncanonical trailing dot,"
           + " which cannot be this environment's public host";
     }
@@ -179,10 +179,18 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
       var address = InetAddress.getByName(host);
       byte[] bytes = address.getAddress();
       boolean uniqueLocal = bytes.length == 16 && (bytes[0] & 0xfe) == 0xfc;
+      boolean documentation =
+          bytes.length == 16
+              && bytes[0] == 0x20
+              && bytes[1] == 0x01
+              && bytes[2] == 0x0d
+              && bytes[3] == (byte) 0xb8;
       return address.isLoopbackAddress()
           || address.isAnyLocalAddress()
           || address.isLinkLocalAddress()
           || address.isSiteLocalAddress()
+          || address.isMulticastAddress()
+          || documentation
           || uniqueLocal;
     } catch (UnknownHostException invalidLiteral) {
       return true;
