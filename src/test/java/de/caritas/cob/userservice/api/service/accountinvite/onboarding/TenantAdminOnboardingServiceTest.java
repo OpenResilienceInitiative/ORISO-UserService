@@ -40,6 +40,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitCreatedEvent;
+import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.DpaUnavailableReason;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient.OperatorDpa;
@@ -345,6 +347,10 @@ class TenantAdminOnboardingServiceTest {
     assertEquals("kc-user-1", invite.getAcceptedByUserId());
     assertEquals("TOTPSECRET", invite.getTotpPendingSecret());
     verify(accountInviteRepository).save(invite);
+    verify(eventPublisher)
+        .publishEvent(
+            new InviteUnitCreatedEvent(
+                InviteUnitType.TENANT, RESERVED_TENANT_ID, RESERVED_TENANT_ID));
   }
 
   /**
@@ -1198,6 +1204,7 @@ class TenantAdminOnboardingServiceTest {
         ConflictException.class, () -> service.registerTenantAdmin(RAW_TOKEN, validCommand()));
 
     verify(identityAccountRemover).rollbackUser("kc-user-1");
+    verify(eventPublisher, never()).publishEvent(any(InviteUnitCreatedEvent.class));
   }
 
   @Test
