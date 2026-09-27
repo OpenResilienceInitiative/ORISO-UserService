@@ -269,8 +269,7 @@ public class PasswordResetService {
       return Optional.of(new AccountResetTarget(user.getUserId(), user.getEmail()));
     }
 
-    Optional<Consultant> consultantOptional =
-        consultantService.findConsultantByUsernameOrEmail(username, username);
+    Optional<Consultant> consultantOptional = consultantService.findConsultantForSignIn(username);
     return consultantOptional.map(
         consultant -> new AccountResetTarget(consultant.getId(), consultant.getEmail()));
   }
@@ -278,8 +277,7 @@ public class PasswordResetService {
   private Optional<AccountResetTarget> resolveAccount(
       String username, PasswordResetApplication application) {
     if (application == PasswordResetApplication.ADMIN) {
-      Optional<Admin> adminOptional =
-          adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(username, username);
+      Optional<Admin> adminOptional = adminRepository.findForSignIn(username);
       return adminOptional.map(admin -> new AccountResetTarget(admin.getId(), admin.getEmail()));
     }
     return resolveAccount(username);

@@ -108,6 +108,9 @@ jobs:
     steps:
     - name: Checkout repository
       uses: actions/checkout@v6
+      with:
+        # Runs PR code; it needs no push access, so keep the token out of .git/config.
+        persist-credentials: false
 
     - name: Set up JDK and Maven
       uses: actions/setup-java@v5
