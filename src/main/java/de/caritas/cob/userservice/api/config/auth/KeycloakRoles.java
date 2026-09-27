@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.config.auth;
 
 import java.util.Collection;
 import java.util.HashSet;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -32,7 +33,8 @@ public final class KeycloakRoles {
 
   /** Strips a {@code ROLE_} prefix and maps underscore notation to the realm role values. */
   static String normalize(String role) {
-    String normalized = role.toLowerCase();
+    // Role checks must not follow the container locale (Turkish lower-cases I to ı).
+    String normalized = role.toLowerCase(Locale.ROOT);
     if (normalized.startsWith("role_")) {
       normalized = normalized.substring("role_".length());
     }
