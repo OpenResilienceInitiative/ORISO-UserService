@@ -120,7 +120,7 @@ class QueuedInviteReleaseOnOnboardingIT {
         .thenAnswer(
             invocation ->
                 Optional.of(
-                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
+                    new AgencyFacts.Agency(invocation.getArgument(0), TENANT, false, List.of())));
     when(agencyService.getAgencyWithoutCaching(NEW_AGENCY)).thenReturn(null);
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(java.util.Map.of(TOPIC, new TopicDTO().id(TOPIC).name("Sucht")));

@@ -116,7 +116,7 @@ class AgencyAdminOnboardingWizardIT {
         .thenAnswer(
             invocation ->
                 Optional.of(
-                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
+                    new AgencyFacts.Agency(invocation.getArgument(0), TENANT, false, List.of())));
     when(agencyService.getAgencyWithoutCaching(AGENCY))
         .thenReturn(new AgencyDTO().id(AGENCY).tenantId(TENANT).topicIds(List.of(TOPIC)));
     when(agencyService.getAgencyWithoutCaching(NEW_AGENCY)).thenReturn(null);

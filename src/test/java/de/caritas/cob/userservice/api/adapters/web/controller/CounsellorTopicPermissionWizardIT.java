@@ -115,7 +115,8 @@ class CounsellorTopicPermissionWizardIT {
         .thenAnswer(
             invocation ->
                 Optional.of(
-                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
+                    new AgencyFacts.Agency(
+                        invocation.getArgument(0), INVITE_TENANT, false, List.of())));
     agencyOffers(AGENCY_TOPIC_A, AGENCY_TOPIC_B);
     when(topicService.getAllActiveTopicsMap())
         .thenReturn(
