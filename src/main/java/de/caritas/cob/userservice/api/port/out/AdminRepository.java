@@ -99,6 +99,21 @@ public interface AdminRepository
 
   Optional<Admin> findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(String username, String email);
 
+  List<Admin> findAllByUsernameIgnoreCase(String username);
+
+  List<Admin> findAllByEmailIgnoreCase(String email);
+
+  /**
+   * Public password-reset lookup across every Träger: the username first, an e-mail only if exactly
+   * one admin carries it, so a shared address never picks another Träger's admin.
+   */
+  default Optional<Admin> findForSignIn(String usernameOrEmail) {
+    List<Admin> byUsername = findAllByUsernameIgnoreCase(usernameOrEmail);
+    List<Admin> matches =
+        byUsername.isEmpty() ? findAllByEmailIgnoreCase(usernameOrEmail) : byUsername;
+    return matches.size() == 1 ? Optional.of(matches.get(0)) : Optional.empty();
+  }
+
   @Query("SELECT a.id, a.type FROM Admin a WHERE a.id IN :ids")
   List<Object[]> findIdAndTypeByIdIn(@Param("ids") Collection<String> ids);
 }
