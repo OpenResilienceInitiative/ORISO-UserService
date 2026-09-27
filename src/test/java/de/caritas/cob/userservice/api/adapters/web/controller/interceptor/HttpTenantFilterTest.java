@@ -164,6 +164,7 @@ class HttpTenantFilterTest {
     httpTenantFilter.doFilterInternal(request, response, filterChain);
 
     Mockito.verifyNoInteractions(tenantResolverService, tenantService);
+    Mockito.verify(filterChain).doFilter(request, response);
   }
 
   @Test
