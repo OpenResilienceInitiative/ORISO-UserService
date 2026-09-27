@@ -130,10 +130,13 @@ class AgencyAdminOnboardingWizardIT {
   @AfterEach
   void cleanUp() {
     accountInviteRepository.deleteAll();
-    for (String id : List.of(CONSULTANT_ID, ADMIN_ONLY_ID)) {
-      adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(id));
-      adminRepository.findById(id).ifPresent(adminRepository::delete);
-    }
+    Tenants.acrossAll(
+        () -> {
+          for (String id : List.of(CONSULTANT_ID, ADMIN_ONLY_ID)) {
+            adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(id));
+            adminRepository.findById(id).ifPresent(adminRepository::delete);
+          }
+        });
     // The admins live in the invite's Träger, so only a read across all of them proves they are
     // gone.
     Tenants.acrossAll(
