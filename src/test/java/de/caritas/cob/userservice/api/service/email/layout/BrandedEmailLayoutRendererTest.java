@@ -9,7 +9,7 @@ import org.junit.jupiter.api.Test;
 /** The canonical layout (ORISO-UserService#914) and the e-mail-client rules it must satisfy. */
 class BrandedEmailLayoutRendererTest {
 
-  private static final String ACCEPT_URL = "https://app.oriso.org/account-invite/tok-123";
+  private static final String ACCEPT_URL = "https://app.example.org/account-invite/tok-123";
 
   private final BrandedEmailLayoutRenderer renderer =
       new BrandedEmailLayoutRenderer(new EmailContentSanitizer());
@@ -23,8 +23,8 @@ class BrandedEmailLayoutRendererTest {
         "Beratungsstelle Nord",
         "https://cdn.example.org/logo.png",
         "#a5000a",
-        "https://nord.oriso.org/impressum",
-        "https://nord.oriso.org/datenschutz");
+        "https://nord.example.org/impressum",
+        "https://nord.example.org/datenschutz");
   }
 
   // --- structure / client compatibility -------------------------------------------------
@@ -238,11 +238,11 @@ class BrandedEmailLayoutRendererTest {
     BrandedEmail mail = render(tenantBranding(), "Hallo", ACCEPT_URL);
 
     assertThat(mail.html())
-        .contains("https://nord.oriso.org/impressum")
-        .contains("https://nord.oriso.org/datenschutz");
+        .contains("https://nord.example.org/impressum")
+        .contains("https://nord.example.org/datenschutz");
     assertThat(mail.plainText())
-        .contains("Impressum: https://nord.oriso.org/impressum")
-        .contains("Datenschutz: https://nord.oriso.org/datenschutz");
+        .contains("Impressum: https://nord.example.org/impressum")
+        .contains("Datenschutz: https://nord.example.org/datenschutz");
   }
 
   @Test
