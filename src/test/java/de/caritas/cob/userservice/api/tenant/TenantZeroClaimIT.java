@@ -93,6 +93,30 @@ class TenantZeroClaimIT {
         .andExpect(status().isOk());
   }
 
+  @Test
+  void technicalUser_Should_BeServed_When_TokenClaimsTenantZero() throws Exception {
+    mockMvc
+        .perform(ownRoute().with(token(0, AuthorityValue.CONSULTANT_DEFAULT, "technical")))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void technicalUser_Should_BeServedAcrossTenants_When_TokenClaimsAnotherTenant() throws Exception {
+    mockMvc
+        .perform(
+            ownRoute()
+                .with(token(SUBDOMAIN_TENANT, AuthorityValue.CONSULTANT_DEFAULT, "technical")))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void tenantAdmin_Should_BeRefused_When_TokenClaimsTenantZeroWithoutTheAgencyAdminRole()
+      throws Exception {
+    mockMvc
+        .perform(ownRoute().with(token(0, AuthorityValue.TENANT_ADMIN, "tenant-admin")))
+        .andExpect(status().isForbidden());
+  }
+
   private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
       ownRoute() {
     return get(OWN_ROUTE).param("surface", "frontend");
