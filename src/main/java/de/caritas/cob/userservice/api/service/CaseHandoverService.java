@@ -90,7 +90,6 @@ public class CaseHandoverService {
       "CLIENT_OPTOUT_DECLINED_AFTER_TAKEOVER";
   private static final String OUTCOME_CLIENT_CONSENT_DECLINED = "CLIENT_CONSENT_DECLINED";
   private static final String OUTCOME_ACCESS_EXPIRED = "ACCESS_EXPIRED";
-  private static final String OUTCOME_ACCESS_EXTENDED = "ACCESS_EXTENDED";
   private static final String OUTCOME_ALREADY_ANSWERED = "ALREADY_ANSWERED";
   private static final String OUTCOME_NOT_REQUESTED = "NOT_REQUESTED";
   private static final String CO_ACCESS_EXPIRY_TASK = "case-handover-co-access-expiry";
@@ -592,8 +591,9 @@ public class CaseHandoverService {
             .getExpiresAt()
             .plusMinutes(
                 validateMaxAccessDuration(ADVICE_NEEDED, grant.getMaxAccessDurationMinutes())));
-    grant.setAuditOutcome(OUTCOME_ACCESS_EXTENDED);
-    grant.setResolvedAt(LocalDateTime.now(clock));
+    // Its own column: the grant's outcome and time stay, and the expiry sweep, which overwrites the
+    // outcome, cannot erase that the access was extended.
+    grant.setExtendedAt(LocalDateTime.now(clock));
     return caseHandoverRequestRepository.save(grant);
   }
 
@@ -602,7 +602,7 @@ public class CaseHandoverService {
         && effectiveAccessType(request) == AccessType.CO_ACCESS
         && request.getExpiresAt() != null
         && request.getExpiresAt().isAfter(LocalDateTime.now(clock))
-        && !OUTCOME_ACCESS_EXTENDED.equals(request.getAuditOutcome());
+        && request.getExtendedAt() == null;
   }
 
   @Transactional(readOnly = true)

@@ -66,6 +66,19 @@ class CaseHandoverLogsServiceTest {
         .allSatisfy(sql -> assertThat(sql).doesNotContain("agencyIds"));
   }
 
+  /** #200: the extension time outlives the expiry sweep that overwrites the outcome. */
+  @Test
+  void listCaseHandoverLogs_Should_ShowWhenACoAccessWasExtended() {
+    ArgumentCaptor<String> sqlCaptor = ArgumentCaptor.forClass(String.class);
+    when(namedParameterJdbcTemplate.query(
+            sqlCaptor.capture(), any(SqlParameterSource.class), any(RowMapper.class)))
+        .thenReturn(List.of());
+
+    service.listCaseHandoverLogs(1, 10);
+
+    assertThat(sqlCaptor.getValue()).contains("chr.extended_at AS extendedAt");
+  }
+
   @Test
   void listCaseHandoverLogs_Should_FilterByAgency_When_AdminIsAgencyScoped() {
     when(adminAuditAgencyScope.resolveAgencyIds()).thenReturn(Optional.of(Set.of(11L)));

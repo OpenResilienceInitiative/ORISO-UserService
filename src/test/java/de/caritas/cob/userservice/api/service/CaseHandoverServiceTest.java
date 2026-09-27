@@ -2223,7 +2223,8 @@ class CaseHandoverServiceTest {
 
   @ParameterizedTest
   @ValueSource(strings = {"GRANTED", "GRANTED_PENDING_CLIENT_OPTOUT"})
-  void extendCoAccess_addsTheGrantedDurationToTheOldEndAndAuditsIt(String grantedStatus) {
+  void extendCoAccess_addsTheGrantedDurationToTheOldEndAndRecordsTheExtensionSeparately(
+      String grantedStatus) {
     CaseHandoverRequest grant =
         activeAdviceGrant(CaseHandoverRequest.Status.valueOf(grantedStatus));
 
@@ -2231,8 +2232,11 @@ class CaseHandoverServiceTest {
 
     // the old end (10:30) + the 180 minutes granted, so an early click wastes nothing
     assertEquals(LocalDateTime.of(2026, 8, 16, 13, 30), status.getExpiresAt());
-    assertEquals("ACCESS_EXTENDED", grant.getAuditOutcome());
-    assertEquals(LocalDateTime.of(2026, 8, 16, 10, 0), grant.getResolvedAt());
+    // the grant's own outcome and time stay; the extension has its own column, so it survives
+    // the expiry sweep overwriting the outcome
+    assertEquals("ACCESS_GRANTED", grant.getAuditOutcome());
+    assertEquals(LocalDateTime.of(2026, 8, 16, 7, 0), grant.getResolvedAt());
+    assertEquals(LocalDateTime.of(2026, 8, 16, 10, 0), grant.getExtendedAt());
     // an advice seeker who has not answered an opt-out yet can still decline
     assertEquals(grantedStatus, status.getStatus());
     assertTrue(status.isCanViewContent());
@@ -2244,11 +2248,25 @@ class CaseHandoverServiceTest {
   @Test
   void extendCoAccess_refusesASecondExtensionOfTheSameGrant() {
     CaseHandoverRequest grant = activeAdviceGrant(CaseHandoverRequest.Status.GRANTED);
-    grant.setAuditOutcome("ACCESS_EXTENDED");
+    grant.setExtendedAt(LocalDateTime.of(2026, 8, 16, 9, 30));
 
     assertThrows(ConflictException.class, () -> caseHandoverService.extendCoAccess(123L));
 
     assertEquals(LocalDateTime.of(2026, 8, 16, 10, 30), grant.getExpiresAt());
+    verify(caseHandoverRequestRepository, never()).save(any());
+  }
+
+  /**
+   * The one-extension rule must not depend on the audit outcome, which a consent answer changes.
+   */
+  @Test
+  void extendCoAccess_staysRefusedAfterTheAdviceSeekerConfirmsTheOptOut() {
+    CaseHandoverRequest grant = activeAdviceGrant(CaseHandoverRequest.Status.GRANTED);
+    grant.setExtendedAt(LocalDateTime.of(2026, 8, 16, 9, 30));
+    grant.setAuditOutcome("CLIENT_OPTOUT_CONFIRMED");
+
+    assertThrows(ConflictException.class, () -> caseHandoverService.extendCoAccess(123L));
+
     verify(caseHandoverRequestRepository, never()).save(any());
   }
 
