@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -33,6 +34,8 @@ import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
@@ -65,6 +68,7 @@ import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 @SpringBootTest
@@ -80,6 +84,7 @@ class AgencyAdminOnboardingWizardIT {
   private static final long TOPIC = 2L;
   private static final String CONSULTANT_ID = "c0a1e5e5-1026-4a4a-9d1e-000000000001";
   private static final String ADMIN_ONLY_ID = "c0a1e5e5-1026-4a4a-9d1e-000000000002";
+  private static final String RETRY_ADMIN_ID = "c0a1e5e5-1026-4a4a-9d1e-000000000003";
   private static final String CSRF = "it-csrf-token";
   private static final Cookie CSRF_COOKIE = new Cookie("CSRF-TOKEN", CSRF);
 
@@ -92,6 +97,9 @@ class AgencyAdminOnboardingWizardIT {
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private AdminRepository adminRepository;
   @Autowired private AdminAgencyRepository adminAgencyRepository;
+
+  /** Real behaviour; lets a test fail the accept step after the admin already exists. */
+  @MockitoSpyBean private AccountInviteService accountInviteService;
 
   @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
 
@@ -143,10 +151,22 @@ class AgencyAdminOnboardingWizardIT {
   @AfterEach
   void cleanUp() {
     accountInviteRepository.deleteAll();
-    for (String id : List.of(CONSULTANT_ID, ADMIN_ONLY_ID)) {
-      adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(id));
-      adminRepository.findById(id).ifPresent(adminRepository::delete);
-    }
+    Tenants.acrossAll(
+        () -> {
+          for (String id : List.of(CONSULTANT_ID, ADMIN_ONLY_ID, RETRY_ADMIN_ID)) {
+            adminAgencyRepository.deleteAll(adminAgencyRepository.findByAdminId(id));
+            adminRepository.findById(id).ifPresent(adminRepository::delete);
+          }
+        });
+    // The admins live in the invite's Träger, so only a read across all of them proves they are
+    // gone.
+    Tenants.acrossAll(
+        () -> {
+          for (String id : List.of(CONSULTANT_ID, ADMIN_ONLY_ID, RETRY_ADMIN_ID)) {
+            assertThat(adminRepository.findById(id)).isEmpty();
+            assertThat(adminAgencyRepository.findByAdminId(id)).isEmpty();
+          }
+        });
   }
 
   @Test
@@ -211,6 +231,45 @@ class AgencyAdminOnboardingWizardIT {
         .andExpect(status().isOk());
     assertThat(accountInviteRepository.findAll().get(0).getTwoFactorStatus())
         .isEqualTo(TwoFactorGateStatus.ACTIVE);
+  }
+
+  @Test
+  void register_Should_LeaveNoAdminRows_When_AStepAfterTheAdminCreationFails() throws Exception {
+    String token = seedAgencyAdminInvite(AGENCY, false);
+    failTheAcceptStepFor(ADMIN_ONLY_ID);
+
+    register(token, "admin_only", false, null).andExpect(status().isGone());
+
+    Tenants.acrossAll(
+        () -> {
+          assertThat(adminRepository.findById(ADMIN_ONLY_ID)).isEmpty();
+          assertThat(adminAgencyRepository.findByAdminId(ADMIN_ONLY_ID)).isEmpty();
+        });
+    AccountInvite invite = accountInviteRepository.findAll().get(0);
+    assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+  }
+
+  @Test
+  void register_Should_Succeed_When_TheInviteeRetriesAfterAFailureAfterTheAdminCreation()
+      throws Exception {
+    String token = seedAgencyAdminInvite(AGENCY, false);
+    failTheAcceptStepFor(ADMIN_ONLY_ID);
+    // Keycloak hands out a new id on the retry; the admin row keeps the same username and email.
+    when(keycloakService.createUser(any(UserDTO.class), anyString(), anyString()))
+        .thenReturn(new CreatedIdentity(ADMIN_ONLY_ID), new CreatedIdentity(RETRY_ADMIN_ID));
+    register(token, "admin_only", false, null).andExpect(status().isGone());
+
+    register(token, "admin_only", false, null)
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.phase").value("PENDING_2FA_ACTIVATION"));
+
+    Admin admin = Tenants.in(TENANT, () -> adminRepository.findById(RETRY_ADMIN_ID).orElseThrow());
+    assertThat(admin.getType()).isEqualTo(Admin.AdminType.AGENCY);
+    assertThat(adminAgencyRepository.findByAdminIdAndAgencyId(RETRY_ADMIN_ID, AGENCY)).hasSize(1);
+    AccountInvite invite = accountInviteRepository.findAll().get(0);
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
+    assertThat(invite.getProvisionedUserId()).isEqualTo(RETRY_ADMIN_ID);
   }
 
   @Test
@@ -370,6 +429,16 @@ class AgencyAdminOnboardingWizardIT {
                     + alsoCounsellorJson
                     + agencyJson
                     + " }"));
+  }
+
+  /**
+   * An admin revokes the invite while it is being accepted. The link exception does not roll the
+   * transaction back, so the admin rows already written would be committed.
+   */
+  private void failTheAcceptStepFor(String adminId) {
+    doThrow(new AccountInviteLinkException(AccountInviteLinkException.Reason.REVOKED))
+        .when(accountInviteService)
+        .acceptInvite(anyString(), eq(adminId));
   }
 
   private String seedAgencyAdminInvite(long agencyId, boolean alsoCounsellor) {
