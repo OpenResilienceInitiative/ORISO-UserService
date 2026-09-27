@@ -75,7 +75,8 @@ class ExpiredInviteReservationSweepTest {
     when(accountInviteService.expireElapsedInvites())
         .thenAnswer(
             invocation -> {
-              assertThat(TechnicalAccessTokenContext.get()).contains("token");
+              // Local writes run without the service token; only allocation calls may use it.
+              assertThat(TechnicalAccessTokenContext.get()).isEmpty();
               return 1;
             });
 
