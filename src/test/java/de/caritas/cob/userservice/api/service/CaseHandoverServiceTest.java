@@ -1409,6 +1409,22 @@ class CaseHandoverServiceTest {
     assertEquals(requester, session.getConsultant());
   }
 
+  /** Moved out of the case's department after the takeover: the GET already answers 403. */
+  @Test
+  void reclaim_isForbiddenWhenTheOriginalCounsellorNoLongerBelongsToTheCasesDepartment() {
+    givenGrantedTakeover("COUNSELLOR_IS_ILL");
+    ConsultantTopic otherDepartment = new ConsultantTopic();
+    otherDepartment.setConsultant(previous);
+    otherDepartment.setTopicId(5L);
+    previous.setConsultantTopics(Set.of(otherDepartment));
+    session.setMainTopicId(99L);
+
+    assertThrows(ForbiddenException.class, () -> caseHandoverService.reclaim(123L));
+
+    assertEquals(requester, session.getConsultant());
+    verify(sessionRepository, never()).save(session);
+  }
+
   @Test
   void reclaim_isRefusedWhenTheCaseHasMovedOnSinceTheTakeover() {
     givenGrantedTakeover("COUNSELLOR_IS_ILL");
@@ -2333,6 +2349,12 @@ class CaseHandoverServiceTest {
   /** The requester covered for {@code previous}, who is now the one calling. */
   private CaseHandoverRequest givenGrantedTakeover(String reasonCode) {
     session.setConsultant(requester);
+    // The original counsellor still works in the case's agency, so reclaim's eligibility gate
+    // passes.
+    ConsultantAgency previousAgency = new ConsultantAgency();
+    previousAgency.setAgencyId(10L);
+    previousAgency.setConsultant(previous);
+    previous.setConsultantAgencies(Set.of(previousAgency));
     CaseHandoverRequest takeover = grantedRequest(requester);
     takeover.setReasonCode(reasonCode);
     takeover.setAccessType(CaseHandoverRequest.AccessType.TAKEOVER);

@@ -789,6 +789,9 @@ public class CaseHandoverService {
   public CaseHandoverStatus reclaim(Long sessionId) {
     Consultant original = retrieveCurrentConsultant();
     Session session = getSession(sessionId);
+    // Same gate as getStatus(): a counsellor moved out of the case's department after the takeover
+    // must not pull the case back out of it with a direct POST.
+    verifyEligibleForSession(session, original);
     CaseHandoverRequest takeover =
         takeoverFrom(session, original)
             .orElseThrow(
