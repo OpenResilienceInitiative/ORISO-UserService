@@ -485,6 +485,34 @@ class AccountInviteUnitQueueIT {
   }
 
   @Test
+  void tenantRelease_Should_GiveBackTheReservedAgency_When_TheClaimRollsBack() {
+    actAsPlatformAdmin();
+    givenTheNewTenantCanBeReserved();
+    service.createInvite(newTenantAdmin());
+    AccountInvite agencyAdmin =
+        service.createInvite(
+            command(
+                AccountInviteTargetRole.AGENCY_ADMIN,
+                NEW_TENANT,
+                IdAllocationMode.MANUAL,
+                null,
+                IdAllocationMode.AUTO));
+    agencyAdmin.setQueuedTemplateId(templateId);
+    accountInviteRepository.saveAndFlush(agencyAdmin);
+    when(agencyIdAllocationClient.reserve(null, NEW_TENANT)).thenReturn(701L);
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), anyString()))
+        .thenThrow(new IllegalStateException("accept URL not configured"));
+
+    List<Long> released = queue.release(InviteUnitType.TENANT, NEW_TENANT, NEW_TENANT);
+
+    assertThat(released).isEmpty();
+    AccountInvite stillWaiting = reload(agencyAdmin);
+    assertThat(stillWaiting.getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
+    assertThat(stillWaiting.getAgencyId()).isNull();
+    verify(agencyIdAllocationClient).release(701L);
+  }
+
+  @Test
   void agencyAdminIntoANewTenant_Should_Answer409_WithoutAPendingTenantAdmin() {
     actAsPlatformAdmin();
 
