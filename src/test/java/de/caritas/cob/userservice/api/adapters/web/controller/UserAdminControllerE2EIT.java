@@ -35,6 +35,7 @@ import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
+import de.caritas.cob.userservice.api.model.ConsultantTopic;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
@@ -290,6 +291,68 @@ class UserAdminControllerE2EIT {
     entityManager.flush();
     entityManager.clear();
     assertThat(languageCodesOf(CONSULTANT_WITH_LANGUAGES_ID)).containsExactlyInAnyOrder("de", "en");
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_UPDATE})
+  void updateConsultant_Should_keepTopics_When_adminBodyOmitsTopicIds() throws Exception {
+    givenConsultantWithTopics(CONSULTANT_WITH_LANGUAGES_ID, 1L, 2L);
+    var body = adminEditBodyFor(CONSULTANT_WITH_LANGUAGES_ID);
+
+    putConsultant(CONSULTANT_WITH_LANGUAGES_ID, body).andExpect(status().isOk());
+
+    entityManager.flush();
+    entityManager.clear();
+    assertThat(topicIdsOf(CONSULTANT_WITH_LANGUAGES_ID)).containsExactlyInAnyOrder(1L, 2L);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_UPDATE})
+  void updateConsultant_Should_rejectRemovingEveryTopic_When_adminBodySendsEmptyTopicIds()
+      throws Exception {
+    givenConsultantWithTopics(CONSULTANT_WITH_LANGUAGES_ID, 1L, 2L);
+    var body = adminEditBodyFor(CONSULTANT_WITH_LANGUAGES_ID);
+    body.put("topicIds", List.of());
+
+    putConsultant(CONSULTANT_WITH_LANGUAGES_ID, body).andExpect(status().isBadRequest());
+
+    entityManager.clear();
+    assertThat(topicIdsOf(CONSULTANT_WITH_LANGUAGES_ID)).containsExactlyInAnyOrder(1L, 2L);
+  }
+
+  private void givenConsultantWithTopics(String consultantId, Long... topicIds) {
+    var consultant = consultantRepository.findById(consultantId).orElseThrow();
+    consultant.replaceTopics(List.of(topicIds));
+    consultantRepository.save(consultant);
+    entityManager.flush();
+  }
+
+  private LinkedHashMap<String, Object> adminEditBodyFor(String consultantId) {
+    var consultant = consultantRepository.findById(consultantId).orElseThrow();
+    var body = new LinkedHashMap<String, Object>();
+    body.put("firstname", consultant.getFirstName());
+    body.put("lastname", consultant.getLastName());
+    body.put("formalLanguage", consultant.isLanguageFormal());
+    body.put("email", consultant.getEmail());
+    body.put("absent", consultant.isAbsent());
+    body.put("rejectPendingPublicSlug", false);
+    return body;
+  }
+
+  private org.springframework.test.web.servlet.ResultActions putConsultant(
+      String consultantId, Object body) throws Exception {
+    return this.mockMvc.perform(
+        put(CONSULTANT_PATH + "/" + consultantId)
+            .cookie(CSRF_COOKIE)
+            .header(CSRF_HEADER, CSRF_VALUE)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(body)));
+  }
+
+  private Set<Long> topicIdsOf(String consultantId) {
+    return consultantRepository.findById(consultantId).orElseThrow().getConsultantTopics().stream()
+        .map(ConsultantTopic::getTopicId)
+        .collect(Collectors.toSet());
   }
 
   private Set<String> languageCodesOf(String consultantId) {
