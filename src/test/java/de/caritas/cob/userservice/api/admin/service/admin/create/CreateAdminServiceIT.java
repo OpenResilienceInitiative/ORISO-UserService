@@ -87,15 +87,21 @@ class CreateAdminServiceIT {
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @Captor private ArgumentCaptor<UserDTO> userDTOArgumentCaptor;
   private final EasyRandom easyRandom = new EasyRandom();
+  private Object originalMultiTenancyEnabled;
 
   @BeforeEach
   void setUp() {
     MockitoAnnotations.openMocks(this);
+    originalMultiTenancyEnabled =
+        ReflectionTestUtils.getField(createAdminService, "multiTenancyEnabled");
   }
 
   @AfterEach
   void afterTests() {
     TenantContext.clear();
+    // The service is a shared context bean; a leaked flag changes later tests' tenant handling.
+    ReflectionTestUtils.setField(
+        createAdminService, "multiTenancyEnabled", originalMultiTenancyEnabled);
     ReflectionTestUtils.setField(adminScope, "multitenancyEnabled", false);
   }
 
