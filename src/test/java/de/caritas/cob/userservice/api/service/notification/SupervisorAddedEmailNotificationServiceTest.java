@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.notification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -430,7 +431,14 @@ class SupervisorAddedEmailNotificationServiceTest {
         .doesNotThrowAnyException();
 
     verify(emailRenderer)
-        .render(eq("team-aenderung"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
+        .render(
+            eq("team-aenderung"),
+            eq(OrisoEmailRenderer.Tone.DE_FORMAL),
+            argThat(
+                values ->
+                    "#5".equals(values.get("caseReference"))
+                        && "Sie wurden als Supervisor-Berater:in zu diesem Vorgang hinzugefügt."
+                            .equals(values.get("teamChangeStatement"))));
   }
 
   @Test
