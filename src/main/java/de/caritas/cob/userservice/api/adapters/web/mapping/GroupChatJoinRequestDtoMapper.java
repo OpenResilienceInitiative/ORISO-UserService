@@ -2,25 +2,14 @@ package de.caritas.cob.userservice.api.adapters.web.mapping;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO.ViaEnum;
-import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestDTO.ViewerRoleEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestStatus;
 import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequestStatusDTO;
-import de.caritas.cob.userservice.api.adapters.web.dto.GroupChatJoinRequesterDTO;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
-import de.caritas.cob.userservice.api.helper.ChatPermissionVerifier;
-import de.caritas.cob.userservice.api.model.Chat;
-import de.caritas.cob.userservice.api.model.Consultant;
-import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
-import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
-import de.caritas.cob.userservice.api.service.chat.GroupChatJoinRequestService;
-import de.caritas.cob.userservice.api.service.chat.GroupChatJoinRequestService.PendingForModerator;
 import java.time.LocalDateTime;
 import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
-import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -31,7 +20,6 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
-import org.springframework.transaction.annotation.Transactional;
 
 /**
  * Maps join requests to their two views. The requester view deliberately carries no group data;
@@ -42,11 +30,9 @@ import org.springframework.transaction.annotation.Transactional;
 @RequiredArgsConstructor
 public class GroupChatJoinRequestDtoMapper {
 
-  private final ConsultantRepository consultantRepository;
   private final AgencyService agencyService;
   private final TenantService tenantService;
-  private final ChatPermissionVerifier chatPermissionVerifier;
-  private final GroupChatJoinRequestService joinRequestService;
+  private final GroupChatJoinRequestLocalLoader localLoader;
 
   public GroupChatJoinRequestStatusDTO toStatusDto(GroupChatJoinRequest request) {
     return new GroupChatJoinRequestStatusDTO()
@@ -56,24 +42,15 @@ public class GroupChatJoinRequestDtoMapper {
         .decidedAt(toUtc(request.getDecidedAt()));
   }
 
-  /**
-   * Pending requests for the moderator view. Runs in one read transaction because the requester's
-   * agencies and the Series' agencies are lazy associations.
-   */
-  @Transactional(readOnly = true)
+  /** Resolve remote names only after the local loader's read transaction has returned. */
   public List<GroupChatJoinRequestDTO> pendingRequestsFor(String moderatorConsultantId) {
-    var pending = joinRequestService.findPendingForModerator(moderatorConsultantId);
+    var pending = localLoader.load(moderatorConsultantId);
     if (pending.isEmpty()) {
       return List.of();
     }
-    var requesterIds =
-        pending.stream().map(item -> item.request().getConsultantId()).distinct().toList();
-    var requesters =
-        consultantRepository.findAllWithAgenciesByIdIn(requesterIds).stream()
-            .collect(Collectors.toMap(Consultant::getId, consultant -> consultant));
     var tenantIds =
-        requesters.values().stream()
-            .map(Consultant::getTenantId)
+        pending.stream()
+            .map(GroupChatJoinRequestLocalLoader.LocalPending::tenantId)
             .filter(Objects::nonNull)
             .collect(Collectors.toSet());
     var tenants = new HashMap<Long, String>();
@@ -89,68 +66,19 @@ public class GroupChatJoinRequestDtoMapper {
     }
     var agencies = new HashMap<Long, String>();
     return pending.stream()
-        .map(item -> toModeratorDto(item, requesters, tenants, agencies))
+        .map(
+            item -> {
+              var requester = item.dto().getRequester();
+              requester
+                  .tenantName(tenants.get(item.tenantId()))
+                  .agencyName(agencyNameOf(item.agencyIds(), agencies));
+              return item.dto();
+            })
         .toList();
   }
 
-  private GroupChatJoinRequestDTO toModeratorDto(
-      PendingForModerator pending,
-      Map<String, Consultant> requesters,
-      Map<Long, String> tenants,
-      Map<Long, String> agencies) {
-    var request = pending.request();
-    var series = pending.series();
-    return new GroupChatJoinRequestDTO()
-        .id(request.getId())
-        .seriesId(request.getSeriesId())
-        .groupTitle(series.getTopic())
-        .status(GroupChatJoinRequestStatus.fromValue(request.getStatus().name()))
-        .requestedAt(toUtc(request.getRequestedAt()))
-        .decidedAt(toUtc(request.getDecidedAt()))
-        .via(ViaEnum.fromValue(request.getVia().name()))
-        .viewerRole(ViewerRoleEnum.fromValue(pending.viewerRole().name()))
-        .requester(
-            toRequesterDto(request.getConsultantId(), series, requesters, tenants, agencies));
-  }
-
-  private GroupChatJoinRequesterDTO toRequesterDto(
-      String consultantId,
-      Chat series,
-      Map<String, Consultant> requesters,
-      Map<Long, String> tenants,
-      Map<Long, String> agencies) {
-    var dto = new GroupChatJoinRequesterDTO().consultantId(consultantId);
-    var requester = requesters.get(consultantId);
-    if (requester == null) {
-      return dto.displayName(null)
-          .firstName(null)
-          .lastName(null)
-          .agencyName(null)
-          .tenantName(null)
-          .sameAgency(false)
-          .sameTenant(false);
-    }
-    return dto.displayName(requester.getInternalDisplayNameOrFallback())
-        .firstName(requester.getFirstName())
-        .lastName(requester.getLastName())
-        .agencyName(agencyNameOf(requester, agencies))
-        .tenantName(tenants.get(requester.getTenantId()))
-        .sameAgency(chatPermissionVerifier.hasSameAgencyAssigned(series, requester))
-        .sameTenant(
-            series.getChatOwner() != null
-                && requester.getTenantId() != null
-                && Objects.equals(requester.getTenantId(), series.getChatOwner().getTenantId()));
-  }
-
-  private String agencyNameOf(Consultant requester, Map<Long, String> agencyNames) {
-    if (requester.getConsultantAgencies() == null) {
-      return null;
-    }
-    return requester.getConsultantAgencies().stream()
-        .filter(consultantAgency -> consultantAgency.getDeleteDate() == null)
-        .map(ConsultantAgency::getAgencyId)
-        .filter(Objects::nonNull)
-        .sorted(Comparator.naturalOrder())
+  private String agencyNameOf(List<Long> agencyIds, Map<Long, String> agencyNames) {
+    return agencyIds.stream()
         .map(agencyId -> cachedAgencyName(agencyId, agencyNames))
         .filter(Objects::nonNull)
         .findFirst()
