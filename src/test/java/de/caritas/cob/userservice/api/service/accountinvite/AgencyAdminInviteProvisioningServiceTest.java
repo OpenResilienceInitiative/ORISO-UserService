@@ -36,6 +36,7 @@ class AgencyAdminInviteProvisioningServiceTest {
   @Mock private AdminAgencyRepository adminAgencyRepository;
   @Mock private AdminRepository adminRepository;
   @Mock private IdentityAccountRemover identityAccountRemover;
+  @Mock private AcceptTimeAgencyCheck acceptTimeAgencyCheck;
 
   @InjectMocks private AgencyAdminInviteProvisioningService service;
 
