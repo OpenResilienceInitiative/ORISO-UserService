@@ -1338,6 +1338,8 @@ class AccountInviteServiceTest {
     when(accountInviteRepository.findElapsedRecipientClaims(
             eq("counsellor@example.org"), any(), any()))
         .thenReturn(List.of(invite));
+    // #1271 expires with a conditional UPDATE; it wins because the invite is still pending.
+    lenient().when(accountInviteRepository.expireWhileStatusIn(eq(1L), any(), any())).thenReturn(1);
     givenAResendWouldOtherwiseGoThrough();
 
     assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(1L, 20L)))

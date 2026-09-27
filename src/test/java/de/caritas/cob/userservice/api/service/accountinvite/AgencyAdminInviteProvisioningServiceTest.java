@@ -57,6 +57,8 @@ class AgencyAdminInviteProvisioningServiceTest {
             .lastName("Lovelace")
             .build();
     when(accountInviteService.findInviteByToken(TOKEN)).thenReturn(invite);
+    // #1271 holds the invite row before provisioning.
+    when(accountInviteRepository.holdInStatus(any(), any(), any())).thenReturn(1);
     when(createAdminService.createNewAgencyAdminInTenant(any()))
         .thenReturn(
             Admin.builder()
