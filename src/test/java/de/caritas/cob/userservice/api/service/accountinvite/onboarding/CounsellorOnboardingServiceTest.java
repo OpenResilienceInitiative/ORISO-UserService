@@ -572,9 +572,13 @@ class CounsellorOnboardingServiceTest {
   @Test
   void registerCounsellor_missingTopics_isRejected_whenTheCoverageOffersSeveralTopics() {
     // Only a single-topic coverage is picked for the invitee; with two topics they must choose.
+    // The agency itself offers both, so the case does not hinge on the department joining in.
     inviteResolves(invite());
     when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
-        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(EXTRA_AGENCY_TOPIC_ID)));
+        .thenReturn(
+            new AgencyDTO()
+                .id(AGENCY_ID)
+                .topicIds(List.of(DEPARTMENT_TOPIC_ID, EXTRA_AGENCY_TOPIC_ID)));
     when(topicService.getAllActiveTopicsMap()).thenReturn(Map.of());
     RegisterCounsellorCommand noTopics =
         new RegisterCounsellorCommand(

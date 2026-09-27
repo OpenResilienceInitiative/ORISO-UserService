@@ -144,6 +144,11 @@ public class AccountInviteService {
     if (command.agencyIdAllocationMode() == IdAllocationMode.EXISTING) {
       command = bindToExistingAgency(command);
     }
+    // After the policy and the agency binding, which both may stamp the tenant.
+    if (command.targetRole() == AccountInviteTargetRole.AGENCY_ADMIN
+        && command.tenantId() == null) {
+      throw new BadRequestException("An AGENCY_ADMIN invite requires a tenant");
+    }
     verifyRecipientEmailAvailable(command.recipientEmail());
     InviteUnitType unitToWaitFor = unitToWaitFor(command);
     if (unitToWaitFor != null) {

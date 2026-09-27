@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.never;
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
@@ -24,10 +26,12 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
+import de.caritas.cob.userservice.api.model.ConsultantTopic;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.ConsultantTopicRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AdminSelfAssignmentService.SelfAssignmentRole;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
@@ -37,6 +41,7 @@ import de.caritas.cob.userservice.api.tenant.TenantFixtures;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.time.LocalDateTime;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.Callable;
@@ -69,6 +74,7 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({
   AdminSelfAssignmentService.class,
   AccountInviteAccessPolicy.class,
+  ConsultantTopicAgencyCompatibilityValidator.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AdminSelfAssignmentIT.CallerConfig.class,
   TenantFixtures.class
@@ -89,6 +95,7 @@ class AdminSelfAssignmentIT {
   private static final long FOREIGN_AGENCY = 3L;
   private static final long MISSING_AGENCY = 999L;
   private static final long TOPICLESS_AGENCY = 4L;
+  private static final long MULTI_TOPIC_AGENCY = 5L;
 
   @TestConfiguration
   static class CallerConfig {
@@ -105,6 +112,7 @@ class AdminSelfAssignmentIT {
   @Autowired private AuthenticatedUser caller;
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private ConsultantAgencyRepository consultantAgencyRepository;
+  @Autowired private ConsultantTopicRepository consultantTopicRepository;
 
   @MockitoBean private ExistingAgencyClient existingAgencyClient;
   @MockitoBean private AgencyService agencyService;
@@ -122,6 +130,7 @@ class AdminSelfAssignmentIT {
     givenAgency(OWN_AGENCY, OWN_TENANT, List.of(11L));
     givenAgency(OTHER_OWN_TENANT_AGENCY, OWN_TENANT, List.of(21L));
     givenAgency(FOREIGN_AGENCY, FOREIGN_TENANT, List.of(31L));
+    givenAgency(MULTI_TOPIC_AGENCY, OWN_TENANT, List.of(51L, 52L));
     when(existingAgencyClient.find(MISSING_AGENCY)).thenReturn(Optional.empty());
     adminRepository.save(
         Admin.builder()
@@ -232,6 +241,51 @@ class AdminSelfAssignmentIT {
   }
 
   @Test
+  void anAdminWhoAlreadyCounsels_Should_Get400_When_TheAgencyOffersSeveralTopicsAndNoneIsPicked() {
+    actAsTenantAdmin(counsellingCaller.getId());
+
+    assertThatThrownBy(
+            () ->
+                service.assign(
+                    new SelfAssignmentCommand(SelfAssignmentRole.COUNSELLOR, MULTI_TOPIC_AGENCY)))
+        .isInstanceOf(BadRequestException.class);
+    verify(consultantAgencyRelationCreatorService, never())
+        .createNewConsultantAgency(anyString(), any());
+  }
+
+  @Test
+  void anAdminWhoAlreadyCounsels_Should_GetThePickedTopicAddedToTheirOwn() {
+    givenCounsellingCallerTopic(11L);
+    actAsTenantAdmin(counsellingCaller.getId());
+
+    service.assign(
+        new SelfAssignmentCommand(SelfAssignmentRole.COUNSELLOR, MULTI_TOPIC_AGENCY, List.of(52L)));
+
+    assertThat(consultantTopicRepository.findTopicIdsByConsultantId(counsellingCaller.getId()))
+        .containsExactlyInAnyOrder(11L, 52L);
+    verify(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(
+            eq(counsellingCaller.getId()),
+            argThat(relation -> relation.getAgencyId() == MULTI_TOPIC_AGENCY));
+  }
+
+  @Test
+  void anAdminWhoAlreadyCounsels_Should_Get400_When_ThePickedTopicIsNotOfThatAgency() {
+    actAsTenantAdmin(counsellingCaller.getId());
+
+    assertThatThrownBy(
+            () ->
+                service.assign(
+                    new SelfAssignmentCommand(
+                        SelfAssignmentRole.COUNSELLOR, MULTI_TOPIC_AGENCY, List.of(11L))))
+        .isInstanceOf(BadRequestException.class);
+    assertThat(consultantTopicRepository.findTopicIdsByConsultantId(counsellingCaller.getId()))
+        .isEmpty();
+    verify(consultantAgencyRelationCreatorService, never())
+        .createNewConsultantAgency(anyString(), any());
+  }
+
+  @Test
   void anAdminWhoAlreadyCounselsInThatAgency_Should_Get409() {
     actAsTenantAdmin(counsellingCaller.getId());
 
@@ -256,6 +310,38 @@ class AdminSelfAssignmentIT {
         .isInstanceOf(BadRequestException.class);
     verify(grantConsultantIdentityService, never())
         .grantConsultantIdentityToAdmin(anyString(), any());
+  }
+
+  @Test
+  void selfAssignment_Should_Answer400_When_ATopicIdIsNull() {
+    actAsTenantAdmin(TENANT_ADMIN_ID);
+
+    assertThatThrownBy(
+            () ->
+                service.assign(
+                    new SelfAssignmentCommand(
+                        SelfAssignmentRole.COUNSELLOR,
+                        MULTI_TOPIC_AGENCY,
+                        Arrays.asList(51L, null))))
+        .isInstanceOf(BadRequestException.class);
+    verify(grantConsultantIdentityService, never())
+        .grantConsultantIdentityToAdmin(anyString(), any());
+  }
+
+  @Test
+  void anAdminWhoAlreadyCounsels_Should_Get400_When_ATopicIdIsNull() {
+    actAsTenantAdmin(counsellingCaller.getId());
+
+    assertThatThrownBy(
+            () ->
+                service.assign(
+                    new SelfAssignmentCommand(
+                        SelfAssignmentRole.COUNSELLOR,
+                        MULTI_TOPIC_AGENCY,
+                        Arrays.asList(51L, null))))
+        .isInstanceOf(BadRequestException.class);
+    verify(consultantAgencyRelationCreatorService, never())
+        .createNewConsultantAgency(anyString(), any());
   }
 
   @Test
@@ -328,9 +414,21 @@ class AdminSelfAssignmentIT {
         caller, AGENCY_ADMIN_ID, OWN_TENANT, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
   }
 
+  private void givenCounsellingCallerTopic(long topicId) {
+    var now = LocalDateTime.now();
+    consultantTopicRepository.save(
+        ConsultantTopic.builder()
+            .consultant(counsellingCaller)
+            .topicId(topicId)
+            .createDate(now)
+            .updateDate(now)
+            .build());
+  }
+
   private void givenAgency(long agencyId, long tenantId, List<Long> topicIds) {
-    when(agencyService.getAgencyWithoutCaching(agencyId))
-        .thenReturn(new AgencyDTO().id(agencyId).tenantId(tenantId).topicIds(topicIds));
+    var agencyDto = new AgencyDTO().id(agencyId).tenantId(tenantId).topicIds(topicIds);
+    when(agencyService.getAgencyWithoutCaching(agencyId)).thenReturn(agencyDto);
+    when(agencyService.getAgenciesWithoutCaching(List.of(agencyId))).thenReturn(List.of(agencyDto));
     when(existingAgencyClient.find(agencyId))
         .thenReturn(Optional.of(new ExistingAgency(agencyId, tenantId, false, topicIds)));
   }
