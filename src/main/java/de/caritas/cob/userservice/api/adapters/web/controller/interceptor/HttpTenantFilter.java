@@ -58,7 +58,8 @@ public class HttpTenantFilter extends OncePerRequestFilter {
       HttpServletRequest request, HttpServletResponse response, FilterChain filterChain)
       throws ServletException, IOException {
     if (requiresTenantFilterMatcher.matches(request)) {
-      log.debug("Trying to resolve tenant for request coming from URI {}", request.getRequestURI());
+      // Never log the path: invite routes carry the raw token, the invitee's only credential.
+      log.debug("Resolving the tenant for a {} request", request.getMethod());
       // Every exit clears the context, so a pooled thread never keeps a tenant from before.
       try {
         Long tenantId;
@@ -66,7 +67,7 @@ public class HttpTenantFilter extends OncePerRequestFilter {
           tenantId = tenantResolverService.resolve(request);
         } catch (AccessDeniedException denied) {
           // Thrown before ExceptionTranslationFilter, which would otherwise never make it a 403.
-          log.warn("Refused request to {}: {}", request.getRequestURI(), denied.getMessage());
+          log.warn("Refused a {} request: {}", request.getMethod(), denied.getMessage());
           response.sendError(HttpServletResponse.SC_FORBIDDEN);
           return;
         }
@@ -78,9 +79,7 @@ public class HttpTenantFilter extends OncePerRequestFilter {
         TenantContext.clear();
       }
     } else {
-      log.debug(
-          "Skipping tenant filter for request: {} as it belongs to a tenancy whitelist.",
-          request.getRequestURI());
+      log.debug("Skipping tenant resolution for a whitelisted {} request", request.getMethod());
       filterChain.doFilter(request, response);
     }
   }

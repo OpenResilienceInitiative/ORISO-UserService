@@ -182,6 +182,46 @@ class HttpTenantFilterTest {
         .isNull();
   }
 
+  @org.junit.jupiter.api.AfterEach
+  void clearTenantContext() {
+    de.caritas.cob.userservice.api.tenant.TenantContext.clear();
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "/users/account-invites/SECRET-INVITE-TOKEN/accept",
+        "/service/users/invitelinks/SECRET-INVITE-TOKEN/redeem"
+      })
+  void logsNeverCarryTheRequestPath_BecauseItMayHoldAnInviteToken(String uri)
+      throws ServletException, IOException {
+    var logger =
+        (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(HttpTenantFilter.class);
+    var appender =
+        new ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent>();
+    appender.start();
+    var previousLevel = logger.getLevel();
+    logger.setLevel(ch.qos.logback.classic.Level.DEBUG);
+    logger.addAppender(appender);
+    try {
+      Mockito.lenient().when(request.getRequestURI()).thenReturn(uri);
+      Mockito.lenient().when(request.getMethod()).thenReturn("POST");
+      Mockito.lenient()
+          .when(tenantResolverService.resolve(request))
+          .thenThrow(new org.springframework.security.access.AccessDeniedException("no tenant"));
+
+      httpTenantFilter.doFilterInternal(request, response, filterChain);
+    } finally {
+      logger.detachAppender(appender);
+      logger.setLevel(previousLevel);
+    }
+
+    org.assertj.core.api.Assertions.assertThat(appender.list).isNotEmpty();
+    org.assertj.core.api.Assertions.assertThat(appender.list)
+        .extracting(ch.qos.logback.classic.spi.ILoggingEvent::getFormattedMessage)
+        .noneMatch(message -> message.contains("SECRET-INVITE-TOKEN"));
+  }
+
   @Test
   void tenantIsClearedWhenTheTenantIsRefused() throws ServletException, IOException {
     de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(99L);
