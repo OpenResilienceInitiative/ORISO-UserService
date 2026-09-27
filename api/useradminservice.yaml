@@ -1737,7 +1737,10 @@ components:
           $ref: '#/components/schemas/AssignedSupervisorId'
         topicIds:
           type: array
-          description: replaces the full set of topics assigned to the consultant
+          nullable: true
+          description: >-
+            Replaces the full set of topics assigned to the consultant. Omitted or null keeps the
+            stored topics; an empty list is rejected while the consultant still has topics.
           items:
             type: integer
             format: int64

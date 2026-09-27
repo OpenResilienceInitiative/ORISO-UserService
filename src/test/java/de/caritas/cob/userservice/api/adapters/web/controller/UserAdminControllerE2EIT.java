@@ -30,6 +30,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.ConsultingTypeServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -147,6 +148,8 @@ class UserAdminControllerE2EIT {
   @Qualifier("topicControllerApiPrimary")
   private TopicControllerApi topicControllerApi;
 
+  @MockitoBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
+
   @MockitoBean
   @Qualifier("mailsControllerApi")
   private MailsControllerApi mailsControllerApi;
@@ -194,6 +197,9 @@ class UserAdminControllerE2EIT {
     when(consultingTypeServiceApiControllerFactory.createControllerApi())
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
+    when(topicServiceApiControllerFactory.createControllerApi()).thenReturn(topicControllerApi);
+    when(topicControllerApi.getApiClient())
+        .thenReturn(new de.caritas.cob.userservice.topicservice.generated.ApiClient());
 
     CreatedIdentity keycloakResponse = new CreatedIdentity();
     keycloakResponse.setUserId(new EasyRandom().nextObject(String.class));
