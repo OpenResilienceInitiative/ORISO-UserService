@@ -102,6 +102,9 @@ public class AccountInviteService {
 
   private static final int EXPIRY_SWEEP_BATCH = 100;
 
+  /** Expiry already freed the address claim and the reserved numbers. */
+  private static final String INACTIVE_RESEND_MESSAGE = "Inactive invites cannot be resent";
+
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull InviteEmailTemplateRepository templateRepository;
   private final @NonNull InviteEmailDeliveryRepository deliveryRepository;
@@ -745,6 +748,9 @@ public class AccountInviteService {
       return sendInvite(command);
     }
     ResendDispatch resend = prepareResend(command);
+    if (resend == null) {
+      throw new BadRequestException(INACTIVE_RESEND_MESSAGE);
+    }
     return deliverPreparedInvite(
         resend.dispatch(),
         resend.oldInviteId(),
@@ -752,6 +758,7 @@ public class AccountInviteService {
         sendFailure -> restoreResendAfterConfirmedFailure(resend, sendFailure));
   }
 
+  /** Null when the invite is (or the recipient cleanup just made it) expired. */
   private ResendDispatch prepareResend(SendInviteCommand command) {
     return requiresNewTransaction()
         .execute(
@@ -763,6 +770,9 @@ public class AccountInviteService {
               if (initialOldInvite.getStatus() == AccountInviteStatus.REVOKED) {
                 throw new BadRequestException("Revoked invites cannot be resent");
               }
+              if (initialOldInvite.getStatus() == AccountInviteStatus.EXPIRED) {
+                return null;
+              }
 
               LocalDateTime now = LocalDateTime.now();
               verifyRecipientEmailAvailableExcluding(
@@ -770,6 +780,10 @@ public class AccountInviteService {
               // The expiry cleanup is a clearing bulk update, so reload the old row before the
               // durable handover.
               AccountInvite oldInvite = findInvite(command.inviteId());
+              if (oldInvite.getStatus() == AccountInviteStatus.EXPIRED) {
+                // Returning commits the cleanup's expiry and number release; a throw would undo it.
+                return null;
+              }
               InviteEmailTemplate template = findTemplate(command.templateId());
               String rawToken = generateToken();
               String acceptUrl =
@@ -1255,8 +1269,10 @@ public class AccountInviteService {
     if (invite.getStatus() == AccountInviteStatus.ACCEPTED) {
       throw new BadRequestException("Accepted invites cannot be sent");
     }
+    // Expiry already freed the address claim and the reserved numbers.
     if (invite.getStatus() == AccountInviteStatus.REVOKED
-        || invite.getStatus() == AccountInviteStatus.SUPERSEDED) {
+        || invite.getStatus() == AccountInviteStatus.SUPERSEDED
+        || invite.getStatus() == AccountInviteStatus.EXPIRED) {
       throw new BadRequestException("Inactive invites cannot be sent");
     }
 
