@@ -117,6 +117,38 @@ class TenantZeroClaimIT {
         .andExpect(status().isForbidden());
   }
 
+  @Test
+  void platformAdmin_Should_BeServed_When_ItsRolesComeAsClientRoles() throws Exception {
+    mockMvc
+        .perform(
+            ownRoute()
+                .with(
+                    jwt()
+                        .jwt(
+                            claims ->
+                                claims
+                                    .claim("tenantId", 0)
+                                    .claim(
+                                        "resource_access",
+                                        Map.of(
+                                            "app",
+                                            Map.of(
+                                                "roles", List.of("agency-admin", "tenant-admin")))))
+                        .authorities(new SimpleGrantedAuthority(AuthorityValue.TENANT_ADMIN))))
+        .andExpect(status().isOk());
+  }
+
+  @Test
+  void platformAdmin_Should_BeServed_When_ItsRealmRolesCarryTheRolePrefix() throws Exception {
+    mockMvc
+        .perform(
+            ownRoute()
+                .with(
+                    token(
+                        0, AuthorityValue.TENANT_ADMIN, "ROLE_AGENCY_ADMIN", "ROLE_TENANT_ADMIN")))
+        .andExpect(status().isOk());
+  }
+
   private static org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder
       ownRoute() {
     return get(OWN_ROUTE).param("surface", "frontend");
