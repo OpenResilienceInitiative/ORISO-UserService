@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import java.time.LocalDateTime;
 import java.util.List;
 import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -74,11 +75,33 @@ public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
   @Autowired private ConsultantRepository consultantRepository;
   @Autowired private AccountInviteTopicPermissionService topicPermissionService;
 
-  @AfterEach
-  void resetTopicPermission() {
-    accountInviteRepository.deleteAll();
+  private static final String CREATED_INVITE_RECIPIENT = "topic-permission-sync@example.org";
+
+  private TopicPermission originalTopicPermission;
+  private String originalFirstName;
+  private String originalLastName;
+  private String originalEmail;
+
+  // No transaction rolls back here, and the seeded consultant is shared with other classes.
+  @BeforeEach
+  void rememberSeededConsultant() {
     var consultant = consultantRepository.findById(VALID_CONSULTANT_ID).orElseThrow();
-    consultant.setTopicPermission(TopicPermission.CREATE);
+    originalTopicPermission = consultant.getTopicPermission();
+    originalFirstName = consultant.getFirstName();
+    originalLastName = consultant.getLastName();
+    originalEmail = consultant.getEmail();
+  }
+
+  @AfterEach
+  void restoreSeededConsultant() {
+    accountInviteRepository.findAll().stream()
+        .filter(invite -> CREATED_INVITE_RECIPIENT.equals(invite.getRecipientEmail()))
+        .forEach(accountInviteRepository::delete);
+    var consultant = consultantRepository.findById(VALID_CONSULTANT_ID).orElseThrow();
+    consultant.setTopicPermission(originalTopicPermission);
+    consultant.setFirstName(originalFirstName);
+    consultant.setLastName(originalLastName);
+    consultant.setEmail(originalEmail);
     consultantRepository.save(consultant);
   }
 
@@ -107,7 +130,7 @@ public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
             AccountInvite.builder()
                 .targetRole(AccountInviteTargetRole.COUNSELLOR)
                 .tenantId(1L)
-                .recipientEmail("topic-permission-sync@example.org")
+                .recipientEmail(CREATED_INVITE_RECIPIENT)
                 .status(AccountInviteStatus.ACCEPTED)
                 .provisioningStatus(AccountInviteProvisioningStatus.COMPLETED)
                 .emailVerificationStatus(EmailVerificationStatus.VERIFIED)
