@@ -159,6 +159,10 @@ public class AdminCallerScope {
    */
   private boolean isUnrestricted() {
     boolean restricted = authenticatedUser.hasRestrictedAgencyPriviliges();
+    // A single-tenant installation has no Träger boundary; only agency admins stay scoped.
+    if (!multitenancyEnabled) {
+      return !restricted;
+    }
     if (!restricted && (authenticatedUser.isPlatformAdmin() || isTechnicalUser())) {
       return true;
     }
@@ -177,7 +181,7 @@ public class AdminCallerScope {
   /** A Beratungsstellen admin without a bound tenant is only narrowed by their agencies. */
   private boolean isOwnTenant(Long tenantId) {
     Long callerTenantId = authenticatedUser.getTenantId();
-    return callerTenantId == null || callerTenantId.equals(tenantId);
+    return !multitenancyEnabled || callerTenantId == null || callerTenantId.equals(tenantId);
   }
 
   private Set<Long> ownAgencyIds() {
