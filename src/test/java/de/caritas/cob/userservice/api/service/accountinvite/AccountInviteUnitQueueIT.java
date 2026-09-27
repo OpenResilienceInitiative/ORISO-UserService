@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.SoftAssertions.assertSoftly;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -18,6 +19,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
+import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
@@ -35,9 +37,11 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispa
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
+import jakarta.persistence.EntityManagerFactory;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.Callable;
@@ -47,6 +51,10 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.function.Function;
+import java.util.stream.Collectors;
+import org.hibernate.SessionFactory;
+import org.hibernate.stat.Statistics;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -77,6 +85,7 @@ import org.springframework.web.client.HttpClientErrorException;
   InviteTargetResolver.class,
   ReservationLedger.class,
   UnitQueue.class,
+  InviteBoard.class,
   InviteDelivery.class,
   AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
@@ -102,6 +111,8 @@ class AccountInviteUnitQueueIT {
 
   @Autowired private AccountInviteService service;
   @Autowired private UnitQueue queue;
+  @Autowired private InviteBoard board;
+  @Autowired private EntityManagerFactory entityManagerFactory;
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private InviteEmailTemplateRepository templateRepository;
   @Autowired private InviteEmailDeliveryRepository deliveryRepository;
@@ -542,7 +553,101 @@ class AccountInviteUnitQueueIT {
     verify(tenantIdAllocationClient, times(1)).reserve(anyLong());
   }
 
+  // --- invite board ---------------------------------------------------------------------------
+
+  @Test
+  void board_Should_DeriveTheQueueProblemAndTheLatestDelivery_ForEveryRow() {
+    actAsTenantAdmin();
+    AccountInvite revokedAdmin = service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite mailed = service.createInvite(counsellor(NEW_AGENCY));
+    AccountInvite unmailed = service.createInvite(counsellor(NEW_AGENCY));
+    service.revokeInvite(revokedAdmin.getId());
+    deliver(mailed, InviteEmailDeliveryStatus.FAILED, LocalDateTime.now().minusHours(2));
+    deliver(mailed, InviteEmailDeliveryStatus.SENT, LocalDateTime.now().minusHours(1));
+    actAsPlatformAdmin();
+    givenTheNewTenantCanBeReserved();
+    service.createInvite(newTenantAdmin());
+    AccountInvite waitsForTenant =
+        service.createInvite(
+            command(
+                AccountInviteTargetRole.AGENCY_ADMIN,
+                NEW_TENANT,
+                IdAllocationMode.MANUAL,
+                null,
+                IdAllocationMode.AUTO));
+
+    Map<Long, InviteBoard.Row> rows = boardRows();
+
+    assertThat(rows.get(mailed.getId()).queueProblem()).isEqualTo(InviteQueueProblem.NO_UNIT_ADMIN);
+    assertThat(rows.get(mailed.getId()).latestDelivery().getStatus())
+        .isEqualTo(InviteEmailDeliveryStatus.SENT);
+    assertThat(rows.get(unmailed.getId()).queueProblem())
+        .isEqualTo(InviteQueueProblem.NO_UNIT_ADMIN);
+    assertThat(rows.get(unmailed.getId()).latestDelivery()).isNull();
+    assertThat(rows.get(waitsForTenant.getId()).queueProblem()).isNull();
+    assertThat(rows.get(revokedAdmin.getId()).queueProblem()).isNull();
+  }
+
+  @Test
+  void board_Should_NotRunMoreQueries_When_MoreInvitesWaitOrWereMailed() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    deliver(service.createInvite(counsellor(NEW_AGENCY)), InviteEmailDeliveryStatus.SENT, null);
+    BoardCost fewInvites = costOf(this::boardRows);
+
+    for (int i = 0; i < 4; i++) {
+      AccountInvite waiting = service.createInvite(counsellor(NEW_AGENCY));
+      deliver(waiting, InviteEmailDeliveryStatus.FAILED, LocalDateTime.now().minusHours(1));
+      deliver(waiting, InviteEmailDeliveryStatus.SENT, null);
+    }
+    BoardCost manyInvites = costOf(this::boardRows);
+
+    assertSoftly(
+        softly -> {
+          softly.assertThat(manyInvites.statements()).isEqualTo(fewInvites.statements());
+          // Only the newest delivery of each of the five mailed invites, not their whole history.
+          softly.assertThat(manyInvites.deliveriesLoaded()).isEqualTo(5);
+        });
+  }
+
   // --- helpers ----------------------------------------------------------------------------------
+
+  private Map<Long, InviteBoard.Row> boardRows() {
+    return board.list(null, null, null, null, null, null, 0, 100).rows().getContent().stream()
+        .collect(Collectors.toMap(row -> row.invite().getId(), Function.identity()));
+  }
+
+  private record BoardCost(long statements, long deliveriesLoaded) {}
+
+  private BoardCost costOf(Runnable action) {
+    Statistics statistics = entityManagerFactory.unwrap(SessionFactory.class).getStatistics();
+    boolean enabled = statistics.isStatisticsEnabled();
+    statistics.setStatisticsEnabled(true);
+    statistics.clear();
+    try {
+      action.run();
+      return new BoardCost(
+          statistics.getPrepareStatementCount(),
+          statistics.getEntityStatistics(InviteEmailDelivery.class.getName()).getLoadCount());
+    } finally {
+      statistics.setStatisticsEnabled(enabled);
+    }
+  }
+
+  private void deliver(AccountInvite invite, InviteEmailDeliveryStatus status, LocalDateTime at) {
+    LocalDateTime createDate = at == null ? LocalDateTime.now() : at;
+    deliveryRepository.save(
+        InviteEmailDelivery.builder()
+            .accountInviteId(invite.getId())
+            .templateKind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subjectSnapshot("Einladung")
+            .bodySnapshot("Hallo Ada")
+            .recipientSnapshot(invite.getRecipientEmail())
+            .status(status)
+            .sentAt(status == InviteEmailDeliveryStatus.SENT ? createDate : null)
+            .createDate(createDate)
+            .build());
+  }
 
   private void givenTheNewTenantCanBeReserved() {
     when(tenantIdAllocationClient.getAvailability(NEW_TENANT))
