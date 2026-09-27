@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
@@ -30,6 +31,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationSta
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient;
+import de.caritas.cob.userservice.api.service.accountinvite.onboarding.PublicDpaForwardClient;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.TenantCreationClient;
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
@@ -75,6 +77,7 @@ class TenantAdminExistingTenantOnboardingIT {
   @MockitoBean private KeycloakService keycloakService;
   @MockitoBean private TenantCreationClient tenantCreationClient;
   @MockitoBean private OperatorDpaContentClient operatorDpaContentClient;
+  @MockitoBean private PublicDpaForwardClient publicDpaForwardClient;
 
   private String email;
 
@@ -156,7 +159,21 @@ class TenantAdminExistingTenantOnboardingIT {
                 .cookie(CSRF_COOKIE)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{}"))
-        .andExpect(status().isBadRequest());
+        .andExpect(status().isBadRequest())
+        // The existing-tenant guard's reason, so a 400 from binding or validation cannot pass.
+        .andExpect(jsonPath("$.message", containsString("joins an existing tenant")));
+
+    verifyNoInteractions(publicDpaForwardClient, operatorDpaContentClient);
+    // findByTokenHash locks the row and needs a transaction; a plain read is enough here.
+    AccountInvite invite =
+        accountInviteRepository.findAll().stream()
+            .filter(i -> AccountInviteService.hash(token).equals(i.getTokenHash()))
+            .findFirst()
+            .orElseThrow();
+    assertThat(invite.getDpaForwardCount()).isZero();
+    assertThat(invite.getDpaForwardedAt()).isNull();
+    assertThat(invite.getDpaSignedAt()).isNull();
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
   }
 
   private String seedExistingTenantInvite() {
