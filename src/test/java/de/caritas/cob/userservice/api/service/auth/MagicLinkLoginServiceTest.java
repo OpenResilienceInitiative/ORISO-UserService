@@ -56,7 +56,7 @@ class MagicLinkLoginServiceTest {
     ReflectionTestUtils.setField(magicLinkLoginService, "emailDummySuffix", "@beratungcaritas.de");
     ReflectionTestUtils.setField(magicLinkLoginService, "consultingTypeServiceApiUrl", "");
     ReflectionTestUtils.setField(
-        magicLinkLoginService, "magicLinkFrontendBaseUrl", "https://app.oriso.org");
+        magicLinkLoginService, "magicLinkFrontendBaseUrl", "https://app.example.org");
     when(oneTimeTokenStore.claim(anyString(), anyString())).thenReturn(Optional.empty());
   }
 
@@ -335,7 +335,7 @@ class MagicLinkLoginServiceTest {
                 "globalSmtpPort", 587,
                 "globalSmtpUsername", "user",
                 "globalSmtpPassword", "pass",
-                "globalSmtpFrom", "no-reply@oriso.org"));
+                "globalSmtpFrom", "no-reply@example.org"));
 
     assertThat(magicLinkLoginService.requestMagicLink("testuser"))
         .isEqualTo(MagicLinkRequestResult.ACCEPTED);
@@ -538,8 +538,8 @@ class MagicLinkLoginServiceTest {
     when(applicationSettingsService.getGlobalSmtpCredentials())
         .thenReturn(Optional.of(credentials));
     Map<String, String> brandValues = new HashMap<>();
-    brandValues.put("appUrl", "https://app.oriso.org");
-    when(emailBrand.values(eq("https://app.oriso.org"), any())).thenReturn(brandValues);
+    brandValues.put("appUrl", "https://app.example.org");
+    when(emailBrand.values(eq("https://app.example.org"), any())).thenReturn(brandValues);
     when(emailRenderer.render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("subject", "<html></html>", "text"));
 

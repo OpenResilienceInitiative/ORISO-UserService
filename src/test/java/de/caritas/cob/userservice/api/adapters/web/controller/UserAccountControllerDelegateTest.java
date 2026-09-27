@@ -328,7 +328,7 @@ class UserAccountControllerDelegateTest {
         .username(USERNAME)
         .firstName("Lisa")
         .lastName("Simpson")
-        .email("lisa.simpson@oriso.org")
+        .email("lisa.simpson@example.org")
         .passwordChangeRequired(passwordChangeRequired)
         .build();
   }
