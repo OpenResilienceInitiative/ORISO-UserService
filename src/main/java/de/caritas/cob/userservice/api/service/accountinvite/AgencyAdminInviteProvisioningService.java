@@ -10,6 +10,7 @@ import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -21,8 +22,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * AGENCY_ADMIN invites whose invitee does not also counsel. On failure the Keycloak account is
- * removed again so the resumable link can be retried.
+ * AGENCY_ADMIN invites whose invitee does not also counsel. On failure the admin rows and the
+ * Keycloak account are removed again so the resumable link can be retried.
  */
 @Slf4j
 @Service
@@ -33,6 +34,7 @@ public class AgencyAdminInviteProvisioningService {
   private final @NonNull AccountInviteRepository accountInviteRepository;
   private final @NonNull CreateAdminService createAdminService;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
+  private final @NonNull AdminRepository adminRepository;
   private final @NonNull IdentityAccountRemover identityAccountRemover;
 
   @Transactional(noRollbackFor = RuntimeException.class)
@@ -89,6 +91,13 @@ public class AgencyAdminInviteProvisioningService {
       return accountInviteRepository.save(accepted);
     } catch (RuntimeException failure) {
       if (adminId != null) {
+        // The transaction commits despite the failure, so rows left here would block a retry.
+        try {
+          adminAgencyRepository.deleteByAdminId(adminId);
+          adminRepository.deleteById(adminId);
+        } catch (RuntimeException cleanupFailure) {
+          failure.addSuppressed(cleanupFailure);
+        }
         try {
           identityAccountRemover.rollbackUser(adminId);
         } catch (RuntimeException rollbackFailure) {
