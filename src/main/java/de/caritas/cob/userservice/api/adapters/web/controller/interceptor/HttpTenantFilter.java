@@ -59,19 +59,20 @@ public class HttpTenantFilter extends OncePerRequestFilter {
       throws ServletException, IOException {
     if (requiresTenantFilterMatcher.matches(request)) {
       log.debug("Trying to resolve tenant for request coming from URI {}", request.getRequestURI());
-      Long tenantId;
+      // Every exit clears the context, so a pooled thread never keeps a tenant from before.
       try {
-        tenantId = tenantResolverService.resolve(request);
-      } catch (AccessDeniedException denied) {
-        // Thrown before ExceptionTranslationFilter, which would otherwise never turn it into a 403.
-        log.warn("Refused request to {}: {}", request.getRequestURI(), denied.getMessage());
-        response.sendError(HttpServletResponse.SC_FORBIDDEN);
-        return;
-      }
-      resolveSubdomain(tenantId);
-      log.debug("Setting current tenant context to: " + tenantId);
-      TenantContext.setCurrentTenant(tenantId);
-      try {
+        Long tenantId;
+        try {
+          tenantId = tenantResolverService.resolve(request);
+        } catch (AccessDeniedException denied) {
+          // Thrown before ExceptionTranslationFilter, which would otherwise never make it a 403.
+          log.warn("Refused request to {}: {}", request.getRequestURI(), denied.getMessage());
+          response.sendError(HttpServletResponse.SC_FORBIDDEN);
+          return;
+        }
+        resolveSubdomain(tenantId);
+        log.debug("Setting current tenant context to: " + tenantId);
+        TenantContext.setCurrentTenant(tenantId);
         filterChain.doFilter(request, response);
       } finally {
         TenantContext.clear();

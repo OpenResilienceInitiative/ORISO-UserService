@@ -183,7 +183,24 @@ class HttpTenantFilterTest {
   }
 
   @Test
+  void tenantIsClearedWhenTheTenantIsRefused() throws ServletException, IOException {
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(99L);
+    Mockito.when(request.getRequestURI()).thenReturn("/users/1");
+    Mockito.when(tenantResolverService.resolve(request))
+        .thenThrow(new org.springframework.security.access.AccessDeniedException("no tenant"));
+
+    httpTenantFilter.doFilterInternal(request, response, filterChain);
+
+    Mockito.verify(response).sendError(HttpServletResponse.SC_FORBIDDEN);
+    org.assertj.core.api.Assertions.assertThat(
+            de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenantData())
+        .isNull();
+  }
+
+  @Test
   void tenantIsClearedWhenTheSubdomainLookupFails() {
+    // A pooled thread may still carry a tenant; the failed lookup must not leave it behind.
+    de.caritas.cob.userservice.api.tenant.TenantContext.setCurrentTenant(99L);
     Mockito.when(request.getRequestURI()).thenReturn("/users/1");
     Mockito.when(tenantResolverService.resolve(request)).thenReturn(1L);
     Mockito.when(tenantService.getRestrictedTenantData(1L))
