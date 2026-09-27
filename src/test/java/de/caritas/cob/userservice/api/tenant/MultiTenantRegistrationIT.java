@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -363,6 +365,18 @@ class MultiTenantRegistrationIT {
   }
 
   @Test
+  void acceptCounsellorInvite_Should_BeRefused_When_TheAgencyHasNoTenant() throws Exception {
+    when(agencyFacts.find(AGENCY))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, null, false, List.of())));
+    var token = persistAccountInvite(AccountInviteTargetRole.COUNSELLOR);
+
+    var result = mockMvc.perform(acceptCounsellorInvite(token)).andReturn();
+
+    assertStatus(result, 404);
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+  }
+
+  @Test
   void registerTenantAdminFromInvite_Should_CreateTheAdminInTheInvitesTenant() throws Exception {
     when(operatorDpaContentClient.fetchPublishedDpa())
         .thenReturn(new OperatorDpaContentClient.OperatorDpa("dpa", "1"));
@@ -449,6 +463,16 @@ class MultiTenantRegistrationIT {
                 .build());
     cleanups.add(() -> agencyInviteLinkRepository.deleteById(link.getId()));
     return link;
+  }
+
+  private static org.springframework.test.web.servlet.RequestBuilder acceptCounsellorInvite(
+      String token) {
+    return post("/users/account-invites/{token}/accept", token)
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(
+            "{\"username\":\"invited_counsellor_"
+                + RandomStringUtils.randomAlphabetic(6)
+                + "\",\"password\":\"Valid-Test-Password-2026!\",\"formalLanguage\":true}");
   }
 
   private String persistAccountInvite(AccountInviteTargetRole role) {
