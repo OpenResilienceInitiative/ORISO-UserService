@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
+import java.util.Optional;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -28,13 +29,18 @@ public class QueuedInviteReleaseListener {
   @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT, fallbackExecution = true)
   public void onUnitCreated(InviteUnitCreatedEvent event) {
     TenantData requestTenant = snapshotTenantContext();
-    boolean technicalTokenSet = false;
     try {
-      technicalTokenSet = useTechnicalToken();
       if (event.tenantId() != null) {
         TenantContext.setCurrentTenant(event.tenantId());
       }
-      unitQueue.release(event.unitType(), event.unitId(), event.tenantId());
+      Optional<String> token = technicalToken();
+      if (token.isPresent()) {
+        TechnicalAccessTokenContext.offerDuring(
+            token.get(),
+            () -> unitQueue.release(event.unitType(), event.unitId(), event.tenantId()));
+      } else {
+        unitQueue.release(event.unitType(), event.unitId(), event.tenantId());
+      }
     } catch (RuntimeException exception) {
       log.error(
           "Invites waiting for {} {} could not be released; they stay waiting",
@@ -42,29 +48,26 @@ public class QueuedInviteReleaseListener {
           event.unitId(),
           exception);
     } finally {
-      if (technicalTokenSet) {
-        TechnicalAccessTokenContext.clear();
-      }
       restoreTenantContext(requestTenant);
     }
   }
 
-  private boolean useTechnicalToken() {
+  /** None when a caller already made the token ambient; then the allocation calls use that one. */
+  private Optional<String> technicalToken() {
     if (TechnicalAccessTokenContext.get().isPresent()) {
-      return false;
+      return Optional.empty();
     }
     try {
       var technicalUser = identityClientConfig.getTechnicalUser();
-      TechnicalAccessTokenContext.set(
+      return Optional.of(
           identityAuthentication
               .login(technicalUser.getUsername(), technicalUser.getPassword())
               .accessToken());
-      return true;
     } catch (RuntimeException exception) {
       log.warn(
           "Technical login for the invite release failed ({}); releasing without it",
           exception.getClass().getSimpleName());
-      return false;
+      return Optional.empty();
     }
   }
 

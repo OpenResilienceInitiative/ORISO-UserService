@@ -49,15 +49,15 @@ public class ExpiredInviteReservationSweep {
       var technicalUser = identityClientConfig.getTechnicalUser();
       var login =
           identityAuthentication.login(technicalUser.getUsername(), technicalUser.getPassword());
-      TechnicalAccessTokenContext.set(login.accessToken());
-      int expired = accountInviteService.expireElapsedInvites();
+      int expired =
+          TechnicalAccessTokenContext.offerDuring(
+              login.accessToken(), accountInviteService::expireElapsedInvites);
       if (expired > 0) {
         log.info("Expired {} elapsed invites that held a reserved number", expired);
       }
     } catch (RuntimeException exception) {
       log.warn("Could not expire elapsed invites holding a reserved number", exception);
     } finally {
-      TechnicalAccessTokenContext.clear();
       TenantContext.clear();
       if (lease != null) {
         try {

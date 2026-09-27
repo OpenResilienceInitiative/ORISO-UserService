@@ -47,6 +47,7 @@ class QueuedInviteReleaseListenerTest {
             invocation -> {
               // Local writes and SMTP run without the service token.
               ambientDuringRelease.set(TechnicalAccessTokenContext.get());
+              assertThat(TechnicalAccessTokenContext.offered()).contains("token");
               return List.of();
             });
 
