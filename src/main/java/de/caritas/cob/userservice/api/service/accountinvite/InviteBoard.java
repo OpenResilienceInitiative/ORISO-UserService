@@ -98,32 +98,36 @@ public class InviteBoard {
   /** The same derivation for a single invite, e.g. in the answer to a change. */
   @Transactional(readOnly = true)
   public Row rowOf(AccountInvite invite) {
-    if (invite.getId() == null) {
-      return row(invite, null, LocalDateTime.now());
-    }
-    return row(
-        invite,
-        deliveryRepository
-            .findFirstByAccountInviteIdOrderByCreateDateDesc(invite.getId())
-            .orElse(null),
-        LocalDateTime.now());
+    InviteEmailDelivery latestDelivery =
+        invite.getId() == null
+            ? null
+            : deliveryRepository
+                .findFirstByAccountInviteIdOrderByCreateDateDesc(invite.getId())
+                .orElse(null);
+    return row(invite, latestDelivery, unitQueue.problemOf(invite), LocalDateTime.now());
   }
 
   private List<Row> rowsOf(List<AccountInvite> invites) {
     Map<Long, InviteEmailDelivery> latest = new HashMap<>();
     List<Long> ids = invites.stream().map(AccountInvite::getId).filter(Objects::nonNull).toList();
     for (List<Long> batch : Lists.partition(ids, DELIVERY_BATCH)) {
-      // Newest first, so the first delivery seen per invite is its latest.
+      // A create-date tie returns both, higher ID first; keep that one.
       deliveryRepository
-          .findByAccountInviteIdInOrderByCreateDateDesc(batch)
+          .findLatestByAccountInviteIdIn(batch)
           .forEach(delivery -> latest.putIfAbsent(delivery.getAccountInviteId(), delivery));
     }
+    Map<Long, InviteQueueProblem> problems = unitQueue.problemsOf(invites);
     LocalDateTime now = LocalDateTime.now();
-    return invites.stream().map(invite -> row(invite, latest.get(invite.getId()), now)).toList();
+    return invites.stream()
+        .map(invite -> row(invite, latest.get(invite.getId()), problems.get(invite.getId()), now))
+        .toList();
   }
 
-  private Row row(AccountInvite invite, InviteEmailDelivery latestDelivery, LocalDateTime now) {
-    InviteQueueProblem problem = unitQueue.problemOf(invite);
+  private static Row row(
+      AccountInvite invite,
+      InviteEmailDelivery latestDelivery,
+      InviteQueueProblem problem,
+      LocalDateTime now) {
     return new Row(
         invite, latestDelivery, problem, InviteProgress.of(invite, latestDelivery, problem, now));
   }

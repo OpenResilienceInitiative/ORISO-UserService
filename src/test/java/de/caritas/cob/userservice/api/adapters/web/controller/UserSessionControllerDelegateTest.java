@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
@@ -385,6 +386,26 @@ class UserSessionControllerDelegateTest {
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NO_CONTENT);
     verify(messenger).removeConsultantFromSession(1L, consultantId.toString());
+  }
+
+  @Test
+  void removeFromSessionShouldRefuseWhenCallerWithoutAccessRemovesAnotherConsultant() {
+    var consultantId = UUID.randomUUID();
+    var consultantMap = Map.<String, Object>of("id", consultantId.toString());
+    var session = inProgressSession();
+    var caller = consultant("other-consultant");
+    when(accountManager.findConsultant(consultantId.toString()))
+        .thenReturn(Optional.of(consultantMap));
+    when(messenger.findSession(1L)).thenReturn(Optional.of(Map.of("id", 1L)));
+    when(authenticatedUser.getUserId()).thenReturn("other-consultant");
+    when(authenticatedUser.isAdviceSeeker()).thenReturn(false);
+    when(sessionService.getSession(1L)).thenReturn(Optional.of(session));
+    when(consultantService.getConsultant("other-consultant")).thenReturn(Optional.of(caller));
+    when(sessionService.isConsultantPermittedToSession(caller, session)).thenReturn(false);
+
+    assertThatThrownBy(() -> delegate.removeFromSession(1L, consultantId))
+        .isInstanceOf(ForbiddenException.class);
+    verify(messenger, never()).removeConsultantFromSession(any(), any());
   }
 
   @Test

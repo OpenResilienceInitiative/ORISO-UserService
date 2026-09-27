@@ -13,8 +13,14 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.InviteDelivery.Prepared;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.Collection;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
+import java.util.Set;
+import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -70,22 +76,75 @@ public class UnitQueue {
 
   /** Derived on read, so the problem clears once a new admin invite exists. */
   public InviteQueueProblem problemOf(AccountInvite invite) {
-    if (invite == null
-        || invite.getStatus() != AccountInviteStatus.WAITING_FOR_UNIT
-        || invite.getWaitingForUnit() == null) {
+    if (invite == null) {
       return null;
     }
-    Long unitId =
-        invite.getWaitingForUnit() == InviteUnitType.AGENCY
-            ? invite.getAgencyId()
-            : invite.getTenantId();
-    if (unitId == null
-        || pendingUnitAdmins(
-                invite.getWaitingForUnit(), unitId, invite.getTenantId(), invite.getId())
-            .isEmpty()) {
-      return InviteQueueProblem.NO_UNIT_ADMIN;
+    return problemsOf(List.of(invite)).get(invite.getId());
+  }
+
+  /**
+   * {@link #problemOf} for a whole list in at most two queries, however long it is. Keyed by invite
+   * ID; invites without a problem are absent.
+   */
+  public Map<Long, InviteQueueProblem> problemsOf(Collection<AccountInvite> invites) {
+    List<AccountInvite> waiting = invites.stream().filter(UnitQueue::waits).toList();
+    LocalDateTime now = LocalDateTime.now();
+    Set<Long> agencyIds = unitIdsOf(waiting, InviteUnitType.AGENCY);
+    Map<Long, List<AccountInvite>> agencyAdmins =
+        agencyIds.isEmpty()
+            ? Map.of()
+            : accountInviteRepository
+                .findPendingAgencyAdminsIn(agencyIds, ReservationLedger.PENDING_STATUSES, now)
+                .stream()
+                .collect(Collectors.groupingBy(AccountInvite::getAgencyId));
+    Set<Long> tenantIds = unitIdsOf(waiting, InviteUnitType.TENANT);
+    Map<Long, List<AccountInvite>> tenantAdmins =
+        tenantIds.isEmpty()
+            ? Map.of()
+            : accountInviteRepository
+                .findPendingTenantAdminsIn(tenantIds, ReservationLedger.PENDING_STATUSES, now)
+                .stream()
+                .collect(Collectors.groupingBy(AccountInvite::getTenantId));
+    Map<Long, InviteQueueProblem> problems = new HashMap<>();
+    for (AccountInvite invite : waiting) {
+      boolean agency = invite.getWaitingForUnit() == InviteUnitType.AGENCY;
+      Long unitId = unitIdOf(invite);
+      List<AccountInvite> admins =
+          unitId == null
+              ? List.of()
+              : (agency ? agencyAdmins : tenantAdmins).getOrDefault(unitId, List.of());
+      boolean hasAdmin =
+          admins.stream()
+              .anyMatch(
+                  admin ->
+                      !Objects.equals(admin.getId(), invite.getId())
+                          && (!agency
+                              || invite.getTenantId() == null
+                              || invite.getTenantId().equals(admin.getTenantId())));
+      if (!hasAdmin) {
+        problems.put(invite.getId(), InviteQueueProblem.NO_UNIT_ADMIN);
+      }
     }
-    return null;
+    return problems;
+  }
+
+  private static boolean waits(AccountInvite invite) {
+    return invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT
+        && invite.getWaitingForUnit() != null;
+  }
+
+  private static Long unitIdOf(AccountInvite invite) {
+    return invite.getWaitingForUnit() == InviteUnitType.AGENCY
+        ? invite.getAgencyId()
+        : invite.getTenantId();
+  }
+
+  private static Set<Long> unitIdsOf(List<AccountInvite> waiting, InviteUnitType unit) {
+    return waiting.stream()
+        .filter(invite -> invite.getWaitingForUnit() == unit)
+        .map(UnitQueue::unitIdOf)
+        .filter(Objects::nonNull)
+        .collect(Collectors.toSet());
   }
 
   /**
