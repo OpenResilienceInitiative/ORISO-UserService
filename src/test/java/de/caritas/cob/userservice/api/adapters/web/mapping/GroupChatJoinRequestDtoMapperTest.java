@@ -22,9 +22,9 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTe
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Set;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
@@ -36,7 +36,13 @@ class GroupChatJoinRequestDtoMapperTest {
   @Mock private TenantService tenants;
   @Mock private ChatPermissionVerifier permissions;
   @Mock private GroupChatJoinRequestService requests;
-  @InjectMocks private GroupChatJoinRequestDtoMapper mapper;
+  private GroupChatJoinRequestDtoMapper mapper;
+
+  @BeforeEach
+  void setUp() {
+    var localLoader = new GroupChatJoinRequestLocalLoader(consultants, permissions, requests);
+    mapper = new GroupChatJoinRequestDtoMapper(agencies, tenants, localLoader);
+  }
 
   @Test
   void resolvesSharedRequesterNamesOnceForTheModeratorList() {
