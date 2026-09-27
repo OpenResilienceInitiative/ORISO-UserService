@@ -64,7 +64,7 @@ class MagicLinkLoginServiceTest {
                 "deployment-pass",
                 "noreply@example.org"));
     ReflectionTestUtils.setField(
-        magicLinkLoginService, "magicLinkFrontendBaseUrl", "https://app.oriso.org");
+        magicLinkLoginService, "magicLinkFrontendBaseUrl", "https://app.example.org");
     ReflectionTestUtils.setField(
         magicLinkLoginService,
         "mailSender",
@@ -158,7 +158,7 @@ class MagicLinkLoginServiceTest {
     assertThat(mail.recipient()).isEqualTo("real@example.com");
     assertThat(mail.host()).isEqualTo("deployment-smtp.example.org");
     assertThat(mail.from()).isEqualTo("noreply@example.org");
-    assertThat(mail.url()).matches("https://app\\.oriso\\.org/login\\?magicToken=[0-9a-f]{64}");
+    assertThat(mail.url()).matches("https://app\\.example\\.org/login\\?magicToken=[0-9a-f]{64}");
   }
 
   @Test

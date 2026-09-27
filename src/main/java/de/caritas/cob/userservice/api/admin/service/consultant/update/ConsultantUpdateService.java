@@ -29,7 +29,6 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -219,7 +218,7 @@ public class ConsultantUpdateService {
     consultant.setLastName(updateConsultantDTO.getLastname());
     consultant.setEmail(updateConsultantDTO.getEmail());
     consultant.setLanguageFormal(updateConsultantDTO.getFormalLanguage());
-    consultant.setLanguages(languagesOf(updateConsultantDTO, consultant));
+    applyLanguages(updateConsultantDTO, consultant);
     consultant.setAbsent(updateConsultantDTO.getAbsent());
     consultant.setAbsenceMessage(updateConsultantDTO.getAbsenceMessage());
     applyPersonalInfo(updateConsultantDTO, consultant);
@@ -350,16 +349,21 @@ public class ConsultantUpdateService {
     consultant.setAssignedSupervisorId(assignedSupervisorId);
   }
 
-  private Set<Language> languagesOf(
-      UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant) {
+  /**
+   * Omitted, null and empty all leave the stored languages untouched. The generated DTO defaults
+   * {@code languages} to {@code []}, so an omitted field arrives as an empty list — and the Admin
+   * edit form never sends it. Treating that as "clear" wiped every counsellor's languages.
+   */
+  private void applyLanguages(UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant) {
     var languages = updateConsultantDTO.getLanguages();
-
-    return isNull(languages)
-        ? Set.of()
-        : languages.stream()
+    if (isNull(languages) || languages.isEmpty()) {
+      return;
+    }
+    consultant.setLanguages(
+        languages.stream()
             .map(LanguageCode::getByCode)
             .map(languageCode -> new Language(consultant, languageCode))
-            .collect(Collectors.toSet());
+            .collect(Collectors.toSet()));
   }
 
   /**
