@@ -61,6 +61,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.OtpType;
+import de.caritas.cob.userservice.api.model.PublicSlugStatus;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
@@ -1592,6 +1593,40 @@ class UserControllerE2EIT {
     assertEquals(
         savedConsultant.get().getTermsAndConditionsConfirmation().toLocalDate(), LocalDate.now());
     assertEquals(savedConsultant.get().getDataPrivacyConfirmation().toLocalDate(), LocalDate.now());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void updateUserDataShouldQueueRequestedPublicSlugForApprovalInsteadOfPublishingIt()
+      throws Exception {
+    givenAValidConsultant();
+    var liveSlug = consultant.getPublicSlug();
+    givenAMinimalUpdateConsultantDto(consultant.getEmail());
+    updateConsultantDTO.setPublicSlug("self-requested-link");
+
+    try {
+      mockMvc
+          .perform(
+              put("/users/data")
+                  .cookie(CSRF_COOKIE)
+                  .header(CSRF_HEADER, CSRF_VALUE)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(updateConsultantDTO))
+                  .accept(MediaType.APPLICATION_JSON))
+          .andExpect(status().isOk());
+
+      var savedConsultant = consultantRepository.findById(consultant.getId()).orElseThrow();
+      assertEquals(liveSlug, savedConsultant.getPublicSlug());
+      assertEquals("self-requested-link", savedConsultant.getPendingPublicSlug());
+      assertEquals(PublicSlugStatus.PENDING, savedConsultant.getPublicSlugStatus());
+    } finally {
+      var toClean = consultantRepository.findById(consultant.getId()).orElseThrow();
+      toClean.setPublicSlug(liveSlug);
+      toClean.setPendingPublicSlug(null);
+      toClean.setPublicSlugStatus(null);
+      toClean.setPublicSlugReviewedAt(null);
+      consultantRepository.save(toClean);
+    }
   }
 
   // FIXME: does not test the "saved monitoring", see next fixme

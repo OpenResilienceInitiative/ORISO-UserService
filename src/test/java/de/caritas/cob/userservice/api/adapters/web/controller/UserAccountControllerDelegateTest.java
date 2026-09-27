@@ -749,7 +749,7 @@ class UserAccountControllerDelegateTest {
     var response = delegate.updateConsultantData(updateConsultantDTO);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(consultantUpdateService).updateConsultant(USER_ID, updateAdminConsultantDTO);
+    verify(consultantUpdateService).updateConsultant(USER_ID, updateAdminConsultantDTO, false);
   }
 
   @Test
