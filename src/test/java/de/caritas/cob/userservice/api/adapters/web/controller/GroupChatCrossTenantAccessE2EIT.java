@@ -1,7 +1,11 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
@@ -23,6 +27,7 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.in.Messaging;
 import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
@@ -30,9 +35,11 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
+import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.Cookie;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Set;
 import java.util.stream.StreamSupport;
 import org.junit.jupiter.api.BeforeEach;
@@ -44,6 +51,7 @@ import org.springframework.http.MediaType;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.test.web.servlet.request.MockHttpServletRequestBuilder;
 import org.springframework.transaction.annotation.Transactional;
@@ -81,6 +89,8 @@ class GroupChatCrossTenantAccessE2EIT {
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private AgencyService agencyService;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
+  @MockitoSpyBean private GroupChatMembershipService membershipService;
+  @MockitoSpyBean private Messaging messaging;
 
   private String[] consultantIds;
   private Consultant owner;
@@ -95,6 +105,7 @@ class GroupChatCrossTenantAccessE2EIT {
             .limit(3)
             .map(Consultant::getId)
             .toArray(String[]::new);
+    assertThat(consultantIds).hasSize(3);
     owner =
         inTenantAndAgency(
             consultantRepository.findById(consultantIds[0]).orElseThrow(),
@@ -201,6 +212,16 @@ class GroupChatCrossTenantAccessE2EIT {
   }
 
   @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.START_CHAT})
+  void theOwnerCanStartTheGroup() throws Exception {
+    actingAs(owner);
+
+    mockMvc
+        .perform(consultantPut("/users/chat/" + group.getId() + "/start"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
   @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
   void counsellorOfAnotherTragerCannotJoinAStartedGroup() throws Exception {
     givenTheGroupIsStarted();
@@ -209,6 +230,21 @@ class GroupChatCrossTenantAccessE2EIT {
     mockMvc
         .perform(consultantPut("/users/chat/" + group.getId() + "/join"))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void theOwnerCanJoinAStartedGroup() throws Exception {
+    givenTheGroupIsStarted();
+    actingAs(owner);
+    doReturn(group.getMatrixRoomId()).when(membershipService).resolveMatrixRoomId(any(Chat.class));
+    doReturn(true)
+        .when(membershipService)
+        .addMemberToRoom(any(Chat.class), eq(owner.getMatrixUserId()));
+
+    mockMvc
+        .perform(consultantPut("/users/chat/" + group.getId() + "/join"))
+        .andExpect(status().isOk());
   }
 
   @Test
@@ -223,6 +259,19 @@ class GroupChatCrossTenantAccessE2EIT {
   }
 
   @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void theOwnerCanListMembersOfAStartedGroup() throws Exception {
+    givenTheGroupIsStarted();
+    actingAs(owner);
+    doReturn(group.getMatrixRoomId()).when(membershipService).resolveMatrixRoomId(any(Chat.class));
+    doReturn(List.of()).when(membershipService).resolveHumanMembers(group.getMatrixRoomId());
+
+    mockMvc
+        .perform(consultantGet("/users/chat/" + group.getId() + "/members"))
+        .andExpect(status().isOk());
+  }
+
+  @Test
   @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.UPDATE_CHAT})
   void counsellorOfAnotherTragerCannotBanAnAdviceSeekerFromTheGroup() throws Exception {
     var adviceSeeker = anAdviceSeekerWithMatrixId("@seeker:matrix.test");
@@ -233,6 +282,20 @@ class GroupChatCrossTenantAccessE2EIT {
             consultantPost(
                 "/users/" + adviceSeeker.getMatrixUserId() + "/chat/" + group.getId() + "/ban"))
         .andExpect(status().isForbidden());
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT, AuthorityValue.UPDATE_CHAT})
+  void theOwnerCanBanAnAdviceSeekerFromTheGroup() throws Exception {
+    var adviceSeeker = anAdviceSeekerWithMatrixId("@seeker:matrix.test");
+    actingAs(owner);
+    doReturn(true).when(messaging).banUserFromChat(adviceSeeker.getUserId(), group.getId());
+
+    mockMvc
+        .perform(
+            consultantPost(
+                "/users/" + adviceSeeker.getMatrixUserId() + "/chat/" + group.getId() + "/ban"))
+        .andExpect(status().isNoContent());
   }
 
   @Test
