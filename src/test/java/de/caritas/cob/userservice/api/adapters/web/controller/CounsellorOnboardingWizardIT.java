@@ -126,7 +126,7 @@ class CounsellorOnboardingWizardIT {
         .thenAnswer(
             invocation ->
                 Optional.of(
-                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
+                    new AgencyFacts.Agency(invocation.getArgument(0), 79L, false, List.of())));
     agencyIsHealthy();
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
         .thenReturn(
