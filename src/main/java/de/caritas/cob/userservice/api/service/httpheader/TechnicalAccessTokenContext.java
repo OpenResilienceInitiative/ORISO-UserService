@@ -15,8 +15,11 @@ import java.util.function.Supplier;
  *
  * <p>Remaining ambient scopes: the counsellor invite provisioning saga (agency re-check, consultant
  * creation, agency assignment and their rollback, which reach
- * TenantService/AgencyService/ConsultingType clients through the shared admin services) and the
- * reservation-release retry scheduler.
+ * TenantService/AgencyService/ConsultingType clients through the shared admin services), the
+ * reservation-release retry scheduler, the expiry sweep ({@code ExpiredInviteReservationSweep},
+ * whole sweep incl. local writes) and the queued-invite release ({@code
+ * QueuedInviteReleaseListener}, whole release incl. local writes and SMTP). The last two run
+ * without a user, so no human identity is replaced.
  */
 public final class TechnicalAccessTokenContext {
 
