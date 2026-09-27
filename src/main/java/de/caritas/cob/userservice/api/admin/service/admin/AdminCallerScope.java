@@ -25,6 +25,7 @@ import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -59,6 +60,9 @@ public class AdminCallerScope {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull AgencyService agencyService;
+
+  @Value("${multitenancy.enabled:false}")
+  private boolean multitenancyEnabled;
 
   /**
    * Checks that the caller may act on the admin with the given ID. An unknown ID passes, so the
