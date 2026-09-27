@@ -9,12 +9,12 @@ class MatrixIdsTest {
 
   @Test
   void localpart_should_extract_username_from_valid_user_id() {
-    assertThat(MatrixIds.localpart("@alice:matrix.oriso.org")).isEqualTo("alice");
+    assertThat(MatrixIds.localpart("@alice:matrix.example.org")).isEqualTo("alice");
   }
 
   @Test
   void localpart_should_extract_from_valid_room_id() {
-    assertThat(MatrixIds.localpart("!abc123:matrix.oriso.org")).isEqualTo("abc123");
+    assertThat(MatrixIds.localpart("!abc123:matrix.example.org")).isEqualTo("abc123");
   }
 
   @Test
@@ -45,7 +45,7 @@ class MatrixIdsTest {
 
   @Test
   void localpartLenient_should_extract_username_from_valid_user_id() {
-    assertThat(MatrixIds.localpartLenient("@alice:matrix.oriso.org")).isEqualTo("alice");
+    assertThat(MatrixIds.localpartLenient("@alice:matrix.example.org")).isEqualTo("alice");
   }
 
   @Test
@@ -60,7 +60,7 @@ class MatrixIdsTest {
 
   @Test
   void localpartLenient_should_split_on_colon_even_without_sigil() {
-    assertThat(MatrixIds.localpartLenient("alice:matrix.oriso.org")).isEqualTo("alice");
+    assertThat(MatrixIds.localpartLenient("alice:matrix.example.org")).isEqualTo("alice");
   }
 
   @Test
@@ -75,12 +75,12 @@ class MatrixIdsTest {
 
   @Test
   void isRoomId_should_return_true_for_room_id() {
-    assertThat(MatrixIds.isRoomId("!abc123:matrix.oriso.org")).isTrue();
+    assertThat(MatrixIds.isRoomId("!abc123:matrix.example.org")).isTrue();
   }
 
   @Test
   void isRoomId_should_return_false_for_user_id() {
-    assertThat(MatrixIds.isRoomId("@alice:matrix.oriso.org")).isFalse();
+    assertThat(MatrixIds.isRoomId("@alice:matrix.example.org")).isFalse();
   }
 
   @Test
@@ -90,12 +90,12 @@ class MatrixIdsTest {
 
   @Test
   void isUserId_should_return_true_for_user_id() {
-    assertThat(MatrixIds.isUserId("@alice:matrix.oriso.org")).isTrue();
+    assertThat(MatrixIds.isUserId("@alice:matrix.example.org")).isTrue();
   }
 
   @Test
   void isUserId_should_return_false_for_room_id() {
-    assertThat(MatrixIds.isUserId("!abc123:matrix.oriso.org")).isFalse();
+    assertThat(MatrixIds.isUserId("!abc123:matrix.example.org")).isFalse();
   }
 
   @Test
@@ -115,7 +115,7 @@ class MatrixIdsTest {
   // ---------------------------------------------------------------------------
   // ADR-005 / DB-M04 regression: the server part of a Matrix ID is opaque to
   // MatrixIds. Parsing must stay correct whether the server is a DNS name
-  // (matrix.oriso.org), carries a port, or is a bare IPv4. These lock the CURRENT
+  // (matrix.example.org), carries a port, or is a bare IPv4. These lock the CURRENT
   // behaviour (documenting, not inventing) so the former bare-Hetzner-IP class of
   // Matrix ID can never silently slip back in unnoticed.
   // ---------------------------------------------------------------------------
@@ -123,12 +123,12 @@ class MatrixIdsTest {
   @Test
   void localpart_should_extract_when_server_has_dots_and_port() {
     // Only the first colon separates the local part; dots and the port colon are ignored.
-    assertThat(MatrixIds.localpart("@alice:matrix.oriso.org:8448")).isEqualTo("alice");
+    assertThat(MatrixIds.localpart("@alice:matrix.example.org:8448")).isEqualTo("alice");
   }
 
   @Test
   void localpart_should_extract_from_room_id_with_dotted_server_and_port() {
-    assertThat(MatrixIds.localpart("!abc123:matrix.oriso.org:8448")).isEqualTo("abc123");
+    assertThat(MatrixIds.localpart("!abc123:matrix.example.org:8448")).isEqualTo("abc123");
   }
 
   @Test
@@ -145,7 +145,7 @@ class MatrixIdsTest {
   @Test
   void localpart_should_return_empty_when_localpart_is_missing() {
     // Documents current behaviour: "@:server" has its colon at index 1, so substring(1, 1) == "".
-    assertThat(MatrixIds.localpart("@:matrix.oriso.org")).isEmpty();
+    assertThat(MatrixIds.localpart("@:matrix.example.org")).isEmpty();
   }
 
   @Test
@@ -155,14 +155,14 @@ class MatrixIdsTest {
 
   @Test
   void localpart_should_throw_when_colon_is_first_char() {
-    assertThatThrownBy(() -> MatrixIds.localpart(":matrix.oriso.org"))
+    assertThatThrownBy(() -> MatrixIds.localpart(":matrix.example.org"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("no colon separator");
   }
 
   @Test
   void localpartLenient_should_extract_when_server_has_dots_and_port() {
-    assertThat(MatrixIds.localpartLenient("@alice:matrix.oriso.org:8448")).isEqualTo("alice");
+    assertThat(MatrixIds.localpartLenient("@alice:matrix.example.org:8448")).isEqualTo("alice");
   }
 
   @Test
@@ -174,7 +174,7 @@ class MatrixIdsTest {
   void localpartLenient_should_return_server_part_when_localpart_is_missing() {
     // Documents current behaviour: after stripping "@", ":server" has its colon at index 0, so the
     // lenient parser returns the remainder unchanged instead of throwing.
-    assertThat(MatrixIds.localpartLenient("@:matrix.oriso.org")).isEqualTo(":matrix.oriso.org");
+    assertThat(MatrixIds.localpartLenient("@:matrix.example.org")).isEqualTo(":matrix.example.org");
   }
 
   @Test

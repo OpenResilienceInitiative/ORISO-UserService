@@ -118,7 +118,7 @@ class CounsellorOnboardingWizardIT {
         .thenReturn(
             Optional.of(
                 new IdentityProfile(
-                    CONSULTANT_ID, "codex_wizard_counsellor", "Lisa", "Simpson", "l@oriso.org")));
+                    CONSULTANT_ID, "codex_wizard_counsellor", "Lisa", "Simpson", "l@example.org")));
   }
 
   /** AgencyService answers: the invite's agency covers the topics 2 (department) and 7. */
@@ -138,7 +138,7 @@ class CounsellorOnboardingWizardIT {
         AccountInvite.builder()
             .targetRole(AccountInviteTargetRole.COUNSELLOR)
             .tenantId(79L)
-            .recipientEmail("lisa.simpson@oriso.org")
+            .recipientEmail("lisa.simpson@example.org")
             .firstName("Lisa")
             .lastName("Simpson")
             .agencyId(AGENCY_ID)
@@ -164,7 +164,7 @@ class CounsellorOnboardingWizardIT {
         .perform(get("/users/account-invites/{token}/onboarding", token))
         .andExpect(status().isOk())
         .andExpect(jsonPath("$.targetRole").value("COUNSELLOR"))
-        .andExpect(jsonPath("$.recipientEmail").value("lisa.simpson@oriso.org"))
+        .andExpect(jsonPath("$.recipientEmail").value("lisa.simpson@example.org"))
         .andExpect(jsonPath("$.firstName").value("Lisa"))
         .andExpect(jsonPath("$.lastName").value("Simpson"))
         .andExpect(jsonPath("$.tenantId").value(79))
@@ -203,7 +203,7 @@ class CounsellorOnboardingWizardIT {
     verify(consultantAdminFacade).createNewConsultant(consultantCaptor.capture());
     CreateConsultantDTO consultant = consultantCaptor.getValue();
     assertThat(consultant.getUsername()).isEqualTo("codex_wizard_counsellor");
-    assertThat(consultant.getEmail()).isEqualTo("lisa.simpson@oriso.org");
+    assertThat(consultant.getEmail()).isEqualTo("lisa.simpson@example.org");
     assertThat(consultant.getTenantId()).isEqualTo(79L);
     assertThat(consultant.getTopicIds()).containsExactly(2L);
     assertThat(consultant.getSalutation()).isEqualTo("counsellor_female");
@@ -310,7 +310,7 @@ class CounsellorOnboardingWizardIT {
             AccountInvite.builder()
                 .targetRole(AccountInviteTargetRole.COUNSELLOR)
                 .tenantId(79L)
-                .recipientEmail("lisa.simpson@oriso.org")
+                .recipientEmail("lisa.simpson@example.org")
                 .firstName("Lisa")
                 .lastName("Simpson")
                 .agencyId(AGENCY_ID)

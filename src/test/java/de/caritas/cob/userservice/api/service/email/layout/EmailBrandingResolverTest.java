@@ -36,7 +36,11 @@ class EmailBrandingResolverTest {
 
   private EmailBrandingResolver resolver(String platformLogoUrl) {
     return new EmailBrandingResolver(
-        tenantService, tenantTemplateSupplier, "ORISO", platformLogoUrl, "https://app.oriso.org/");
+        tenantService,
+        tenantTemplateSupplier,
+        "ORISO",
+        platformLogoUrl,
+        "https://app.example.org/");
   }
 
   private void givenNoTemplateAttributes() {
@@ -57,13 +61,13 @@ class EmailBrandingResolverTest {
   void resolve_Should_preferTheTenantLogo() {
     givenNoTemplateAttributes();
     Theming theming = new Theming();
-    theming.setLogo("https://app.oriso.org/tenant.png");
-    theming.setAssociationLogo("https://app.oriso.org/association.png");
+    theming.setLogo("https://app.example.org/tenant.png");
+    theming.setAssociationLogo("https://app.example.org/association.png");
     when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", theming));
 
-    EmailBranding branding = resolver("https://app.oriso.org/platform.png").resolve(7L);
+    EmailBranding branding = resolver("https://app.example.org/platform.png").resolve(7L);
 
-    assertThat(branding.logoUrl()).isEqualTo("https://app.oriso.org/tenant.png");
+    assertThat(branding.logoUrl()).isEqualTo("https://app.example.org/tenant.png");
     assertThat(branding.brandName()).isEqualTo("Nord");
   }
 
@@ -71,15 +75,15 @@ class EmailBrandingResolverTest {
   void resolve_Should_fallBackToTheAssociationLogoThenThePlatformLogo() {
     givenNoTemplateAttributes();
     Theming associationOnly = new Theming();
-    associationOnly.setAssociationLogo("https://app.oriso.org/association.png");
+    associationOnly.setAssociationLogo("https://app.example.org/association.png");
     when(tenantService.getRestrictedTenantDataFresh(7L))
         .thenReturn(tenant("Nord", associationOnly));
 
-    assertThat(resolver("https://app.oriso.org/platform.png").resolve(7L).logoUrl())
-        .isEqualTo("https://app.oriso.org/association.png");
+    assertThat(resolver("https://app.example.org/platform.png").resolve(7L).logoUrl())
+        .isEqualTo("https://app.example.org/association.png");
 
-    assertThat(resolver("https://app.oriso.org/platform.png").resolve(null).logoUrl())
-        .isEqualTo("https://app.oriso.org/platform.png");
+    assertThat(resolver("https://app.example.org/platform.png").resolve(null).logoUrl())
+        .isEqualTo("https://app.example.org/platform.png");
   }
 
   /**
@@ -97,12 +101,12 @@ class EmailBrandingResolverTest {
     when(tenantService.getRestrictedTenantDataFresh(12L)).thenReturn(resolvedTenant);
     lenient()
         .when(tenantTemplateSupplier.getTenantBaseUrl(resolvedTenant))
-        .thenReturn("https://nord.app.oriso.org");
+        .thenReturn("https://nord.app.example.org");
 
     EmailBranding branding = resolver("").resolve(12L);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/12/logo");
+        .isEqualTo("https://app.example.org/service/tenant/public/branding/12/logo");
     assertThat(branding.hasLogo()).isTrue();
   }
 
@@ -118,13 +122,13 @@ class EmailBrandingResolverTest {
     EmailBranding branding = resolver("").resolve(null);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/1/logo");
+        .isEqualTo("https://app.example.org/service/tenant/public/branding/1/logo");
   }
 
   /**
    * Measured on staging 2026-09-21/22: Träger there have an empty subdomain, so the tenant base URL
    * degenerates to {@code https://.<host>}. The mail logo must still point at this tenant's own
-   * image, pinned by id on the application origin.
+   * image, pinned by id on the application origin once a valid tenant URL exists.
    */
   @Test
   void resolve_Should_rejectAnEmptySubdomainWithoutAValidTenantUrl() {
@@ -156,9 +160,9 @@ class EmailBrandingResolverTest {
         .isEqualTo("https://ok.org/a");
   }
 
-  /** The empty-subdomain base URL must not leak into the footer either. */
+  /** An invalid tenant URL must stop the footer from using a different origin. */
   @Test
-  void resolve_Should_fallBackToTheApplicationFooter_When_TheTenantBaseUrlHasNoHost() {
+  void resolve_Should_rejectAnInvalidTenantFooterOrigin() {
     RestrictedTenantDTO tenant12 = tenant("Traeger Zwoelf", null);
     tenant12.setId(12L);
     when(tenantService.getRestrictedTenantDataFresh(12L)).thenReturn(tenant12);
@@ -177,8 +181,8 @@ class EmailBrandingResolverTest {
     tenant12.setId(12L);
     when(tenantService.getRestrictedTenantDataFresh(12L)).thenReturn(tenant12);
 
-    assertThat(resolver("https://app.oriso.org/platform.png").resolve(12L).logoUrl())
-        .isEqualTo("https://app.oriso.org/platform.png");
+    assertThat(resolver("https://app.example.org/platform.png").resolve(12L).logoUrl())
+        .isEqualTo("https://app.example.org/platform.png");
   }
 
   @Test
@@ -195,7 +199,7 @@ class EmailBrandingResolverTest {
     when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", null));
     EmailBrandingResolver cached =
         new EmailBrandingResolver(
-            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.oriso.org", 10L);
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.example.org", 10L);
 
     cached.resolve(7L);
     cached.resolve(7L);
@@ -212,15 +216,15 @@ class EmailBrandingResolverTest {
     theming.setAssociationLogo("data:image/png;base64,iVBORw0KGgo=");
     when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", theming));
 
-    assertThat(resolver("https://app.oriso.org/platform.png").resolve(7L).logoUrl())
-        .isEqualTo("https://app.oriso.org/platform.png");
+    assertThat(resolver("https://app.example.org/platform.png").resolve(7L).logoUrl())
+        .isEqualTo("https://app.example.org/platform.png");
   }
 
   @Test
   void constructor_Should_limitBrandingCacheToTenSeconds() {
     EmailBrandingResolver cached =
         new EmailBrandingResolver(
-            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.oriso.org", 300L);
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.example.org", 300L);
 
     assertThat(org.springframework.test.util.ReflectionTestUtils.getField(cached, "cacheTtlNanos"))
         .isEqualTo(10_000_000_000L);
@@ -237,10 +241,10 @@ class EmailBrandingResolverTest {
   @ParameterizedTest
   @ValueSource(
       strings = {
-        "ftp://app.oriso.org",
-        "https://user:secret@app.oriso.org",
-        "https://app.oriso.org/?mail=1",
-        "https://app.oriso.org/#mail"
+        "ftp://app.example.org",
+        "https://user:secret@app.example.org",
+        "https://app.example.org/?mail=1",
+        "https://app.example.org/#mail"
       })
   void constructor_Should_rejectApplicationUrlsThatCannotBeSafeMailOrigins(String url) {
     assertThatThrownBy(
@@ -409,7 +413,7 @@ class EmailBrandingResolverTest {
   }
 
   @Test
-  void resolve_Should_fallBackToTheApplicationBaseUrl_When_TheTenantHasNoOwnBaseUrl() {
+  void resolve_Should_rejectMissingTenantBaseUrl() {
     givenNoTemplateAttributes();
     when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", null));
 
@@ -425,7 +429,7 @@ class EmailBrandingResolverTest {
 
     EmailBranding branding = resolver("").resolve(null);
 
-    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
-    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+    assertThat(branding.imprintUrl()).isEqualTo("https://app.example.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://app.example.org/datenschutz");
   }
 }
