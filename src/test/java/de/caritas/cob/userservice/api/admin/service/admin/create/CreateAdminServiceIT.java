@@ -88,15 +88,19 @@ class CreateAdminServiceIT {
   @Captor private ArgumentCaptor<UserDTO> userDTOArgumentCaptor;
   private final EasyRandom easyRandom = new EasyRandom();
 
+  // AdminScope is a singleton of the cached context; later classes must see its configured value.
+  private Object configuredMultitenancy;
+
   @BeforeEach
   void setUp() {
     MockitoAnnotations.openMocks(this);
+    configuredMultitenancy = ReflectionTestUtils.getField(adminScope, "multitenancyEnabled");
   }
 
   @AfterEach
   void afterTests() {
     TenantContext.clear();
-    ReflectionTestUtils.setField(adminScope, "multitenancyEnabled", false);
+    ReflectionTestUtils.setField(adminScope, "multitenancyEnabled", configuredMultitenancy);
   }
 
   @Test
