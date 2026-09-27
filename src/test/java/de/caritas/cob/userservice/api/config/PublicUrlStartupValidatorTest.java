@@ -140,6 +140,17 @@ class PublicUrlStartupValidatorTest {
   }
 
   @Test
+  void rejectsPrivateIpv6HostsInDeployedProfiles() {
+    for (String host : new String[] {"[fe80::1]", "[fec0::1]", "[fc00::1]", "[fd12:3456::1]"}) {
+      environment.setProperty("magic.link.frontend.base-url", "https://" + host);
+
+      assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+          .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL")
+          .hasMessageContaining("public host");
+    }
+  }
+
+  @Test
   void allowsPublicIpv6Hosts() {
     environment.setProperty("magic.link.frontend.base-url", "https://[2001:4860:4860::8888]");
 
