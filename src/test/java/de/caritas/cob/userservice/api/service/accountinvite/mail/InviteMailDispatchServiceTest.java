@@ -107,7 +107,7 @@ class InviteMailDispatchServiceTest {
             "to@example.org",
             "Ihre Einladung",
             "Hallo Ada, bitte bestaetigen Sie Ihr Konto.",
-            "https://app.oriso.org/account-invite/tok",
+            "https://app.example.org/account-invite/tok",
             null,
             "de");
 
@@ -119,11 +119,11 @@ class InviteMailDispatchServiceTest {
     assertThat(html.getValue())
         .startsWith("<!DOCTYPE html>")
         .contains("Hallo Ada, bitte bestaetigen Sie Ihr Konto.")
-        .contains("https://app.oriso.org/account-invite/tok");
+        .contains("https://app.example.org/account-invite/tok");
     assertThat(text.getValue())
         .doesNotContain("<table")
         .contains("Hallo Ada, bitte bestaetigen Sie Ihr Konto.")
-        .contains("https://app.oriso.org/account-invite/tok");
+        .contains("https://app.example.org/account-invite/tok");
   }
 
   /**

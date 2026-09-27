@@ -54,8 +54,8 @@ class SupervisorAddedEmailNotificationServiceTest {
   @BeforeEach
   void injectValues() {
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org");
-    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.oriso.org");
+    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org");
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.example.org");
   }
 
   // ── notifySupervisorAdded early-return paths ──────────────────────────────
@@ -637,7 +637,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifyEmailAddressChanged_Should_StripTrailingSlash_When_AppBaseUrlEndsWithSlash() {
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org/");
+    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org/");
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtpSettings()));
 
@@ -677,8 +677,8 @@ class SupervisorAddedEmailNotificationServiceTest {
         service.renderTeamChange(
             LanguageCode.de,
             statement,
-            "https://app.oriso.org",
-            "https://app.oriso.org",
+            "https://app.example.org",
+            "https://app.example.org",
             null,
             "#1c4f8f");
 
@@ -697,8 +697,8 @@ class SupervisorAddedEmailNotificationServiceTest {
         service.renderTeamChange(
             LanguageCode.de,
             service.staffStatementSupervisorAdded(LanguageCode.de),
-            "https://app.oriso.org",
-            "https://app.oriso.org/sessions/consultant/sessionView/session/4711",
+            "https://app.example.org",
+            "https://app.example.org/sessions/consultant/sessionView/session/4711",
             4711L,
             "#1c4f8f");
 
@@ -706,7 +706,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     assertThat(email.html())
         .contains("Supervisor-Berater:in")
         .contains("#4711")
-        .contains("https://app.oriso.org/sessions/consultant/sessionView/session/4711");
+        .contains("https://app.example.org/sessions/consultant/sessionView/session/4711");
     assertThat(email.text()).contains("Supervisor-Berater:in");
   }
 
@@ -716,8 +716,8 @@ class SupervisorAddedEmailNotificationServiceTest {
         service.renderTeamChange(
             LanguageCode.de,
             "Etwas hat sich geändert.",
-            "https://app.oriso.org",
-            "https://app.oriso.org",
+            "https://app.example.org",
+            "https://app.example.org",
             1L,
             "#1c4f8f");
 
@@ -737,8 +737,8 @@ class SupervisorAddedEmailNotificationServiceTest {
         service.renderTeamChange(
             LanguageCode.de,
             "Etwas hat sich geändert.",
-            "https://app.oriso.org",
-            "https://app.oriso.org",
+            "https://app.example.org",
+            "https://app.example.org",
             1L,
             "#ffd400");
 
