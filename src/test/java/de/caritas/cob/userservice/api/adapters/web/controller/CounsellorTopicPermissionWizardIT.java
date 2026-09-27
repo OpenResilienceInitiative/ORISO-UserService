@@ -313,7 +313,7 @@ class CounsellorTopicPermissionWizardIT {
         AccountInvite.builder()
             .targetRole(AccountInviteTargetRole.COUNSELLOR)
             .tenantId(INVITE_TENANT)
-            .recipientEmail("topic.permission." + UUID.randomUUID() + "@oriso.org")
+            .recipientEmail("topic.permission." + UUID.randomUUID() + "@example.org")
             .firstName("Lisa")
             .lastName("Simpson")
             .agencyId(AGENCY_ID)
