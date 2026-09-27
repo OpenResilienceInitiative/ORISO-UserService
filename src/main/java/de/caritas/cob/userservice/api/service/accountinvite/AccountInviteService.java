@@ -770,6 +770,10 @@ public class AccountInviteService {
               if (initialOldInvite.getStatus() == AccountInviteStatus.REVOKED) {
                 throw new BadRequestException("Revoked invites cannot be resent");
               }
+              // Already replaced by a live invite; resending it would mint a second one.
+              if (initialOldInvite.getStatus() == AccountInviteStatus.SUPERSEDED) {
+                throw new BadRequestException(INACTIVE_RESEND_MESSAGE);
+              }
               if (initialOldInvite.getStatus() == AccountInviteStatus.EXPIRED) {
                 return null;
               }
