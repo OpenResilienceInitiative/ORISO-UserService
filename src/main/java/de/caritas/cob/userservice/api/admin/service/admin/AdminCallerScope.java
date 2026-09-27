@@ -73,7 +73,7 @@ public class AdminCallerScope {
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull UserAgencyRepository userAgencyRepository;
 
-  @Value("${multitenancy.enabled:false}")
+  @Value("${multitenancy.enabled:true}")
   private boolean multitenancyEnabled;
 
   /**
