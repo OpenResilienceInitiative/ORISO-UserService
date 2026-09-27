@@ -91,9 +91,19 @@ public class ConsultantService {
    * @param email email address
    * @return an optional with the consultant found or an empty optional
    */
-  /** Public sign-in lookups (magic link, password reset): the typed name or e-mail. */
+  /**
+   * Public sign-in lookups (magic link, password reset) run across every Träger: usernames are
+   * unique there, an e-mail counts only if exactly one account carries it.
+   */
   public Optional<Consultant> findConsultantForSignIn(String usernameOrEmail) {
-    return findConsultantByUsernameOrEmail(usernameOrEmail, usernameOrEmail);
+    var usernameTranscoder = new UsernameTranscoder();
+    return getConsultantByUsername(usernameTranscoder.decodeUsername(usernameOrEmail))
+        .or(() -> getConsultantByUsername(usernameTranscoder.encodeUsername(usernameOrEmail)))
+        .or(() -> onlyOne(consultantRepository.findAllByEmailAndDeleteDateIsNull(usernameOrEmail)));
+  }
+
+  private static <T> Optional<T> onlyOne(List<T> matches) {
+    return matches.size() == 1 ? Optional.of(matches.get(0)) : Optional.empty();
   }
 
   public Optional<Consultant> findConsultantByUsernameOrEmail(String username, String email) {
