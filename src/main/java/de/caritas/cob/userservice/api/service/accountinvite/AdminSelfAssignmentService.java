@@ -135,6 +135,9 @@ public class AdminSelfAssignmentService {
   /** A counsellor needs at least one topic: the agency's only one, or a pick among several. */
   private static List<Long> resolveTopics(List<Long> requested, AgencyFacts.Agency agency) {
     if (requested != null && !requested.isEmpty()) {
+      if (requested.stream().anyMatch(Objects::isNull)) {
+        throw new BadRequestException("topicIds must not contain null");
+      }
       return List.copyOf(requested);
     }
     List<Long> offered = agency.topicIds() == null ? List.of() : agency.topicIds();

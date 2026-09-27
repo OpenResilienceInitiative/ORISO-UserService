@@ -257,9 +257,10 @@ class PasswordResetServiceTest {
     when(consultantService.findConsultantForSignIn(anyString()))
         .thenReturn(Optional.of(consultant));
 
-    // SMTP not configured → completes silently, but proves consultant path was taken (no NPE)
+    // SMTP not configured → completes silently; the verify proves the consultant path ran.
     assertThatCode(() -> passwordResetService.requestPasswordReset("consultant1", "de"))
         .doesNotThrowAnyException();
+    verify(consultantService).findConsultantForSignIn("consultant1");
   }
 
   // --- confirmPasswordReset ---

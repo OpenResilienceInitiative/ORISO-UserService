@@ -560,6 +560,65 @@ class AccountInviteServiceTest {
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
   }
 
+  // --- agency-admin invites need a tenant: provisioning refuses a tenantless one at accept time
+
+  private static CreateAccountInviteCommand tenantlessAgencyAdminInvite(
+      Long agencyId, IdAllocationMode agencyMode) {
+    return new CreateAccountInviteCommand(
+        AccountInviteTargetRole.AGENCY_ADMIN,
+        null,
+        "agency-admin@example.org",
+        "A",
+        "B",
+        agencyId,
+        null,
+        null,
+        null,
+        agencyMode);
+  }
+
+  @Test
+  void createInvite_Should_throwBadRequest_When_platformCreatesAgencyAdminInviteWithoutTenant() {
+    // Lenient: without the guard the invite would be reserved and saved like any other.
+    lenient().when(agencyIdAllocationClient.reserve(null, null)).thenReturn(70L);
+    lenient()
+        .when(agencyIdAllocationClient.getAvailability(70L))
+        .thenReturn(IdAllocationStatus.RESERVED);
+    lenient().when(accountInviteRepository.save(any())).thenAnswer(call -> call.getArgument(0));
+    var command = tenantlessAgencyAdminInvite(null, IdAllocationMode.AUTO);
+
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+    verifyNoInteractions(agencyIdAllocationClient);
+    verifyNoInteractions(accountInviteRepository);
+  }
+
+  @Test
+  void createInvite_Should_keepTheStampedTenant_When_tragerAdminCreatesAgencyAdminInvite() {
+    when(accessPolicy.authorizeCreate(any()))
+        .thenAnswer(call -> call.<CreateAccountInviteCommand>getArgument(0).withTenantId(7L));
+    when(agencyIdAllocationClient.reserve(null, 7L)).thenReturn(70L);
+    when(agencyIdAllocationClient.getAvailability(70L)).thenReturn(IdAllocationStatus.RESERVED);
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite invite =
+        service.createInvite(tenantlessAgencyAdminInvite(null, IdAllocationMode.AUTO));
+
+    assertThat(invite.getTenantId()).isEqualTo(7L);
+    assertThat(invite.getAgencyId()).isEqualTo(70L);
+  }
+
+  @Test
+  void createInvite_Should_takeTheTenantOfTheExistingAgency_When_agencyAdminInviteNamesNoTenant() {
+    when(agencyFacts.find(42L))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(42L, 7L, false, null)));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite invite =
+        service.createInvite(tenantlessAgencyAdminInvite(42L, IdAllocationMode.EXISTING));
+
+    assertThat(invite.getTenantId()).isEqualTo(7L);
+  }
+
   // --- P3 (#Problem 3): duplicate recipient e-mail is refused at invite CREATION time, not only
   // at redemption. Both invite kinds and both creation paths ("send now" / "add to list") funnel
   // through createInvite, so a single guard here covers all of them.

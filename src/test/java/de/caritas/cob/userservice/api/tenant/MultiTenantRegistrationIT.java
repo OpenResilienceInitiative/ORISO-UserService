@@ -100,6 +100,7 @@ import org.springframework.test.web.servlet.MvcResult;
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = AutoConfigureTestDatabase.Replace.NONE)
 @TestPropertySource(properties = {"multitenancy.enabled=true"})
+@org.springframework.context.annotation.Import(TenantFixtures.class)
 class MultiTenantRegistrationIT {
 
   private static final String CSRF_HEADER = "X-CSRF-Token";
@@ -153,6 +154,7 @@ class MultiTenantRegistrationIT {
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private ChatRepository chatRepository;
   @Autowired private UserChatRepository userChatRepository;
+  @Autowired private TenantFixtures fixtures;
 
   private final List<String> createdUserIds = new ArrayList<>();
   private final List<Runnable> cleanups = new ArrayList<>();
@@ -227,6 +229,7 @@ class MultiTenantRegistrationIT {
         sessionRepository.findByUserUserId(userId).forEach(sessionRepository::delete);
         userRepository.findById(userId).ifPresent(userRepository::delete);
       }
+      fixtures.removeAll();
     } finally {
       TenantContext.clear();
     }
@@ -297,7 +300,23 @@ class MultiTenantRegistrationIT {
   @Test
   void groupInviteLink_Should_LetTheNewAdviceSeekerJoinTheChat() throws Exception {
     var link = persistInviteLink("TENANT_CHAT");
-    assertStatus(mockMvc.perform(register(Map.of())).andReturn(), 201);
+    // The link's own contract: redeem answers the Träger and agency the client registers with.
+    var redeemed =
+        objectMapper.readTree(
+            mockMvc
+                .perform(
+                    post("/users/invitelinks/{token}/redeem", link.getToken())
+                        .cookie(CSRF_COOKIE)
+                        .header(CSRF_HEADER, CSRF_VALUE))
+                .andReturn()
+                .getResponse()
+                .getContentAsString());
+    assertThat(redeemed.get("tenantId").asLong()).isEqualTo(TENANT);
+    assertStatus(
+        mockMvc
+            .perform(register(Map.of("agencyId", redeemed.get("agencyId").asLong())))
+            .andReturn(),
+        201);
     var chat = persistChat();
     actAsAdviceSeeker(createdUserIds.get(0));
 
@@ -316,6 +335,7 @@ class MultiTenantRegistrationIT {
             .andReturn();
 
     assertStatus(result, 200);
+    assertCreatedInTenant();
     TenantContext.setCurrentTenant(TENANT);
     try {
       assertThat(
@@ -329,7 +349,6 @@ class MultiTenantRegistrationIT {
     } finally {
       TenantContext.clear();
     }
-    assertThat(link.getTenantId()).isEqualTo(TENANT);
   }
 
   // --- account invites --------------------------------------------------------------------------
@@ -513,7 +532,9 @@ class MultiTenantRegistrationIT {
   private Chat persistChat() {
     TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
     try {
-      var owner = consultantRepository.findAll().iterator().next();
+      // The chat owner is a counsellor of the link's Träger, not whichever row the seed lists
+      // first.
+      var owner = fixtures.consultant(TENANT, AGENCY);
       var chat =
           chatRepository.save(
               Chat.builder()
