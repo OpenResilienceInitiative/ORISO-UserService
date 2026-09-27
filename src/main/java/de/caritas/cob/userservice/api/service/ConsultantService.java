@@ -91,6 +91,11 @@ public class ConsultantService {
    * @param email email address
    * @return an optional with the consultant found or an empty optional
    */
+  /** Public sign-in lookups (magic link, password reset): the typed name or e-mail. */
+  public Optional<Consultant> findConsultantForSignIn(String usernameOrEmail) {
+    return findConsultantByUsernameOrEmail(usernameOrEmail, usernameOrEmail);
+  }
+
   public Optional<Consultant> findConsultantByUsernameOrEmail(String username, String email) {
 
     // Search for decoded username

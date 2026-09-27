@@ -99,6 +99,11 @@ public interface AdminRepository
 
   Optional<Admin> findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(String username, String email);
 
+  /** Public password-reset lookup: the typed name or e-mail. */
+  default Optional<Admin> findForSignIn(String usernameOrEmail) {
+    return findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(usernameOrEmail, usernameOrEmail);
+  }
+
   @Query("SELECT a.id, a.type FROM Admin a WHERE a.id IN :ids")
   List<Object[]> findIdAndTypeByIdIn(@Param("ids") Collection<String> ids);
 }
