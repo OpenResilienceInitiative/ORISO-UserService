@@ -450,6 +450,17 @@ class TenantAdminUserServiceTest {
 
     tenantAdminUserService.findTenantAdminsByInfix("*", pageRequest);
 
+    @SuppressWarnings("unchecked")
+    ArgumentCaptor<Page<Admin.AdminBase>> mappedPage = ArgumentCaptor.forClass(Page.class);
+    Mockito.verify(userServiceMapper)
+        .mapOfAdmin(
+            mappedPage.capture(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.anyList(),
+            Mockito.any(),
+            Mockito.any());
+    assertThat(mappedPage.getValue()).isEmpty();
     Mockito.verify(retrieveAdminService, Mockito.never())
         .findAllByInfix(Mockito.anyString(), Mockito.any(), Mockito.any(PageRequest.class));
     Mockito.verify(retrieveAdminService, Mockito.never())
