@@ -34,8 +34,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -49,7 +51,7 @@ class GroupChatAdmissionCommitIT {
   @Autowired private GroupChatJoinRequestService service;
   @Autowired private GroupChatAdmissionProcessor processor;
   @Autowired private GroupChatJoinRequestRepository requests;
-  @Autowired private GroupChatParticipantRepository participants;
+  @MockitoSpyBean private GroupChatParticipantRepository participants;
   @Autowired private ChatRepository chats;
   @Autowired private ConsultantRepository consultants;
   @Autowired private PlatformTransactionManager transactionManager;
@@ -259,6 +261,48 @@ class GroupChatAdmissionCommitIT {
         .isEqualTo(Status.ADMITTED);
     assertThat(participants.findBySeriesIdAndConsultantId(series.getId(), requester.getId()))
         .isPresent();
+    verify(appointmentEvents)
+        .recordMemberJoined(any(Chat.class), eq(RecipientRole.COUNSELOR), eq(requester.getId()));
+  }
+
+  @Test
+  void matrixSuccessFollowedByParticipantWriteFailureRemainsRetryable() {
+    var request =
+        requests.save(
+            GroupChatJoinRequest.builder()
+                .seriesId(series.getId())
+                .consultantId(requester.getId())
+                .status(Status.PENDING)
+                .requestedAt(CustomLocalDateTime.nowInUtc())
+                .build());
+    when(membership.addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test")))
+        .thenReturn(true);
+    doThrow(new DataIntegrityViolationException("simulated participant write failure"))
+        .when(participants)
+        .save(any(GroupChatParticipant.class));
+
+    service.admit(series.getId(), request.getId(), series.getChatOwner().getId(), null);
+
+    var waiting = requests.findById(request.getId()).orElseThrow();
+    assertThat(waiting.getStatus()).isEqualTo(Status.ADMITTING);
+    assertThat(waiting.getAdmissionAttemptCount()).isEqualTo(1);
+    assertThat(participants.findBySeriesIdAndConsultantId(series.getId(), requester.getId()))
+        .isEmpty();
+    verify(membership).addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test"));
+    verify(appointmentEvents, never()).recordMemberJoined(any(), any(), any());
+
+    reset(participants);
+    waiting.setAdmissionLastAttemptAt(CustomLocalDateTime.nowInUtc().minusMinutes(2));
+    requests.save(waiting);
+    assertThat(processor.pendingIds()).contains(request.getId());
+    processor.process(request.getId());
+
+    assertThat(requests.findById(request.getId()).orElseThrow().getStatus())
+        .isEqualTo(Status.ADMITTED);
+    assertThat(participants.findBySeriesIdAndConsultantId(series.getId(), requester.getId()))
+        .isPresent();
+    verify(membership, org.mockito.Mockito.times(2))
+        .addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test"));
     verify(appointmentEvents)
         .recordMemberJoined(any(Chat.class), eq(RecipientRole.COUNSELOR), eq(requester.getId()));
   }
