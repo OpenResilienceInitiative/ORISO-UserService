@@ -162,11 +162,8 @@ class MultiTenantRegistrationIT {
 
   @BeforeEach
   void oneAgencyOfTenantTwo() throws Exception {
-    when(agencyFacts.find(anyLong()))
-        .thenAnswer(
-            invocation ->
-                Optional.of(
-                    new AgencyFacts.Agency(invocation.getArgument(0), null, false, List.of())));
+    when(agencyFacts.find(AGENCY))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, TENANT, false, List.of())));
     // The platform domain resolves to the main tenant, as with single-domain multitenancy.
     when(tenantResolverService.resolve(any())).thenReturn(1L);
     when(((IdentityAuthentication) identityClient).login(anyString(), anyString()))
