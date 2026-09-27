@@ -218,6 +218,34 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("statuses") Collection<AccountInviteStatus> statuses,
       @Param("now") LocalDateTime now);
 
+  /** {@link #findPendingAgencyAdmins} for several agencies in one query, for a whole list. */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".AGENCY_ADMIN"
+          + " AND i.agencyId IN :agencyIds"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  List<AccountInvite> findPendingAgencyAdminsIn(
+      @Param("agencyIds") Collection<Long> agencyIds,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
+  /** {@link #findPendingTenantAdmins} for several Träger in one query, for a whole list. */
+  @Query(
+      "SELECT i FROM AccountInvite i"
+          + " WHERE i.targetRole ="
+          + " de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole"
+          + ".TENANT_ADMIN"
+          + " AND i.tenantId IN :tenantIds"
+          + " AND i.status IN :statuses"
+          + " AND (i.expiresAt IS NULL OR i.expiresAt > :now)")
+  List<AccountInvite> findPendingTenantAdminsIn(
+      @Param("tenantIds") Collection<Long> tenantIds,
+      @Param("statuses") Collection<AccountInviteStatus> statuses,
+      @Param("now") LocalDateTime now);
+
   /**
    * The invites waiting for an agency that is about to exist, in its Träger; a null {@code
    * tenantId} (single-tenant deployment) matches any.
