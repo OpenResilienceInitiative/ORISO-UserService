@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
-import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
@@ -375,9 +374,9 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(tenantTemplateSupplier.getTemplateAttributes())
         .thenThrow(new RuntimeException("service unavailable"));
 
-    assertThatThrownBy(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
-        .isInstanceOf(RuntimeException.class)
-        .hasMessageContaining("service unavailable");
+    assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
+        .doesNotThrowAnyException();
+    verify(emailBrand, never()).valuesForTenant(any(), any());
   }
 
   @Test
@@ -391,9 +390,9 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(attr.getValue()).thenReturn("some-value");
     when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(List.of(attr));
 
-    assertThatThrownBy(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("Tenant notification frontend URL is missing for tenant 1");
+    assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
+        .doesNotThrowAnyException();
+    verify(emailBrand, never()).valuesForTenant(any(), any());
   }
 
   @Test
@@ -407,9 +406,8 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(urlAttr.getValue()).thenReturn("https://tenant.example.com?redirect=other");
     when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(List.of(urlAttr));
 
-    assertThatThrownBy(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("tenant notification frontend URL");
+    assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
+        .doesNotThrowAnyException();
     verify(emailBrand, never()).valuesForTenant(any(), any());
   }
 
@@ -494,10 +492,10 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtpSettings()));
 
-    assertThatThrownBy(
+    assertThatCode(
             () -> service.notifyEmailAddressChanged("user", "user@example.com", 1L, null, null))
-        .isInstanceOf(IllegalStateException.class)
-        .hasMessageContaining("system.notification.frontend.base-url");
+        .doesNotThrowAnyException();
+    verify(emailBrand, never()).valuesForTenant(any(), any());
   }
 
   // ── resolveHexColor — valid hex passes through, invalid → default ─────────

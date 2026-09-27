@@ -64,7 +64,10 @@ public class SupervisorAddedEmailNotificationService {
     if (smtpSettings == null) {
       return;
     }
-    String appUrl = resolveAppFrontendUrl(tenantData);
+    String appUrl = resolveAppFrontendUrlOrSkip(tenantData, tenantId);
+    if (appUrl == null) {
+      return;
+    }
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
@@ -110,7 +113,10 @@ public class SupervisorAddedEmailNotificationService {
     if (smtpSettings == null) {
       return;
     }
-    String appUrl = resolveAppFrontendUrl(tenantData);
+    String appUrl = resolveAppFrontendUrlOrSkip(tenantData, tenantId);
+    if (appUrl == null) {
+      return;
+    }
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
@@ -151,7 +157,10 @@ public class SupervisorAddedEmailNotificationService {
     if (smtpSettings == null) {
       return;
     }
-    String appUrl = resolveAppFrontendUrl(tenantData);
+    String appUrl = resolveAppFrontendUrlOrSkip(tenantData, tenantId);
+    if (appUrl == null) {
+      return;
+    }
     sendEmailSafely(smtpSettings, newEmail, renderEmailChanged(username, appUrl, tenantId));
   }
 
@@ -265,6 +274,18 @@ public class SupervisorAddedEmailNotificationService {
       return requireFrontendUrl(resolved, "tenant notification frontend URL");
     } finally {
       TenantContext.clear();
+    }
+  }
+
+  private String resolveAppFrontendUrlOrSkip(TenantData tenantData, Long tenantId) {
+    try {
+      return resolveAppFrontendUrl(tenantData);
+    } catch (RuntimeException urlFailure) {
+      log.warn(
+          "Skipping system notification mail for tenant {}: frontend URL resolution failed",
+          tenantId,
+          urlFailure);
+      return null;
     }
   }
 

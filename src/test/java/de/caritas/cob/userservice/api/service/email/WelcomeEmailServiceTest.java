@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -69,6 +70,7 @@ class WelcomeEmailServiceTest {
 
     var email = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
     verify(dispatcher).send(eq(smtp), eq("jemand@example.org"), email.capture());
+    verify(emailBrand).valuesForTenant("https://app.oriso.org", 1L);
 
     // The user name is the whole point: ORISO cannot recover it, so a mail that
     // does not carry it is worse than no mail.
@@ -104,6 +106,17 @@ class WelcomeEmailServiceTest {
   void staysSilentWhenTheTenantHasNoSmtpSettings() {
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.empty());
+
+    service.sendWelcomeEmail(user("jemand@example.org"), "ruhiges-yak-1428");
+
+    verify(dispatcher, never()).send(any(), anyString(), any());
+  }
+
+  @Test
+  void brandingFailureLeavesRegistrationMailUnsent() {
+    doThrow(new IllegalStateException("invalid tenant URL"))
+        .when(emailBrand)
+        .valuesForTenant("https://app.oriso.org", 1L);
 
     service.sendWelcomeEmail(user("jemand@example.org"), "ruhiges-yak-1428");
 
