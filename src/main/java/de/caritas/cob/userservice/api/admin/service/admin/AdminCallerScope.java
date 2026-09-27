@@ -32,6 +32,7 @@ import java.util.stream.Stream;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -70,6 +71,9 @@ public class AdminCallerScope {
   private final @NonNull UserRepository userRepository;
   private final @NonNull SessionRepository sessionRepository;
   private final @NonNull UserAgencyRepository userAgencyRepository;
+
+  @Value("${multitenancy.enabled:false}")
+  private boolean multitenancyEnabled;
 
   /**
    * Checks that the caller may act on the admin with the given ID. An unknown ID passes, so the
@@ -212,6 +216,10 @@ public class AdminCallerScope {
    */
   private boolean isUnrestricted() {
     boolean restricted = authenticatedUser.hasRestrictedAgencyPriviliges();
+    // A single-tenant installation has no Träger boundary; only agency admins stay scoped.
+    if (!multitenancyEnabled) {
+      return !restricted;
+    }
     if (!restricted && (authenticatedUser.isPlatformAdmin() || isTechnicalUser())) {
       return true;
     }
@@ -230,7 +238,7 @@ public class AdminCallerScope {
   /** A Beratungsstellen admin without a bound tenant is only narrowed by their agencies. */
   private boolean isOwnTenant(Long tenantId) {
     Long callerTenantId = authenticatedUser.getTenantId();
-    return callerTenantId == null || callerTenantId.equals(tenantId);
+    return !multitenancyEnabled || callerTenantId == null || callerTenantId.equals(tenantId);
   }
 
   private Set<Long> ownAgencyIds() {

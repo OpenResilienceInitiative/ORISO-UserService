@@ -41,6 +41,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -75,6 +76,7 @@ class AdminCallerScopeTest {
             userRepository,
             sessionRepository,
             userAgencyRepository);
+    ReflectionTestUtils.setField(adminCallerScope, "multitenancyEnabled", true);
     caller.setUserId(CALLER);
     caller.setTenantId(OWN_TENANT);
     caller.setRoles(
@@ -128,6 +130,39 @@ class AdminCallerScopeTest {
     givenAgencies(agency(20L, 0L));
 
     assertThatThrownBy(() -> adminCallerScope.assertMayUseAgencies(List.of(20L)))
+        .isInstanceOf(ForbiddenException.class);
+  }
+
+  @Test
+  void assertMayActOnAdmin_Should_Allow_When_SingleTenantDeploymentAndTheTokenCarriesTenantZero() {
+    // No Träger boundary exists on a single-tenant installation; tenant 0 means nothing there.
+    ReflectionTestUtils.setField(adminCallerScope, "multitenancyEnabled", false);
+    actAs(0L, UserRole.USER_ADMIN);
+
+    assertThatCode(() -> adminCallerScope.assertMayActOnAdmin(admin(1L)))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void assertMayUseAgencies_Should_Allow_When_SingleTenantDeploymentAndTheTokenCarriesTenantZero() {
+    ReflectionTestUtils.setField(adminCallerScope, "multitenancyEnabled", false);
+    actAs(0L, UserRole.USER_ADMIN);
+    givenAgencies(agency(20L, 1L));
+
+    assertThatCode(() -> adminCallerScope.assertMayUseAgencies(List.of(20L)))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
+  void assertMayUseAgencies_Should_KeepAgencyAdminToOwnAgencies_When_SingleTenantDeployment() {
+    ReflectionTestUtils.setField(adminCallerScope, "multitenancyEnabled", false);
+    actAs(0L, UserRole.RESTRICTED_AGENCY_ADMIN, UserRole.USER_ADMIN);
+    when(adminAgencyRepository.findByAdminId(CALLER))
+        .thenReturn(List.of(AdminAgency.builder().agencyId(10L).build()));
+
+    assertThatCode(() -> adminCallerScope.assertMayUseAgencies(List.of(10L)))
+        .doesNotThrowAnyException();
+    assertThatThrownBy(() -> adminCallerScope.assertMayUseAgencies(List.of(11L)))
         .isInstanceOf(ForbiddenException.class);
   }
 
