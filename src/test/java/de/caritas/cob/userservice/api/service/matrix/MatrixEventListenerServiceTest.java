@@ -982,6 +982,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void syncCycle_Should_RunInTheTechnicalTenant_When_TheWorkerThreadCarriesAnotherOne() {
     var service = newServiceWithSyncExecutor();
+    service.setTenantContextProvider(multiTenantProvider());
     ReflectionTestUtils.setField(service, "adminAccessToken", "admin-token");
     when(matrixSynapseService.getMatrixApiUrl()).thenReturn("https://matrix.example");
     var tenantInCycle = new AtomicReference<Long>();
@@ -1010,6 +1011,7 @@ class MatrixEventListenerServiceTest {
   @Test
   void notificationTask_Should_RunInTheTechnicalTenant_When_TheWorkerThreadCarriesAnotherOne() {
     var service = newServiceWithSyncExecutor();
+    service.setTenantContextProvider(multiTenantProvider());
     service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
     when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(CONSULTANT_MATRIX_ID))
         .thenReturn(Optional.empty());
@@ -1038,6 +1040,12 @@ class MatrixEventListenerServiceTest {
     } finally {
       de.caritas.cob.userservice.api.tenant.TenantContext.clear();
     }
+  }
+
+  private static de.caritas.cob.userservice.api.tenant.TenantContextProvider multiTenantProvider() {
+    var provider = new de.caritas.cob.userservice.api.tenant.TenantContextProvider();
+    ReflectionTestUtils.setField(provider, "multiTenancyEnabled", true);
+    return provider;
   }
 
   // ── processMatrixSyncEvents ────────────────────────────────────────────────
