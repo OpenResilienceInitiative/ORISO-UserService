@@ -138,6 +138,11 @@ class AccountInviteControllerTest {
     var commandCaptor =
         ArgumentCaptor.forClass(AccountInviteService.CreateAccountInviteCommand.class);
     verify(accountInviteService).createInvite(commandCaptor.capture());
+    var command = commandCaptor.getValue();
+    assertEquals(AccountInviteTargetRole.COUNSELLOR, command.targetRole());
+    assertEquals("queued@example.org", command.recipientEmail());
+    assertEquals(500L, command.agencyId());
+    assertEquals(IdAllocationMode.MANUAL, command.agencyIdAllocationMode());
     assertNotNull(body);
     assertEquals("WAITING_FOR_UNIT", body.inviteStatus);
     assertEquals("AGENCY", body.waitingForUnit);
