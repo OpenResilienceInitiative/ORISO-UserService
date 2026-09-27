@@ -157,7 +157,7 @@ class PasswordResetServiceTest {
     assertThat(mail.recipient()).isEqualTo("real@example.com");
     assertThat(mail.locale()).isEqualTo("en");
     assertThat(mail.tenantId()).isEqualTo(42L);
-    assertThat(mail.frontendBaseUrl()).isEqualTo("https://app.oriso.org");
+    assertThat(mail.frontendBaseUrl()).isEqualTo("https://app.example.org");
     // Reset URL must be built from the configured base URL and carry a 64-hex-char one-time token.
     assertThat(mail.resetUrl())
         .startsWith("https://app.example.org/password-reset/confirm?token=")
