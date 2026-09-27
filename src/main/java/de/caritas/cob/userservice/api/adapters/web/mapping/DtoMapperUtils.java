@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.HalLink;
 import de.caritas.cob.userservice.api.adapters.web.dto.HalLink.MethodEnum;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.LanguageResponseDTO;
+import de.caritas.cob.userservice.api.port.out.SearchSort;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -67,7 +68,7 @@ public interface DtoMapperUtils {
       case "TENANT_ID":
         return "tenantId";
       case "UPDATE_DATE":
-        return "updateDate";
+        return SearchSort.LAST_UPDATED;
       default:
     }
 
