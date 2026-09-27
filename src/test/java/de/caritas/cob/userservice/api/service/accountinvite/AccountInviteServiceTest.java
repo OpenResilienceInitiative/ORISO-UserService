@@ -447,8 +447,13 @@ class AccountInviteServiceTest {
 
     // The revoke wins: the old link is not brought back and the revoked row is kept.
     assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
-    assertThat(replacement[0].getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
-    verify(accountInviteRepository, never()).deleteById(11L);
+    verify(accountInviteRepository, never()).deleteById(any());
+    verify(accountInviteRepository, never()).delete(any());
+    verify(accountInviteRepository, never()).deleteAll(any());
+    verify(accountInviteRepository, never()).deleteAll();
+    // Only the three writes of the handover itself; nothing after the failed send.
+    verify(accountInviteRepository, org.mockito.Mockito.times(3)).saveAndFlush(any());
+    verify(accountInviteRepository, never()).save(any());
   }
 
   @Test
@@ -1019,7 +1024,13 @@ class AccountInviteServiceTest {
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(accepted));
 
     assertThatThrownBy(() -> service.revokeInvite(1L))
-        .isInstanceOf(CustomValidationHttpStatusException.class);
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            conflict -> {
+              assertThat(conflict.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(conflict.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("INVITE_ALREADY_ACCEPTED");
+            });
     verify(accountInviteRepository, never()).existsReservationHolderForAgency(any(), any());
   }
 

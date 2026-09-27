@@ -95,6 +95,8 @@ import org.springframework.transaction.support.TransactionTemplate;
   de.caritas.cob.userservice.api.service.accountinvite.onboarding.CounsellorOnboardingService.class,
   RevokeAcceptRaceContract.CallerConfig.class
 })
+// Resets the acting tenant after each test (TenantExtension); inherited by both subclasses.
+@de.caritas.cob.userservice.api.tenant.WithTenant(RevokeAcceptRaceContract.OWN_TENANT)
 abstract class RevokeAcceptRaceContract {
 
   static final long OWN_TENANT = 1L;
@@ -246,6 +248,13 @@ abstract class RevokeAcceptRaceContract {
                 return new Thread(work, "revoke-race-worker-" + count.incrementAndGet());
               }
             });
+  }
+
+  /** Later classes on this fork must not inherit the tenant this contract acted in. */
+  @org.junit.jupiter.api.AfterAll
+  static void leavesNoActingTenantBehind() {
+    assertThat(Tenants.acting()).isNull();
+    assertThat(de.caritas.cob.userservice.api.tenant.TenantContext.getCurrentTenantData()).isNull();
   }
 
   /** Removes only this test's rows: on MariaDB the schema is shared with other contracts. */
@@ -489,14 +498,28 @@ abstract class RevokeAcceptRaceContract {
       throws Exception {
     AccountInvite invite = persistedAgencyAdminInvite();
     Long template = persistedTemplate();
+    Object[] rowDuringSmtp = new Object[1];
     when(inviteMailDispatchService.send(anyString(), anyString(), anyString(), any(), any(), any()))
-        .thenThrow(
-            new SmtpSendException(
-                SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
-                SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
-                "SMTP refused the message"));
+        .thenAnswer(
+            call -> {
+              // While SMTP runs, another transaction must get the row at once.
+              rowDuringSmtp[0] =
+                  submit(
+                          "revoke-race-probe",
+                          () ->
+                              new TransactionTemplate(transactionManager)
+                                  .execute(
+                                      transaction ->
+                                          accountInviteRepository
+                                              .findByIdForUpdate(invite.getId())
+                                              .isPresent()))
+                      .get(30, TimeUnit.SECONDS);
+              throw new SmtpSendException(
+                  SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+                  SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+                  "SMTP refused the message");
+            });
 
-    long started = System.nanoTime();
     Object sent =
         submit(
                 WRITER_THREAD,
@@ -504,11 +527,10 @@ abstract class RevokeAcceptRaceContract {
                     service.sendInvite(
                         new AccountInviteService.SendInviteCommand(invite.getId(), template)))
             .get(30, TimeUnit.SECONDS);
-    long millis = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started);
 
     assertThat(sent).isInstanceOf(SmtpSendException.class);
-    // The FAILED audit row references the invite; it must not wait for the sender's own lock.
-    assertThat(millis).isLessThan(2_500L);
+    // No row lock across SMTP, so the FAILED audit row (FK to the invite) never waits for it.
+    assertThat(rowDuringSmtp[0]).isEqualTo(true);
     assertThat(deliveryRepository.findAll())
         .filteredOn(delivery -> invite.getId().equals(delivery.getAccountInviteId()))
         .extracting(de.caritas.cob.userservice.api.model.InviteEmailDelivery::getStatus)
