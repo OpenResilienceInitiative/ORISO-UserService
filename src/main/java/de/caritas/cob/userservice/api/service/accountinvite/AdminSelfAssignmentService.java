@@ -4,18 +4,23 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.GrantConsultantIdentityService;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
+import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AdminAgency;
+import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
+import java.util.Optional;
+import java.util.Set;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -39,6 +44,8 @@ public class AdminSelfAssignmentService {
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
+  private final @NonNull ConsultantTopicAgencyCompatibilityValidator
+      consultantTopicAgencyCompatibilityValidator;
   private final @NonNull ConsultantAgencyRelationCreatorService
       consultantAgencyRelationCreatorService;
 
@@ -86,11 +93,13 @@ public class AdminSelfAssignmentService {
   private boolean assignAsCounsellor(
       String userId, AgencyFacts.Agency agency, List<Long> topicIds) {
     // The row lock makes a double click wait for the first request and then answer 409.
-    if (consultantRepository.findActiveByIdForUpdate(userId).isPresent()) {
+    Optional<Consultant> existing = consultantRepository.findActiveByIdForUpdate(userId);
+    if (existing.isPresent()) {
       if (consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
           userId, agency.id())) {
         throw alreadyAssigned();
       }
+      addTopics(existing.get(), resolveTopics(topicIds, agency), agency);
       consultantAgencyRelationCreatorService.createNewConsultantAgency(
           userId, new CreateConsultantAgencyDTO().agencyId(agency.id()));
       log.info("Admin {} assigned themselves as counsellor of agency {}", userId, agency.id());
@@ -108,9 +117,24 @@ public class AdminSelfAssignmentService {
     return true;
   }
 
+  /** Same check as the new-identity grant; the counsellor keeps the topics of other agencies. */
+  private void addTopics(Consultant consultant, List<Long> selected, AgencyFacts.Agency agency) {
+    consultantTopicAgencyCompatibilityValidator.validateGrantTopicsAgainstSelectedAgencies(
+        selected, List.of(agency.id()), consultant.getTenantId());
+    Set<Long> topics = new HashSet<>(selected);
+    if (consultant.getConsultantTopics() != null) {
+      consultant.getConsultantTopics().forEach(topic -> topics.add(topic.getTopicId()));
+    }
+    consultant.replaceTopics(topics);
+    consultantRepository.save(consultant);
+  }
+
   /** A counsellor needs at least one topic: the agency's only one, or a pick among several. */
   private static List<Long> resolveTopics(List<Long> requested, AgencyFacts.Agency agency) {
     if (requested != null && !requested.isEmpty()) {
+      if (requested.stream().anyMatch(Objects::isNull)) {
+        throw new BadRequestException("topicIds must not contain null");
+      }
       return List.copyOf(requested);
     }
     List<Long> offered = agency.topicIds() == null ? List.of() : agency.topicIds();
