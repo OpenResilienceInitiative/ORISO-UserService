@@ -330,6 +330,21 @@ class EmailBrandingResolverTest {
   }
 
   @Test
+  void pendingTenantFallbackDoesNotMaskUnknownTenantInNormalResolution() {
+    givenNoTemplateAttributes();
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenThrow(
+            HttpClientErrorException.create(
+                org.springframework.http.HttpStatus.NOT_FOUND, "nf", null, null, null));
+    EmailBrandingResolver cached = resolver("");
+
+    assertThat(cached.resolvePendingTenant(7L).brandName()).isEqualTo("ORISO");
+    assertThatThrownBy(() -> cached.resolve(7L))
+        .isInstanceOf(HttpClientErrorException.NotFound.class);
+    verify(tenantService, times(2)).getRestrictedTenantDataFresh(7L);
+  }
+
+  @Test
   void resolve_Should_rejectAnUnknownTenantForAnExistingAccount() {
     when(tenantService.getRestrictedTenantDataFresh(7L))
         .thenThrow(

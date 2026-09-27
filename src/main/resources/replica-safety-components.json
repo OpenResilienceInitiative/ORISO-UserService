@@ -529,7 +529,7 @@
       "owner": "agency-tenant",
       "risk": "performance",
       "components": ["tenantCache"],
-      "decision": "Retain one process-local cache of fresh TenantService branding reads. Default TTL is ten seconds, configuration is capped at 300 seconds, and cardinality is capped at 1000 tenant/mode keys. A cache miss re-reads TenantService; replica differences are bounded by the TTL and never select another tenant's URL.",
+      "decision": "Retain one process-local cache of fresh TenantService branding reads. Default TTL is ten seconds, larger configured values are clamped to a ten-second maximum, and cardinality is capped at 1000 tenant/mode keys. A cache miss re-reads TenantService; replica differences are bounded by the TTL and never select another tenant's URL.",
       "signals": ["userservice.replica.local_state"],
       "status": "bounded"
     },

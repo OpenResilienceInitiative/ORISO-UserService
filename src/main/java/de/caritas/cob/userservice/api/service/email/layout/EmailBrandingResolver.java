@@ -301,12 +301,16 @@ public class EmailBrandingResolver {
       return cached.tenant();
     }
     RestrictedTenantDTO fresh = loadTenantUncached(tenantId, pendingTenantAllowed);
-    if (tenantCache.size() >= MAX_CACHE_ENTRIES) {
-      tenantCache.clear();
-    }
     // A null result is cached too: tenant-admin invites resolve to "no tenant yet", and that 404
     // is the normal case, not an error worth repeating once per recipient.
-    tenantCache.put(key, new CachedTenant(fresh, now));
+    synchronized (tenantCache) {
+      if (!tenantCache.containsKey(key) && tenantCache.size() >= MAX_CACHE_ENTRIES) {
+        tenantCache.clear();
+      }
+      // Capacity check and insertion must share the lock; concurrent misses can otherwise all
+      // observe space and leave more than MAX_CACHE_ENTRIES distinct tenants in the cache.
+      tenantCache.put(key, new CachedTenant(fresh, now));
+    }
     return fresh;
   }
 
