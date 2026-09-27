@@ -268,7 +268,10 @@ class UserSessionControllerDelegate {
     return ResponseEntity.noContent().build();
   }
 
-  /** Only the session's advice seeker or a consultant with access to it changes its consultants. */
+  /**
+   * Only the session's advice seeker or a consultant with access to it changes its consultants.
+   * Only these two roles hold the route's authorities; AuthorityTest pins that.
+   */
   private boolean callerMayChangeConsultantsOf(Session session) {
     var callerId = authenticatedUser.getUserId();
     if (authenticatedUser.isAdviceSeeker()) {

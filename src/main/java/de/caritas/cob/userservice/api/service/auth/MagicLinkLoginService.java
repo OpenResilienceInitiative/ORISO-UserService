@@ -163,8 +163,7 @@ public class MagicLinkLoginService {
               user.getMagicLinkLoginEnabled()));
     }
 
-    Optional<Consultant> consultantOptional =
-        consultantService.findConsultantByUsernameOrEmail(username, username);
+    Optional<Consultant> consultantOptional = consultantService.findConsultantForSignIn(username);
     if (consultantOptional.isPresent()) {
       Consultant consultant = consultantOptional.get();
       return Optional.of(

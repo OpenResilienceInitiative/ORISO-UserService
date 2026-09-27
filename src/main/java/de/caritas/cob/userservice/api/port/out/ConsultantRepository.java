@@ -26,6 +26,8 @@ public interface ConsultantRepository
 
   Optional<Consultant> findByEmailAndDeleteDateIsNull(String email);
 
+  List<Consultant> findAllByEmailAndDeleteDateIsNull(String email);
+
   Optional<Consultant> findByUsernameAndDeleteDateIsNull(String username);
 
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
