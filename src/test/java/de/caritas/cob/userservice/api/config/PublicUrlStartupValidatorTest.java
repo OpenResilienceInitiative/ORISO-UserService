@@ -151,6 +151,17 @@ class PublicUrlStartupValidatorTest {
   }
 
   @Test
+  void rejectsDocumentationAndMulticastIpv6HostsInDeployedProfiles() {
+    for (String host : new String[] {"[2001:db8::1]", "[2001:db8:ffff::1]", "[ff02::1]"}) {
+      environment.setProperty("magic.link.frontend.base-url", "https://" + host);
+
+      assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+          .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL")
+          .hasMessageContaining("public host");
+    }
+  }
+
+  @Test
   void allowsPublicIpv6Hosts() {
     environment.setProperty("magic.link.frontend.base-url", "https://[2001:4860:4860::8888]");
 
