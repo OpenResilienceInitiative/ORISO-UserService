@@ -91,7 +91,8 @@ class TenantAdminExistingTenantOnboardingIT {
   @AfterEach
   void cleanUp() {
     accountInviteRepository.deleteAll();
-    adminRepository.findById(NEW_ADMIN_ID).ifPresent(adminRepository::delete);
+    Tenants.acrossAll(
+        () -> adminRepository.findById(NEW_ADMIN_ID).ifPresent(adminRepository::delete));
     // The admin lives in the existing Träger, so only a read across all of them proves it is gone.
     assertThat(Tenants.acrossAll(() -> adminRepository.findById(NEW_ADMIN_ID))).isEmpty();
   }
