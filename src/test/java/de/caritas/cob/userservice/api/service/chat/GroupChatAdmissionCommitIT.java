@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.service.chat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -29,8 +31,10 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.transaction.PlatformTransactionManager;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
@@ -44,7 +48,7 @@ class GroupChatAdmissionCommitIT {
   @Autowired private GroupChatJoinRequestService service;
   @Autowired private GroupChatAdmissionProcessor processor;
   @Autowired private GroupChatJoinRequestRepository requests;
-  @Autowired private GroupChatParticipantRepository participants;
+  @MockitoSpyBean private GroupChatParticipantRepository participants;
   @Autowired private ChatRepository chats;
   @Autowired private ConsultantRepository consultants;
   @Autowired private PlatformTransactionManager transactionManager;
@@ -216,6 +220,45 @@ class GroupChatAdmissionCommitIT {
     assertThat(participants.findBySeriesIdAndConsultantId(series.getId(), requester.getId()))
         .map(GroupChatParticipant::getRole)
         .contains(ParticipantRole.PARTICIPANT);
+    verify(membership, org.mockito.Mockito.times(2))
+        .addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test"));
+  }
+
+  @Test
+  void matrixSuccessFollowedByParticipantWriteFailureRemainsRetryable() {
+    var request =
+        requests.save(
+            GroupChatJoinRequest.builder()
+                .seriesId(series.getId())
+                .consultantId(requester.getId())
+                .status(Status.PENDING)
+                .requestedAt(CustomLocalDateTime.nowInUtc())
+                .build());
+    when(membership.addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test")))
+        .thenReturn(true);
+    doThrow(new DataIntegrityViolationException("simulated participant write failure"))
+        .when(participants)
+        .save(any(GroupChatParticipant.class));
+
+    service.admit(series.getId(), request.getId(), series.getChatOwner().getId(), null);
+
+    var waiting = requests.findById(request.getId()).orElseThrow();
+    assertThat(waiting.getStatus()).isEqualTo(Status.ADMITTING);
+    assertThat(waiting.getAdmissionAttemptCount()).isEqualTo(1);
+    assertThat(participants.findBySeriesIdAndConsultantId(series.getId(), requester.getId()))
+        .isEmpty();
+    verify(membership).addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test"));
+
+    reset(participants);
+    waiting.setAdmissionLastAttemptAt(CustomLocalDateTime.nowInUtc().minusMinutes(2));
+    requests.save(waiting);
+    assertThat(processor.pendingIds()).contains(request.getId());
+    processor.process(request.getId());
+
+    assertThat(requests.findById(request.getId()).orElseThrow().getStatus())
+        .isEqualTo(Status.ADMITTED);
+    assertThat(participants.findBySeriesIdAndConsultantId(series.getId(), requester.getId()))
+        .isPresent();
     verify(membership, org.mockito.Mockito.times(2))
         .addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test"));
   }
