@@ -61,7 +61,7 @@ public class AdminCallerScope {
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull AgencyService agencyService;
 
-  @Value("${multitenancy.enabled:false}")
+  @Value("${multitenancy.enabled:true}")
   private boolean multitenancyEnabled;
 
   /**
