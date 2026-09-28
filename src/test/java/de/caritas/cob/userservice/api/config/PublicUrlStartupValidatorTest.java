@@ -132,7 +132,8 @@ class PublicUrlStartupValidatorTest {
   void rejectsPrivateIpv4HostsInDeployedProfiles() {
     for (String host :
         new String[] {
-          "10.0.0.1", "10.255.255.254", "172.16.0.1", "172.31.255.254", "192.168.1.1"
+          "10.0.0.1", "10.255.255.254", "169.254.0.1", "169.254.169.254",
+          "169.254.255.254", "172.16.0.1", "172.31.255.254", "192.168.1.1"
         }) {
       environment.setProperty("magic.link.frontend.base-url", "https://" + host);
 

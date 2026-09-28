@@ -180,6 +180,7 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
     int first = Integer.parseInt(octets[0]);
     int second = Integer.parseInt(octets[1]);
     return first == 10
+        || (first == 169 && second == 254)
         || (first == 172 && second >= 16 && second <= 31)
         || (first == 192 && second == 168);
   }
