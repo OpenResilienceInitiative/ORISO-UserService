@@ -34,6 +34,7 @@ public class GroupChatAdmissionProcessor {
   private final ChatRepository chats;
   private final ConsultantRepository consultants;
   private final GroupChatMembershipService membership;
+  private final GroupChatAdmissionMatrixRepairService repair;
 
   @Value("${group.chat.admission.retry-backoff:PT1M}")
   private Duration retryBackoff;
@@ -89,12 +90,16 @@ public class GroupChatAdmissionProcessor {
     if (!TransactionSynchronizationManager.isSynchronizationActive()) {
       throw new IllegalStateException("Group admission requires a transaction before Matrix join");
     }
+    var roomId = membership.resolveMatrixRoomId(series.get());
+    if (!wasMemberBefore.get()) {
+      repair.recordBeforeJoin(
+          requestId, request.getSeriesId(), request.getConsultantId(), roomId, matrixUserId);
+    }
     if (!membership.addMemberToRoom(series.get(), matrixUserId)) {
       recordRetry(requestId, request);
       return;
     }
     if (!wasMemberBefore.get()) {
-      var roomId = membership.resolveMatrixRoomId(series.get());
       TransactionSynchronizationManager.registerSynchronization(
           new TransactionSynchronization() {
             @Override
@@ -120,6 +125,7 @@ public class GroupChatAdmissionProcessor {
     request.setStatus(Status.ADMITTED);
     request.setDecidedAt(CustomLocalDateTime.nowInUtc());
     requests.save(request);
+    repair.clearAfterAdmission(requestId);
     log.info("Group chat join request {} admitted after Matrix join", requestId);
   }
 

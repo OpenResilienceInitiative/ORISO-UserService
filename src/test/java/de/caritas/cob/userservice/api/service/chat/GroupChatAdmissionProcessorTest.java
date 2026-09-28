@@ -43,6 +43,7 @@ class GroupChatAdmissionProcessorTest {
   @Mock private ChatRepository chats;
   @Mock private ConsultantRepository consultants;
   @Mock private GroupChatMembershipService membership;
+  @Mock private GroupChatAdmissionMatrixRepairService repair;
   @InjectMocks private GroupChatAdmissionProcessor processor;
 
   private GroupChatJoinRequest request;
