@@ -578,6 +578,7 @@ class MagicLinkLoginServiceTest {
     assertThat(magicLinkLoginService.requestMagicLink("testuser"))
         .isEqualTo(MagicLinkRequestResult.ACCEPTED);
 
+    verify(emailBrand).valuesForTenant("https://app.example.org", 42L);
     verify(oneTimeTokenStore, never())
         .store(anyString(), anyString(), anyString(), any(), anyBoolean());
     verify(emailRenderer, never()).render(anyString(), any(), any());
