@@ -7,6 +7,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
@@ -52,6 +53,12 @@ class InviteEmailPreviewServiceTest {
   private InviteMailDispatchService dispatchService;
   private InviteEmailPreviewService previewService;
 
+  /**
+   * A preview reads a stored template's subject and body, so it is scoped like a send
+   * (ORISO-Admin#1026). The mock passes everything except where a test makes it refuse.
+   */
+  @Mock private AccountInviteAccessPolicy accessPolicy;
+
   @BeforeEach
   void setUp() {
     acceptUrlBuilder =
@@ -68,6 +75,7 @@ class InviteEmailPreviewServiceTest {
     previewService =
         new InviteEmailPreviewService(
             templateRepository,
+            accessPolicy,
             acceptUrlBuilder,
             dispatchService,
             new de.caritas.cob.userservice.api.service.notification.AdminPanelUrl(
@@ -172,6 +180,27 @@ class InviteEmailPreviewServiceTest {
         .contains("Maren Muster")
         .doesNotContain("{{inviteLink}}")
         .contains(preview.sampleAcceptUrl());
+  }
+
+  @Test
+  void preview_Should_refuseAnotherTraegersTemplate_BeforeRenderingIt() {
+    InviteEmailTemplate foreign =
+        InviteEmailTemplate.builder()
+            .id(6L)
+            .tenantId(2L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("B's subject")
+            .body("B's body")
+            .active(true)
+            .build();
+    when(templateRepository.findById(6L)).thenReturn(Optional.of(foreign));
+    org.mockito.Mockito.doThrow(new ForbiddenException("foreign template"))
+        .when(accessPolicy)
+        .authorizeTemplateUse(2L);
+
+    assertThatThrownBy(() -> previewService.preview(new PreviewCommand(6L, null, null, null, null)))
+        .isInstanceOf(ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(emailBrandingResolver, inviteMailTransport);
   }
 
   @Test

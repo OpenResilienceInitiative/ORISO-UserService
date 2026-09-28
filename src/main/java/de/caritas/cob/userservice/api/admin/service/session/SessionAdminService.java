@@ -27,18 +27,16 @@ public class SessionAdminService {
   public SessionAdminResultDTO findSessions(
       Integer page, Integer perPage, SessionFilter sessionFilter) {
     Pageable pageable = PageRequest.of(Math.max(page - 1, 0), Math.max(perPage, 1));
+    SessionFilter filter = sessionFilter != null ? sessionFilter : new SessionFilter();
     SessionPageProvider sessionPageProvider =
         adminScope.current() instanceof AdminScope.Agencies agencies
-            ? new AgencyScopedSessionPageProvider(
-                this.sessionRepository,
-                sessionFilter != null ? sessionFilter : new SessionFilter(),
-                agencies.ids())
-            : PageProviderFactory.getInstance(this.sessionRepository, sessionFilter)
+            ? new AgencyScopedSessionPageProvider(this.sessionRepository, filter, agencies.ids())
+            : PageProviderFactory.getInstance(this.sessionRepository, filter)
                 .retrieveFirstSupportedSessionPageProvider();
     return SessionAdminResultDTOBuilder.getInstance()
         .withPage(page)
         .withPerPage(perPage)
-        .withFilter(sessionFilter)
+        .withFilter(filter)
         .withResultPage(sessionPageProvider.executeQuery(pageable))
         .build();
   }
