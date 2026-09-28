@@ -16,6 +16,11 @@ import org.springframework.data.repository.query.Param;
 public interface AdminRepository
     extends JpaRepository<Admin, String>, JpaSpecificationExecutor<Admin> {
 
+  /** Serializes one admin's own changes, e.g. a first self-assignment, which has no row to lock. */
+  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+  @Query("select a from Admin a where a.id = :id")
+  Optional<Admin> findByIdForUpdate(@Param("id") String id);
+
   @Query(
       value =
           "SELECT a.id as id, a.firstName as firstName, a.lastName as lastName, a.email as email, a.tenantId as tenantId "
