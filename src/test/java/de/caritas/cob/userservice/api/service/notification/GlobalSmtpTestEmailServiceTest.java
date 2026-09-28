@@ -52,7 +52,7 @@ class GlobalSmtpTestEmailServiceTest {
 
   @Test
   void sendTestEmail_Should_RenderThroughTheDesignSystemAndHandToTheTransport() throws Exception {
-    ReflectionTestUtils.setField(service, "appBaseUrl", "https://app.oriso.org");
+    ReflectionTestUtils.setField(service, "appBaseUrl", "https://app.example.org");
     ReflectionTestUtils.setField(service, "transport", transport);
 
     ApplicationSettingsSmtpCredentialsDTO credentials = new ApplicationSettingsSmtpCredentialsDTO();
@@ -62,8 +62,8 @@ class GlobalSmtpTestEmailServiceTest {
         .thenReturn(Optional.of(credentials));
 
     Map<String, String> brandValues = new HashMap<>();
-    brandValues.put("appUrl", "https://app.oriso.org");
-    when(emailBrand.values(eq("https://app.oriso.org"), any())).thenReturn(brandValues);
+    brandValues.put("appUrl", "https://app.example.org");
+    when(emailBrand.values(eq("https://app.example.org"), any())).thenReturn(brandValues);
     when(emailRenderer.render(eq("smtp-test"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(
             new OrisoEmailRenderer.RenderedEmail(
