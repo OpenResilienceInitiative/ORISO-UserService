@@ -19,6 +19,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient.ExistingAgency;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -95,10 +96,9 @@ public class AdminSelfAssignmentService {
 
   /** Returns true when a new consultant identity was created. */
   private boolean assignAsCounsellor(String userId, ExistingAgency agency, List<Long> topicIds) {
-    // A first grant has no consultant row to lock yet, so a double click would create two
-    // identities, and the loser's rollback would strip the winner's Keycloak role. The admin row
-    // makes the second click wait for the first and then answer 409.
-    adminRepository.findByIdForUpdate(userId);
+    // A first grant has no consultant row to lock; the admin row (platform admins sit in tenant 0)
+    // makes a double click wait and answer 409 instead of creating a second identity.
+    TenantContext.supplyAcrossTenants(() -> adminRepository.findByIdForUpdate(userId));
     Optional<Consultant> existing = consultantRepository.findActiveByIdForUpdate(userId);
     if (existing.isPresent()) {
       if (consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
