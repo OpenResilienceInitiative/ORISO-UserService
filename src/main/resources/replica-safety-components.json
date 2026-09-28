@@ -583,6 +583,17 @@
       "status": "bounded"
     },
     {
+      "id": "group-chat-admission-matrix-repair",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/chat/GroupChatAdmissionMatrixRepairScheduler.java",
+      "kind": "scheduler",
+      "owner": "sessions-group-chat",
+      "risk": "duplicate-side-effect",
+      "components": ["retryRepairs"],
+      "decision": "A shared lease and request-row lock serialize reconciliation. A cleanup task is committed before a new Matrix join and removed only with a successful admission; failed removal is retried without revoking admitted members.",
+      "signals": ["userservice.scheduler.executions", "userservice.scheduler.duration"],
+      "status": "bounded"
+    },
+    {
       "id": "event-notification-retention-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/notificationretention/scheduler/EventNotificationRetentionScheduler.java",
       "kind": "scheduler",

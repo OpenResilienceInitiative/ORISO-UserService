@@ -14,12 +14,14 @@ import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
+import de.caritas.cob.userservice.api.model.GroupChatAdmissionMatrixRepairTask;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.GroupChatAdmissionMatrixRepairTaskRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
@@ -52,6 +54,8 @@ class GroupChatAdmissionCommitIT {
   @Autowired private GroupChatJoinRequestService service;
   @Autowired private GroupChatAdmissionProcessor processor;
   @Autowired private GroupChatJoinRequestRepository requests;
+  @Autowired private GroupChatAdmissionMatrixRepairTaskRepository repairTasks;
+  @Autowired private GroupChatAdmissionMatrixRepairService repairService;
   @MockitoSpyBean private GroupChatParticipantRepository participants;
   @Autowired private ChatRepository chats;
   @Autowired private ConsultantRepository consultants;
@@ -108,6 +112,7 @@ class GroupChatAdmissionCommitIT {
 
   @AfterEach
   void cleanUp() {
+    repairTasks.deleteAll();
     if (series != null) {
       requests
           .findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
@@ -211,6 +216,7 @@ class GroupChatAdmissionCommitIT {
     var waiting = requests.findById(request.getId()).orElseThrow();
     assertThat(waiting.getStatus()).isEqualTo(Status.ADMITTING);
     assertThat(waiting.getAdmissionRequestedAt()).isNotNull();
+    assertThat(repairTasks.findByRequestId(request.getId())).isPresent();
     assertThat(waiting.getAdmissionAttemptCount()).isEqualTo(1);
     assertThat(participants.findBySeriesIdAndConsultantId(series.getId(), requester.getId()))
         .isEmpty();
@@ -222,6 +228,8 @@ class GroupChatAdmissionCommitIT {
     assertThat(processor.pendingIds()).contains(request.getId());
 
     processor.process(request.getId());
+
+    assertThat(repairTasks.findByRequestId(request.getId())).isEmpty();
 
     var admitted = requests.findById(request.getId()).orElseThrow();
     assertThat(admitted.getStatus()).isEqualTo(Status.ADMITTED);
@@ -296,6 +304,7 @@ class GroupChatAdmissionCommitIT {
     verify(appointmentEvents, never()).recordMemberJoined(any(), any(), any());
     verify(membership)
         .removeMemberFromRoom("!admission-test:matrix.test", "@admission-test:matrix.test");
+    assertThat(repairTasks.findByRequestId(request.getId())).isPresent();
 
     reset(participants);
     waiting.setAdmissionLastAttemptAt(CustomLocalDateTime.nowInUtc().minusMinutes(2));
@@ -307,10 +316,73 @@ class GroupChatAdmissionCommitIT {
         .isEqualTo(Status.ADMITTED);
     assertThat(participants.findBySeriesIdAndConsultantId(series.getId(), requester.getId()))
         .isPresent();
+    assertThat(repairTasks.findByRequestId(request.getId())).isEmpty();
     verify(membership, org.mockito.Mockito.times(2))
         .addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test"));
     verify(appointmentEvents)
         .recordMemberJoined(any(Chat.class), eq(RecipientRole.COUNSELOR), eq(requester.getId()));
+  }
+
+  @Test
+  void failedMatrixRemovalRemainsDurableUntilRoomIsConfirmedClear() {
+    var request =
+        requests.save(
+            GroupChatJoinRequest.builder()
+                .seriesId(series.getId())
+                .consultantId(requester.getId())
+                .status(Status.PENDING)
+                .requestedAt(CustomLocalDateTime.nowInUtc())
+                .build());
+    when(membership.addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test")))
+        .thenReturn(true);
+    doThrow(new DataIntegrityViolationException("simulated participant write failure"))
+        .when(participants)
+        .save(any(GroupChatParticipant.class));
+
+    service.admit(series.getId(), request.getId(), series.getChatOwner().getId(), null);
+
+    var task = repairTasks.findByRequestId(request.getId()).orElseThrow();
+    assertThat(requests.findById(request.getId()).orElseThrow().getStatus())
+        .isEqualTo(Status.ADMITTING);
+    when(membership.isMemberInRoom("!admission-test:matrix.test", "@admission-test:matrix.test"))
+        .thenReturn(java.util.Optional.of(true), java.util.Optional.of(true));
+    repairService.reconcile(task.getId());
+    assertThat(repairTasks.findById(task.getId())).isPresent();
+    assertThat(repairTasks.findById(task.getId()).orElseThrow().getAttemptCount()).isEqualTo(1);
+
+    when(membership.isMemberInRoom("!admission-test:matrix.test", "@admission-test:matrix.test"))
+        .thenReturn(java.util.Optional.of(false));
+    repairService.reconcile(task.getId());
+    assertThat(repairTasks.findById(task.getId())).isEmpty();
+    assertThat(requests.findById(request.getId()).orElseThrow().getStatus())
+        .isEqualTo(Status.ADMITTING);
+  }
+
+  @Test
+  void staleRepairNeverRemovesMemberAfterAdmissionCommits() {
+    var request =
+        requests.save(
+            GroupChatJoinRequest.builder()
+                .seriesId(series.getId())
+                .consultantId(requester.getId())
+                .status(Status.ADMITTED)
+                .requestedAt(CustomLocalDateTime.nowInUtc())
+                .build());
+    var task =
+        repairTasks.save(
+            GroupChatAdmissionMatrixRepairTask.builder()
+                .requestId(request.getId())
+                .seriesId(series.getId())
+                .consultantId(requester.getId())
+                .roomId("!admission-test:matrix.test")
+                .memberId("@admission-test:matrix.test")
+                .createdAt(CustomLocalDateTime.nowInUtc())
+                .build());
+
+    repairService.reconcile(task.getId());
+
+    assertThat(repairTasks.findById(task.getId())).isEmpty();
+    verify(membership, never()).removeMemberFromRoom(any(), any());
   }
 
   @Test
@@ -336,6 +408,7 @@ class GroupChatAdmissionCommitIT {
     assertThat(requests.findById(request.getId()).orElseThrow().getStatus())
         .isEqualTo(Status.ADMITTING);
     verify(membership, never()).removeMemberFromRoom(any(), any());
+    assertThat(repairTasks.findByRequestId(request.getId())).isEmpty();
   }
 
   @Test

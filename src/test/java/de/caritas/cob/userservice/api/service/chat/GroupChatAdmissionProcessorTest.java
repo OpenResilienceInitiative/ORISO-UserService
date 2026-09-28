@@ -46,6 +46,7 @@ class GroupChatAdmissionProcessorTest {
   @Mock private ConsultantRepository consultants;
   @Mock private GroupChatMembershipService membership;
   @Mock private GroupAppointmentSeriesEventProducer appointmentEvents;
+  @Mock private GroupChatAdmissionMatrixRepairService repair;
   @InjectMocks private GroupChatAdmissionProcessor processor;
 
   private GroupChatJoinRequest request;

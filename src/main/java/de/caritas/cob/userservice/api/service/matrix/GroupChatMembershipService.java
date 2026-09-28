@@ -72,6 +72,10 @@ public class GroupChatMembershipService {
   /** Returns empty when Matrix cannot establish the member's state; callers must retry safely. */
   public Optional<Boolean> isMemberInRoom(Chat chat, String memberMatrixUserId) {
     var matrixRoomId = resolveMatrixRoomId(chat);
+    return isMemberInRoom(matrixRoomId, memberMatrixUserId);
+  }
+
+  public Optional<Boolean> isMemberInRoom(String matrixRoomId, String memberMatrixUserId) {
     if (isBlank(matrixRoomId) || isBlank(memberMatrixUserId)) {
       return Optional.empty();
     }

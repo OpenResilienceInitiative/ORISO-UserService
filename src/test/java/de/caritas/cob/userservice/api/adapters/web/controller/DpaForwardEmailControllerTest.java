@@ -111,6 +111,30 @@ class DpaForwardEmailControllerTest {
     verify(dpaForwardEmailService).previewSigningMail(84L);
   }
 
+  /**
+   * The Admin frontend calls this controller through the gateway prefix (ORISO-Admin
+   * `appConfig.ts`: `${userServiceURL}/service/useradmin/dpa-invites/...`), the same way the public
+   * onboarding endpoints are reached. The tests above exercise the un-prefixed path only, so a
+   * class-level mapping that omits the prefix looks healthy while the Legal Settings preview shows
+   * "preview could not be rendered".
+   */
+  @Test
+  void previewSigningMail_isServedOnTheGatewayPathTheAdminFrontendCalls() throws Exception {
+    when(authenticatedUser.getTenantId()).thenReturn(84L);
+    when(dpaForwardEmailService.previewSigningMail(84L))
+        .thenReturn(new DpaSigningEmailPreview("Vertragsunterlagen", "<p>canonical preview</p>"));
+
+    mockMvc
+        .perform(
+            post("/service/useradmin/dpa-invites/preview")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"tenantId\":84}"))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.subject").value("Vertragsunterlagen"));
+
+    verify(dpaForwardEmailService).previewSigningMail(84L);
+  }
+
   @Test
   void forwardSigningLink_validRequest_returnsNoContent() throws Exception {
     mockMvc
