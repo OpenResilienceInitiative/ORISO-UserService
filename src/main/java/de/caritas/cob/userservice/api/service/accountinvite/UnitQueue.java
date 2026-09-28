@@ -253,11 +253,7 @@ public class UnitQueue {
       invite.setAgencyId(ledger.reserveAgencyOnRelease(invite));
     }
     InviteEmailTemplate template =
-        manualTemplate != null
-            ? manualTemplate
-            : invite.getQueuedTemplateId() == null
-                ? null
-                : templateRepository.findById(invite.getQueuedTemplateId()).orElse(null);
+        manualTemplate != null ? manualTemplate : queuedTemplateOf(invite);
     if (template == null) {
       return new Prepared(
           accountInviteRepository.saveAndFlush(invite), null, null, null, null, null, now);
@@ -267,6 +263,28 @@ public class UnitQueue {
     invite.setStatus(AccountInviteStatus.EMAIL_SENT);
     invite.setUpdateDate(now);
     return prepared.withInvite(accountInviteRepository.saveAndFlush(invite));
+  }
+
+  /**
+   * The release runs without a caller, so the stored id is checked against the invite's own Träger:
+   * another Träger's text is not mailed, the invite becomes a DRAFT to be sent by hand.
+   */
+  private InviteEmailTemplate queuedTemplateOf(AccountInvite invite) {
+    if (invite.getQueuedTemplateId() == null) {
+      return null;
+    }
+    InviteEmailTemplate template =
+        templateRepository.findById(invite.getQueuedTemplateId()).orElse(null);
+    if (template != null
+        && template.getTenantId() != null
+        && !template.getTenantId().equals(invite.getTenantId())) {
+      log.warn(
+          "Waiting invite {} names template {} of another Träger; released without mail",
+          invite.getId(),
+          template.getId());
+      return null;
+    }
+    return template;
   }
 
   /** SMTP confirmed the mail was not sent: a DRAFT without a link, to be sent by hand. */
