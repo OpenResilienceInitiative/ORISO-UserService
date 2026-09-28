@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -21,7 +22,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteFrameMail
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailTransport;
-import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
+import de.caritas.cob.userservice.api.service.email.AdminSettingsSmtpProvider;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisation;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
@@ -158,14 +159,7 @@ class DpaSignedNoticeFooterTest {
             tenantService, tenantTemplateSupplier, "Online-Beratung", "", APP_ORIGIN);
     InviteMailDispatchService mailDispatch =
         new InviteMailDispatchService(
-            new PlatformSmtpSettingsProvider(
-                "smtp.example.org",
-                "587",
-                "false",
-                "smtp-user",
-                "smtp-pass",
-                "noreply@example.org",
-                false),
+            smtpProvider(),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(
                 brandingResolver, senderOrganisations));
@@ -190,6 +184,15 @@ class DpaSignedNoticeFooterTest {
     verify(inviteMailTransport)
         .send(any(), eq("toni@example.org"), any(), html.capture(), text.capture());
     return new SentMail(html.getValue(), text.getValue());
+  }
+
+  private AdminSettingsSmtpProvider smtpProvider() {
+    AdminSettingsSmtpProvider provider = mock(AdminSettingsSmtpProvider.class);
+    when(provider.requireConfigured())
+        .thenReturn(
+            new AdminSettingsSmtpProvider.Settings(
+                "smtp.example.org", 587, false, "smtp-user", "smtp-pass", "noreply@example.org"));
+    return provider;
   }
 
   private record SentMail(String html, String text) {}

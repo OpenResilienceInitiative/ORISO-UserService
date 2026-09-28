@@ -10,7 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
-import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
+import de.caritas.cob.userservice.api.service.email.AdminSettingsSmtpProvider;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import java.time.Instant;
@@ -24,11 +24,15 @@ import org.mockito.junit.jupiter.MockitoExtension;
 class InviteMailDispatchServiceTest {
   @Mock private InviteMailTransport inviteMailTransport;
   @Mock private EmailBrandingResolver emailBrandingResolver;
+  @Mock private AdminSettingsSmtpProvider adminSettingsSmtp;
 
   private InviteMailDispatchService service(String username, String password) {
+    when(adminSettingsSmtp.requireConfigured())
+        .thenReturn(
+            new AdminSettingsSmtpProvider.Settings(
+                "smtp.example.org", 587, false, username, password, "noreply@example.org"));
     return new InviteMailDispatchService(
-        new PlatformSmtpSettingsProvider(
-            "smtp.example.org", "587", "false", username, password, "noreply@example.org", false),
+        adminSettingsSmtp,
         inviteMailTransport,
         InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver));
   }
@@ -38,7 +42,7 @@ class InviteMailDispatchServiceTest {
   }
 
   @Test
-  void sendReturnsReceiptFromDeploymentOwnedServer() {
+  void sendReturnsReceiptFromAdminSettingsServer() {
     givenNeutralBranding();
     InviteMailSendReceipt receipt = new InviteMailSendReceipt("to@example.org", Instant.now());
     when(inviteMailTransport.send(any(), any(), any(), any(), any())).thenReturn(receipt);
@@ -102,11 +106,19 @@ class InviteMailDispatchServiceTest {
   }
 
   @Test
-  void missingDeploymentCredentialsStopBeforeAnyTransportCall() {
-    assertThatThrownBy(() -> service("", "").send("to@example.org", "subject", "body"))
+  void incompleteAdminSettingsStopBeforeAnyTransportCall() {
+    when(adminSettingsSmtp.requireConfigured())
+        .thenThrow(new IllegalStateException("Platform SMTP is not configured in Admin Settings"));
+    assertThatThrownBy(
+            () ->
+                new InviteMailDispatchService(
+                        adminSettingsSmtp,
+                        inviteMailTransport,
+                        InviteFrameMailRendererFixture.inviteFrameMailRenderer(
+                            emailBrandingResolver))
+                    .send("to@example.org", "subject", "body"))
         .isInstanceOf(SmtpSendException.class)
-        .hasMessageContaining("SMTP_USER")
-        .hasMessageContaining("SMTP_PASSWORD")
+        .hasMessageContaining("Admin Settings")
         .isInstanceOfSatisfying(
             SmtpSendException.class,
             exception ->

@@ -1,8 +1,8 @@
 package de.caritas.cob.userservice.api.service.accountinvite.mail;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import de.caritas.cob.userservice.api.service.email.AdminSettingsSmtpProvider;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.RenderedEmail;
-import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
 import lombok.NonNull;
 import org.springframework.stereotype.Service;
@@ -14,7 +14,8 @@ import org.springframework.stereotype.Service;
  * is no silent-failure path. Failures additionally say whether non-delivery is confirmed or the
  * SMTP outcome is uncertain, allowing callers with an existing deduplication claim to retry safely.
  *
- * <p>The platform transport comes only from deployment-owned SMTP settings.
+ * <p>The platform transport is configured through the Admin Settings owned by
+ * ConsultingTypeService.
  *
  * <p>Since ORISO-UserService#914 this service is also the single choke point where the frame is
  * applied: callers hand over the <em>authored content</em> and the primary action, never finished
@@ -27,15 +28,15 @@ import org.springframework.stereotype.Service;
 @Service
 public class InviteMailDispatchService {
 
-  private final @NonNull PlatformSmtpSettingsProvider platformSmtpSettings;
+  private final @NonNull AdminSettingsSmtpProvider adminSettingsSmtp;
   private final @NonNull InviteMailTransport inviteMailTransport;
   private final @NonNull InviteFrameMailRenderer inviteFrameMailRenderer;
 
   public InviteMailDispatchService(
-      @NonNull PlatformSmtpSettingsProvider platformSmtpSettings,
+      @NonNull AdminSettingsSmtpProvider adminSettingsSmtp,
       @NonNull InviteMailTransport inviteMailTransport,
       @NonNull InviteFrameMailRenderer inviteFrameMailRenderer) {
-    this.platformSmtpSettings = platformSmtpSettings;
+    this.adminSettingsSmtp = adminSettingsSmtp;
     this.inviteMailTransport = inviteMailTransport;
     this.inviteFrameMailRenderer = inviteFrameMailRenderer;
   }
@@ -151,7 +152,7 @@ public class InviteMailDispatchService {
 
   private InviteSmtpSettings resolveGlobalSmtpSettings() {
     try {
-      var settings = platformSmtpSettings.requireConfigured();
+      var settings = adminSettingsSmtp.requireConfigured();
       return new InviteSmtpSettings(
           settings.host(),
           settings.port(),

@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -15,6 +16,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteFrameMail
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailTransport;
+import de.caritas.cob.userservice.api.service.email.AdminSettingsSmtpProvider;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import java.time.Instant;
@@ -46,20 +48,22 @@ class InviteEmailPreviewServiceTest {
   private InviteMailDispatchService dispatchService;
   private InviteEmailPreviewService previewService;
 
+  private AdminSettingsSmtpProvider smtpProvider() {
+    AdminSettingsSmtpProvider provider = mock(AdminSettingsSmtpProvider.class);
+    when(provider.requireConfigured())
+        .thenReturn(
+            new AdminSettingsSmtpProvider.Settings(
+                "smtp.example.org", 587, false, "smtp-user", "smtp-pass", "noreply@example.org"));
+    return provider;
+  }
+
   @BeforeEach
   void setUp() {
     acceptUrlBuilder =
         new InviteAcceptUrlBuilder("https://app.example.org", "https://admin.example.org");
     dispatchService =
         new InviteMailDispatchService(
-            new de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider(
-                "smtp.example.org",
-                "587",
-                "false",
-                "smtp-user",
-                "smtp-pass",
-                "noreply@example.org",
-                false),
+            smtpProvider(),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver));
     previewService =

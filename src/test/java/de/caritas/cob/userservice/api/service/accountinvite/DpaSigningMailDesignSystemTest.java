@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -12,6 +13,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteFrameMail
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailTransport;
+import de.caritas.cob.userservice.api.service.email.AdminSettingsSmtpProvider;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisation;
@@ -92,19 +94,21 @@ class DpaSigningMailDesignSystemTest {
             new OrisoEmailRenderer());
     InviteMailDispatchService mailDispatch =
         new InviteMailDispatchService(
-            new de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider(
-                "smtp.example.org",
-                "587",
-                "false",
-                "smtp-user",
-                "smtp-pass",
-                "noreply@example.org",
-                false),
+            smtpProvider(),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(
                 brandingResolver, senderOrganisations));
     dispatch = new DefaultDpaSigningEmailDispatchService(renderer, mailDispatch, CLOCK);
     forward = new DpaForwardEmailService(tenantService, dispatch, APP_ORIGIN);
+  }
+
+  private AdminSettingsSmtpProvider smtpProvider() {
+    AdminSettingsSmtpProvider provider = mock(AdminSettingsSmtpProvider.class);
+    when(provider.requireConfigured())
+        .thenReturn(
+            new AdminSettingsSmtpProvider.Settings(
+                "smtp.example.org", 587, false, "smtp-user", "smtp-pass", "noreply@example.org"));
+    return provider;
   }
 
   @Test
