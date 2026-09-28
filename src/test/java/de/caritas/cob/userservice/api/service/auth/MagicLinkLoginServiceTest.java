@@ -551,6 +551,38 @@ class MagicLinkLoginServiceTest {
     verify(emailBrand).valuesForTenant("https://app.example.org", 42L);
   }
 
+  @Test
+  void requestMagicLink_Should_NotStoreToken_When_TenantBrandingFails() {
+    ReflectionTestUtils.setField(
+        magicLinkLoginService, "consultingTypeServiceApiUrl", "http://cts");
+    when(userService.findUserByUsername("testuser"))
+        .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
+    when(restTemplate.getForObject(anyString(), any()))
+        .thenReturn(
+            Map.of(
+                "globalFeatureSystemNotificationEmailsEnabled", true,
+                "globalSmtpEnabled", true,
+                "globalSmtpHost", "smtp.invalid",
+                "globalSmtpPort", 587,
+                "globalSmtpUsername", "user",
+                "globalSmtpPassword", "pass",
+                "globalSmtpFrom", "noreply@example.com"));
+    ApplicationSettingsSmtpCredentialsDTO credentials = new ApplicationSettingsSmtpCredentialsDTO();
+    credentials.setGlobalSmtpUsername("user");
+    credentials.setGlobalSmtpPassword("pass");
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(Optional.of(credentials));
+    when(emailBrand.valuesForTenant("https://app.example.org", 42L))
+        .thenThrow(new IllegalStateException("tenant branding unavailable"));
+
+    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+
+    verify(oneTimeTokenStore, never())
+        .store(anyString(), anyString(), anyString(), any(), anyBoolean());
+    verify(emailRenderer, never()).render(anyString(), any(), any());
+  }
+
   // ── consumeMagicLink — happy path returns provider-neutral session ────────
 
   @Test

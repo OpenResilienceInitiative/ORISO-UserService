@@ -192,7 +192,7 @@ public class MagicLinkLoginService {
       }
       var smtpSettings = smtpSettingsOptional.get();
       String decodedUsername = new UsernameTranscoder().decodeUsername(target.getUsername());
-      String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
+      String oneTimeToken = generateToken();
       String magicUrl = buildMagicFrontendUrl(oneTimeToken);
 
       Properties props = new Properties();
@@ -217,6 +217,12 @@ public class MagicLinkLoginService {
               });
 
       var email = renderMagicLink(magicUrl, target.getTenantId());
+      oneTimeTokenStore.store(
+          TOKEN_SCOPE,
+          oneTimeToken,
+          target.getKeycloakUserId(),
+          Instant.now().plus(MAGIC_LINK_TOKEN_TTL),
+          false);
       MimeMessage message = new MimeMessage(session);
       message.setFrom(new InternetAddress(smtpSettings.getFrom()));
       message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(target.getEmail()));
@@ -251,13 +257,9 @@ public class MagicLinkLoginService {
     return emailRenderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values);
   }
 
-  private String generateAndStoreToken(String keycloakUserId) {
-    String token =
-        UUID.randomUUID().toString().replace("-", "")
-            + UUID.randomUUID().toString().replace("-", "");
-    oneTimeTokenStore.store(
-        TOKEN_SCOPE, token, keycloakUserId, Instant.now().plus(MAGIC_LINK_TOKEN_TTL), false);
-    return token;
+  private String generateToken() {
+    return UUID.randomUUID().toString().replace("-", "")
+        + UUID.randomUUID().toString().replace("-", "");
   }
 
   private String buildMagicFrontendUrl(String oneTimeToken) {
