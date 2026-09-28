@@ -14,8 +14,10 @@ import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
+import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Objects;
@@ -41,6 +43,7 @@ public class AdminSelfAssignmentService {
   private final @NonNull AccountInviteAccessPolicy accessPolicy;
   private final @NonNull AgencyFacts agencyFacts;
   private final @NonNull AdminAgencyRepository adminAgencyRepository;
+  private final @NonNull AdminRepository adminRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull ConsultantAgencyRepository consultantAgencyRepository;
   private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
@@ -92,7 +95,9 @@ public class AdminSelfAssignmentService {
   /** Returns true when a new consultant identity was created. */
   private boolean assignAsCounsellor(
       String userId, AgencyFacts.Agency agency, List<Long> topicIds) {
-    // The row lock makes a double click wait for the first request and then answer 409.
+    // A first grant has no consultant row to lock; the admin row (platform admins sit in tenant 0)
+    // makes a double click wait and answer 409 instead of creating a second identity.
+    TenantContext.supplyAcrossTenants(() -> adminRepository.findByIdForUpdate(userId));
     Optional<Consultant> existing = consultantRepository.findActiveByIdForUpdate(userId);
     if (existing.isPresent()) {
       if (consultantAgencyRepository.existsByConsultantIdAndAgencyIdAndDeleteDateIsNull(
