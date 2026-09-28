@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -39,6 +40,8 @@ import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentServ
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
+import java.util.Arrays;
+import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -311,10 +314,23 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
         .andExpect(jsonPath("_embedded.tenantId", is("0")));
   }
 
-  // Production only builds a platform admin from tenant 0 plus both super-admin roles.
+  // Production only builds a platform admin from tenant 0 plus both super-admin roles: the real
+  // predicates run on that state, so a broken rule fails here instead of being stubbed to true.
   private void givenPlatformAdmin() {
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
-    when(authenticatedUser.getTenantId()).thenReturn(0L);
+    givenCaller(0L, UserRole.AGENCY_ADMIN, UserRole.TENANT_ADMIN);
+  }
+
+  private void givenCaller(Long tenantId, UserRole... roles) {
+    Mockito.doCallRealMethod().when(authenticatedUser).setRoles(any());
+    Mockito.doCallRealMethod().when(authenticatedUser).setTenantId(any());
+    authenticatedUser.setRoles(
+        Arrays.stream(roles).map(UserRole::getValue).collect(Collectors.toSet()));
+    authenticatedUser.setTenantId(tenantId);
+    Mockito.doCallRealMethod().when(authenticatedUser).getRoles();
+    Mockito.doCallRealMethod().when(authenticatedUser).isAgencySuperAdmin();
+    Mockito.doCallRealMethod().when(authenticatedUser).isTenantSuperAdmin();
+    Mockito.doCallRealMethod().when(authenticatedUser).isPlatformAdmin();
+    when(authenticatedUser.getTenantId()).thenReturn(tenantId);
   }
 
   private void givenCallerBelongsToTenant(Long tenantId) {
