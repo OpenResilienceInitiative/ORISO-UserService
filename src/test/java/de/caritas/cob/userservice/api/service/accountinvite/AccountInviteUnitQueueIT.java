@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.customheader.HttpStatusExceptionReason;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -131,6 +132,7 @@ class AccountInviteUnitQueueIT {
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
 
   private Long templateId;
+  private Long foreignTemplateId;
 
   @BeforeEach
   void upstreams() {
@@ -177,6 +179,9 @@ class AccountInviteUnitQueueIT {
     deliveryRepository.deleteAll();
     accountInviteRepository.deleteAll();
     templateRepository.deleteById(templateId);
+    if (foreignTemplateId != null) {
+      templateRepository.deleteById(foreignTemplateId);
+    }
   }
 
   // --- queueing ---------------------------------------------------------------------------------
@@ -486,6 +491,98 @@ class AccountInviteUnitQueueIT {
     assertThat(result.rawToken()).isNotBlank();
   }
 
+  // --- another Träger's template (#1213 review) ------------------------------------------------
+
+  @Test
+  void createAndSend_Should_RefuseAnotherTraegersTemplate_BeforeTheInviteExists() {
+    actAsTenantAdmin();
+    Long foreign = foreignTemplate();
+
+    assertThatThrownBy(() -> service.createAndSendInvite(agencyAdmin(NEW_AGENCY), foreign))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(accountInviteRepository.count()).isZero();
+    verify(agencyIdAllocationClient, never()).reserve(any(), any());
+    verifyNoMailWasSent();
+  }
+
+  @Test
+  void createAndSend_Should_RefuseAnotherTraegersTemplate_When_TheInviteWouldWait() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    Long foreign = foreignTemplate();
+
+    assertThatThrownBy(() -> service.createAndSendInvite(counsellor(NEW_AGENCY), foreign))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(accountInviteRepository.findAll())
+        .noneMatch(invite -> invite.getStatus() == AccountInviteStatus.WAITING_FOR_UNIT);
+  }
+
+  @Test
+  void send_Should_RefuseAnotherTraegersTemplate() {
+    actAsTenantAdmin();
+    AccountInvite draft = service.createInvite(agencyAdmin(NEW_AGENCY));
+    Long foreign = foreignTemplate();
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(draft.getId(), foreign)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(reload(draft).getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    verifyNoMailWasSent();
+  }
+
+  @Test
+  void resend_Should_RefuseAnotherTraegersTemplate_AndKeepTheSentInvite() {
+    actAsTenantAdmin();
+    var sent = service.createAndSendInvite(agencyAdmin(NEW_AGENCY), templateId);
+    Long foreign = foreignTemplate();
+
+    assertThatThrownBy(
+            () -> service.resendInvite(new SendInviteCommand(sent.invite().getId(), foreign)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(reload(sent.invite()).getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    verify(inviteMailDispatchService, times(1))
+        .send(anyString(), anyString(), anyString(), anyString(), any(), any());
+  }
+
+  @Test
+  void manualRelease_Should_RefuseAnotherTraegersTemplate_AndKeepTheInviteWaiting() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    AccountInvite queued = service.createInvite(counsellor(NEW_AGENCY));
+    when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
+        .thenReturn(IdAllocationStatus.ASSIGNED);
+    Long foreign = foreignTemplate();
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(queued.getId(), foreign)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(reload(queued).getStatus()).isEqualTo(AccountInviteStatus.WAITING_FOR_UNIT);
+    verifyNoMailWasSent();
+  }
+
+  @Test
+  void queuedRelease_Should_NotMailAnotherTraegersTemplate_ButLeaveADraft() {
+    actAsTenantAdmin();
+    service.createInvite(agencyAdmin(NEW_AGENCY));
+    var queued = service.createAndSendInvite(counsellor(NEW_AGENCY), templateId);
+    // A stored id is only as good as the check at queue time: the release checks it again.
+    AccountInvite waiting = reload(queued.invite());
+    waiting.setQueuedTemplateId(foreignTemplate());
+    accountInviteRepository.saveAndFlush(waiting);
+    when(agencyIdAllocationClient.getAvailability(NEW_AGENCY))
+        .thenReturn(IdAllocationStatus.ASSIGNED);
+
+    queue.release(InviteUnitType.AGENCY, NEW_AGENCY, OWN_TENANT);
+
+    AccountInvite draft = reload(queued.invite());
+    assertThat(draft.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    assertThat(draft.getTokenHash()).isNull();
+    verifyNoMailWasSent();
+  }
+
   // --- a new Träger -----------------------------------------------------------------------------
 
   @Test
@@ -668,6 +765,29 @@ class AccountInviteUnitQueueIT {
             .sentAt(status == InviteEmailDeliveryStatus.SENT ? createDate : null)
             .createDate(createDate)
             .build());
+  }
+
+  private Long foreignTemplate() {
+    foreignTemplateId =
+        templateRepository
+            .save(
+                InviteEmailTemplate.builder()
+                    .tenantId(OTHER_TENANT)
+                    .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+                    .name("another Träger's text")
+                    .language("de")
+                    .subject("Einladung")
+                    .body("Hallo {{firstName}}")
+                    .active(true)
+                    .createDate(LocalDateTime.now())
+                    .build())
+            .getId();
+    return foreignTemplateId;
+  }
+
+  private void verifyNoMailWasSent() {
+    verify(inviteMailDispatchService, never())
+        .send(anyString(), anyString(), anyString(), anyString(), any(), any());
   }
 
   private void givenTheNewTenantCanBeReserved() {
