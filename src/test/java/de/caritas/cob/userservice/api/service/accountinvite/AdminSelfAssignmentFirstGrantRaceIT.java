@@ -25,8 +25,21 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
+import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
+import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
+import de.caritas.cob.userservice.api.port.out.IdentityDummyEmailUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailAddressUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
+import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleUpdater;
+import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
+import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.port.out.MatrixUserClient;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService;
 import de.caritas.cob.userservice.api.service.ChatRecoveryEnrollmentPolicyService.RecoveryPolicySnapshot;
@@ -107,8 +120,27 @@ class AdminSelfAssignmentFirstGrantRaceIT {
 
   @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private AgencyService agencyService;
-  @MockitoBean private IdentityClient identityClient;
-  @MockitoBean private IdentityRoleUpdater identityRoleUpdater;
+
+  // One Keycloak mock carrying every port, as the real KeycloakService does.
+  @MockitoBean(
+      extraInterfaces = {
+        IdentityAccountRemover.class,
+        IdentityAuthentication.class,
+        IdentityDeactivator.class,
+        IdentityDummyEmailUpdater.class,
+        IdentityEmailAddressUpdater.class,
+        IdentityEmailOwnerLookup.class,
+        IdentityLocaleLookup.class,
+        IdentityPasswordUpdater.class,
+        IdentityProfileLookup.class,
+        IdentityProfileUpdater.class,
+        IdentityRoleLookup.class,
+        IdentityRoleUpdater.class,
+        IdentitySecondFactor.class,
+        IdentityUsernameAvailability.class
+      })
+  private IdentityClient identityClient;
+
   @MockitoBean private MatrixUserClient matrixUserClient;
   @MockitoBean private UserHelper userHelper;
   @MockitoBean private ChatRecoveryEnrollmentPolicyService chatRecoveryEnrollmentPolicyService;
@@ -131,7 +163,7 @@ class AdminSelfAssignmentFirstGrantRaceIT {
         .thenReturn(new RecoveryPolicySnapshot("RECOVERY_KEY", 1L));
     when(userHelper.getRandomPassword()).thenReturn("random-matrix-password");
     doAnswer(call -> keycloakRoles.addAll(call.<Collection<String>>getArgument(1)))
-        .when(identityRoleUpdater)
+        .when((IdentityRoleUpdater) identityClient)
         .ensureRoles(eq(ADMIN_ID), anyCollection());
     doAnswer(call -> keycloakRoles.remove(call.<String>getArgument(1)))
         .when(identityClient)
