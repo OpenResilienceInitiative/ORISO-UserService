@@ -164,11 +164,24 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
         || host.endsWith(".localhost")
         || host.endsWith(".")
         || host.equals("0.0.0.0")
+        || isPrivateIpv4(host)
         || isNonPublicIpv6(host)
         // Browsers interpret single decimal/hex labels as IPv4 addresses.
         || host.matches("[0-9]+|0x[0-9a-f]+")
         || host.matches("127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}")
         || EXAMPLE_DOMAINS.stream().anyMatch(d -> host.equals(d) || host.endsWith("." + d));
+  }
+
+  private static boolean isPrivateIpv4(String host) {
+    if (!host.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}")) {
+      return false;
+    }
+    String[] octets = host.split("\\.");
+    int first = Integer.parseInt(octets[0]);
+    int second = Integer.parseInt(octets[1]);
+    return first == 10
+        || (first == 172 && second >= 16 && second <= 31)
+        || (first == 192 && second == 168);
   }
 
   private static boolean isNonPublicIpv6(String host) {

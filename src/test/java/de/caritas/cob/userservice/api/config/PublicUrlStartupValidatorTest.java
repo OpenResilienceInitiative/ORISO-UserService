@@ -129,6 +129,39 @@ class PublicUrlStartupValidatorTest {
   }
 
   @Test
+  void rejectsPrivateIpv4HostsInDeployedProfiles() {
+    for (String host :
+        new String[] {
+          "10.0.0.1", "10.255.255.254", "172.16.0.1", "172.31.255.254", "192.168.1.1"
+        }) {
+      environment.setProperty("magic.link.frontend.base-url", "https://" + host);
+
+      assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+          .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL")
+          .hasMessageContaining("public host");
+    }
+  }
+
+  @Test
+  void keepsPublicIpv4HostsAndLocalProfilePrivateOriginsAvailable() {
+    for (String host : new String[] {"10.255.255.254", "172.15.255.254", "172.32.0.1"}) {
+      environment.setProperty("magic.link.frontend.base-url", "https://" + host);
+      environment.setActiveProfiles("local");
+
+      assertThatCode(() -> PublicUrlStartupValidator.validate(environment))
+          .doesNotThrowAnyException();
+    }
+
+    environment.setActiveProfiles("prod");
+    environment.setProperty("magic.link.frontend.base-url", "https://172.15.255.254");
+    assertThatCode(() -> PublicUrlStartupValidator.validate(environment))
+        .doesNotThrowAnyException();
+    environment.setProperty("magic.link.frontend.base-url", "https://172.32.0.1");
+    assertThatCode(() -> PublicUrlStartupValidator.validate(environment))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
   void rejectsIpv6LoopbackAndUnspecifiedHostsInDeployedProfiles() {
     for (String host : new String[] {"[::1]", "[0:0:0:0:0:0:0:1]", "[::ffff:127.0.0.1]", "[::]"}) {
       environment.setProperty("magic.link.frontend.base-url", "https://" + host);
