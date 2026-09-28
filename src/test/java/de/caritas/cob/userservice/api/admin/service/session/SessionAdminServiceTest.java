@@ -51,6 +51,14 @@ class SessionAdminServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
+  void findSessions_Should_TreatAMissingFilterAsEmpty_When_TheCallerIsTenantWide() {
+    when(sessionRepository.findAll(any(Pageable.class))).thenReturn(emptyPage(0));
+
+    assertThat(sessionAdminService.findSessions(1, 10, null)).isNotNull();
+    verify(sessionRepository).findAll(any(Pageable.class));
+  }
+
+  @Test
   void findSessions_Should_UseZeroBasedIndex_When_PageIsOne() {
     when(sessionRepository.findAll(any(Pageable.class))).thenReturn(emptyPage(0));
     ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
