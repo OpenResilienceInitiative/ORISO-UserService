@@ -145,7 +145,7 @@ class TenantAdminExistingTenantOnboardingIT {
     assertThat(admin.getType()).isEqualTo(Admin.AdminType.TENANT);
     assertThat(admin.getTenantId()).isEqualTo(EXISTING_TENANT);
     verify(keycloakService).updatePassword(eq(NEW_ADMIN_ID), eq("Valid-Test-Password-2026!"));
-    AccountInvite invite = accountInviteRepository.findAll().get(0);
+    AccountInvite invite = seededInvite();
     assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.ACCEPTED);
     assertThat(invite.getAcceptedByUserId()).isEqualTo(NEW_ADMIN_ID);
     assertThat(invite.getDpaSignedAt()).isNull();
@@ -167,16 +167,23 @@ class TenantAdminExistingTenantOnboardingIT {
         .andExpect(jsonPath("$.message", containsString("joins an existing tenant")));
 
     verifyNoInteractions(publicDpaForwardClient, operatorDpaContentClient);
-    // findByTokenHash locks the row and needs a transaction; a plain read is enough here.
-    AccountInvite invite =
-        accountInviteRepository.findAll().stream()
-            .filter(i -> AccountInviteService.hash(token).equals(i.getTokenHash()))
-            .findFirst()
-            .orElseThrow();
+    AccountInvite invite = seededInvite();
     assertThat(invite.getDpaForwardCount()).isZero();
     assertThat(invite.getDpaForwardedAt()).isNull();
     assertThat(invite.getDpaSignedAt()).isNull();
     assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+  }
+
+  /**
+   * The invite this test seeded, by id: other classes leave rows in the shared table, and an
+   * accepted invite may no longer carry its token hash. findByTokenHash would also need a lock.
+   */
+  private AccountInvite seededInvite() {
+    Long id = seededInviteIds.get(seededInviteIds.size() - 1);
+    return accountInviteRepository.findAll().stream()
+        .filter(invite -> id.equals(invite.getId()))
+        .findFirst()
+        .orElseThrow();
   }
 
   private String seedExistingTenantInvite() {

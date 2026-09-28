@@ -53,6 +53,7 @@ import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import jakarta.servlet.http.Cookie;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -92,6 +93,8 @@ class QueuedInviteReleaseOnOnboardingIT {
   @MockitoBean private TenantService tenantService;
 
   @Autowired private MockMvc mockMvc;
+  private final List<Long> seededInviteIds = new ArrayList<>();
+
   @Autowired private AccountInviteRepository accountInviteRepository;
   @Autowired private InviteEmailTemplateRepository templateRepository;
   @Autowired private InviteEmailDeliveryRepository deliveryRepository;
@@ -155,8 +158,8 @@ class QueuedInviteReleaseOnOnboardingIT {
 
   @AfterEach
   void cleanUp() {
-    deliveryRepository.deleteAll();
-    accountInviteRepository.deleteAll();
+    // The invite tables are shared: only this class's rows go.
+    Tenants.acrossAll(() -> seededInviteIds.forEach(this::deleteInviteWithItsMail));
     templateRepository.deleteById(templateId);
     // The new admin lives in the new Träger, not in the one the requests resolved to.
     Tenants.acrossAll(
@@ -282,7 +285,15 @@ class QueuedInviteReleaseOnOnboardingIT {
   }
 
   private AccountInvite seed(AccountInvite invite) {
-    return accountInviteRepository.save(invite);
+    AccountInvite saved = accountInviteRepository.save(invite);
+    seededInviteIds.add(saved.getId());
+    return saved;
+  }
+
+  private void deleteInviteWithItsMail(Long inviteId) {
+    deliveryRepository.deleteAll(
+        deliveryRepository.findByAccountInviteIdOrderByCreateDateDesc(inviteId));
+    accountInviteRepository.deleteById(inviteId);
   }
 
   private String seedSentInvite(AccountInvite invite) {
