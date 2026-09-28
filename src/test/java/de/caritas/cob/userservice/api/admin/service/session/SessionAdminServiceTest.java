@@ -222,6 +222,27 @@ class SessionAdminServiceTest {
     verify(sessionRepository).findByAgencyIdIn(eq(Set.of(7L)), any(Pageable.class));
   }
 
+  @Test
+  void findSessions_Should_ListNothing_When_RestrictedCallerFiltersByAForeignAgency() {
+    when(adminScope.current()).thenReturn(new AdminScope.Agencies(1L, Set.of(7L)));
+
+    SessionAdminResultDTO result =
+        sessionAdminService.findSessions(1, 10, new SessionFilter().agency(99));
+
+    assertThat(result.getEmbedded()).isEmpty();
+    verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
+  void findSessions_Should_ListThatAgency_When_RestrictedCallerFiltersByAnOwnAgency() {
+    when(adminScope.current()).thenReturn(new AdminScope.Agencies(1L, Set.of(7L)));
+    when(sessionRepository.findByAgencyId(eq(7L), any(Pageable.class))).thenReturn(emptyPage(0));
+
+    sessionAdminService.findSessions(1, 10, new SessionFilter().agency(7));
+
+    verify(sessionRepository).findByAgencyId(eq(7L), any(Pageable.class));
+  }
+
   private Page<Session> emptyPage(int totalElements) {
     return new PageImpl<>(Collections.emptyList(), Pageable.ofSize(10), totalElements);
   }
