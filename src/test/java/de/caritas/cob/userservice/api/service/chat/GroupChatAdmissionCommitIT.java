@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -22,6 +23,7 @@ import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import java.time.LocalDateTime;
+import java.util.Optional;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -62,6 +64,9 @@ class GroupChatAdmissionCommitIT {
 
   @BeforeEach
   void setUp() {
+    when(membership.isMemberInRoom(any(Chat.class), eq("@admission-test:matrix.test")))
+        .thenReturn(Optional.of(false));
+    when(membership.resolveMatrixRoomId(any(Chat.class))).thenReturn("!admission-test:matrix.test");
     var users =
         StreamSupport.stream(consultants.findAll().spliterator(), false)
             .filter(user -> user.getDeleteDate() == null)
@@ -248,6 +253,8 @@ class GroupChatAdmissionCommitIT {
     assertThat(participants.findBySeriesIdAndConsultantId(series.getId(), requester.getId()))
         .isEmpty();
     verify(membership).addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test"));
+    verify(membership)
+        .removeMemberFromRoom("!admission-test:matrix.test", "@admission-test:matrix.test");
 
     reset(participants);
     waiting.setAdmissionLastAttemptAt(CustomLocalDateTime.nowInUtc().minusMinutes(2));
@@ -261,6 +268,31 @@ class GroupChatAdmissionCommitIT {
         .isPresent();
     verify(membership, org.mockito.Mockito.times(2))
         .addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test"));
+  }
+
+  @Test
+  void rollbackDoesNotRemoveAnExistingMatrixMember() {
+    when(membership.isMemberInRoom(any(Chat.class), eq("@admission-test:matrix.test")))
+        .thenReturn(Optional.of(true));
+    var request =
+        requests.save(
+            GroupChatJoinRequest.builder()
+                .seriesId(series.getId())
+                .consultantId(requester.getId())
+                .status(Status.PENDING)
+                .requestedAt(CustomLocalDateTime.nowInUtc())
+                .build());
+    when(membership.addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test")))
+        .thenReturn(true);
+    doThrow(new DataIntegrityViolationException("simulated participant write failure"))
+        .when(participants)
+        .save(any(GroupChatParticipant.class));
+
+    service.admit(series.getId(), request.getId(), series.getChatOwner().getId(), null);
+
+    assertThat(requests.findById(request.getId()).orElseThrow().getStatus())
+        .isEqualTo(Status.ADMITTING);
+    verify(membership, never()).removeMemberFromRoom(any(), any());
   }
 
   @Test

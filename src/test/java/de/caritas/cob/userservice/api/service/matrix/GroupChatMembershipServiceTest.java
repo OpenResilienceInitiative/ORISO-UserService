@@ -84,6 +84,23 @@ class GroupChatMembershipServiceTest {
   }
 
   @Test
+  void memberSnapshotDistinguishesExistingAbsentAndUnknown() {
+    when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
+        .thenReturn(
+            Optional.of(List.of(CONSULTANT_MATRIX_ID)), Optional.of(List.of()), Optional.empty());
+
+    assertEquals(
+        Optional.of(true),
+        groupChatMembershipService.isMemberInRoom(chatWithMatrixRoom(), CONSULTANT_MATRIX_ID));
+    assertEquals(
+        Optional.of(false),
+        groupChatMembershipService.isMemberInRoom(chatWithMatrixRoom(), CONSULTANT_MATRIX_ID));
+    assertEquals(
+        Optional.empty(),
+        groupChatMembershipService.isMemberInRoom(chatWithMatrixRoom(), CONSULTANT_MATRIX_ID));
+  }
+
+  @Test
   void hasRemainingHumanMembers_Should_ReturnTrue_When_AnotherConsultantIsInRoom() {
     when(matrixSynapseService.getRoomMembers(MATRIX_ROOM_ID))
         .thenReturn(Optional.of(List.of(LEAVER_MATRIX_ID, CONSULTANT_MATRIX_ID)));

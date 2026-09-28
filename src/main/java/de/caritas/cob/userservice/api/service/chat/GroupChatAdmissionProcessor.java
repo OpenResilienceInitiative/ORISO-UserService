@@ -20,6 +20,8 @@ import org.springframework.data.domain.PageRequest;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 /** Retries a committed moderation decision until Matrix and the participant row agree. */
 @Service
@@ -78,9 +80,30 @@ public class GroupChatAdmissionProcessor {
       return;
     }
 
-    if (!membership.addMemberToRoom(series.get(), consultant.get().getMatrixUserId())) {
+    var matrixUserId = consultant.get().getMatrixUserId();
+    var wasMemberBefore = membership.isMemberInRoom(series.get(), matrixUserId);
+    if (wasMemberBefore.isEmpty()) {
       recordRetry(requestId, request);
       return;
+    }
+    if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+      throw new IllegalStateException("Group admission requires a transaction before Matrix join");
+    }
+    if (!membership.addMemberToRoom(series.get(), matrixUserId)) {
+      recordRetry(requestId, request);
+      return;
+    }
+    if (!wasMemberBefore.get()) {
+      var roomId = membership.resolveMatrixRoomId(series.get());
+      TransactionSynchronizationManager.registerSynchronization(
+          new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+              if (status == TransactionSynchronization.STATUS_ROLLED_BACK) {
+                membership.removeMemberFromRoom(roomId, matrixUserId);
+              }
+            }
+          });
     }
 
     if (current.stream()

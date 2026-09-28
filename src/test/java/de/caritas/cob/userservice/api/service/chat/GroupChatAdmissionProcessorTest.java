@@ -24,6 +24,7 @@ import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -32,6 +33,7 @@ import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @ExtendWith(MockitoExtension.class)
 class GroupChatAdmissionProcessorTest {
@@ -48,6 +50,7 @@ class GroupChatAdmissionProcessorTest {
 
   @BeforeEach
   void setUp() {
+    TransactionSynchronizationManager.initSynchronization();
     request =
         GroupChatJoinRequest.builder()
             .id(7L)
@@ -75,8 +78,14 @@ class GroupChatAdmissionProcessorTest {
                     .build()));
   }
 
+  @AfterEach
+  void clearSynchronization() {
+    TransactionSynchronizationManager.clearSynchronization();
+  }
+
   @Test
   void failedMatrixJoinLeavesDurableIntentWithoutParticipantAndLaterRetryCompletes() {
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(false));
     when(membership.addMemberToRoom(series, "@r:test")).thenReturn(false, true);
 
     processor.process(7L);
@@ -99,6 +108,7 @@ class GroupChatAdmissionProcessorTest {
 
   @Test
   void failedParticipantWriteDoesNotMarkRequestAdmittedAfterMatrixJoined() {
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.of(false));
     when(membership.addMemberToRoom(series, "@r:test")).thenReturn(true);
     when(participants.save(any())).thenThrow(new DataIntegrityViolationException("write failed"));
 
@@ -111,5 +121,17 @@ class GroupChatAdmissionProcessorTest {
     processor.recordFailure(7L);
     assertThat(request.getAdmissionAttemptCount()).isEqualTo(1);
     assertThat(request.getAdmissionLastAttemptAt()).isNotNull();
+  }
+
+  @Test
+  void unknownMatrixMembershipLeavesAdmissionForRetryWithoutJoining() {
+    when(membership.isMemberInRoom(series, "@r:test")).thenReturn(Optional.empty());
+
+    processor.process(7L);
+
+    assertThat(request.getStatus()).isEqualTo(Status.ADMITTING);
+    assertThat(request.getAdmissionAttemptCount()).isEqualTo(1);
+    verify(membership, never()).addMemberToRoom(any(), any());
+    verify(participants, never()).save(any());
   }
 }
