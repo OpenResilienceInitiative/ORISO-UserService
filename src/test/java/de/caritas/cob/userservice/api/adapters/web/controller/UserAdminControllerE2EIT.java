@@ -322,6 +322,8 @@ class UserAdminControllerE2EIT {
 
     putConsultant(CONSULTANT_WITH_LANGUAGES_ID, body).andExpect(status().isBadRequest());
 
+    // Without the flush, a removal the service made before refusing would never reach the table.
+    entityManager.flush();
     entityManager.clear();
     assertThat(topicIdsOf(CONSULTANT_WITH_LANGUAGES_ID)).containsExactlyInAnyOrder(1L, 2L);
   }
