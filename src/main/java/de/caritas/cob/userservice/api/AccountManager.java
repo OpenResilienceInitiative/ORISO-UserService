@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.SearchSort;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -34,8 +35,6 @@ import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.domain.Page;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort.Direction;
 import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestClientException;
 
@@ -108,8 +107,7 @@ public class AccountManager implements AccountManaging {
       String fieldName,
       boolean isAscending) {
 
-    var direction = isAscending ? Direction.ASC : Direction.DESC;
-    var pageRequest = PageRequest.of(pageNumber, pageSize, direction, fieldName);
+    var pageRequest = SearchSort.pageRequestOf(pageNumber, pageSize, fieldName, isAscending);
     var effectiveTenantId = resolveEffectiveTenantId();
     Page<ConsultantBase> consultantPage;
     if (!shouldFilterByAgencies) {

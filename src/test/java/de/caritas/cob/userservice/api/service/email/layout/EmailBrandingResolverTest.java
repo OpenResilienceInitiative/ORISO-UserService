@@ -27,7 +27,11 @@ class EmailBrandingResolverTest {
 
   private EmailBrandingResolver resolver(String platformLogoUrl) {
     return new EmailBrandingResolver(
-        tenantService, tenantTemplateSupplier, "ORISO", platformLogoUrl, "https://app.oriso.org/");
+        tenantService,
+        tenantTemplateSupplier,
+        "ORISO",
+        platformLogoUrl,
+        "https://app.example.org/");
   }
 
   private void givenNoTemplateAttributes() {
@@ -113,12 +117,12 @@ class EmailBrandingResolverTest {
     when(tenantService.getRestrictedTenantData(12L)).thenReturn(resolvedTenant);
     lenient()
         .when(tenantTemplateSupplier.getTenantBaseUrl(resolvedTenant))
-        .thenReturn("https://nord.app.oriso.org");
+        .thenReturn("https://nord.app.example.org");
 
     EmailBranding branding = resolver("").resolve(12L);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/12/logo");
+        .isEqualTo("https://app.example.org/service/tenant/public/branding/12/logo");
     assertThat(branding.hasLogo()).isTrue();
   }
 
@@ -134,7 +138,7 @@ class EmailBrandingResolverTest {
     EmailBranding branding = resolver("").resolve(null);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/1/logo");
+        .isEqualTo("https://app.example.org/service/tenant/public/branding/1/logo");
   }
 
   /**
@@ -157,7 +161,7 @@ class EmailBrandingResolverTest {
     EmailBranding branding = resolver("").resolve(12L);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/12/logo");
+        .isEqualTo("https://app.example.org/service/tenant/public/branding/12/logo");
   }
 
   @Test
@@ -184,8 +188,8 @@ class EmailBrandingResolverTest {
 
     EmailBranding branding = resolver("").resolve(12L);
 
-    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
-    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+    assertThat(branding.imprintUrl()).isEqualTo("https://app.example.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://app.example.org/datenschutz");
   }
 
   @Test
@@ -319,8 +323,8 @@ class EmailBrandingResolverTest {
 
     EmailBranding branding = resolver("").resolve(7L);
 
-    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
-    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+    assertThat(branding.imprintUrl()).isEqualTo("https://app.example.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://app.example.org/datenschutz");
   }
 
   @Test
@@ -329,7 +333,7 @@ class EmailBrandingResolverTest {
 
     EmailBranding branding = resolver("").resolve(null);
 
-    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
-    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+    assertThat(branding.imprintUrl()).isEqualTo("https://app.example.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://app.example.org/datenschutz");
   }
 }
