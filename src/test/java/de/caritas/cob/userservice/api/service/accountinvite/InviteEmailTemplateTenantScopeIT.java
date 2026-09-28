@@ -162,6 +162,8 @@ class InviteEmailTemplateTenantScopeIT {
     service.createTemplate(command("Platform text"));
     actAsTenantAdmin(TRAEGER_A);
     service.createTemplate(command("A's own"));
+    // Visible to A as well, but of another kind: the kind filter must drop it.
+    service.createTemplate(command("A's tenant invite", InviteEmailTemplateKind.TENANT_INVITE));
 
     assertThat(service.listTemplates(InviteEmailTemplateKind.COUNSELLOR_INVITE))
         .extracting(InviteEmailTemplate::getName)
@@ -259,8 +261,11 @@ class InviteEmailTemplateTenantScopeIT {
   // --- helpers ---------------------------------------------------------------------------------
 
   private static TemplateCommand command(String name) {
-    return new TemplateCommand(
-        InviteEmailTemplateKind.COUNSELLOR_INVITE, name, "de", "Subject", "Body", true);
+    return command(name, InviteEmailTemplateKind.COUNSELLOR_INVITE);
+  }
+
+  private static TemplateCommand command(String name, InviteEmailTemplateKind kind) {
+    return new TemplateCommand(kind, name, "de", "Subject", "Body", true);
   }
 
   private void actAsTenantAdmin(long tenantId) {
