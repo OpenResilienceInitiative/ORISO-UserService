@@ -32,8 +32,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 class MatrixRtcCallPolicyServiceTest {
 
-  private static final String ROOM_ID = "!source:matrix.oriso.org";
-  private static final String MATRIX_USER_ID = "@participant:matrix.oriso.org";
+  private static final String ROOM_ID = "!source:matrix.example.org";
+  private static final String MATRIX_USER_ID = "@participant:matrix.example.org";
   private static final long TENANT_ID = 7L;
 
   @Mock private SessionRepository sessionRepository;
@@ -212,7 +212,7 @@ class MatrixRtcCallPolicyServiceTest {
   @Test
   void callerMustCurrentlyBelongToTheSourceConversationRoom() {
     when(matrixSynapseService.getRoomMembers(ROOM_ID))
-        .thenReturn(Optional.of(List.of("@someone-else:matrix.oriso.org")));
+        .thenReturn(Optional.of(List.of("@someone-else:matrix.example.org")));
 
     assertThat(service.resolve(ROOM_ID, MATRIX_USER_ID)).isEqualTo(CallMediaPolicy.denied());
     verifyNoInteractions(tenantService);

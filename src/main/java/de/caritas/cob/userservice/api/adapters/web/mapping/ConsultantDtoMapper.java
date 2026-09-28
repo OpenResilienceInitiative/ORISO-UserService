@@ -56,7 +56,9 @@ public class ConsultantDtoMapper implements DtoMapperUtils {
         .absenceMessage(consultant.getAbsenceMessage())
         .publicSlug(updateConsultantDTO.getPublicSlug())
         .dataPrivacyConfirmation(updateConsultantDTO.getDataPrivacyConfirmation())
-        .termsAndConditionsConfirmation(updateConsultantDTO.getTermsAndConditionsConfirmation());
+        .termsAndConditionsConfirmation(updateConsultantDTO.getTermsAndConditionsConfirmation())
+        // Self-service never manages topics; the generated default [] would remove them all.
+        .topicIds(null);
   }
 
   public ConsultantResponseDTO consultantResponseDtoOf(

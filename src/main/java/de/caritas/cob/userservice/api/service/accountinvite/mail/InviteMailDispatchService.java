@@ -6,6 +6,7 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.RenderedEmail;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
 import java.util.Map;
 import lombok.NonNull;
@@ -113,8 +114,39 @@ public class InviteMailDispatchService {
           exception);
     }
 
+    return transmit(smtp, recipient, subject, mail.html(), mail.plainText());
+  }
+
+  /**
+   * Sends a mail the caller already rendered from the design system — both MIME parts plus the
+   * subject — through the same global SMTP settings and the same strict contract as {@link
+   * #send(String, String, String, String, Long, String)}. For mails whose template is not the
+   * invite frame, e.g. the DPA signing mail ({@code avv-unterschrift}).
+   *
+   * @return a receipt confirming the SMTP server accepted the message
+   * @throws SmtpSendException if the global SMTP settings are unavailable/incomplete or the message
+   *     could not be handed over to the SMTP server
+   */
+  public InviteMailSendReceipt sendRendered(String recipient, RenderedEmail mail) {
+    InviteSmtpSettings smtp;
     try {
-      return inviteMailTransport.send(smtp, recipient, subject, mail.html(), mail.plainText());
+      smtp = resolveGlobalSmtpSettings();
+    } catch (SmtpSendException exception) {
+      throw exception;
+    } catch (RuntimeException exception) {
+      throw new SmtpSendException(
+          SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+          SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+          "Mail could not be prepared before SMTP dispatch",
+          exception);
+    }
+    return transmit(smtp, recipient, mail.subject(), mail.html(), mail.text());
+  }
+
+  private InviteMailSendReceipt transmit(
+      InviteSmtpSettings smtp, String recipient, String subject, String html, String text) {
+    try {
+      return inviteMailTransport.send(smtp, recipient, subject, html, text);
     } catch (SmtpSendException exception) {
       throw exception;
     } catch (RuntimeException exception) {

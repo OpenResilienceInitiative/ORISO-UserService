@@ -57,7 +57,7 @@ public class MagicLinkLoginService {
   @Value("${identity.email-dummy-suffix:@beratungcaritas.de}")
   private String emailDummySuffix;
 
-  @Value("${magic.link.frontend.base-url:${app.base.url}}")
+  @Value("${magic.link.frontend.base-url}")
   private String magicLinkFrontendBaseUrl;
 
   @Value("${consulting.type.service.api.url:}")
