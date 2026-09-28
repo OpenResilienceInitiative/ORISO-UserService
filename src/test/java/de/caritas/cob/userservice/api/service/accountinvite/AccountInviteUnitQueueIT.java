@@ -42,6 +42,7 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.Callable;
 import java.util.concurrent.CopyOnWriteArrayList;
@@ -50,6 +51,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -117,6 +119,7 @@ class AccountInviteUnitQueueIT {
   @MockitoBean private AgencyService agencyService;
 
   private Long templateId;
+  private Set<Long> invitesBefore = Set.of();
 
   @BeforeEach
   void upstreams() {
@@ -156,11 +159,36 @@ class AccountInviteUnitQueueIT {
             .getId();
   }
 
+  @BeforeEach
+  void rememberExistingInvites() {
+    invitesBefore = Tenants.acrossAll(this::allInviteIds);
+  }
+
   @AfterEach
   void cleanUp() {
-    deliveryRepository.deleteAll();
-    accountInviteRepository.deleteAll();
+    // The invite tables are shared: only the rows this test wrote go.
+    Tenants.acrossAll(
+        () ->
+            allInviteIds().stream()
+                .filter(id -> !invitesBefore.contains(id))
+                .forEach(this::deleteInviteWithItsMail));
     templateRepository.deleteById(templateId);
+  }
+
+  private void assertNoInviteWasWritten() {
+    assertThat(Tenants.acrossAll(this::allInviteIds)).isEqualTo(invitesBefore);
+  }
+
+  private Set<Long> allInviteIds() {
+    return accountInviteRepository.findAll().stream()
+        .map(AccountInvite::getId)
+        .collect(Collectors.toSet());
+  }
+
+  private void deleteInviteWithItsMail(Long inviteId) {
+    deliveryRepository.deleteAll(
+        deliveryRepository.findByAccountInviteIdOrderByCreateDateDesc(inviteId));
+    accountInviteRepository.deleteById(inviteId);
   }
 
   // --- queueing ---------------------------------------------------------------------------------
@@ -189,7 +217,7 @@ class AccountInviteUnitQueueIT {
     assertReason(
         () -> service.createInvite(counsellor(NEW_AGENCY)),
         HttpStatusExceptionReason.NO_PENDING_UNIT_ADMIN);
-    assertThat(accountInviteRepository.count()).isZero();
+    assertNoInviteWasWritten();
     verify(agencyIdAllocationClient, never()).reserve(any(), any());
   }
 
