@@ -81,6 +81,9 @@ public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
   private String originalFirstName;
   private String originalLastName;
   private String originalEmail;
+  private boolean originalAbsent;
+  private String originalAbsenceMessage;
+  private boolean originalLanguageFormal;
 
   // No transaction rolls back here, and the seeded consultant is shared with other classes.
   @BeforeEach
@@ -90,6 +93,10 @@ public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
     originalFirstName = consultant.getFirstName();
     originalLastName = consultant.getLastName();
     originalEmail = consultant.getEmail();
+    // minimalUpdate() also writes these three.
+    originalAbsent = consultant.isAbsent();
+    originalAbsenceMessage = consultant.getAbsenceMessage();
+    originalLanguageFormal = consultant.isLanguageFormal();
   }
 
   @AfterEach
@@ -102,6 +109,9 @@ public class ConsultantUpdateServiceIT extends ConsultantUpdateServiceBase {
     consultant.setFirstName(originalFirstName);
     consultant.setLastName(originalLastName);
     consultant.setEmail(originalEmail);
+    consultant.setAbsent(originalAbsent);
+    consultant.setAbsenceMessage(originalAbsenceMessage);
+    consultant.setLanguageFormal(originalLanguageFormal);
     consultantRepository.save(consultant);
   }
 
