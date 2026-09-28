@@ -2311,7 +2311,8 @@ class UserControllerAuthorizationIT {
       throws Exception {
     var consultant = givenAValidConsultant();
     var updateConsultantDTO = givenAMinimalUpdateConsultantDto(consultant.getEmail());
-    when(consultantUpdateService.updateConsultant(anyString(), any())).thenReturn(consultant);
+    when(consultantUpdateService.updateConsultant(anyString(), any(), eq(false)))
+        .thenReturn(consultant);
 
     mvc.perform(
             put(PATH_GET_USER_DATA)

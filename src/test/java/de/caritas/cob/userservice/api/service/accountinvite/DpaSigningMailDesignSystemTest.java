@@ -152,14 +152,14 @@ class DpaSigningMailDesignSystemTest {
       assertThat(part).doesNotContain("AVV").doesNotContain("Auftragsverarbeitungsvertrag");
     }
     assertThat(mail.html())
-        .contains(">Die Vertragsunterlagen liegen zur Unterschrift bereit</h1>")
+        .contains(">Die Vertragsunterlagen liegen zur Bestätigung bereit</h1>")
         .contains("Für Träger Nord &amp; Söhne e.V. wurden Vertragsunterlagen erstellt.")
         .contains(
-            "Ohne unterzeichnete Vertragsunterlagen bleibt die Beratung für diesen Träger"
+            "Ohne die Bestätigung der Vertragsunterlagen bleibt die Beratung für diesen Träger"
                 + " gesperrt.");
     assertThat(mail.text())
         .contains(
-            "Ohne unterzeichnete Vertragsunterlagen bleibt die Beratung für diesen Träger"
+            "Ohne die Bestätigung der Vertragsunterlagen bleibt die Beratung für diesen Träger"
                 + " gesperrt.");
   }
 
