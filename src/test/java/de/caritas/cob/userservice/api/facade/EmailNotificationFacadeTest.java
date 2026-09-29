@@ -376,6 +376,7 @@ class EmailNotificationFacadeTest {
 
   @BeforeEach
   void setup() throws SecurityException {
+    USER.setTenantId(1L);
     emailNotificationFacade =
         new EmailNotificationFacade(
             mailService,
@@ -812,6 +813,83 @@ class EmailNotificationFacadeTest {
   }
 
   @Test
+  void automaticNoticeEmitsExplicitOccasionTenantScopeAndGermanDialect() {
+    USER.setTenantId(7L);
+    USER.setLanguageFormal(false);
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT_WITH_PSEUDONYM, new TenantData(7L, "tenant"));
+
+    var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(captor.capture());
+    var mail = captor.getValue().getMails().get(0);
+    assertThat(mail.getTemplate()).isEqualTo("inquiry-accepted-notification");
+    assertThat(mail.getDialect())
+        .isEqualTo(de.caritas.cob.userservice.mailservice.generated.web.model.Dialect.INFORMAL);
+    assertThat(mail.getTemplateData())
+        .anySatisfy(
+            item -> {
+              assertThat(item.getKey()).isEqualTo("tenantId");
+              assertThat(item.getValue()).isEqualTo("7");
+            })
+        .anySatisfy(
+            item -> {
+              assertThat(item.getKey()).isEqualTo("recipientTenantId");
+              assertThat(item.getValue()).isEqualTo("7");
+            })
+        .noneSatisfy(item -> assertThat(item.getKey()).isIn("subject", "text", "name", "topic"));
+  }
+
+  @Test
+  void automaticNoticeRejectsDifferentRecipientAndRequestTenantsAndClearsContext() {
+    USER.setTenantId(7L);
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT_WITH_PSEUDONYM, new TenantData(8L, "other"));
+    verifyNoInteractions(mailService);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
+  void automaticNoticeRejectsAnUnidentifiedRecipientTenantInsteadOfAssumingOne() {
+    USER.setTenantId(null);
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT_WITH_PSEUDONYM, null);
+    verifyNoInteractions(mailService);
+    assertThat(facadeLogCaptor.events())
+        .anySatisfy(event -> assertThat(event.getThrowableProxy().getMessage()).contains("tenant"));
+  }
+
+  @Test
+  void automaticNoticeSingleTenantModeUsesTheActualUserTenantWithoutAContextGuess() {
+    USER.setTenantId(7L);
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+    var sent = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(sent.capture());
+    assertThat(sent.getValue().getMails().get(0).getTemplateData())
+        .filteredOn(item -> List.of("tenantId", "recipientTenantId").contains(item.getKey()))
+        .hasSize(2)
+        .allSatisfy(item -> assertThat(item.getValue()).isEqualTo("7"));
+  }
+
+  @Test
+  void automaticNoticeMultitenancyRequiresAnExplicitRequestTenant() {
+    USER.setTenantId(7L);
+    ReflectionTestUtils.setField(emailNotificationFacade, "multiTenancyEnabled", true);
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+    verifyNoInteractions(mailService);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
+  void automaticNoticeOptOutClearsTheCapturedContextBeforeReturning() {
+    USER.setTenantId(7L);
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(true);
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT, new TenantData(7L, "tenant"));
+    verifyNoInteractions(mailService);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
   void sendInquiryAcceptedNotification_Should_SendEmail_When_ToggleDisabled() {
     emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
 
@@ -825,11 +903,12 @@ class EmailNotificationFacadeTest {
 
     var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(captor.capture());
-    var data = captor.getValue().getMails().get(0).getTemplateData();
-    org.assertj.core.api.Assertions.assertThat(data.get(0).getValue())
-        .isEqualTo("Neue Nachricht auf Beispielplattform");
-    org.assertj.core.api.Assertions.assertThat(data.get(1).getValue())
-        .isEqualTo("Bitte melden Sie sich an.");
+    var mail = captor.getValue().getMails().get(0);
+    assertThat(mail.getTemplate()).isEqualTo("inquiry-accepted-notification");
+    assertThat(mail.getDialect())
+        .isEqualTo(de.caritas.cob.userservice.mailservice.generated.web.model.Dialect.FORMAL);
+    assertThat(mail.getTemplateData())
+        .noneSatisfy(item -> assertThat(item.getKey()).isIn("subject", "text", "name"));
   }
 
   // ---------------------------------------------------------------------------
@@ -840,7 +919,7 @@ class EmailNotificationFacadeTest {
   void sendInquiryAcceptedNotification_Should_NotExposeAnyConsultantName() {
     emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT_WITH_PSEUDONYM, null);
 
-    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
+    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedMetadata())
         .doesNotContain("Frau M.")
         .doesNotContain(REAL_FIRST_NAME)
         .doesNotContain(REAL_LAST_NAME);
@@ -851,7 +930,7 @@ class EmailNotificationFacadeTest {
     emailNotificationFacade.sendInquiryAcceptedNotification(
         USER, CONSULTANT_WITHOUT_PSEUDONYM, null);
 
-    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
+    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedMetadata())
         .doesNotContain("beraterin1")
         .doesNotContain(REAL_FIRST_NAME)
         .doesNotContain(REAL_LAST_NAME);
@@ -862,58 +941,54 @@ class EmailNotificationFacadeTest {
     emailNotificationFacade.sendInquiryAcceptedNotification(
         USER, CONSULTANT_WITHOUT_ANY_PUBLIC_NAME, null);
 
-    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
+    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedMetadata())
         .doesNotContain("Beraterin")
         .doesNotContain(REAL_FIRST_NAME)
         .doesNotContain(REAL_LAST_NAME);
   }
 
-  private String capturedInquiryAcceptedText() {
+  private String capturedInquiryAcceptedMetadata() {
     var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(captor.capture());
-    return captor.getValue().getMails().get(0).getTemplateData().get(1).getValue();
+    return captor.getValue().getMails().get(0).getTemplateData().stream()
+        .map(de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO::getValue)
+        .collect(java.util.stream.Collectors.joining(" "));
   }
 
   @Test
-  void sendInquiryAcceptedNotification_Should_LocalizeBothMailboxFieldsForAllSevenVariants() {
+  void sendInquiryAcceptedNotification_Should_PreserveAllSevenVariantsAndGermanNullLocale() {
     Object[][] variants = {
-      {null, true, "Neue Nachricht auf Beispielplattform", "Bitte melden Sie sich an."},
-      {LanguageCode.de, true, "Neue Nachricht auf Beispielplattform", "Bitte melden Sie sich an."},
-      {LanguageCode.de, false, "Neue Nachricht auf Beispielplattform", "Bitte melde dich an."},
-      {LanguageCode.en, false, "New message on Beispielplattform", "Please sign in."},
-      {LanguageCode.fr, false, "Nouveau message sur Beispielplattform", "Veuillez vous connecter."},
-      {
-        LanguageCode.ru,
-        false,
-        "Новое сообщение на Beispielplattform",
-        "Пожалуйста, войдите в систему."
-      },
-      {LanguageCode.ti, false, "ሓድሽ መልእኽቲ ኣብ Beispielplattform", "በጃኹም እተዉ።"},
-      {LanguageCode.tr, false, "Beispielplattform üzerinde yeni mesaj", "Lütfen giriş yapın."}
+      {null, true}, {LanguageCode.de, true}, {LanguageCode.de, false},
+      {LanguageCode.en, false}, {LanguageCode.fr, false}, {LanguageCode.ru, false},
+      {LanguageCode.ti, false}, {LanguageCode.tr, false}
     };
-
     for (Object[] variant : variants) {
       USER.setLanguageCode((LanguageCode) variant[0]);
       USER.setLanguageFormal((boolean) variant[1]);
       emailNotificationFacade.sendInquiryAcceptedNotification(
           USER, CONSULTANT_WITH_PSEUDONYM, null);
-
       var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
       verify(mailService).sendEmailNotification(captor.capture());
       var sentMail = captor.getValue().getMails().get(0);
-      org.assertj.core.api.Assertions.assertThat(sentMail.getLanguage().toString())
+      assertThat(sentMail.getLanguage().toString())
           .isEqualTo(variant[0] == null ? "de" : variant[0].toString());
-      var data = sentMail.getTemplateData();
-      org.assertj.core.api.Assertions.assertThat(data.get(0).getValue()).isEqualTo(variant[2]);
-      org.assertj.core.api.Assertions.assertThat(data.get(1).getValue())
-          .contains((String) variant[3])
-          .doesNotContain("Frau M.", REAL_FIRST_NAME, REAL_LAST_NAME, "suchtberatung");
+      assertThat(sentMail.getTemplate()).isEqualTo("inquiry-accepted-notification");
+      assertThat(sentMail.getDialect())
+          .isEqualTo(
+              (boolean) variant[1]
+                  ? de.caritas.cob.userservice.mailservice.generated.web.model.Dialect.FORMAL
+                  : de.caritas.cob.userservice.mailservice.generated.web.model.Dialect.INFORMAL);
+      assertThat(sentMail.getTemplateData())
+          .allSatisfy(
+              item ->
+                  assertThat(item.getValue())
+                      .doesNotContain("Frau M.", REAL_FIRST_NAME, REAL_LAST_NAME, "suchtberatung"));
       Mockito.clearInvocations(mailService);
     }
   }
 
   @Test
-  void sendInquiryAcceptedNotification_Should_UseCanonicalConfiguredPlatformName() {
+  void sendInquiryAcceptedNotification_Should_ValidateCanonicalConfiguredPlatformName() {
     bindCanonicalPlatformName("  Independent Platform  ");
     USER.setLanguageCode(LanguageCode.en);
 
@@ -921,9 +996,8 @@ class EmailNotificationFacadeTest {
 
     var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(captor.capture());
-    var subject = captor.getValue().getMails().get(0).getTemplateData().get(0).getValue();
-    org.assertj.core.api.Assertions.assertThat(subject)
-        .isEqualTo("New message on Independent Platform");
+    assertThat(captor.getValue().getMails().get(0).getTemplate())
+        .isEqualTo("inquiry-accepted-notification");
     org.assertj.core.api.Assertions.assertThat(emailBrand.values("https://app.example.org", null))
         .containsEntry("platformName", "Independent Platform")
         .containsEntry("offeringName", "Independent Platform");
@@ -977,7 +1051,8 @@ class EmailNotificationFacadeTest {
                     .key("tenantKey")
                     .value("tenantValue")));
 
-    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT, new TenantData(1L, "tenant"));
 
     var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(captor.capture());

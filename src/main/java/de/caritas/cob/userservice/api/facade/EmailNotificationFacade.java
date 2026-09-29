@@ -270,15 +270,28 @@ public class EmailNotificationFacade {
         return;
       }
 
-      var copy = neutralInquiryAcceptedCopy(user);
-      var effectivePlatformName = emailBrand.platformName();
+      emailBrand.platformName();
+      Long recipientTenantId = user.getTenantId();
+      Long requestTenantId = tenantData == null ? null : tenantData.getTenantId();
+      if (requestTenantId == null && !multiTenancyEnabled) {
+        requestTenantId = recipientTenantId;
+      }
+      if (recipientTenantId == null
+          || recipientTenantId <= 0
+          || requestTenantId == null
+          || requestTenantId <= 0) {
+        throw new IllegalStateException("Inquiry accepted notification tenant metadata is missing");
+      }
+      if (!recipientTenantId.equals(requestTenantId)) {
+        throw new IllegalStateException(
+            "Inquiry accepted notification recipient and request tenants differ");
+      }
 
       var templateAttributes = new ArrayList<TemplateDataDTO>();
       templateAttributes.add(
-          new TemplateDataDTO()
-              .key("subject")
-              .value(copy.subject().formatted(effectivePlatformName)));
-      templateAttributes.add(new TemplateDataDTO().key("text").value(copy.text()));
+          new TemplateDataDTO().key("tenantId").value(requestTenantId.toString()));
+      templateAttributes.add(
+          new TemplateDataDTO().key("recipientTenantId").value(recipientTenantId.toString()));
 
       if (!multiTenancyEnabled) {
         templateAttributes.add(new TemplateDataDTO().key("url").value(applicationBaseUrl));
@@ -291,36 +304,18 @@ public class EmailNotificationFacade {
               user.getLanguageCode() == null ? "de" : user.getLanguageCode().toString());
       var mailDTO =
           new MailDTO()
-              .template(EmailSupplier.TEMPLATE_FREE_TEXT)
+              .template(EmailSupplier.TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION)
               .email(user.getEmail())
               .language(language)
+              .dialect(user.getDialect())
               .templateData(templateAttributes);
       mailService.sendEmailNotification(new MailsDTO().mails(List.of(mailDTO)));
     } catch (Exception exception) {
       log.error(
           "EmailNotificationFacade error: Failed to send inquiry accepted notification", exception);
+    } finally {
+      TenantContext.clear();
     }
-    TenantContext.clear();
-  }
-
-  private record NeutralInquiryAcceptedCopy(String subject, String text) {}
-
-  /** Mailbox-visible copy cannot contain the case, the counsellor, or the acceptance event. */
-  private NeutralInquiryAcceptedCopy neutralInquiryAcceptedCopy(User user) {
-    String language = user.getLanguageCode() == null ? "de" : user.getLanguageCode().name();
-    return switch (language) {
-      case "en" -> new NeutralInquiryAcceptedCopy("New message on %s", "Please sign in.");
-      case "fr" ->
-          new NeutralInquiryAcceptedCopy("Nouveau message sur %s", "Veuillez vous connecter.");
-      case "ru" ->
-          new NeutralInquiryAcceptedCopy("Новое сообщение на %s", "Пожалуйста, войдите в систему.");
-      case "ti" -> new NeutralInquiryAcceptedCopy("ሓድሽ መልእኽቲ ኣብ %s", "በጃኹም እተዉ።");
-      case "tr" -> new NeutralInquiryAcceptedCopy("%s üzerinde yeni mesaj", "Lütfen giriş yapın.");
-      default ->
-          user.isLanguageFormal()
-              ? new NeutralInquiryAcceptedCopy("Neue Nachricht auf %s", "Bitte melden Sie sich an.")
-              : new NeutralInquiryAcceptedCopy("Neue Nachricht auf %s", "Bitte melde dich an.");
-    };
   }
 
   private boolean shouldSendReassignmentNotificationForConsultant(

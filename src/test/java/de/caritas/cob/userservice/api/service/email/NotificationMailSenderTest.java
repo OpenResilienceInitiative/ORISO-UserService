@@ -58,6 +58,26 @@ class NotificationMailSenderTest {
   }
 
   @Test
+  void routesOnlyTheDistinctAutomaticNoticeUsingItsApprovedPurpose() {
+    var mail = mail("inquiry-accepted-notification", "7", "7");
+    when(routes.resolve(7L)).thenReturn(Optional.of(platform));
+    when(composer.compose(mail, 7L)).thenReturn(rendered);
+    when(delivery.sendConfirmed(
+            eq(7L), eq(platform), any(), eq("recipient@example.org"), eq(rendered)))
+        .thenReturn(true);
+
+    assertThat(NotificationMailSender.supports(mail.getTemplate())).isTrue();
+    assertThat(NotificationMailSender.supports("free-text")).isFalse();
+    assertThat(sender.send(mail)).isTrue();
+
+    var purpose = org.mockito.ArgumentCaptor.forClass(TenantSystemEmailDelivery.Purpose.class);
+    verify(delivery)
+        .sendConfirmed(
+            eq(7L), eq(platform), purpose.capture(), eq("recipient@example.org"), eq(rendered));
+    assertThat(purpose.getValue().name()).isEqualTo("FREE_TEXT_NOTICE");
+  }
+
+  @Test
   void rejectsAnotherTenantBeforeRenderingOrDelivery() {
     assertThatThrownBy(() -> sender.send(mail("enquiry-notification-consultant", "7", "8")))
         .isInstanceOf(IllegalArgumentException.class)

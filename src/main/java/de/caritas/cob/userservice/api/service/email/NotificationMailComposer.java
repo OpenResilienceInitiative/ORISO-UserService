@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.email;
 
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_ASSIGN_ENQUIRY_NOTIFICATION;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_DAILY_ENQUIRY_NOTIFICATION;
+import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_NEW_DIRECT_ENQUIRY_NOTIFICATION;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_NEW_ENQUIRY_NOTIFICATION;
 import static org.apache.commons.lang3.StringUtils.isBlank;
@@ -54,7 +55,21 @@ public class NotificationMailComposer {
                 ? ASSIGNED_PATH
                 : PREVIEW_PATH));
 
-    if (TEMPLATE_DAILY_ENQUIRY_NOTIFICATION.equals(mail.getTemplate())) {
+    var tone = renderer.deliveryTone(toneFor(mail.getLanguage(), mail.getDialect()));
+    if (TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION.equals(mail.getTemplate())) {
+      // Only catalogue-authored neutral copy enters the mail; input subject/text and case data do
+      // not.
+      String configuredPlatformName = values.get("offeringName");
+      if (isBlank(configuredPlatformName)) {
+        throw new IllegalStateException(
+            "Email branding name is missing: configure EMAIL_BRANDING_NAME before sending mail");
+      }
+      values.put("platformName", configuredPlatformName.trim());
+      String prompt = renderer.preheaderOf(template, tone);
+      values.put("messageHeadline", prompt);
+      values.put("messageBody", prompt);
+      values.put("loginUrl", baseUrl);
+    } else if (TEMPLATE_DAILY_ENQUIRY_NOTIFICATION.equals(mail.getTemplate())) {
       values.put("openRequestCount", require(attributes, "enquiries"));
       values.put("oldestRequestAge", require(attributes, "oldestRequestAge"));
       values.put("digestGeneratedAt", require(attributes, "digestGeneratedAt"));
@@ -66,8 +81,7 @@ public class NotificationMailComposer {
       }
     }
 
-    var rendered =
-        renderer.render(template, toneFor(mail.getLanguage(), mail.getDialect()), values);
+    var rendered = renderer.render(template, tone, values);
     if (PLACEHOLDER.matcher(rendered.subject()).find()
         || PLACEHOLDER.matcher(rendered.html()).find()
         || PLACEHOLDER.matcher(rendered.text()).find()) {
@@ -82,6 +96,7 @@ public class NotificationMailComposer {
       case TEMPLATE_NEW_DIRECT_ENQUIRY_NOTIFICATION -> "direkte-anfrage";
       case TEMPLATE_ASSIGN_ENQUIRY_NOTIFICATION -> "anfrage-zugewiesen";
       case TEMPLATE_DAILY_ENQUIRY_NOTIFICATION -> "tagesuebersicht";
+      case TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION -> "mitteilung";
       default ->
           throw new IllegalArgumentException("Unsupported notification occasion: " + occasion);
     };

@@ -255,22 +255,25 @@ public class OrisoEmailRenderer {
 
   /** The subject line, from the generated catalogue rather than from the document. */
   public String subjectOf(String templateId, Tone tone) {
+    return catalogueCopy(templateId, tone, "subject");
+  }
+
+  /** Trusted mailbox preview copy from the same generated catalogue as the subject. */
+  public String preheaderOf(String templateId, Tone tone) {
+    return catalogueCopy(templateId, tone, "preheader");
+  }
+
+  private String catalogueCopy(String templateId, Tone tone, String field) {
     tone = deliveryTone(tone);
     JsonNode node =
-        catalogue
-            .path("mails")
-            .path(templateId)
-            .path("tones")
-            .path(tone.directory())
-            .path("subject");
+        catalogue.path("mails").path(templateId).path("tones").path(tone.directory()).path(field);
     if (node.isMissingNode() || !isNotBlank(node.asText())) {
       throw new IllegalStateException(
-          "no subject for e-mail template '" + templateId + "' in tone " + tone.directory());
+          "no " + field + " for e-mail template '" + templateId + "' in tone " + tone.directory());
     }
     return node.asText();
   }
 
-  /** The reviewed tone used for delivery unless this deployment explicitly opts into test copy. */
   public Tone deliveryTone(Tone tone) {
     String release = catalogue.path("locales").path(tone.directory()).path("release").asText();
     if ("released".equals(release)

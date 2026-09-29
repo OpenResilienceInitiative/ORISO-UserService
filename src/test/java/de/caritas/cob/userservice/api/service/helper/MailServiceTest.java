@@ -77,6 +77,16 @@ public class MailServiceTest {
   }
 
   @Test
+  void automaticNoticeUsesLocalDeliveryAndNeverFallsBackOnFailure() {
+    var notice = new MailDTO().template("inquiry-accepted-notification");
+    doThrow(new IllegalStateException("SMTP failed")).when(notificationMailSender).send(notice);
+
+    assertThat(mailService.sendEmailNotification(new MailsDTO().mails(List.of(notice)))).isFalse();
+    verify(notificationMailSender).send(notice);
+    verifyNoInteractions(mailsControllerApi);
+  }
+
+  @Test
   void unrelatedMailsStillUseUpstreamInAMixedBatch() {
     when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(getCsrfHttpHeaders());
     var notification = new MailDTO().template("daily-enquiry-notification");
