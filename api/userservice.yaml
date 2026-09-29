@@ -3063,6 +3063,9 @@ components:
           description: Optional public slug request. Letters and hyphens only.
         languages:
           type: array
+          description: >-
+            Replaces the spoken languages when non-empty. Omitted, null or an empty list leave the
+            stored languages untouched.
           example: de, en
           items:
             $ref: '#/components/schemas/LanguageCode'
