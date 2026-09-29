@@ -112,4 +112,27 @@ class CaseHandoverLogsServiceTest {
     assertThat(result.getPage()).isEqualTo(1);
     assertThat(result.getPerPage()).isEqualTo(200);
   }
+
+  @Test
+  @SuppressWarnings("unchecked")
+  void listCaseHandoverLogs_Should_ShowANeutralLabel_When_ARecordCarriesARetiredReason()
+      throws Exception {
+    ArgumentCaptor<RowMapper<CaseHandoverLogsService.CaseHandoverLogEntry>> mapperCaptor =
+        ArgumentCaptor.forClass(RowMapper.class);
+    when(namedParameterJdbcTemplate.queryForObject(
+            anyString(), any(SqlParameterSource.class), eq(Long.class)))
+        .thenReturn(1L);
+    when(namedParameterJdbcTemplate.query(
+            anyString(), any(SqlParameterSource.class), mapperCaptor.capture()))
+        .thenReturn(List.of());
+    service.listCaseHandoverLogs(1, 10);
+    java.sql.ResultSet row = org.mockito.Mockito.mock(java.sql.ResultSet.class);
+    when(row.getString("reasonCode")).thenReturn("COUNSELLOR_IS_ILL");
+    when(row.getString("reasonLabel")).thenReturn("Counsellor is ill");
+
+    var entry = mapperCaptor.getValue().mapRow(row, 0);
+
+    assertThat(entry.getReasonCode()).isEqualTo("COUNSELLOR_IS_ILL");
+    assertThat(entry.getReasonLabel()).isEqualTo("Unplanned absence");
+  }
 }
