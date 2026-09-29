@@ -21,9 +21,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class RemoveConsultantFromSessionRoomsServiceTest {
 
-  private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
-  private static final String ASSIGNED_MATRIX_ID = "@assigned:matrix.oriso.org";
-  private static final String SURPLUS_MATRIX_ID = "@surplus:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!room:matrix.example.org";
+  private static final String ASSIGNED_MATRIX_ID = "@assigned:matrix.example.org";
+  private static final String SURPLUS_MATRIX_ID = "@surplus:matrix.example.org";
 
   @InjectMocks
   private RemoveConsultantFromSessionRoomsService removeConsultantFromSessionRoomsService;
@@ -73,12 +73,12 @@ class RemoveConsultantFromSessionRoomsServiceTest {
         .thenReturn(
             List.of(
                 consultantMember("assigned-id", ASSIGNED_MATRIX_ID),
-                askerMember("asker-id", "@asker:matrix.oriso.org")));
+                askerMember("asker-id", "@asker:matrix.example.org")));
 
     removeConsultantFromSessionRoomsService.removeConsultantFromSessions(singletonList(session));
 
     verify(groupChatMembershipService, never())
-        .removeMemberFromRoom(eq(MATRIX_ROOM_ID), eq("@asker:matrix.oriso.org"));
+        .removeMemberFromRoom(eq(MATRIX_ROOM_ID), eq("@asker:matrix.example.org"));
     verify(groupChatMembershipService, never())
         .removeMemberFromRoom(MATRIX_ROOM_ID, ASSIGNED_MATRIX_ID);
   }
