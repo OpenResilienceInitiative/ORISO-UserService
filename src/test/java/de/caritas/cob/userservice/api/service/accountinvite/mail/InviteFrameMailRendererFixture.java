@@ -34,7 +34,7 @@ public final class InviteFrameMailRendererFixture {
         resolver,
         new EmailContentSanitizer(),
         tenantEmailBrandValues(senderOrganisations, APP_BASE_URL),
-        new OrisoEmailRenderer());
+        new OrisoEmailRenderer(true));
   }
 
   public static TenantEmailBrandValues tenantEmailBrandValues(
