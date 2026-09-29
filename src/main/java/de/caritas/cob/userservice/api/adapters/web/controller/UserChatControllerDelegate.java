@@ -144,6 +144,14 @@ class UserChatControllerDelegate {
   }
 
   ResponseEntity<Void> banFromChat(String matrixUserId, Long chatId) {
+    var chat =
+        chatService
+            .getChat(chatId)
+            .orElseThrow(() -> new NotFoundException("Chat (%s) not found", chatId));
+    // The ban runs as the chat owner in Matrix, so only a moderator may ask for it (#1237).
+    // Checked before the identity lookup so a 404/403 difference cannot probe Matrix ids.
+    groupChatPermissionService.requireCanModerate(
+        chat, userAccountProvider.retrieveValidatedConsultant());
     var adviceSeeker =
         accountManager
             .findAdviceSeekerByMatrixUserId(matrixUserId)
@@ -151,13 +159,6 @@ class UserChatControllerDelegate {
                 () -> {
                   throw new NotFoundException("Matrix user (%s) not found", matrixUserId);
                 });
-    var chat =
-        chatService
-            .getChat(chatId)
-            .orElseThrow(() -> new NotFoundException("Chat (%s) not found", chatId));
-    // The ban runs as the chat owner in Matrix, so only a moderator may ask for it (#1237).
-    groupChatPermissionService.requireCanModerate(
-        chat, userAccountProvider.retrieveValidatedConsultant());
 
     var adviceSeekerId = adviceSeeker.getUserId();
     if (!messenger.banUserFromChat(adviceSeekerId, chatId)) {
