@@ -159,11 +159,7 @@ public interface AccountInviteRepository extends JpaRepository<AccountInvite, Lo
       @Param("searchTenantId") Long searchTenantId,
       Pageable pageable);
 
-  /**
-   * {@link #findAllByFilters} narrowed to the given agencies — the listing a Beratungsstellen admin
-   * gets (restricted agency admin, cross-Träger isolation). The caller never passes an empty
-   * collection; an admin without agencies gets an empty page without a query.
-   */
+  /** {@link #findAllByFilters} narrowed to the given agencies, which are never empty. */
   @Query(
       "SELECT i FROM AccountInvite i"
           + " WHERE i.agencyId IN :agencyIds"

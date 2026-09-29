@@ -79,8 +79,7 @@ class MagicLinkLoginServiceTest {
   @Test
   void requestMagicLink_Should_ReturnAccepted_When_AccountNotFound() {
     when(userService.findUserByUsername(anyString())).thenReturn(Optional.empty());
-    when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
-        .thenReturn(Optional.empty());
+    when(consultantService.findConsultantForSignIn(anyString())).thenReturn(Optional.empty());
 
     MagicLinkRequestResult result = magicLinkLoginService.requestMagicLink("unknown-user");
 
@@ -123,7 +122,7 @@ class MagicLinkLoginServiceTest {
     consultant.setId("consultant-1");
     consultant.setUsername("consultant");
     consultant.setMagicLinkLoginEnabled(Boolean.FALSE);
-    when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
+    when(consultantService.findConsultantForSignIn(anyString()))
         .thenReturn(Optional.of(consultant));
 
     MagicLinkRequestResult result = magicLinkLoginService.requestMagicLink("consultant");
@@ -467,7 +466,7 @@ class MagicLinkLoginServiceTest {
     consultant.setUsername("consultant1");
     consultant.setEmail("consultant@example.com");
     consultant.setMagicLinkLoginEnabled(Boolean.FALSE);
-    when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
+    when(consultantService.findConsultantForSignIn(anyString()))
         .thenReturn(Optional.of(consultant));
 
     assertThat(magicLinkLoginService.requestMagicLink("consultant1"))

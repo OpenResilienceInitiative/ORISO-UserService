@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.OrisoSmtpTransport;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.mail.Message;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
@@ -72,7 +73,9 @@ public class MagicLinkLoginService {
       return MagicLinkRequestResult.ACCEPTED;
     }
 
-    Optional<AccountLoginTarget> accountOptional = resolveAccount(usernameInput.trim());
+    // Public route without a tenant; usernames are unique across Träger.
+    Optional<AccountLoginTarget> accountOptional =
+        TenantContext.supplyAcrossTenants(() -> resolveAccount(usernameInput.trim()));
     if (accountOptional.isEmpty()) {
       return MagicLinkRequestResult.ACCEPTED;
     }
@@ -157,8 +160,7 @@ public class MagicLinkLoginService {
               user.getMagicLinkLoginEnabled()));
     }
 
-    Optional<Consultant> consultantOptional =
-        consultantService.findConsultantByUsernameOrEmail(username, username);
+    Optional<Consultant> consultantOptional = consultantService.findConsultantForSignIn(username);
     if (consultantOptional.isPresent()) {
       Consultant consultant = consultantOptional.get();
       return Optional.of(
