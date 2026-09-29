@@ -26,7 +26,13 @@ class TenantSystemEmailDeliveryTest {
   void platformNeverCallsTenantDelivery() {
     var smtp =
         new PlatformSmtpSettingsProvider.Settings(
-            "smtp.platform.example", 587, false, "account", "secret", "sender@platform.example");
+            "smtp.platform.example",
+            587,
+            false,
+            "account",
+            "secret",
+            "sender@platform.example",
+            "#123456");
     when(platformSettings.requireConfigured()).thenReturn(smtp);
 
     new TenantSystemEmailDelivery(tenantClient, platformSettings, platformDispatcher)
@@ -65,7 +71,13 @@ class TenantSystemEmailDeliveryTest {
   void platformFailureIsObservableToNotificationSender() {
     var smtp =
         new PlatformSmtpSettingsProvider.Settings(
-            "smtp.platform.example", 587, false, "account", "secret", "sender@platform.example");
+            "smtp.platform.example",
+            587,
+            false,
+            "account",
+            "secret",
+            "sender@platform.example",
+            "#123456");
     when(platformSettings.requireConfigured()).thenReturn(smtp);
     when(platformDispatcher.send(smtp, "recipient@example.org", email)).thenReturn(false);
 
