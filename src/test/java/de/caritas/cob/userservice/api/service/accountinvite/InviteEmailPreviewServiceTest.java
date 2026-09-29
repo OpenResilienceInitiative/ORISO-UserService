@@ -52,14 +52,8 @@ class InviteEmailPreviewServiceTest {
         new InviteAcceptUrlBuilder("https://app.example.org", "https://admin.example.org");
     dispatchService =
         new InviteMailDispatchService(
-            new de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider(
-                "smtp.example.org",
-                "587",
-                "false",
-                "smtp-user",
-                "smtp-pass",
-                "noreply@example.org",
-                false),
+            de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture.configured(
+                "smtp-user", "smtp-pass"),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver));
     previewService =
