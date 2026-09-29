@@ -34,6 +34,11 @@ class EmailBrandingResolverTest {
         "https://app.example.org/");
   }
 
+  private EmailBrandingResolver resolverWithPlatformName(String platformName) {
+    return new EmailBrandingResolver(
+        tenantService, tenantTemplateSupplier, platformName, "", "https://app.example.org/");
+  }
+
   private void givenNoTemplateAttributes() {
     lenient().when(tenantTemplateSupplier.getTenantBaseUrl(any())).thenReturn(null);
   }
@@ -293,6 +298,21 @@ class EmailBrandingResolverTest {
     resolver("").resolve(null);
 
     org.mockito.Mockito.verify(tenantService).getPlatformTenantData();
+  }
+
+  @Test
+  void resolve_ShouldRejectMissingPlatformName_WhenNoTenantNameIsAvailable() {
+    assertThatThrownBy(() -> resolverWithPlatformName(" ").resolve(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
+  @Test
+  void resolve_ShouldUseTenantName_WhenPlatformNameIsMissing() {
+    RestrictedTenantDTO resolvedTenant = tenant("Nord", null);
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolvedTenant);
+
+    assertThat(resolverWithPlatformName("").resolve(7L).brandName()).isEqualTo("Nord");
   }
 
   // --- footer ---------------------------------------------------------------------------
