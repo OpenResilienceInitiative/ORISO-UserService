@@ -62,6 +62,10 @@ public class TenantAdminUserService {
 
   private void validateUpdateAdmin(UpdateTenantAdminDTO updateTenantAdminDTO) {
     validateTenantId(updateTenantAdminDTO.getTenantId());
+    // The body's tenantId is written to the admin row: a tenant-bound caller must not move an
+    // admin into another tenant.
+    AdminTenantOwnershipValidator.assertCallerMayCreateAdminForTenant(
+        authenticatedUser, updateTenantAdminDTO.getTenantId());
   }
 
   private void validateTenantId(Integer inputTenantId) {

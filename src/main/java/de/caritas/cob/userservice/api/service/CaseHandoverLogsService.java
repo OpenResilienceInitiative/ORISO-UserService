@@ -117,7 +117,9 @@ public class CaseHandoverLogsService {
           .status(rs.getString("status"))
           .auditOutcome(rs.getString("auditOutcome"))
           .reasonCode(rs.getString("reasonCode"))
-          .reasonLabel(rs.getString("reasonLabel"))
+          .reasonLabel(
+              CaseHandoverReasonCodes.displayLabel(
+                  rs.getString("reasonCode"), rs.getString("reasonLabel")))
           .explanation(rs.getString("explanation"))
           .clientConsentRequired(rs.getBoolean("clientConsentRequired"))
           .policyAuthority(rs.getString("policyAuthority"))
