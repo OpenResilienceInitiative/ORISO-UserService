@@ -248,10 +248,13 @@ public class EmailNotificationFacade {
       }
 
       var copy = neutralInquiryAcceptedCopy(user);
+      var effectivePlatformName = isNotBlank(platformName) ? platformName : "Online-Beratung";
 
       var templateAttributes = new ArrayList<TemplateDataDTO>();
       templateAttributes.add(
-          new TemplateDataDTO().key("subject").value(copy.subject().formatted(platformName)));
+          new TemplateDataDTO()
+              .key("subject")
+              .value(copy.subject().formatted(effectivePlatformName)));
       templateAttributes.add(new TemplateDataDTO().key("text").value(copy.text()));
 
       if (!multiTenancyEnabled) {
@@ -262,7 +265,7 @@ public class EmailNotificationFacade {
 
       var language =
           de.caritas.cob.userservice.mailservice.generated.web.model.LanguageCode.fromValue(
-              user.getLanguageCode().toString());
+              user.getLanguageCode() == null ? "de" : user.getLanguageCode().toString());
       var mailDTO =
           new MailDTO()
               .template(EmailSupplier.TEMPLATE_FREE_TEXT)

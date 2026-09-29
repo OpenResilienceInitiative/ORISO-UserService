@@ -712,6 +712,7 @@ class EmailNotificationFacadeTest {
   @Test
   void sendInquiryAcceptedNotification_Should_LocalizeBothMailboxFieldsForAllSevenVariants() {
     Object[][] variants = {
+      {null, true, "Neue Nachricht auf Beispielplattform", "Bitte melden Sie sich an."},
       {LanguageCode.de, true, "Neue Nachricht auf Beispielplattform", "Bitte melden Sie sich an."},
       {LanguageCode.de, false, "Neue Nachricht auf Beispielplattform", "Bitte melde dich an."},
       {LanguageCode.en, false, "New message on Beispielplattform", "Please sign in."},
@@ -741,6 +742,19 @@ class EmailNotificationFacadeTest {
           .doesNotContain("Frau M.", REAL_FIRST_NAME, REAL_LAST_NAME, "suchtberatung");
       Mockito.clearInvocations(mailService);
     }
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_UseGenericName_WhenConfiguredNameIsBlank() {
+    ReflectionTestUtils.setField(emailNotificationFacade, "platformName", "  ");
+    USER.setLanguageCode(LanguageCode.en);
+
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT_WITH_PSEUDONYM, null);
+
+    var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(captor.capture());
+    var subject = captor.getValue().getMails().get(0).getTemplateData().get(0).getValue();
+    org.assertj.core.api.Assertions.assertThat(subject).isEqualTo("New message on Online-Beratung");
   }
 
   @Test
