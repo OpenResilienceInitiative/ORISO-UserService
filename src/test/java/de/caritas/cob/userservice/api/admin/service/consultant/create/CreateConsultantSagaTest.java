@@ -190,6 +190,19 @@ class CreateConsultantSagaTest {
   }
 
   @Test
+  void createNewConsultant_Should_startWithProductToursSwitchedOff() throws Exception {
+    // #1526: tours are opt-in; the counsellor switches them on under Profile -> Help.
+    stubHappyPath();
+
+    createConsultantSaga.createNewConsultant(validCreateConsultantDto());
+
+    ArgumentCaptor<de.caritas.cob.userservice.api.model.Consultant> captured =
+        ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
+    verify(consultantService).saveConsultant(captured.capture());
+    assertThat(captured.getValue().getWalkThroughEnabled(), is(false));
+  }
+
+  @Test
   void createNewConsultant_Should_persistThePasswordChangeRequirement() throws Exception {
     // The administrator chose this password and passed it on, so it is a shared
     // secret until the counsellor replaces it.

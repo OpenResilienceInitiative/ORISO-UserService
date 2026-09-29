@@ -63,6 +63,18 @@ class TutorialProgressServiceTest {
   }
 
   @Test
+  void upsertOwnProgress_acceptsTheMailCounsellingTour() {
+    // #1526: every tour the frontend ships must be able to save progress.
+    when(tutorialProgressStore.upsert(any(), anyInt())).thenAnswer(inv -> inv.getArgument(0));
+    var req = request("completed");
+    req.setTourId("consultant-mail-counselling");
+
+    var item = service.upsertOwnProgress("user-1", 1L, req);
+
+    assertThat(item.getTourId()).isEqualTo("consultant-mail-counselling");
+  }
+
+  @Test
   void upsertOwnProgress_createsScopedRecordForTheAuthenticatedUser() {
     // Business reason: progress is keyed by user, surface, tour and version so
     // multiple tutorials and audiences can track state independently.

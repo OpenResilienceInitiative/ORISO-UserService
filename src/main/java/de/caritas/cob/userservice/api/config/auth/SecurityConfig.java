@@ -298,7 +298,6 @@ public class SecurityConfig {
                     "/users/chat/{chatId:[0-9]+}/members",
                     "/users/chat/{chatId:[0-9]+}/leave",
                     "/users/chat/{matrixRoomId}/assign",
-                    "/users/consultants/toggleWalkThrough",
                     "/matrix/**",
                     "/service/matrix/**")
                 .hasAnyAuthority(USER_DEFAULT, CONSULTANT_DEFAULT)
