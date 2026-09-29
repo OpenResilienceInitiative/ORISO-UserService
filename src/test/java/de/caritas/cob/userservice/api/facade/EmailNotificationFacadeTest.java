@@ -735,7 +735,10 @@ class EmailNotificationFacadeTest {
 
       var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
       verify(mailService).sendEmailNotification(captor.capture());
-      var data = captor.getValue().getMails().get(0).getTemplateData();
+      var sentMail = captor.getValue().getMails().get(0);
+      org.assertj.core.api.Assertions.assertThat(sentMail.getLanguage().toString())
+          .isEqualTo(variant[0] == null ? "de" : variant[0].toString());
+      var data = sentMail.getTemplateData();
       org.assertj.core.api.Assertions.assertThat(data.get(0).getValue()).isEqualTo(variant[2]);
       org.assertj.core.api.Assertions.assertThat(data.get(1).getValue())
           .contains((String) variant[3])
