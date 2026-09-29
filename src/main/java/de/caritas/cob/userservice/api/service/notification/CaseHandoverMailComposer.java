@@ -6,6 +6,8 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.mailservice.generated.web.model.Dialect;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.LinkedHashMap;
 import java.util.regex.Pattern;
 import lombok.NonNull;
@@ -32,13 +34,7 @@ public class CaseHandoverMailComposer {
     var branding = brandingResolver.resolveNotification(mail.tenantId(), baseUrl);
     var values = new LinkedHashMap<>(brandValues.values(branding, mail.tenantId()));
     values.put("appUrl", baseUrl);
-    values.put(
-        "requestUrl",
-        baseUrl
-            + "/sessions/user/view/session/"
-            + mail.sessionId()
-            + "?caseHandoverRequestId="
-            + mail.requestId());
+    values.put("requestUrl", actionUrl(mail, baseUrl));
     values.put("settingsUrl", baseUrl + "/profile/einstellungen");
     values.put("unsubscribeUrl", baseUrl + "/profile/einstellungen/email");
     String template =
@@ -52,6 +48,28 @@ public class CaseHandoverMailComposer {
       throw new IllegalArgumentException("Takeover email template data is incomplete");
     }
     return rendered;
+  }
+
+  private String actionUrl(CaseHandoverEmailNotification.Mail mail, String baseUrl) {
+    if (mail.sessionId() == null || mail.sessionId() <= 0) {
+      throw new IllegalArgumentException("Takeover email requires a session id");
+    }
+    if (mail.outcome() == CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED) {
+      if (mail.requestId() == null || mail.requestId() <= 0) {
+        throw new IllegalArgumentException("Takeover consent email requires a request id");
+      }
+      return baseUrl
+          + "/sessions/user/view/session/"
+          + mail.sessionId()
+          + "?caseHandoverRequestId="
+          + mail.requestId();
+    }
+    if (mail.matrixRoomId() == null || mail.matrixRoomId().isBlank()) {
+      throw new IllegalArgumentException("Takeover confirmation email requires a Matrix room");
+    }
+    String room =
+        URLEncoder.encode(mail.matrixRoomId(), StandardCharsets.UTF_8).replace("+", "%20");
+    return baseUrl + "/sessions/consultant/sessionView/" + room + "/" + mail.sessionId();
   }
 
   private OrisoEmailRenderer.Tone tone(CaseHandoverEmailNotification.Mail mail) {

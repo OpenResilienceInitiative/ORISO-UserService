@@ -87,6 +87,6 @@ class CaseHandoverMailSenderTest {
   private static CaseHandoverEmailNotification.Mail mail(
       long tenantId, CaseHandoverEmailNotification.Outcome outcome, String recipient) {
     return new CaseHandoverEmailNotification.Mail(
-        12L, 77L, outcome, tenantId, recipient, LanguageCode.en, null);
+        12L, 77L, "!room:example.test", outcome, tenantId, recipient, LanguageCode.en, null);
   }
 }

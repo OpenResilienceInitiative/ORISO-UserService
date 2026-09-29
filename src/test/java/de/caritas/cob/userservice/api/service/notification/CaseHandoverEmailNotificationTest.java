@@ -154,6 +154,7 @@ class CaseHandoverEmailNotificationTest {
         Session.builder()
             .id(77L)
             .tenantId(40L)
+            .matrixRoomId("!room:example.test")
             .user(asker)
             .registrationType(Session.RegistrationType.REGISTERED)
             .postcode("12345")

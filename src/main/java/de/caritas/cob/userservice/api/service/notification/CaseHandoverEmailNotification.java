@@ -34,6 +34,7 @@ public class CaseHandoverEmailNotification {
   public record Mail(
       Long requestId,
       Long sessionId,
+      String matrixRoomId,
       Outcome outcome,
       long tenantId,
       String recipient,
@@ -107,8 +108,16 @@ public class CaseHandoverEmailNotification {
       throw new IllegalStateException(
           "Takeover mail requires a persisted request and matching tenant");
     }
+    String roomId = request.getSession().getMatrixRoomId();
     return new Mail(
-        request.getId(), request.getSession().getId(), outcome, tenantId, email, language, dialect);
+        request.getId(),
+        request.getSession().getId(),
+        roomId,
+        outcome,
+        tenantId,
+        email,
+        language,
+        dialect);
   }
 
   private void schedule(Mail mail) {

@@ -20,7 +20,7 @@ class CaseHandoverMailComposerTest {
   private final EmailBrandingResolver branding = mock(EmailBrandingResolver.class);
   private final TenantEmailBrandValues brandValues = mock(TenantEmailBrandValues.class);
   private final CaseHandoverMailComposer composer =
-      new CaseHandoverMailComposer(new OrisoEmailRenderer(), branding, brandValues);
+      new CaseHandoverMailComposer(new OrisoEmailRenderer(true), branding, brandValues);
 
   @Test
   void neutralConsentCopyHasNoCaseOrCounsellorInAnyOfSevenVariants() {
@@ -42,10 +42,20 @@ class CaseHandoverMailComposerTest {
             composer.compose(
                 mail(CaseHandoverEmailNotification.Outcome.CONSENT_REQUESTED, language, dialect),
                 "https://tenant.example.test");
-        assertThat(rendered.subject()).isNotBlank().doesNotContain("#123", "Counsellor Name");
+        assertThat(rendered.subject())
+            .isEqualTo(
+                Map.of(
+                        LanguageCode.de, "Neue Benachrichtigung",
+                        LanguageCode.en, "New notification",
+                        LanguageCode.fr, "Nouvelle notification",
+                        LanguageCode.ru, "Новое уведомление",
+                        LanguageCode.ti, "ሓድሽ ምልክታ",
+                        LanguageCode.tr, "Yeni bildirim")
+                    .get(language));
         assertThat(rendered.text())
             .contains(
                 "https://tenant.example.test/sessions/user/view/session/77?caseHandoverRequestId=12")
+            .doesNotContain("/sessions/consultant/sessionView/")
             .doesNotContain("#123", "Counsellor Name", "{{");
         assertThat(rendered.html()).doesNotContain("{{");
         var confirmed =
@@ -54,7 +64,9 @@ class CaseHandoverMailComposerTest {
                 "https://tenant.example.test");
         assertThat(confirmed.subject()).isNotBlank().doesNotContain("{{", "ORISO");
         assertThat(confirmed.text())
-            .contains("https://tenant.example.test")
+            .contains(
+                "https://tenant.example.test/sessions/consultant/sessionView/%21room%3Aexample.test/77")
+            .doesNotContain("/sessions/user/view/session/")
             .doesNotContain("{{", "Your access to the previous");
         assertThat(confirmed.html()).doesNotContain("{{");
       }
@@ -70,6 +82,9 @@ class CaseHandoverMailComposerTest {
             "https://tenant.example.test");
     assertThat(rendered.text())
         .contains("You are now responsible")
+        .contains(
+            "https://tenant.example.test/sessions/consultant/sessionView/%21room%3Aexample.test/77")
+        .doesNotContain("/sessions/user/view/session/")
         .doesNotContain("Your access to the previous", "{{");
   }
 
@@ -96,6 +111,25 @@ class CaseHandoverMailComposerTest {
                         Dialect.FORMAL),
                     "https://other.example.test"))
         .isInstanceOf(IllegalArgumentException.class);
+  }
+
+  @Test
+  void confirmedMailWithNoMatrixRoomHasNoFallbackActionLink() {
+    prepareBrand();
+    var mail =
+        new CaseHandoverEmailNotification.Mail(
+            12L,
+            77L,
+            null,
+            CaseHandoverEmailNotification.Outcome.GRANTED,
+            40L,
+            "incoming@example.test",
+            LanguageCode.en,
+            Dialect.FORMAL);
+
+    assertThatThrownBy(() -> composer.compose(mail, "https://tenant.example.test"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessage("Takeover confirmation email requires a Matrix room");
   }
 
   private void prepareBrand() {
@@ -125,6 +159,6 @@ class CaseHandoverMailComposerTest {
   private static CaseHandoverEmailNotification.Mail mail(
       CaseHandoverEmailNotification.Outcome outcome, LanguageCode language, Dialect dialect) {
     return new CaseHandoverEmailNotification.Mail(
-        12L, 77L, outcome, 40L, "recipient@example.test", language, dialect);
+        12L, 77L, "!room:example.test", outcome, 40L, "recipient@example.test", language, dialect);
   }
 }

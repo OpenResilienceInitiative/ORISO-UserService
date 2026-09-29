@@ -73,6 +73,7 @@ public class MailService {
         || "Notification URL is invalid".equals(message)
         || "Notification URL does not match recipient tenant".equals(message)
         || "Tenant subdomain is required for an email URL".equals(message)
+        || "Takeover confirmation email requires a Matrix room".equals(message)
         || "Notification url is invalid".equals(message)
         || "Notification platform SMTP send failed".equals(message)
         || "Platform SMTP is unavailable in Admin Settings or the technical identity cannot read it"
