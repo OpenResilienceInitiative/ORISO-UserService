@@ -1,19 +1,11 @@
 package de.caritas.cob.userservice.api.service.accountinvite.mail;
 
-import static java.util.Objects.nonNull;
-import static org.apache.commons.lang3.StringUtils.isBlank;
-import static org.apache.commons.lang3.StringUtils.isNotBlank;
-
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
-import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.RenderedEmail;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
-import java.util.Map;
 import lombok.NonNull;
-import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import org.springframework.web.client.RestTemplate;
 
 /**
  * Sends account-invite mails via the platform's global SMTP settings with a strict
@@ -22,12 +14,7 @@ import org.springframework.web.client.RestTemplate;
  * is no silent-failure path. Failures additionally say whether non-delivery is confirmed or the
  * SMTP outcome is uncertain, allowing callers with an existing deduplication claim to retry safely.
  *
- * <p>Settings resolution mirrors {@link
- * de.caritas.cob.userservice.api.service.auth.PasswordResetService}: connection settings come from
- * the public ConsultingTypeService {@code /settings} payload (which deliberately omits credentials
- * since CTS-C01), the credentials from the operator-provided {@code smtp.user}/{@code
- * smtp.password} properties, falling back to the super-admin-guarded credentials endpoint when the
- * request context allows it.
+ * <p>The platform transport comes only from deployment-owned SMTP settings.
  *
  * <p>Since ORISO-UserService#914 this service is also the single choke point where the frame is
  * applied: callers hand over the <em>authored content</em> and the primary action, never finished
@@ -37,33 +24,20 @@ import org.springframework.web.client.RestTemplate;
  * system (see {@link InviteFrameMailRenderer}); the send contract is untouched: receipt after
  * acceptance, {@link SmtpSendException} otherwise.
  */
-@Slf4j
 @Service
 public class InviteMailDispatchService {
 
-  private final @NonNull RestTemplate restTemplate;
-  private final @NonNull ApplicationSettingsService applicationSettingsService;
+  private final @NonNull PlatformSmtpSettingsProvider platformSmtpSettings;
   private final @NonNull InviteMailTransport inviteMailTransport;
   private final @NonNull InviteFrameMailRenderer inviteFrameMailRenderer;
-  private final String consultingTypeServiceApiUrl;
-  private final String configuredSmtpUsername;
-  private final String configuredSmtpPassword;
 
   public InviteMailDispatchService(
-      @NonNull RestTemplate restTemplate,
-      @NonNull ApplicationSettingsService applicationSettingsService,
+      @NonNull PlatformSmtpSettingsProvider platformSmtpSettings,
       @NonNull InviteMailTransport inviteMailTransport,
-      @NonNull InviteFrameMailRenderer inviteFrameMailRenderer,
-      @Value("${consulting.type.service.api.url:}") String consultingTypeServiceApiUrl,
-      @Value("${smtp.user:}") String configuredSmtpUsername,
-      @Value("${smtp.password:}") String configuredSmtpPassword) {
-    this.restTemplate = restTemplate;
-    this.applicationSettingsService = applicationSettingsService;
+      @NonNull InviteFrameMailRenderer inviteFrameMailRenderer) {
+    this.platformSmtpSettings = platformSmtpSettings;
     this.inviteMailTransport = inviteMailTransport;
     this.inviteFrameMailRenderer = inviteFrameMailRenderer;
-    this.consultingTypeServiceApiUrl = consultingTypeServiceApiUrl;
-    this.configuredSmtpUsername = configuredSmtpUsername;
-    this.configuredSmtpPassword = configuredSmtpPassword;
   }
 
   /**
@@ -175,183 +149,20 @@ public class InviteMailDispatchService {
         subject, bodyContent, primaryActionUrl, tenantId, language);
   }
 
-  /**
-   * Resolves the global SMTP settings or throws an {@link SmtpSendException} whose message names
-   * the exact defect (#1006, "loud failure"): unreachable or erroring settings endpoint, the
-   * disabled/missing toggle or missing field by name, an invalid port, or missing credentials with
-   * both remedies. The detailed message goes to the server log only; the API response carries just
-   * the coarse {@link SmtpSendException.Category}. Messages must never contain secret values.
-   */
-  @SuppressWarnings("unchecked")
   private InviteSmtpSettings resolveGlobalSmtpSettings() {
-    if (isBlank(consultingTypeServiceApiUrl)) {
-      throw new SmtpSendException(
-          SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
-          "Invite mail not sent: 'consulting.type.service.api.url' is not configured on"
-              + " UserService, so the global SMTP settings cannot be resolved");
-    }
-    String settingsUrl = normalizeBaseUrl(consultingTypeServiceApiUrl) + "/settings";
-
-    Map<String, Object> settingsResponse;
     try {
-      settingsResponse = restTemplate.getForObject(settingsUrl, Map.class);
-    } catch (org.springframework.web.client.RestClientResponseException exception) {
-      // Review 3893231991: an HTTP error means the endpoint WAS reached — say so, with the status.
-      throw new SmtpSendException(
-          SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
-          "Invite mail not sent: the ConsultingTypeService /settings endpoint responded with HTTP "
-              + exception.getStatusCode().value(),
-          exception);
-    } catch (org.springframework.web.client.ResourceAccessException exception) {
-      throw new SmtpSendException(
-          SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
-          "Invite mail not sent: the ConsultingTypeService /settings endpoint could not be reached"
-              + " ("
-              + exception.getClass().getSimpleName()
-              + ")",
-          exception);
-    } catch (Exception exception) {
-      // Conversion or other unexpected failures get their own case instead of "unreachable".
-      throw new SmtpSendException(
-          SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
-          "Invite mail not sent: the ConsultingTypeService /settings response could not be"
-              + " processed ("
-              + exception.getClass().getSimpleName()
-              + ")",
-          exception);
-    }
-    if (settingsResponse == null || settingsResponse.isEmpty()) {
-      throw new SmtpSendException(
-          SmtpSendException.Category.SMTP_SETTINGS_UNAVAILABLE,
-          "Invite mail not sent: the ConsultingTypeService /settings endpoint returned an empty"
-              + " payload");
-    }
-
-    Boolean systemEmailsEnabled =
-        asBooleanSettingValue(settingsResponse.get("globalFeatureSystemNotificationEmailsEnabled"));
-    Boolean smtpEnabled = asBooleanSettingValue(settingsResponse.get("globalSmtpEnabled"));
-    String host = asStringSettingValue(settingsResponse.get("globalSmtpHost"));
-    Boolean secure = asBooleanSettingValue(settingsResponse.get("globalSmtpSecure"));
-    String from = asStringSettingValue(settingsResponse.get("globalSmtpFrom"));
-
-    var problems = new java.util.ArrayList<String>();
-    // Review 3893223709: an absent or malformed toggle must not masquerade as "disabled".
-    if (systemEmailsEnabled == null) {
-      problems.add("globalFeatureSystemNotificationEmailsEnabled is missing or not a boolean");
-    } else if (!systemEmailsEnabled) {
-      problems.add("globalFeatureSystemNotificationEmailsEnabled is disabled");
-    }
-    if (smtpEnabled == null) {
-      problems.add("globalSmtpEnabled is missing or not a boolean");
-    } else if (!smtpEnabled) {
-      problems.add("globalSmtpEnabled is disabled");
-    }
-    // Review 3893323639: an absent/malformed secure toggle must not silently select STARTTLS.
-    if (secure == null) {
-      problems.add("globalSmtpSecure is missing or not a boolean");
-    }
-    if (isBlank(host)) {
-      problems.add("globalSmtpHost is missing");
-    }
-    Integer port = resolvePort(settingsResponse.get("globalSmtpPort"), problems);
-    if (isBlank(from)) {
-      problems.add("globalSmtpFrom is missing");
-    }
-    if (!problems.isEmpty()) {
+      var settings = platformSmtpSettings.requireConfigured();
+      return new InviteSmtpSettings(
+          settings.host(),
+          settings.port(),
+          settings.secure(),
+          settings.username(),
+          settings.password(),
+          settings.from());
+    } catch (IllegalStateException exception) {
       throw new SmtpSendException(
           SmtpSendException.Category.SMTP_DISABLED_OR_INCOMPLETE,
-          "Invite mail not sent: the global SMTP configuration is unusable — "
-              + String.join(", ", problems));
+          "Invite mail not sent: " + exception.getMessage());
     }
-
-    // The public /settings payload deliberately omits the SMTP username and password since the
-    // CTS-C01 credential-leak fix, so they can never be read from there.
-    String username = configuredSmtpUsername;
-    String password = configuredSmtpPassword;
-    if (isBlank(username) || isBlank(password)) {
-      var credentials = applicationSettingsService.getGlobalSmtpCredentials();
-      if (credentials.isEmpty()) {
-        throw new SmtpSendException(
-            SmtpSendException.Category.SMTP_CREDENTIALS_MISSING,
-            "Invite mail not sent: no SMTP credentials available — set SMTP_USER and SMTP_PASSWORD"
-                + " on the UserService deployment (the supported configuration), or make the"
-                + " guarded ConsultingTypeService credentials endpoint accept the technical"
-                + " service identity (see the UserService log for the credential lookup"
-                + " outcome). #1160: the outcome no longer depends on who triggered the send.");
-      }
-      username = credentials.get().getGlobalSmtpUsername();
-      password = credentials.get().getGlobalSmtpPassword();
-    }
-
-    return new InviteSmtpSettings(host, port, secure, username, password, from);
-  }
-
-  /**
-   * Review 3893223709: nullable on purpose — {@code null} means "missing or not a boolean", which
-   * must not be conflated with an explicit {@code false}.
-   */
-  private Boolean asBooleanSettingValue(Object raw) {
-    Object value = unwrapSettingValue(raw);
-    if (value instanceof Boolean bool) {
-      return bool;
-    }
-    if (value instanceof String string) {
-      if ("true".equalsIgnoreCase(string.trim())) {
-        return Boolean.TRUE;
-      }
-      if ("false".equalsIgnoreCase(string.trim())) {
-        return Boolean.FALSE;
-      }
-    }
-    return null;
-  }
-
-  private String asStringSettingValue(Object raw) {
-    Object value = unwrapSettingValue(raw);
-    return nonNull(value) ? String.valueOf(value).trim() : null;
-  }
-
-  /**
-   * Review 3893223709: validates the port as an integral TCP port in 1..65535 instead of letting 0,
-   * negative, out-of-range or fractional values fail later in transport. Adds the field-specific
-   * problem and returns {@code null} when the value is unusable.
-   */
-  private Integer resolvePort(Object raw, java.util.List<String> problems) {
-    Object value = unwrapSettingValue(raw);
-    if (value instanceof Number number) {
-      double asDouble = number.doubleValue();
-      if (asDouble == Math.rint(asDouble) && asDouble >= 1 && asDouble <= 65535) {
-        return (int) asDouble;
-      }
-      problems.add("globalSmtpPort is not a valid TCP port (1-65535)");
-      return null;
-    }
-    if (value instanceof String string && isNotBlank(string)) {
-      try {
-        int parsed = Integer.parseInt(string.trim());
-        if (parsed >= 1 && parsed <= 65535) {
-          return parsed;
-        }
-        problems.add("globalSmtpPort is not a valid TCP port (1-65535)");
-        return null;
-      } catch (NumberFormatException exception) {
-        // falls through to the "missing or not a number" problem below
-      }
-    }
-    problems.add("globalSmtpPort is missing or not a number");
-    return null;
-  }
-
-  @SuppressWarnings("unchecked")
-  private Object unwrapSettingValue(Object raw) {
-    if (raw instanceof Map<?, ?> map) {
-      return ((Map<String, Object>) map).get("value");
-    }
-    return raw;
-  }
-
-  private static String normalizeBaseUrl(String value) {
-    String trimmed = value.trim();
-    return trimmed.endsWith("/") ? trimmed.substring(0, trimmed.length() - 1) : trimmed;
   }
 }

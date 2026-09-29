@@ -204,5 +204,6 @@
   <include file="db/changelog/changeset/20260922_consultant_live_chat_via_sidebar/changeSet.xml"/>
   <include file="db/changelog/changeset/20260921_account_invite_allocation_modes/changeSet.xml"/>
   <include file="db/changelog/changeset/20260921_account_invite_also_counsellor/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260923_case_handover_neutral_reasons/changeSet.xml"/>
   <include file="db/changelog/changeset/20260924_invite_email_template_tenant/changeSet.xml"/>
 </databaseChangeLog>
