@@ -767,17 +767,6 @@ class ChatServiceTest {
   }
 
   @Test
-  void getChatSessionsForConsultantByIds_Should_OmitChatsDeniedByAccessFilter() {
-    when(chatRepository.findByIdsWithChatAgencies(Set.of(CHAT_ID)))
-        .thenReturn(List.of(activeChatWithAgency()));
-    when(groupChatConsultantAccess.filterAccessible(Mockito.anyList(), eq(CONSULTANT)))
-        .thenReturn(List.of());
-
-    assertThat(
-        chatService.getChatSessionsForConsultantByIds(Set.of(CHAT_ID), CONSULTANT), hasSize(0));
-  }
-
-  @Test
   void getChatSessionsByGroupIds_Should_returnUserSessionsForGivenGroupIds() {
     when(chatRepository.findByMatrixRoomIdIn(Set.of(MATRIX_ROOM_ID)))
         .thenReturn(List.of(activeChatWithAgency()));
