@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
@@ -28,7 +29,6 @@ import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.Executor;
 import org.junit.jupiter.api.BeforeEach;
@@ -371,28 +371,17 @@ class PasswordResetServiceTest {
   }
 
   @Test
-  void requestPasswordReset_Should_NotUseDeploymentCredentialsWhenAdminSettingsMissing() {
+  void requestPasswordReset_Should_NotIssueTokenWhenAdminSmtpIsDisabled() {
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
-    when(applicationSettingsService.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
+    when(applicationSettingsService.getGlobalSmtpCredentials())
+        .thenReturn(
+            Optional.of(smtpCredentials("smtp-user", "smtp-pass").globalSmtpEnabled(false)));
 
     passwordResetService.requestPasswordReset("testuser", "en");
 
     assertThat(sentMails).isEmpty();
-    verify(restTemplate, never()).getForObject(anyString(), any());
-  }
-
-  private Map<String, Object> publicSmtpSettingsWithoutCredentials() {
-    return Map.of(
-        "globalFeatureSystemNotificationEmailsEnabled",
-        true,
-        "globalSmtpEnabled",
-        true,
-        "globalSmtpHost",
-        "smtp.invalid",
-        "globalSmtpPort",
-        587,
-        "globalSmtpFrom",
-        "noreply@example.com");
+    verify(oneTimeTokenStore, never())
+        .store(anyString(), anyString(), anyString(), any(Instant.class), anyBoolean());
   }
 
   private ApplicationSettingsSmtpCredentialsDTO smtpCredentials(String username, String password) {
@@ -413,10 +402,6 @@ class PasswordResetServiceTest {
     user.setUsername("testuser");
     user.setEmail("real@example.com");
     return user;
-  }
-
-  private Map<String, Object> validSmtpSettings() {
-    return publicSmtpSettingsWithoutCredentials();
   }
 
   private OneTimeTokenStore.TokenClaim validClaim() {

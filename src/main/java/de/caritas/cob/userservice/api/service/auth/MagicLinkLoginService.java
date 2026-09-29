@@ -77,7 +77,8 @@ public class MagicLinkLoginService {
       return MagicLinkRequestResult.ACCEPTED;
     }
 
-    sendMagicLinkEmailSafely(account);
+    var smtpSettings = resolveGlobalSmtpSettings();
+    smtpSettings.ifPresent(settings -> sendMagicLinkEmailSafely(account, settings));
     return MagicLinkRequestResult.ACCEPTED;
   }
 
@@ -166,17 +167,12 @@ public class MagicLinkLoginService {
   private boolean isMagicLinkAllowedForAccount(AccountLoginTarget target) {
     return Boolean.TRUE.equals(target.getMagicLinkLoginEnabled())
         && isNotBlank(target.getEmail())
-        && (emailDummySuffix == null || !target.getEmail().endsWith(emailDummySuffix))
-        && resolveGlobalSmtpSettings().isPresent();
+        && (emailDummySuffix == null || !target.getEmail().endsWith(emailDummySuffix));
   }
 
-  private void sendMagicLinkEmailSafely(AccountLoginTarget target) {
+  private void sendMagicLinkEmailSafely(
+      AccountLoginTarget target, GlobalSmtpSettings smtpSettings) {
     try {
-      var smtpSettingsOptional = resolveGlobalSmtpSettings();
-      if (smtpSettingsOptional.isEmpty()) {
-        return;
-      }
-      var smtpSettings = smtpSettingsOptional.get();
       String decodedUsername = new UsernameTranscoder().decodeUsername(target.getUsername());
       String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
       String magicUrl = buildMagicFrontendUrl(oneTimeToken);
