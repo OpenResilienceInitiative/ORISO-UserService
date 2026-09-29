@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
@@ -21,6 +22,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetR
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
+import de.caritas.cob.userservice.api.tenant.TenantResolverService;
+import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
@@ -42,15 +45,26 @@ import org.springframework.test.web.servlet.MockMvc;
 @AutoConfigureMockMvc
 @ActiveProfiles("testing")
 @AutoConfigureTestDatabase(replace = Replace.NONE)
+@WithTenant(1L)
 class AccountInviteCounsellorProvisioningIT {
 
   private static final String RAW_TOKEN = "emailed-counsellor-token";
+
+  /** The public route resolves to the main tenant, as on the single-domain deployment. */
+  @MockitoBean private TenantResolverService tenantResolverService;
+
+  @MockitoBean private TenantService tenantService;
 
   @Autowired private MockMvc mockMvc;
 
   @Autowired private AccountInviteRepository accountInviteRepository;
 
   @MockitoBean private ConsultantAdminFacade consultantAdminFacade;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation
+          .ConsultantAgencyRelationCreatorService
+      consultantAgencyRelationCreatorService;
 
   @BeforeEach
   void configureConsultantProvisioning() {
@@ -71,7 +85,7 @@ class AccountInviteCounsellorProvisioningIT {
         AccountInvite.builder()
             .targetRole(AccountInviteTargetRole.COUNSELLOR)
             .tenantId(79L)
-            .recipientEmail("lisa.simpson@oriso.org")
+            .recipientEmail("lisa.simpson@example.org")
             .firstName("Lisa")
             .lastName("Simpson")
             .agencyId(275L)
@@ -109,13 +123,13 @@ class AccountInviteCounsellorProvisioningIT {
     verify(consultantAdminFacade).createNewConsultant(consultantCaptor.capture());
     CreateConsultantDTO consultant = consultantCaptor.getValue();
     assertThat(consultant.getUsername()).isEqualTo("codex_invited_counsellor");
-    assertThat(consultant.getEmail()).isEqualTo("lisa.simpson@oriso.org");
+    assertThat(consultant.getEmail()).isEqualTo("lisa.simpson@example.org");
     assertThat(consultant.getTenantId()).isEqualTo(79L);
     assertThat(consultant.getTopicIds()).containsExactly(2L);
 
     ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
         ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
-    verify(consultantAdminFacade)
+    verify(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(eq("provisioned-counsellor-id"), agencyCaptor.capture());
     assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(275L);
     assertThat(agencyCaptor.getValue().getRoleSetKey()).isEqualTo("CONSULTANT_DEFAULT");

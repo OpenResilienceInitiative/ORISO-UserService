@@ -11,6 +11,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAnonymousEnquiryResponseDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.conversation.facade.CreateAnonymousEnquiryFacade;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
@@ -35,6 +36,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.Mockito;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -53,9 +55,12 @@ class AgencyInviteLinkServiceTest {
 
   @InjectMocks private AgencyInviteLinkService service;
 
+  @Mock private AdminScope adminScope;
+
   @BeforeEach
   void setTenantContext() {
     TenantContext.setCurrentTenant(1L);
+    Mockito.lenient().when(adminScope.current()).thenReturn(new AdminScope.Tenant(1L));
   }
 
   @AfterEach
@@ -166,13 +171,28 @@ class AgencyInviteLinkServiceTest {
   }
 
   @Test
-  void create_Should_ThrowForbidden_When_NoTenantContext() {
+  void create_Should_ThrowForbidden_When_TheCallerHasNoTenant() {
     TenantContext.clear();
+    Mockito.when(authenticatedUser.getTenantId()).thenReturn(null);
+    Mockito.when(authenticatedUser.getRoles()).thenReturn(java.util.Set.of("tenant-admin"));
+    var realScope =
+        new AdminScope(
+            authenticatedUser,
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.AdminRepository.class),
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.AdminAgencyRepository.class),
+            consultantRepository,
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.class),
+            agencyService,
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.UserRepository.class),
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.UserAgencyRepository.class));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        realScope, "multitenancyEnabled", true);
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "adminScope", realScope);
     CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();
 
-    assertThatThrownBy(() -> service.create(cmd))
-        .isInstanceOf(ForbiddenException.class)
-        .hasMessageContaining("tenant");
+    assertThatThrownBy(() -> service.create(cmd)).isInstanceOf(ForbiddenException.class);
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
   }
 
   @Test

@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -45,6 +46,9 @@ class CounsellorInviteProvisioningServiceTest {
   private final CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService =
       mock(CounsellorAgencyAdminGrantService.class);
 
+  private final ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService =
+      mock(ConsultantAgencyRelationCreatorService.class);
+
   private CounsellorInviteProvisioningService service;
 
   @BeforeEach
@@ -58,7 +62,8 @@ class CounsellorInviteProvisioningServiceTest {
             createConsultantSaga,
             identityAuthentication,
             identityClientConfig,
-            counsellorAgencyAdminGrantService);
+            counsellorAgencyAdminGrantService,
+            consultantAgencyRelationCreatorService);
     var technicalUser = new TechnicalUserConfig();
     technicalUser.setUsername("technical-user");
     technicalUser.setPassword("technical-password");
@@ -81,7 +86,7 @@ class CounsellorInviteProvisioningServiceTest {
     when(consultantRepository.findById("partially-created-consultant"))
         .thenReturn(Optional.of(partiallyCreatedConsultant));
     doThrow(new IllegalStateException("agency assignment failed"))
-        .when(consultantAdminFacade)
+        .when(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(
             org.mockito.ArgumentMatchers.eq("partially-created-consultant"),
             any(CreateConsultantAgencyDTO.class));
@@ -218,7 +223,7 @@ class CounsellorInviteProvisioningServiceTest {
               ambientDuringAgencyAssignment.add(TechnicalAccessTokenContext.get());
               return null;
             })
-        .when(consultantAdminFacade)
+        .when(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(
             org.mockito.ArgumentMatchers.eq("created-consultant"),
             any(CreateConsultantAgencyDTO.class));
@@ -293,7 +298,7 @@ class CounsellorInviteProvisioningServiceTest {
     when(consultantRepository.findById("partially-created-consultant"))
         .thenReturn(Optional.of(partiallyCreatedConsultant));
     doThrow(new IllegalStateException("agency assignment failed"))
-        .when(consultantAdminFacade)
+        .when(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(
             org.mockito.ArgumentMatchers.eq("partially-created-consultant"),
             any(CreateConsultantAgencyDTO.class));
@@ -441,7 +446,7 @@ class CounsellorInviteProvisioningServiceTest {
             .username("invited-counsellor")
             .firstName("Lisa")
             .lastName("Simpson")
-            .email("lisa.simpson@oriso.org")
+            .email("lisa.simpson@example.org")
             .twoFactorRequired(true)
             .passwordChangeRequired(passwordChangeRequired)
             .build();
@@ -465,7 +470,7 @@ class CounsellorInviteProvisioningServiceTest {
     return AccountInvite.builder()
         .targetRole(AccountInviteTargetRole.COUNSELLOR)
         .tenantId(79L)
-        .recipientEmail("lisa.simpson@oriso.org")
+        .recipientEmail("lisa.simpson@example.org")
         .firstName("Lisa")
         .lastName("Simpson")
         .agencyId(275L)
