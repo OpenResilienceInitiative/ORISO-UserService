@@ -37,6 +37,7 @@ import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -55,9 +56,12 @@ public class EmailNotificationFacade {
   private final @NonNull SessionService sessionService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull IdentityClientConfig identityClientConfig;
-  private final @NonNull NewEnquiryEmailSupplier newEnquiryEmailSupplier;
-  private final @NonNull NewDirectEnquiryEmailSupplier newDirectEnquiryEmailSupplier;
-  private final @NonNull AssignEnquiryEmailSupplier assignEnquiryEmailSupplier;
+  // These suppliers carry request data in fields. Resolve a prototype for every dispatch.
+  private final @NonNull ObjectProvider<NewEnquiryEmailSupplier> newEnquiryEmailSupplierProvider;
+  private final @NonNull ObjectProvider<NewDirectEnquiryEmailSupplier>
+      newDirectEnquiryEmailSupplierProvider;
+  private final @NonNull ObjectProvider<AssignEnquiryEmailSupplier>
+      assignEnquiryEmailSupplierProvider;
   private final @NonNull TenantTemplateSupplier tenantTemplateSupplier;
   private final @NonNull NotificationRequestFacts notificationRequestFacts;
 
@@ -86,6 +90,7 @@ public class EmailNotificationFacade {
             "Preparing to send NEW_ENQUIRY_EMAIL_NOTIFICATION email for session: {}",
             session.getId());
         TenantContext.setCurrentTenantData(tenantData);
+        var newEnquiryEmailSupplier = newEnquiryEmailSupplierProvider.getObject();
         newEnquiryEmailSupplier.setCurrentSession(session);
         sendMailTasksToMailService(newEnquiryEmailSupplier, session);
       } catch (Exception ex) {
@@ -109,6 +114,7 @@ public class EmailNotificationFacade {
 
     try {
       TenantContext.setCurrentTenantData(tenantData);
+      var newDirectEnquiryEmailSupplier = newDirectEnquiryEmailSupplierProvider.getObject();
       newDirectEnquiryEmailSupplier.setAgencyId(session.getAgencyId());
       newDirectEnquiryEmailSupplier.setConsultantId(session.getConsultant().getId());
       newDirectEnquiryEmailSupplier.setPostCode(session.getPostcode());
@@ -163,6 +169,7 @@ public class EmailNotificationFacade {
         "Preparing to send ASSIGN_ENQUIRY_NOTIFICATION email to consultant: {}",
         receiverConsultant != null ? receiverConsultant.getId() : "No consultant selected");
     try {
+      var assignEnquiryEmailSupplier = assignEnquiryEmailSupplierProvider.getObject();
       assignEnquiryEmailSupplier.setReceiverConsultant(receiverConsultant);
       assignEnquiryEmailSupplier.setSenderUserId(senderUserId);
       assignEnquiryEmailSupplier.setAskerUserName(askerUserName);

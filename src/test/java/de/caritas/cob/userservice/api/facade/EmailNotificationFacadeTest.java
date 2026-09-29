@@ -72,18 +72,22 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -332,15 +336,19 @@ class EmailNotificationFacadeTest {
               .roles(null)
               .registration(null);
 
-  @InjectMocks private EmailNotificationFacade emailNotificationFacade;
+  private EmailNotificationFacade emailNotificationFacade;
 
   @Mock private NewEnquiryEmailSupplier newEnquiryEmailSupplier;
+  @Mock private ObjectProvider<NewEnquiryEmailSupplier> newEnquiryEmailSupplierProvider;
 
   @SuppressWarnings("unused")
   @Mock
   private NewDirectEnquiryEmailSupplier newDirectEnquiryEmailSupplier;
 
+  @Mock private ObjectProvider<NewDirectEnquiryEmailSupplier> newDirectEnquiryEmailSupplierProvider;
+
   @Spy private AssignEnquiryEmailSupplier assignEnquiryEmailSupplier;
+  @Mock private ObjectProvider<AssignEnquiryEmailSupplier> assignEnquiryEmailSupplierProvider;
 
   // The real rule, not a mock: ConsultantDisplayNameResolver is the single place that decides
   // which counsellor name may be published (ADR-002 §2).
@@ -366,6 +374,23 @@ class EmailNotificationFacadeTest {
 
   @BeforeEach
   void setup() throws SecurityException {
+    emailNotificationFacade =
+        new EmailNotificationFacade(
+            mailService,
+            sessionService,
+            consultantService,
+            identityClientConfig,
+            newEnquiryEmailSupplierProvider,
+            newDirectEnquiryEmailSupplierProvider,
+            assignEnquiryEmailSupplierProvider,
+            tenantTemplateSupplier,
+            notificationRequestFacts,
+            releaseToggleService,
+            consultantDisplayNameResolver);
+    when(newEnquiryEmailSupplierProvider.getObject()).thenReturn(newEnquiryEmailSupplier);
+    when(newDirectEnquiryEmailSupplierProvider.getObject())
+        .thenReturn(newDirectEnquiryEmailSupplier);
+    when(assignEnquiryEmailSupplierProvider.getObject()).thenReturn(assignEnquiryEmailSupplier);
     when(identityClientConfig.getEmailDummySuffix()).thenReturn(FIELD_VALUE_EMAIL_DUMMY_SUFFIX);
     when(notificationRequestFacts.forSession(any())).thenReturn(List.of());
     ReflectionTestUtils.setField(
@@ -426,6 +451,119 @@ class EmailNotificationFacadeTest {
   private void givenNewEnquiryMailSupplierReturnNonEmptyMails() {
     List<MailDTO> mails = getMailDTOS();
     when(newEnquiryEmailSupplier.generateEmails()).thenReturn(mails);
+  }
+
+  @Test
+  void concurrentNewEnquiriesKeepSupplierStateFactsAndTenantSeparate() throws Exception {
+    var first = givenEnquirySession();
+    first.setId(101L);
+    var second = givenEnquirySession();
+    second.setId(202L);
+    var firstSupplier = Mockito.mock(NewEnquiryEmailSupplier.class);
+    var secondSupplier = Mockito.mock(NewEnquiryEmailSupplier.class);
+    var firstSession = new AtomicReference<Session>();
+    var secondSession = new AtomicReference<Session>();
+    var firstInsideGeneration = new CountDownLatch(1);
+    var releaseFirst = new CountDownLatch(1);
+    when(newEnquiryEmailSupplierProvider.getObject()).thenReturn(firstSupplier, secondSupplier);
+    Mockito.doAnswer(
+            invocation -> {
+              firstSession.set(invocation.getArgument(0));
+              return null;
+            })
+        .when(firstSupplier)
+        .setCurrentSession(any());
+    Mockito.doAnswer(
+            invocation -> {
+              secondSession.set(invocation.getArgument(0));
+              return null;
+            })
+        .when(secondSupplier)
+        .setCurrentSession(any());
+    when(firstSupplier.generateEmails())
+        .thenAnswer(
+            invocation -> {
+              firstInsideGeneration.countDown();
+              if (!releaseFirst.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("First dispatch was never released");
+              }
+              return List.of(
+                  new MailDTO()
+                      .email("first@example.test")
+                      .templateData(
+                          List.of(
+                              new TemplateDataDTO()
+                                  .key("sourceSession")
+                                  .value(firstSession.get().getId().toString()))));
+            });
+    when(secondSupplier.generateEmails())
+        .thenAnswer(
+            invocation ->
+                List.of(
+                    new MailDTO()
+                        .email("second@example.test")
+                        .templateData(
+                            List.of(
+                                new TemplateDataDTO()
+                                    .key("sourceSession")
+                                    .value(secondSession.get().getId().toString())))));
+    when(notificationRequestFacts.forSession(any()))
+        .thenAnswer(
+            invocation ->
+                List.of(
+                    new TemplateDataDTO()
+                        .key("factSession")
+                        .value(((Session) invocation.getArgument(0)).getId().toString())));
+    var deliveries = new java.util.concurrent.ConcurrentHashMap<String, String>();
+    Mockito.doAnswer(
+            invocation -> {
+              var mail = ((MailsDTO) invocation.getArgument(0)).getMails().getFirst();
+              var details =
+                  mail.getTemplateData().stream()
+                      .filter(
+                          value ->
+                              "sourceSession".equals(value.getKey())
+                                  || "factSession".equals(value.getKey()))
+                      .collect(
+                          java.util.stream.Collectors.toMap(
+                              TemplateDataDTO::getKey, TemplateDataDTO::getValue));
+              deliveries.put(
+                  mail.getEmail(),
+                  TenantContext.getCurrentTenant()
+                      + ":"
+                      + details.get("sourceSession")
+                      + ":"
+                      + details.get("factSession"));
+              return null;
+            })
+        .when(mailService)
+        .sendEmailNotification(any());
+
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var firstDispatch =
+          executor.submit(
+              () ->
+                  emailNotificationFacade.sendNewEnquiryEmailNotification(
+                      first, new TenantData(11L, "first")));
+      try {
+        assertThat(firstInsideGeneration.await(5, TimeUnit.SECONDS)).isTrue();
+        var secondDispatch =
+            executor.submit(
+                () ->
+                    emailNotificationFacade.sendNewEnquiryEmailNotification(
+                        second, new TenantData(22L, "second")));
+        secondDispatch.get(5, TimeUnit.SECONDS);
+      } finally {
+        releaseFirst.countDown();
+      }
+      firstDispatch.get(5, TimeUnit.SECONDS);
+    }
+
+    assertThat(deliveries)
+        .containsEntry("first@example.test", "11:101:101")
+        .containsEntry("second@example.test", "22:202:202")
+        .hasSize(2);
+    verify(newEnquiryEmailSupplierProvider, times(2)).getObject();
   }
 
   private List<MailDTO> getMailDTOS() {
