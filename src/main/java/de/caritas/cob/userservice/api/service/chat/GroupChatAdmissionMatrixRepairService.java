@@ -82,14 +82,11 @@ public class GroupChatAdmissionMatrixRepairService {
     if (task.isEmpty()) {
       return;
     }
-    if (request.isEmpty() || request.get().getStatus() != Status.ADMITTING) {
-      if (request.isPresent() && request.get().getStatus() == Status.ADMITTED) {
-        tasks.delete(task.get());
-      } else {
-        recordRetry(task.get());
-      }
+    if (request.isPresent() && request.get().getStatus() == Status.ADMITTED) {
+      tasks.delete(task.get());
       return;
     }
+    // Any other state (still admitting, handed back, gone) must not keep a Matrix-only member.
     if (participants
         .findBySeriesIdAndConsultantId(task.get().getSeriesId(), task.get().getConsultantId())
         .isPresent()) {

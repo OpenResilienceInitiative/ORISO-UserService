@@ -39,6 +39,10 @@ public class GroupChatAdmissionProcessor {
   @Value("${group.chat.admission.retry-backoff:PT1M}")
   private Duration retryBackoff;
 
+  /** 0 or less retries forever. */
+  @Value("${group.chat.admission.max-attempts:30}")
+  private int maxAttempts;
+
   @Transactional(readOnly = true)
   public List<Long> pendingIds() {
     return requests
@@ -133,11 +137,33 @@ public class GroupChatAdmissionProcessor {
       Long requestId, de.caritas.cob.userservice.api.model.GroupChatJoinRequest request) {
     request.setAdmissionAttemptCount(request.getAdmissionAttemptCount() + 1);
     request.setAdmissionLastAttemptAt(CustomLocalDateTime.nowInUtc());
+    if (maxAttempts > 0 && request.getAdmissionAttemptCount() >= maxAttempts) {
+      handBackToModerators(requestId, request);
+      return;
+    }
     requests.save(request);
     log.warn(
         "Group chat admission {} remains pending after attempt {}",
         requestId,
         request.getAdmissionAttemptCount());
+  }
+
+  // No endpoint resolves ADMITTING, so a request that keeps failing goes back to the moderators'
+  // pending list, where they can admit it again or decline it.
+  private void handBackToModerators(
+      Long requestId, de.caritas.cob.userservice.api.model.GroupChatJoinRequest request) {
+    var attempts = request.getAdmissionAttemptCount();
+    request.setStatus(Status.PENDING);
+    request.setAdmissionRequestedAt(null);
+    request.setAdmittedRole(null);
+    request.setDecidedBy(null);
+    request.setDecidedAt(null);
+    request.setAdmissionAttemptCount(0);
+    requests.save(request);
+    log.warn(
+        "Group chat admission {} handed back to moderators after {} failed attempts",
+        requestId,
+        attempts);
   }
 
   /** Records a failed transaction in a fresh transaction so one bad row cannot starve the queue. */
