@@ -48,6 +48,7 @@ class ReplicaSafetyInventoryContractTest {
           "account-deletion-scheduler",
           "anonymous-deletion-scheduler",
           "registered-only-deletion-scheduler",
+          "temporary-account-deletion-scheduler",
           "handshake-expiry-scheduler",
           "support-room-expiry-scheduler",
           "event-notification-retention-scheduler",

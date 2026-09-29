@@ -475,6 +475,22 @@
       "status": "blocker"
     },
     {
+      "id": "temporary-account-deletion-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/workflow/delete/scheduler/DeleteTemporaryAccountsScheduler.java",
+      "kind": "scheduler",
+      "owner": "identity-profile",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "performDeletionWorkflow"
+      ],
+      "decision": "Lease execution and make provider cleanup idempotent.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "blocker"
+    },
+    {
       "id": "handshake-expiry-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/service/handshake/HandshakeService.java",
       "kind": "scheduler",
