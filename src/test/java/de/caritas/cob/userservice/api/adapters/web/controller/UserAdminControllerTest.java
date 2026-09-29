@@ -483,7 +483,7 @@ class UserAdminControllerTest {
 
   @Test
   void getAdminAgencies_Should_delegate() {
-    when(adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L, 2L));
+    when(adminUserFacade.findAgencyIdsOfAdminInCallerScope("admin-1")).thenReturn(List.of(1L, 2L));
 
     var response = controller.getAdminAgencies("admin-1");
 

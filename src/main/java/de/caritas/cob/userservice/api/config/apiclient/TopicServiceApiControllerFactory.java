@@ -9,7 +9,8 @@ import org.springframework.web.client.RestTemplate;
 @Component
 public class TopicServiceApiControllerFactory {
 
-  @Value("${topic.service.api.url:${consulting.type.service.api.url}}")
+  // The topic API is served by the ConsultingTypeService; no environment ever set a separate URL.
+  @Value("${consulting.type.service.api.url}")
   private String topicServiceApiUrl;
 
   @Autowired private RestTemplate restTemplate;
