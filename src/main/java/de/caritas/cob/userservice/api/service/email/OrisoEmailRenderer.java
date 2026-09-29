@@ -212,7 +212,7 @@ public class OrisoEmailRenderer {
    */
   public RenderedEmail render(
       String templateId, Tone tone, Map<String, String> values, Map<String, String> fragments) {
-    tone = releasedTone(tone);
+    tone = deliveryTone(tone);
     values = withOccasionOnUnsubscribeLink(templateId, values);
     String html =
         substitute(
@@ -255,7 +255,7 @@ public class OrisoEmailRenderer {
 
   /** The subject line, from the generated catalogue rather than from the document. */
   public String subjectOf(String templateId, Tone tone) {
-    tone = releasedTone(tone);
+    tone = deliveryTone(tone);
     JsonNode node =
         catalogue
             .path("mails")
@@ -270,7 +270,8 @@ public class OrisoEmailRenderer {
     return node.asText();
   }
 
-  private Tone releasedTone(Tone tone) {
+  /** The reviewed tone used for delivery unless this deployment explicitly opts into test copy. */
+  public Tone deliveryTone(Tone tone) {
     String release = catalogue.path("locales").path(tone.directory()).path("release").asText();
     if ("released".equals(release)
         || ("pending-human-review".equals(release) && allowUnreviewedLocales)) {

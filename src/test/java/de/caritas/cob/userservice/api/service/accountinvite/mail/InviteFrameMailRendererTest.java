@@ -51,6 +51,21 @@ class InviteFrameMailRendererTest {
   }
 
   @Test
+  void unreviewedLanguageUsesReviewedGermanFrameAndLabelsByDefault() {
+    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    BrandedEmail mail =
+        InviteFrameMailRendererFixture.inviteFrameMailRenderer(
+                emailBrandingResolver, SenderOrganisationFixture.platformOwner(), false)
+            .render("Invitation", "Body", ACCEPT_URL, 42L, "fr");
+
+    assertThat(mail.html())
+        .contains("<html lang=\"de\"")
+        .contains("Einladung annehmen")
+        .doesNotContain("Accepter l’invitation");
+    assertThat(mail.plainText()).contains("Einladung annehmen");
+  }
+
+  @Test
   void rejectsAnUnknownInvitationLanguage() {
     assertThatThrownBy(() -> InviteFrameMailRenderer.Labels.forLanguage("uk"))
         .isInstanceOf(IllegalArgumentException.class)
