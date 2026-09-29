@@ -28,7 +28,7 @@ class NotificationMailComposerTest {
   @BeforeEach
   void setUp() {
     composer =
-        new NotificationMailComposer(new OrisoEmailRenderer(), brandingResolver, brandValues);
+        new NotificationMailComposer(new OrisoEmailRenderer(true), brandingResolver, brandValues);
     brand(7L, "Träger Sieben");
     brand(8L, "Träger Acht");
   }
