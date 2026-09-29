@@ -22,6 +22,7 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
 class GroupChatConsultantAccessTest {
@@ -112,6 +113,82 @@ class GroupChatConsultantAccessTest {
                     .build()));
 
     assertThat(access.mayModerate(series, consultant)).isTrue();
+  }
+
+  @Test
+  void aPlainMemberOfTheGroupsOwnBeratungsstelleMayNotModerate() {
+    var member = consultant("member", 1L, 100L);
+    var series = series(31L, consultant("owner", 1L, 100L), 100L);
+    when(participants.findBySeriesIdAndConsultantId(31L, "member"))
+        .thenReturn(Optional.of(participant(31L, "member", ParticipantRole.PARTICIPANT)));
+
+    assertThat(access.mayModerate(series, member)).isFalse();
+  }
+
+  @Test
+  void aSameTragerColleagueOfTheBeratungsstelleWhoIsNoMemberMayModerate() {
+    var colleague = consultant("colleague", 1L, 100L);
+    var series = series(32L, consultant("owner", 1L, 100L), 100L);
+    when(participants.findBySeriesIdAndConsultantId(32L, "colleague")).thenReturn(Optional.empty());
+
+    assertThat(access.mayModerate(series, colleague)).isTrue();
+  }
+
+  @Test
+  void withMultitenancyAMissingTenantOnEitherSideIsNeverTheSameTrager() {
+    ReflectionTestUtils.setField(access, "multitenancy", true);
+    var tenantless = consultant("tenantless", null, 100L);
+    var tenantlessOwnerSeries = series(33L, consultant("owner", null, 100L), 100L);
+
+    assertThat(access.mayAccess(series(34L, consultant("owner", 1L, 100L), 100L), tenantless))
+        .isFalse();
+    assertThat(access.mayAccess(tenantlessOwnerSeries, consultant("colleague", 1L, 100L)))
+        .isFalse();
+    assertThat(access.mayAccess(tenantlessOwnerSeries, tenantless)).isFalse();
+    assertThat(access.filterAccessible(List.of(tenantlessOwnerSeries), tenantless)).isEmpty();
+  }
+
+  @Test
+  void withoutMultitenancyTenantlessColleaguesOfTheBeratungsstelleKeepAccess() {
+    ReflectionTestUtils.setField(access, "multitenancy", false);
+    var series = series(35L, consultant("owner", null, 100L), 100L);
+
+    assertThat(access.mayAccess(series, consultant("colleague", null, 100L))).isTrue();
+  }
+
+  @Test
+  void onceAGroupHasMembersOnlyItsOwnerOrCoModeratorsMayStartStopOrBan() {
+    var series = series(36L, consultant("owner", 1L, 100L), 100L);
+    when(participants.findBySeriesId(36L))
+        .thenReturn(
+            List.of(
+                participant(36L, "owner", ParticipantRole.OWNER),
+                participant(36L, "co", ParticipantRole.CO_MODERATOR),
+                participant(36L, "member", ParticipantRole.PARTICIPANT)));
+
+    assertThat(access.mayStartStopOrBan(series, consultant("owner", 1L, 100L))).isTrue();
+    assertThat(access.mayStartStopOrBan(series, consultant("co", 1L, 200L))).isTrue();
+    assertThat(access.mayStartStopOrBan(series, consultant("member", 1L, 100L))).isFalse();
+    assertThat(access.mayStartStopOrBan(series, consultant("colleague", 1L, 100L))).isFalse();
+  }
+
+  @Test
+  void aLegacyGroupWithoutMembersFallsBackToSameTragerColleaguesOfTheBeratungsstelle() {
+    var series = series(37L, consultant("owner", 1L, 100L), 100L);
+    when(participants.findBySeriesId(37L)).thenReturn(List.of());
+
+    assertThat(access.mayStartStopOrBan(series, consultant("colleague", 1L, 100L))).isTrue();
+    assertThat(access.mayStartStopOrBan(series, consultant("foreign", 2L, 100L))).isFalse();
+    assertThat(access.mayStartStopOrBan(series, consultant("elsewhere", 1L, 200L))).isFalse();
+  }
+
+  private static GroupChatParticipant participant(
+      Long seriesId, String consultantId, ParticipantRole role) {
+    return GroupChatParticipant.builder()
+        .seriesId(seriesId)
+        .consultantId(consultantId)
+        .role(role)
+        .build();
   }
 
   private static Consultant consultant(String id, Long tenantId, Long agencyId) {

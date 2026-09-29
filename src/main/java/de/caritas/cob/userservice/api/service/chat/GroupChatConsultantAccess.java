@@ -14,6 +14,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
 /**
@@ -29,6 +30,9 @@ import org.springframework.stereotype.Component;
 public class GroupChatConsultantAccess {
 
   private final GroupChatParticipantRepository participantRepository;
+
+  @Value("${multitenancy.enabled:true}")
+  private boolean multitenancy;
 
   public boolean mayAccess(Chat chat, Consultant consultant) {
     if (chat == null || consultant == null) {
@@ -71,11 +75,37 @@ public class GroupChatConsultantAccess {
     if (chat == null || consultant == null) {
       return false;
     }
+    // A member's role decides; the colleague fallback is only for non-members.
     return participationOf(chat, consultant)
-            .map(GroupChatParticipant::getRole)
-            .filter(role -> role == ParticipantRole.OWNER || role == ParticipantRole.CO_MODERATOR)
-            .isPresent()
-        || (isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant));
+        .map(participant -> isModeratorRole(participant.getRole()))
+        .orElseGet(() -> isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant));
+  }
+
+  /**
+   * Whether the counsellor may start or stop an occurrence or ban an advice seeker. Once the group
+   * has members, only its Owner or Co-Moderators may; a legacy group without member rows falls back
+   * to same-Träger colleagues of its Beratungsstelle.
+   */
+  public boolean mayStartStopOrBan(Chat chat, Consultant consultant) {
+    if (chat == null || consultant == null) {
+      return false;
+    }
+    var members =
+        chat.getId() == null
+            ? List.<GroupChatParticipant>of()
+            : participantRepository.findBySeriesId(chat.getId());
+    if (members.isEmpty()) {
+      return isSameTenantAsOwner(chat, consultant) && sharesAgency(chat, consultant);
+    }
+    return members.stream()
+        .anyMatch(
+            member ->
+                Objects.equals(consultant.getId(), member.getConsultantId())
+                    && isModeratorRole(member.getRole()));
+  }
+
+  private static boolean isModeratorRole(ParticipantRole role) {
+    return role == ParticipantRole.OWNER || role == ParticipantRole.CO_MODERATOR;
   }
 
   private boolean isParticipant(Chat chat, Consultant consultant) {
@@ -88,9 +118,16 @@ public class GroupChatConsultantAccess {
         : participantRepository.findBySeriesIdAndConsultantId(chat.getId(), consultant.getId());
   }
 
-  private static boolean isSameTenantAsOwner(Chat chat, Consultant consultant) {
-    return chat.getChatOwner() != null
-        && Objects.equals(chat.getChatOwner().getTenantId(), consultant.getTenantId());
+  private boolean isSameTenantAsOwner(Chat chat, Consultant consultant) {
+    if (chat.getChatOwner() == null) {
+      return false;
+    }
+    var ownerTenantId = chat.getChatOwner().getTenantId();
+    // With multitenancy an unknown tenant must not match another unknown tenant.
+    if (multitenancy && (ownerTenantId == null || consultant.getTenantId() == null)) {
+      return false;
+    }
+    return Objects.equals(ownerTenantId, consultant.getTenantId());
   }
 
   private static boolean sharesAgency(Chat chat, Consultant consultant) {
