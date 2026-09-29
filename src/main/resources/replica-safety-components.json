@@ -285,6 +285,36 @@
       "status": "bounded"
     },
     {
+      "id": "platform-operator-organisation-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/sender/PlatformOperatorOrganisationClient.java",
+      "kind": "local-state",
+      "owner": "administration",
+      "risk": "performance",
+      "components": [
+        "cache"
+      ],
+      "decision": "Retain locally with the five-minute TTL; a miss re-reads the operator master data from TenantService, and a replica with an older copy only shows a changed mail-footer sender for at most that TTL.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
+      "id": "traeger-organisation-cache",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/email/sender/TraegerOrganisationClient.java",
+      "kind": "local-state",
+      "owner": "administration",
+      "risk": "performance",
+      "components": [
+        "cache"
+      ],
+      "decision": "Retain locally per tenant with the five-minute TTL; a miss re-reads the tenant from TenantService, and a replica with an older copy only shows a changed Traeger name or address in mail footers for at most that TTL.",
+      "signals": [
+        "userservice.replica.local_state"
+      ],
+      "status": "bounded"
+    },
+    {
       "id": "appointment-cleanup-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/Organizer.java",
       "kind": "scheduler",

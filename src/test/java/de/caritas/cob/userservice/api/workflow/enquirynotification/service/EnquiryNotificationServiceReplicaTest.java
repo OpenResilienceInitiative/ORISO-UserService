@@ -110,7 +110,7 @@ class EnquiryNotificationServiceReplicaTest {
             releaseToggleService,
             taskClaimService);
     setField(service, "openEnquiryCheckHours", 12L);
-    setField(service, "applicationBaseUrl", "https://app.oriso.org");
+    setField(service, "applicationBaseUrl", "https://app.example.org");
     setField(service, "claimDuration", Duration.ofMinutes(30));
     return service;
   }

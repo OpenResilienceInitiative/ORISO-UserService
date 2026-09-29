@@ -20,7 +20,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class StopChatActionCommandTest {
 
-  private static final String MATRIX_ROOM_ID = "!group:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!group:matrix.example.org";
 
   @Mock private ChatService chatService;
   @Mock private ChatReCreator chatReCreator;
@@ -73,11 +73,11 @@ class StopChatActionCommandTest {
     when(chat.isRepetitive()).thenReturn(true);
     when(chat.getChatInterval()).thenReturn(Chat.ChatInterval.WEEKLY);
     when(chat.nextStart()).thenReturn(LocalDateTime.parse("2026-08-04T10:00:00"));
-    when(chatReCreator.recreateMessengerChat(chat)).thenReturn("!next:matrix.oriso.org");
+    when(chatReCreator.recreateMessengerChat(chat)).thenReturn("!next:matrix.example.org");
 
     command.execute(chat);
 
-    verify(chatReCreator).updateAsNextChat(chat, "!next:matrix.oriso.org");
+    verify(chatReCreator).updateAsNextChat(chat, "!next:matrix.example.org");
     verify(chatService, never()).deleteChat(chat);
   }
 
