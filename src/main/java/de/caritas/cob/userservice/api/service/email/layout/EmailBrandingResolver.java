@@ -51,7 +51,7 @@ public class EmailBrandingResolver {
   public EmailBrandingResolver(
       @NonNull TenantService tenantService,
       @NonNull TenantTemplateSupplier tenantTemplateSupplier,
-      @Value("${email.branding.name:ORISO}") String platformName,
+      @Value("${email.branding.name:}") String platformName,
       @Value("${email.branding.logo-url:}") String platformLogoUrl,
       @Value("${app.base.url}") String applicationBaseUrl) {
     this.tenantService = tenantService;
@@ -68,10 +68,7 @@ public class EmailBrandingResolver {
     RestrictedTenantDTO tenant = loadTenantQuietly(tenantId);
     Theming theming = tenant == null ? null : tenant.getTheming();
 
-    String brandName =
-        tenant != null && !isBlank(tenant.getName())
-            ? tenant.getName()
-            : (isBlank(platformName) ? "ORISO" : platformName);
+    String brandName = requireBrandName(tenant);
 
     return new EmailBranding(
         brandName,
@@ -79,6 +76,17 @@ public class EmailBrandingResolver {
         resolveAccentColor(theming),
         resolveFooterUrl(tenant, "/impressum"),
         resolveFooterUrl(tenant, "/datenschutz"));
+  }
+
+  private String requireBrandName(RestrictedTenantDTO tenant) {
+    if (tenant != null && !isBlank(tenant.getName())) {
+      return tenant.getName();
+    }
+    if (isBlank(platformName)) {
+      throw new IllegalStateException(
+          "Email branding name is missing: configure EMAIL_BRANDING_NAME before sending mail");
+    }
+    return platformName;
   }
 
   private String resolveLogoUrl(RestrictedTenantDTO tenant, Theming theming) {

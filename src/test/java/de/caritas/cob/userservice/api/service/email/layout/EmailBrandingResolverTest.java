@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.email.layout;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
@@ -30,6 +31,11 @@ class EmailBrandingResolverTest {
         "ORISO",
         platformLogoUrl,
         "https://app.example.org/");
+  }
+
+  private EmailBrandingResolver resolverWithPlatformName(String platformName) {
+    return new EmailBrandingResolver(
+        tenantService, tenantTemplateSupplier, platformName, "", "https://app.example.org/");
   }
 
   private void givenNoTemplateAttributes() {
@@ -252,6 +258,21 @@ class EmailBrandingResolverTest {
     resolver("").resolve(null);
 
     org.mockito.Mockito.verify(tenantService).getPlatformTenantData();
+  }
+
+  @Test
+  void resolve_ShouldRejectMissingPlatformName_WhenNoTenantNameIsAvailable() {
+    assertThatThrownBy(() -> resolverWithPlatformName(" ").resolve(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
+  @Test
+  void resolve_ShouldUseTenantName_WhenPlatformNameIsMissing() {
+    RestrictedTenantDTO resolvedTenant = tenant("Nord", null);
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolvedTenant);
+
+    assertThat(resolverWithPlatformName("").resolve(7L).brandName()).isEqualTo("Nord");
   }
 
   // --- footer ---------------------------------------------------------------------------
