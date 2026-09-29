@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.model;
 
 import com.fasterxml.jackson.annotation.JsonIgnore;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import jakarta.persistence.Column;
 import jakarta.persistence.Entity;
@@ -225,10 +226,13 @@ public class Chat {
 
   /** Wall-clock time in {@code zoneId} to the UTC instant stored in start dates. */
   public static LocalDateTime toUtc(LocalDate date, LocalTime time, ZoneId zoneId) {
-    return LocalDateTime.of(date, time)
-        .atZone(zoneId)
-        .withZoneSameInstant(ZoneOffset.UTC)
-        .toLocalDateTime();
+    var local = LocalDateTime.of(date, time);
+    // atZone would silently move a time skipped at DST start by an hour.
+    if (zoneId.getRules().getValidOffsets(local).isEmpty()) {
+      throw new BadRequestException(
+          String.format("Start time %s does not exist in timezone %s.", local, zoneId));
+    }
+    return local.atZone(zoneId).withZoneSameInstant(ZoneOffset.UTC).toLocalDateTime();
   }
 
   /** The chat's timezone; falls back to UTC for legacy rows without a valid zone. */

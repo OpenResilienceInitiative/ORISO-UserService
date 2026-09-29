@@ -3,12 +3,15 @@ package de.caritas.cob.userservice.api.service;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.AUTHENTICATED_USER_CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.lenient;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Chat.ChatInterval;
@@ -152,6 +155,27 @@ class ChatStartTimeContractTest {
     UserChatDTO read = read(series);
     assertThat(read.getStartDate()).isEqualTo(LocalDate.parse("2026-10-27"));
     assertThat(read.getStartTime()).isEqualTo(LocalTime.parse("18:00"));
+  }
+
+  @Test
+  void create_Should_Reject_ATimeTheClockSkipsAtDstStart() {
+    // 28.03.2027: Berlin clocks jump from 02:00 to 03:00, so 02:30 never happens.
+    assertThatThrownBy(
+            () -> chatConverter.convertToEntity(dto("2027-03-28", "02:30", BERLIN), CONSULTANT))
+        .isInstanceOf(BadRequestException.class);
+  }
+
+  @Test
+  void update_Should_Reject_ATimeTheClockSkipsAtDstStart() {
+    Chat existing = inactiveOwnedChat();
+    when(chatRepository.findByIdWithPermissionRelations(CHAT_ID)).thenReturn(Optional.of(existing));
+
+    assertThatThrownBy(
+            () ->
+                chatService.updateChat(
+                    CHAT_ID, dto("2027-03-28", "02:30", BERLIN), AUTHENTICATED_USER_CONSULTANT))
+        .isInstanceOf(BadRequestException.class);
+    verify(chatRepository, never()).save(Mockito.any());
   }
 
   @Test
