@@ -731,7 +731,7 @@ class CreateConsultantSagaTest {
     PlainCredentialsHolder.set(VALID_USERNAME, null);
     when(userHelper.getRandomPassword()).thenReturn("MatrixPass1!");
     when(matrixSynapseService.createUserId(anyString(), anyString(), anyString()))
-        .thenReturn("@" + VALID_USERNAME + ":matrix.oriso.org");
+        .thenReturn("@" + VALID_USERNAME + ":matrix.example.org");
   }
 
   private String capturedMatrixDisplayName() throws Exception {

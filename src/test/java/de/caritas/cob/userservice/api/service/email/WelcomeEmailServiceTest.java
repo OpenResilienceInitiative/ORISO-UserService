@@ -48,7 +48,7 @@ class WelcomeEmailServiceTest {
 
   @BeforeEach
   void setUp() {
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org");
+    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org");
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
     ReflectionTestUtils.setField(emailBrand, "platformName", "Online-Beratung");
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))

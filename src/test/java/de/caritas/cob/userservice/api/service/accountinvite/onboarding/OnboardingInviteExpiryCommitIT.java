@@ -126,7 +126,7 @@ class OnboardingInviteExpiryCommitIT {
                 .targetRole(targetRole)
                 .tenantId(79L)
                 .tenantIdReservationToken("3f2c6d1e-8b1a-4b8e-9f47-1234567890ab")
-                .recipientEmail("lisa.simpson@oriso.org")
+                .recipientEmail("lisa.simpson@example.org")
                 .firstName("Lisa")
                 .lastName("Simpson")
                 .agencyId(275L)
@@ -150,7 +150,7 @@ class OnboardingInviteExpiryCommitIT {
         true,
         "Lisa Simpson",
         "Head of centre",
-        "lisa.simpson@oriso.org",
+        "lisa.simpson@example.org",
         "Beratungsstelle Springfield",
         "Valid-Test-Password-2026!",
         79L,

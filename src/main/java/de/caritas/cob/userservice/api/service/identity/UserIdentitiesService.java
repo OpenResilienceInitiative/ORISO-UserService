@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.identity;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.UserIdentitiesDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityRoleLookup;
@@ -23,6 +24,7 @@ public class UserIdentitiesService {
   private final @NonNull AdminRepository adminRepository;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull IdentityRoleLookup identityRoleLookup;
+  private final @NonNull AdminCallerScope adminCallerScope;
 
   /**
    * Looks up the identities held by the given user.
@@ -31,6 +33,8 @@ public class UserIdentitiesService {
    * @return a {@link UserIdentitiesDTO} describing the admin/consultant identities and realm roles
    */
   public UserIdentitiesDTO getUserIdentities(String userId) {
+    // The realm roles come from Keycloak, which knows no tenant: check the caller's scope first.
+    adminCallerScope.assertMayReadUser(userId);
     var dto = new UserIdentitiesDTO();
     dto.setHasAdminIdentity(adminRepository.existsById(userId));
     dto.setHasConsultantIdentity(
