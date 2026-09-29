@@ -5,6 +5,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.model.ReplyEmailDelivery;
+import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.RecipientKind;
 import de.caritas.cob.userservice.api.port.out.ReplyEmailDeliveryRepository;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
@@ -28,7 +29,15 @@ class ReplyEmailDeliveryWriterCorrelationTest {
               return delivery;
             });
 
-    long id = writer.reserve("asker", "event-hash", 7L, 42L);
+    long id =
+        writer.reserve(
+            RecipientKind.ASKER,
+            "asker",
+            "@consultant:matrix.example",
+            "!room:matrix.example",
+            "event-hash",
+            7L,
+            42L);
 
     assertThat(id).isEqualTo(17L);
     org.mockito.ArgumentCaptor<ReplyEmailDelivery> saved =
@@ -36,5 +45,34 @@ class ReplyEmailDeliveryWriterCorrelationTest {
     org.mockito.Mockito.verify(repository).saveAndFlush(saved.capture());
     assertThat(UUID.fromString(saved.getValue().getCorrelationId())).isNotNull();
     assertThat(saved.getValue().getCorrelationId()).doesNotContain("asker", "event-hash");
+    assertThat(saved.getValue().getRecipientKind()).isEqualTo(RecipientKind.ASKER);
+    assertThat(saved.getValue().getSourceMatrixUserId()).isEqualTo("@consultant:matrix.example");
+    assertThat(saved.getValue().getSourceRoomId()).isEqualTo("!room:matrix.example");
+  }
+
+  @Test
+  void consultantClaimPersistsExplicitRoleWithoutAnAskerForeignKey() {
+    when(repository.saveAndFlush(any(ReplyEmailDelivery.class)))
+        .thenAnswer(
+            invocation -> {
+              ReplyEmailDelivery delivery = invocation.getArgument(0);
+              delivery.setId(18L);
+              return delivery;
+            });
+
+    writer.reserve(
+        RecipientKind.CONSULTANT,
+        "consultant-id",
+        "@asker:matrix.example",
+        "!room:matrix.example",
+        "event-hash",
+        7L,
+        42L);
+
+    org.mockito.ArgumentCaptor<ReplyEmailDelivery> saved =
+        org.mockito.ArgumentCaptor.forClass(ReplyEmailDelivery.class);
+    org.mockito.Mockito.verify(repository).saveAndFlush(saved.capture());
+    assertThat(saved.getValue().getRecipientKind()).isEqualTo(RecipientKind.CONSULTANT);
+    assertThat(saved.getValue().getRecipientUserId()).isEqualTo("consultant-id");
   }
 }

@@ -20,6 +20,11 @@ import lombok.Setter;
 @Setter
 @NoArgsConstructor
 public class ReplyEmailDelivery {
+  public enum RecipientKind {
+    ASKER,
+    CONSULTANT
+  }
+
   public enum Status {
     PENDING,
     SENDING,
@@ -34,6 +39,17 @@ public class ReplyEmailDelivery {
 
   @Column(name = "recipient_user_id", nullable = false, length = 36)
   private String recipientUserId;
+
+  @Enumerated(EnumType.STRING)
+  @Column(name = "recipient_kind", nullable = false, length = 16)
+  private RecipientKind recipientKind = RecipientKind.ASKER;
+
+  /** Trusted Matrix sender at claim time, rechecked against the current case before dispatch. */
+  @Column(name = "source_matrix_user_id", length = 255)
+  private String sourceMatrixUserId;
+
+  @Column(name = "source_room_id", length = 255)
+  private String sourceRoomId;
 
   @Column(name = "event_key", nullable = false, length = 64)
   private String eventKey;

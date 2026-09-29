@@ -555,6 +555,21 @@ public class MatrixEventListenerService {
                 messageBody,
                 event.get("event_id") != null ? String.valueOf(event.get("event_id")) : null));
 
+    // Persist the mail claim before the in-app recipient cache can short-circuit this event.
+    // A missing push/feed recipient must not cause the Matrix cursor to consume an unclaimed mail.
+    if (!"m.notice".equals(msgtype)
+        && (messageBody == null || !messageBody.startsWith("[SYSTEM_NOTIFICATION]"))
+        && isEligibleForReplyEmail(event)) {
+      String eventId = privacyEnvelope == null ? null : privacyEnvelope.getMessageId();
+      if (isConsultantMatrixUser(senderId)) {
+        replyEmailService.onConsultantReply(roomId, eventId, senderId);
+      } else if (senderDomainUserId != null) {
+        // The durable mail service admits only the primary session room. Protected supervision
+        // and team discussions use separate Matrix rooms; ordinary m.thread replies are allowed.
+        replyEmailService.onAdviceSeekerMessage(roomId, eventId, senderId);
+      }
+    }
+
     // Get users who should receive notification (exclude sender)
     Set<String> userIds = getRecipientCandidatesForRoom(roomId);
     if (userIds == null || userIds.isEmpty()) {
@@ -579,16 +594,6 @@ public class MatrixEventListenerService {
           "No session mapping for Matrix room {}; continuing notification delivery for {} users",
           roomId,
           recipientIds.size());
-    }
-
-    // Commit the mail claim before this batch's Matrix cursor advances. A failed claim makes the
-    // sync loop replay the event; the recipient/event uniqueness key collapses that replay.
-    if (!"m.notice".equals(msgtype)
-        && (messageBody == null || !messageBody.startsWith("[SYSTEM_NOTIFICATION]"))
-        && isConsultantMatrixUser(senderId)
-        && isEligibleForReplyEmail(event)) {
-      replyEmailService.onConsultantReply(
-          roomId, privacyEnvelope == null ? null : privacyEnvelope.getMessageId());
     }
 
     // Notify asynchronously so the Matrix sync loop is not blocked.

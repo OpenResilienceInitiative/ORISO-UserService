@@ -1087,7 +1087,7 @@ class MatrixEventListenerServiceTest {
         .thenReturn(Optional.of(consultantWithId(CONSULTANT_DOMAIN_ID)));
     doThrow(new IllegalStateException("delivery claim database unavailable"))
         .when(replyEmailService)
-        .onConsultantReply(MATRIX_ROOM_ID, "$new-reply");
+        .onConsultantReply(MATRIX_ROOM_ID, "$new-reply", CONSULTANT_MATRIX_ID);
 
     assertThatThrownBy(
             () -> ReflectionTestUtils.invokeMethod(service, "executeObservedMatrixSyncCycle"))
@@ -1154,8 +1154,46 @@ class MatrixEventListenerServiceTest {
     verify(eventNotificationService, never())
         .createThreadReplyNotificationFromRoom(
             anyString(), any(), anyString(), any(PrivacyEnvelope.class));
-    verify(replyEmailService).onConsultantReply(MATRIX_ROOM_ID, "$evt-direct");
+    verify(replyEmailService)
+        .onConsultantReply(MATRIX_ROOM_ID, "$evt-direct", CONSULTANT_MATRIX_ID);
     verify(consultantMessageStatService).recordMessageSent(CONSULTANT_DOMAIN_ID, 10L);
+  }
+
+  @Test
+  void seekerMatrixEventClaimsOnlyTheConsultantMailPathBeforeCursorAdvance() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID, CONSULTANT_DOMAIN_ID));
+    var seeker = userWithId(ASKER_DOMAIN_ID);
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(seeker));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "private text", "$seeker-event"))));
+
+    verify(replyEmailService)
+        .onAdviceSeekerMessage(MATRIX_ROOM_ID, "$seeker-event", SENDER_MATRIX_ID);
+    verify(replyEmailService, never()).onConsultantReply(anyString(), anyString(), anyString());
+  }
+
+  @Test
+  void seekerMailClaimDoesNotDependOnTheInAppRecipientCache() {
+    var service = newServiceWithSyncExecutor();
+    service.registerRoom(10L, MATRIX_ROOM_ID, Set.of(ASKER_DOMAIN_ID));
+    when(userRepository.findByMatrixUserIdAndDeleteDateIsNull(SENDER_MATRIX_ID))
+        .thenReturn(Optional.of(userWithId(ASKER_DOMAIN_ID)));
+
+    invokeProcessMatrixSyncEvents(
+        service,
+        syncResultWithEvents(
+            MATRIX_ROOM_ID,
+            List.of(messageEvent(SENDER_MATRIX_ID, "m.text", "private text", "$seeker-event"))));
+
+    verify(replyEmailService)
+        .onAdviceSeekerMessage(MATRIX_ROOM_ID, "$seeker-event", SENDER_MATRIX_ID);
+    verifyNoInteractions(mobilePushNotificationService);
   }
 
   @Test
@@ -1173,7 +1211,7 @@ class MatrixEventListenerServiceTest {
 
     invokeProcessMatrixSyncEvents(service, syncResultWithEvents(MATRIX_ROOM_ID, List.of(event)));
 
-    verify(replyEmailService, never()).onConsultantReply(anyString(), anyString());
+    verify(replyEmailService, never()).onConsultantReply(anyString(), anyString(), anyString());
   }
 
   @Test
@@ -1193,8 +1231,9 @@ class MatrixEventListenerServiceTest {
     invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, oldReply);
     invokeProcessMatrixEvent(service, MATRIX_ROOM_ID, newReply);
 
-    verify(replyEmailService, never()).onConsultantReply(MATRIX_ROOM_ID, "$old");
-    verify(replyEmailService).onConsultantReply(MATRIX_ROOM_ID, "$new");
+    verify(replyEmailService, never())
+        .onConsultantReply(MATRIX_ROOM_ID, "$old", CONSULTANT_MATRIX_ID);
+    verify(replyEmailService).onConsultantReply(MATRIX_ROOM_ID, "$new", CONSULTANT_MATRIX_ID);
   }
 
   @Test
@@ -1226,7 +1265,8 @@ class MatrixEventListenerServiceTest {
     assertThat(envelopeCaptor.getValue().getMessageId()).isEqualTo("$evt-thread");
     verify(eventNotificationService, never())
         .createMessageNotificationFromRoom(anyString(), any(), any(PrivacyEnvelope.class));
-    verifyNoInteractions(replyEmailService);
+    verify(replyEmailService)
+        .onAdviceSeekerMessage(MATRIX_ROOM_ID, "$evt-thread", SENDER_MATRIX_ID);
     verify(consultantMessageStatService, never()).recordMessageSent(any(), any());
   }
 

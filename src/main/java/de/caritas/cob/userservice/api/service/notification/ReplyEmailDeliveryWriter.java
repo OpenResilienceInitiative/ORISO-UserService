@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import de.caritas.cob.userservice.api.model.ReplyEmailDelivery;
+import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.RecipientKind;
 import de.caritas.cob.userservice.api.port.out.ReplyEmailDeliveryRepository;
 import java.time.Duration;
 import java.time.LocalDateTime;
@@ -20,9 +21,19 @@ public class ReplyEmailDeliveryWriter {
   private final @NonNull ReplyEmailDeliveryRepository repository;
 
   @Transactional(propagation = Propagation.REQUIRES_NEW)
-  public long reserve(String recipientUserId, String eventKey, long tenantId, long sessionId) {
+  public long reserve(
+      RecipientKind recipientKind,
+      String recipientUserId,
+      String sourceMatrixUserId,
+      String sourceRoomId,
+      String eventKey,
+      long tenantId,
+      long sessionId) {
     var delivery = new ReplyEmailDelivery();
+    delivery.setRecipientKind(recipientKind);
     delivery.setRecipientUserId(recipientUserId);
+    delivery.setSourceMatrixUserId(sourceMatrixUserId);
+    delivery.setSourceRoomId(sourceRoomId);
     delivery.setEventKey(eventKey);
     delivery.setCorrelationId(UUID.randomUUID().toString());
     delivery.setTenantId(tenantId);

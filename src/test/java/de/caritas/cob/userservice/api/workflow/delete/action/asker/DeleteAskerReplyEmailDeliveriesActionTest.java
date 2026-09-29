@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 
+import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.RecipientKind;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.ReplyEmailDeliveryRepository;
 import de.caritas.cob.userservice.api.workflow.delete.model.AskerDeletionWorkflowDTO;
@@ -26,7 +27,7 @@ class DeleteAskerReplyEmailDeliveriesActionTest {
 
     action.execute(target);
 
-    verify(repository).deleteByRecipientUserId("asker-id");
+    verify(repository).deleteByRecipientKindAndRecipientUserId(RecipientKind.ASKER, "asker-id");
     assertThat(target.getDeletionWorkflowErrors()).isEmpty();
   }
 
@@ -35,7 +36,7 @@ class DeleteAskerReplyEmailDeliveriesActionTest {
     var target = target();
     doThrow(new IllegalStateException("database unavailable"))
         .when(repository)
-        .deleteByRecipientUserId("asker-id");
+        .deleteByRecipientKindAndRecipientUserId(RecipientKind.ASKER, "asker-id");
 
     action.execute(target);
 

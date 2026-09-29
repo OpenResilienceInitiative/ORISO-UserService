@@ -123,7 +123,13 @@ class TenantSystemEmailDeliveryTest {
   void replyMailKeepsAnAmbiguousPlatformSmtpFailureVisible() {
     var smtp =
         new PlatformSmtpSettingsProvider.Settings(
-            "smtp.platform.example", 587, false, "account", "secret", "sender@platform.example");
+            "smtp.platform.example",
+            587,
+            false,
+            "account",
+            "secret",
+            "sender@platform.example",
+            "#123456");
     when(platformSettings.requireConfigured()).thenReturn(smtp);
     org.mockito.Mockito.doThrow(new IllegalStateException("SMTP acknowledgement lost"))
         .when(platformDispatcher)

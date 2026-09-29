@@ -11,7 +11,8 @@ import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
 public interface ReplyEmailDeliveryRepository extends JpaRepository<ReplyEmailDelivery, Long> {
-  void deleteByRecipientUserId(String recipientUserId);
+  void deleteByRecipientKindAndRecipientUserId(
+      ReplyEmailDelivery.RecipientKind recipientKind, String recipientUserId);
 
   List<ReplyEmailDelivery> findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByCreatedAtAsc(
       ReplyEmailDelivery.Status status, LocalDateTime now);

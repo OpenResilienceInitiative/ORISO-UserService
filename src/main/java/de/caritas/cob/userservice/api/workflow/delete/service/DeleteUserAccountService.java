@@ -22,6 +22,7 @@ import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteCa
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteChatAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantDraftMessagesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantEventNotificationsAction;
+import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteConsultantMessageEmailDeliveriesAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteDatabaseConsultantAgencyAction;
 import de.caritas.cob.userservice.api.workflow.delete.action.consultant.DeleteKeycloakConsultantAction;
@@ -113,6 +114,7 @@ public class DeleteUserAccountService {
         .addActionToExecute(DeleteCaseHandoverRequestsForConsultantAction.class)
         .addActionToExecute(DeleteConsultantDraftMessagesAction.class)
         .addActionToExecute(DeleteConsultantEventNotificationsAction.class)
+        .addActionToExecute(DeleteConsultantMessageEmailDeliveriesAction.class)
         .addActionToExecute(DeleteDatabaseConsultantAction.class)
         .executeActions(deletionWorkflowDTO);
 
