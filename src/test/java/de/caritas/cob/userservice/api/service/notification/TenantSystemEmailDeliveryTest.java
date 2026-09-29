@@ -68,6 +68,30 @@ class TenantSystemEmailDeliveryTest {
   }
 
   @Test
+  void ownHandoverPurposesMatchTenantServiceRelayContract() {
+    var route =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.OWN, null);
+    var sender = new TenantSystemEmailDelivery(tenantClient, platformSettings, platformDispatcher);
+
+    sender.sendConfirmed(
+        40L,
+        route,
+        TenantSystemEmailDelivery.Purpose.HANDOVER_REQUESTED,
+        "asker@example.org",
+        email);
+    sender.sendConfirmed(
+        40L,
+        route,
+        TenantSystemEmailDelivery.Purpose.HANDOVER_CONFIRMED,
+        "incoming@example.org",
+        email);
+
+    verify(tenantClient).deliver(40L, "HANDOVER_REQUESTED", "asker@example.org", email);
+    verify(tenantClient).deliver(40L, "HANDOVER_CONFIRMED", "incoming@example.org", email);
+    verify(platformSettings, never()).requireConfigured();
+  }
+
+  @Test
   void platformFailureIsObservableToNotificationSender() {
     var smtp =
         new PlatformSmtpSettingsProvider.Settings(

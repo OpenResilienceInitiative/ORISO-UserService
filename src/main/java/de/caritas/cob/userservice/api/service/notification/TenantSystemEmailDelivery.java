@@ -18,7 +18,9 @@ public class TenantSystemEmailDelivery {
     NEW_ENQUIRY,
     DIRECT_ENQUIRY,
     ENQUIRY_ASSIGNED,
-    DAILY_ENQUIRY_DIGEST
+    DAILY_ENQUIRY_DIGEST,
+    HANDOVER_REQUESTED,
+    HANDOVER_CONFIRMED
   }
 
   private final @NonNull TenantSystemEmailClient tenantClient;

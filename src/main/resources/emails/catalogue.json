@@ -574,13 +574,10 @@
       }
     },
     "uebergabe-angefragt": {
-      "audience": "consultant",
+      "audience": "asker",
       "class": "operational",
       "unsubscribable": true,
       "placeholders": [
-        "{{fromConsultantName}}",
-        "{{caseReference}}",
-        "{{requestReceivedAt}}",
         "{{requestUrl}}",
         "{{settingsUrl}}",
         "{{privacyUrl}}",
@@ -590,38 +587,38 @@
       "tones": {
         "de-sie": {
           "lang": "de",
-          "subject": "Übergabe angefragt",
-          "preheader": "Eine Beratung soll an Sie übergeben werden."
+          "subject": "Neue Benachrichtigung",
+          "preheader": "Bitte melden Sie sich an."
         },
         "de-du": {
           "lang": "de",
-          "subject": "Übergabe angefragt",
-          "preheader": "Eine Beratung soll an dich übergeben werden."
+          "subject": "Neue Benachrichtigung",
+          "preheader": "Bitte melde dich an."
         },
         "en": {
           "lang": "en",
-          "subject": "Handover requested",
-          "preheader": "A counselling case is to be handed over to you."
+          "subject": "New notification",
+          "preheader": "Please sign in."
         },
         "fr": {
           "lang": "fr",
-          "subject": "Transfert demandé",
-          "preheader": "Une consultation doit vous être transférée."
+          "subject": "Nouvelle notification",
+          "preheader": "Veuillez vous connecter."
         },
         "ru": {
           "lang": "ru",
-          "subject": "Запрошена передача",
-          "preheader": "Консультацию предлагают передать Вам."
+          "subject": "Новое уведомление",
+          "preheader": "Пожалуйста, войдите."
         },
         "ti": {
           "lang": "ti",
-          "subject": "ምትሕልላፍ ተሓቲቱ",
-          "preheader": "ሓደ ምኽሪ ናባኹም ክመሓላለፍ ተሓቲቱ ኣሎ።"
+          "subject": "ሓድሽ ምልክታ",
+          "preheader": "በጃኹም እተዉ።"
         },
         "tr": {
           "lang": "tr",
-          "subject": "Devir talebi",
-          "preheader": "Bir danışmanlığın size devredilmesi isteniyor."
+          "subject": "Yeni bildirim",
+          "preheader": "Lütfen giriş yapın."
         }
       }
     },
@@ -630,9 +627,6 @@
       "class": "operational",
       "unsubscribable": true,
       "placeholders": [
-        "{{toConsultantName}}",
-        "{{caseReference}}",
-        "{{handoverAt}}",
         "{{requestUrl}}",
         "{{settingsUrl}}",
         "{{privacyUrl}}",
@@ -642,38 +636,38 @@
       "tones": {
         "de-sie": {
           "lang": "de",
-          "subject": "Übergabe bestätigt",
-          "preheader": "Die Zuständigkeit hat gewechselt."
+          "subject": "Die Übergabe ist bestätigt",
+          "preheader": "Die Übergabe ist bestätigt"
         },
         "de-du": {
           "lang": "de",
-          "subject": "Übergabe bestätigt",
-          "preheader": "Die Zuständigkeit hat gewechselt."
+          "subject": "Die Übergabe ist bestätigt",
+          "preheader": "Die Übergabe ist bestätigt"
         },
         "en": {
           "lang": "en",
-          "subject": "Handover confirmed",
-          "preheader": "Responsibility has changed."
+          "subject": "The handover is confirmed",
+          "preheader": "The handover is confirmed"
         },
         "fr": {
           "lang": "fr",
-          "subject": "Transfert confirmé",
-          "preheader": "La responsabilité a changé."
+          "subject": "Le transfert est confirmé",
+          "preheader": "Le transfert est confirmé"
         },
         "ru": {
           "lang": "ru",
           "subject": "Передача подтверждена",
-          "preheader": "Ответственность перешла к другому специалисту."
+          "preheader": "Передача подтверждена"
         },
         "ti": {
           "lang": "ti",
-          "subject": "ምትሕልላፍ ተረጋጊጹ",
-          "preheader": "እቲ ሓላፍነት ተቐዪሩ።"
+          "subject": "እቲ ምትሕልላፍ ተረጋጊጹ",
+          "preheader": "እቲ ምትሕልላፍ ተረጋጊጹ"
         },
         "tr": {
           "lang": "tr",
           "subject": "Devir onaylandı",
-          "preheader": "Sorumluluk değişti."
+          "preheader": "Devir onaylandı"
         }
       }
     },
