@@ -16,6 +16,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.emailsupplier.AssignEnquiryEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.NewDirectEnquiryEmailSupplier;
@@ -50,6 +51,7 @@ public class EmailNotificationFacade {
   private String applicationBaseUrl;
 
   private final @NonNull MailService mailService;
+  private final @NonNull OrisoEmailBrand emailBrand;
   private final @NonNull SessionService sessionService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull IdentityClientConfig identityClientConfig;
@@ -62,9 +64,6 @@ public class EmailNotificationFacade {
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
-
-  @Value("${email.brand.platform-name:Online-Beratung}")
-  private String platformName;
 
   /**
    * Sends email notifications according to the corresponding consultant(s) when a new enquiry was
@@ -248,7 +247,7 @@ public class EmailNotificationFacade {
       }
 
       var copy = neutralInquiryAcceptedCopy(user);
-      var effectivePlatformName = isNotBlank(platformName) ? platformName : "Online-Beratung";
+      var effectivePlatformName = emailBrand.platformName();
 
       var templateAttributes = new ArrayList<TemplateDataDTO>();
       templateAttributes.add(

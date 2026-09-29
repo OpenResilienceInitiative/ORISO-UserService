@@ -53,6 +53,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @BeforeEach
   void injectValues() {
+    ReflectionTestUtils.setField(emailBrand, "platformName", "Independent Platform");
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
     ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org");
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.example.org");

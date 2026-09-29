@@ -46,6 +46,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.emailsupplier.AssignEnquiryEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.NewDirectEnquiryEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.NewEnquiryEmailSupplier;
@@ -67,6 +69,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import org.jeasy.random.EasyRandom;
@@ -80,6 +83,8 @@ import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -340,6 +345,10 @@ class EmailNotificationFacadeTest {
 
   @Mock private MailService mailService;
 
+  @Spy
+  private OrisoEmailBrand emailBrand =
+      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
+
   @Mock SessionService sessionService;
   @Mock ConsultantService consultantService;
   @Mock IdentityClientConfig identityClientConfig;
@@ -358,7 +367,7 @@ class EmailNotificationFacadeTest {
     when(identityClientConfig.getEmailDummySuffix()).thenReturn(FIELD_VALUE_EMAIL_DUMMY_SUFFIX);
     ReflectionTestUtils.setField(
         emailNotificationFacade, APPLICATION_BASE_URL_FIELD_NAME, APPLICATION_BASE_URL);
-    ReflectionTestUtils.setField(emailNotificationFacade, "platformName", "Beispielplattform");
+    ReflectionTestUtils.setField(emailBrand, "platformName", "Beispielplattform");
     ReflectionTestUtils.setField(
         assignEnquiryEmailSupplier, "consultantService", consultantService);
     facadeLogCaptor = LogbackCaptor.forClass(EmailNotificationFacade.class);
@@ -748,8 +757,8 @@ class EmailNotificationFacadeTest {
   }
 
   @Test
-  void sendInquiryAcceptedNotification_Should_UseGenericName_WhenConfiguredNameIsBlank() {
-    ReflectionTestUtils.setField(emailNotificationFacade, "platformName", "  ");
+  void sendInquiryAcceptedNotification_Should_UseCanonicalConfiguredPlatformName() {
+    bindCanonicalPlatformName("  Independent Platform  ");
     USER.setLanguageCode(LanguageCode.en);
 
     emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT_WITH_PSEUDONYM, null);
@@ -757,7 +766,48 @@ class EmailNotificationFacadeTest {
     var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(captor.capture());
     var subject = captor.getValue().getMails().get(0).getTemplateData().get(0).getValue();
-    org.assertj.core.api.Assertions.assertThat(subject).isEqualTo("New message on Online-Beratung");
+    org.assertj.core.api.Assertions.assertThat(subject)
+        .isEqualTo("New message on Independent Platform");
+    org.assertj.core.api.Assertions.assertThat(emailBrand.values("https://app.example.org", null))
+        .containsEntry("platformName", "Independent Platform")
+        .containsEntry("offeringName", "Independent Platform");
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_NotSendAndReportMissingCanonicalPlatformName() {
+    bindCanonicalPlatformName("  ");
+
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT_WITH_PSEUDONYM, new TenantData(42L, "tenant"));
+
+    verifyNoInteractions(mailService);
+    org.assertj.core.api.Assertions.assertThat(facadeLogCaptor.events())
+        .anySatisfy(
+            event ->
+                org.assertj.core.api.Assertions.assertThat(event.getThrowableProxy().getMessage())
+                    .contains("EMAIL_BRANDING_NAME"));
+    org.assertj.core.api.Assertions.assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  private void bindCanonicalPlatformName(String name) {
+    try (var context = new AnnotationConfigApplicationContext()) {
+      context
+          .getEnvironment()
+          .getPropertySources()
+          .addFirst(
+              new MapPropertySource(
+                  "mail-test",
+                  Map.of(
+                      "email.branding.name",
+                      name,
+                      "app.base.url",
+                      APPLICATION_BASE_URL,
+                      "multitenancy.enabled",
+                      "false")));
+      context.registerBean(OrisoEmailBrand.class, () -> emailBrand);
+      context.registerBean(EmailNotificationFacade.class, () -> emailNotificationFacade);
+      context.refresh();
+    }
   }
 
   @Test
