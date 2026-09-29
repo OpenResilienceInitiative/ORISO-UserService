@@ -15,6 +15,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.config.observability.OutboundHttpMetrics;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.exception.keycloak.KeycloakException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.UserHelper;
@@ -63,6 +64,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.function.Predicate;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -78,6 +80,7 @@ import org.keycloak.representations.idm.RoleRepresentation;
 import org.keycloak.representations.idm.UserRepresentation;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.util.ObjectUtils;
@@ -327,6 +330,8 @@ public class KeycloakService
     var requestUrl = getOtpUrl(ENDPOINT_OTP_FINISH_EMAIL, username);
 
     try {
+      // The OTP SPI also returns 401 for an invalid or expired code. Only a bearer challenge
+      // identifies a failed service session; repeating a rejected code consumes another attempt.
       var response =
           withFreshAdminTokenOnUnauthorized(
               "email-verification-finish",
@@ -335,9 +340,15 @@ public class KeycloakService
                       keycloakClient.getBearerToken(),
                       requestUrl,
                       otpSetupDTO,
-                      SuccessWithEmail.class));
+                      SuccessWithEmail.class),
+              KeycloakService::isBearerChallenge);
       return keycloakMapper.identityEmailVerificationOf(response);
     } catch (HttpClientErrorException exception) {
+      if (exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)
+          && isBearerChallenge(exception)) {
+        throw new ServiceUnavailableException(
+            "OTP verification service authentication unavailable");
+      }
       return keycloakMapper.identityEmailVerificationOf(exception);
     }
   }
@@ -349,10 +360,16 @@ public class KeycloakService
   }
 
   private <T> T withFreshAdminTokenOnUnauthorized(String operation, Supplier<T> request) {
+    return withFreshAdminTokenOnUnauthorized(operation, request, exception -> true);
+  }
+
+  private <T> T withFreshAdminTokenOnUnauthorized(
+      String operation, Supplier<T> request, Predicate<HttpClientErrorException> retryable) {
     try {
       return request.get();
     } catch (HttpClientErrorException exception) {
-      if (!exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)) {
+      if (!exception.getStatusCode().equals(HttpStatus.UNAUTHORIZED)
+          || !retryable.test(exception)) {
         throw exception;
       }
 
@@ -364,6 +381,16 @@ public class KeycloakService
       keycloakClient.refreshAdminSession();
       return request.get();
     }
+  }
+
+  private static boolean isBearerChallenge(HttpClientErrorException exception) {
+    var headers = exception.getResponseHeaders();
+    if (headers == null) {
+      return false;
+    }
+    var challenge = headers.getFirst(HttpHeaders.WWW_AUTHENTICATE);
+    return StringUtils.equalsIgnoreCase(challenge, "Bearer")
+        || StringUtils.startsWithIgnoreCase(challenge, "Bearer ");
   }
 
   /**
