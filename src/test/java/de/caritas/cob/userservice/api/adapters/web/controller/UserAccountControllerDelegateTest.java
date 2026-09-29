@@ -328,7 +328,7 @@ class UserAccountControllerDelegateTest {
         .username(USERNAME)
         .firstName("Lisa")
         .lastName("Simpson")
-        .email("lisa.simpson@oriso.org")
+        .email("lisa.simpson@example.org")
         .passwordChangeRequired(passwordChangeRequired)
         .build();
   }
@@ -749,7 +749,7 @@ class UserAccountControllerDelegateTest {
     var response = delegate.updateConsultantData(updateConsultantDTO);
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-    verify(consultantUpdateService).updateConsultant(USER_ID, updateAdminConsultantDTO);
+    verify(consultantUpdateService).updateConsultant(USER_ID, updateAdminConsultantDTO, false);
   }
 
   @Test

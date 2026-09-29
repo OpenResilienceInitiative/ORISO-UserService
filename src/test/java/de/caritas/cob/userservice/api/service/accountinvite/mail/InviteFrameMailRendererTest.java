@@ -28,7 +28,7 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class InviteFrameMailRendererTest {
 
-  private static final String ACCEPT_URL = "https://admin.oriso.org/onboarding/accept?token=tok";
+  private static final String ACCEPT_URL = "https://admin.example.org/onboarding/accept?token=tok";
 
   @Mock private EmailBrandingResolver emailBrandingResolver;
 
@@ -101,23 +101,23 @@ class InviteFrameMailRendererTest {
         render(
             new EmailBranding(
                 "Träger Nord e.V.",
-                "https://nord.oriso.org/service/tenant/public/branding/logo",
+                "https://nord.example.org/service/tenant/public/branding/logo",
                 "#1c4f8f",
-                "https://nord.oriso.org/impressum",
-                "https://nord.oriso.org/datenschutz"),
+                "https://nord.example.org/impressum",
+                "https://nord.example.org/datenschutz"),
             "Einladung",
             "Hallo",
             ACCEPT_URL);
 
     assertThat(mail.html())
-        .contains("<img src=\"https://nord.oriso.org/service/tenant/public/branding/logo\"")
+        .contains("<img src=\"https://nord.example.org/service/tenant/public/branding/logo\"")
         .as("the tenant name brands the header")
         .contains("Träger Nord e.V.")
         .as("the tenant colour reaches the accent bar and the button")
         .contains("#1c4f8f")
         .as("tenant imprint and privacy pointers, not the platform's")
-        .contains("https://nord.oriso.org/impressum")
-        .contains("https://nord.oriso.org/datenschutz");
+        .contains("https://nord.example.org/impressum")
+        .contains("https://nord.example.org/datenschutz");
   }
 
   /**

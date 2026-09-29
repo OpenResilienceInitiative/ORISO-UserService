@@ -446,7 +446,7 @@ class CounsellorInviteProvisioningServiceTest {
             .username("invited-counsellor")
             .firstName("Lisa")
             .lastName("Simpson")
-            .email("lisa.simpson@oriso.org")
+            .email("lisa.simpson@example.org")
             .twoFactorRequired(true)
             .passwordChangeRequired(passwordChangeRequired)
             .build();
@@ -470,7 +470,7 @@ class CounsellorInviteProvisioningServiceTest {
     return AccountInvite.builder()
         .targetRole(AccountInviteTargetRole.COUNSELLOR)
         .tenantId(79L)
-        .recipientEmail("lisa.simpson@oriso.org")
+        .recipientEmail("lisa.simpson@example.org")
         .firstName("Lisa")
         .lastName("Simpson")
         .agencyId(275L)
