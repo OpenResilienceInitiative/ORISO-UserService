@@ -102,6 +102,10 @@ public class EmailBrandingResolver {
     }
     Theming theming = tenant.getTheming();
     String brandName = isBlank(tenant.getName()) ? platformName : tenant.getName();
+    if (isBlank(brandName)) {
+      throw new IllegalStateException(
+          "Email branding name is missing: configure EMAIL_BRANDING_NAME before sending mail");
+    }
     return new EmailBranding(
         brandName,
         resolveLogoUrl(tenant, theming),

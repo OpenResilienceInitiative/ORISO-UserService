@@ -72,6 +72,19 @@ class EmailBrandingResolverTest {
         .hasMessageContaining("tenant is unavailable");
   }
 
+  @Test
+  void notificationBrandingRequiresAConfiguredNameWhenTenantHasNone() {
+    var unnamedTenant = tenant("  ", null);
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(unnamedTenant);
+    var subject =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "  ", "", "https://app.example.org/");
+
+    assertThatThrownBy(() -> subject.resolveNotification(7L, "https://app.example.org"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
   // --- logo -----------------------------------------------------------------------------
 
   @Test
