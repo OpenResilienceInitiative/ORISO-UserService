@@ -35,7 +35,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationD
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.EmailNotificationException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -339,12 +338,6 @@ class EmailNotificationFacadeTest {
 
   @Spy private AssignEnquiryEmailSupplier assignEnquiryEmailSupplier;
 
-  // The real rule, not a mock: ConsultantDisplayNameResolver is the single place that decides
-  // which counsellor name may be published (ADR-002 §2).
-  @Spy
-  private ConsultantDisplayNameResolver consultantDisplayNameResolver =
-      new ConsultantDisplayNameResolver();
-
   @Mock private MailService mailService;
 
   @Mock SessionService sessionService;
@@ -365,6 +358,7 @@ class EmailNotificationFacadeTest {
     when(identityClientConfig.getEmailDummySuffix()).thenReturn(FIELD_VALUE_EMAIL_DUMMY_SUFFIX);
     ReflectionTestUtils.setField(
         emailNotificationFacade, APPLICATION_BASE_URL_FIELD_NAME, APPLICATION_BASE_URL);
+    ReflectionTestUtils.setField(emailNotificationFacade, "platformName", "Beispielplattform");
     ReflectionTestUtils.setField(
         assignEnquiryEmailSupplier, "consultantService", consultantService);
     facadeLogCaptor = LogbackCaptor.forClass(EmailNotificationFacade.class);
@@ -660,51 +654,51 @@ class EmailNotificationFacadeTest {
   }
 
   @Test
-  void sendInquiryAcceptedNotification_Should_UseDefaultConsultantName_When_ConsultantIsNull() {
+  void sendInquiryAcceptedNotification_Should_KeepSubjectAndBodyNeutral_When_ConsultantIsNull() {
+    USER.setLanguageFormal(true);
     emailNotificationFacade.sendInquiryAcceptedNotification(USER, null, null);
 
     var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(captor.capture());
-    var text = captor.getValue().getMails().get(0).getTemplateData().get(1).getValue();
-    org.assertj.core.api.Assertions.assertThat(text).contains("Ihre Beraterin/Ihr Berater");
+    var data = captor.getValue().getMails().get(0).getTemplateData();
+    org.assertj.core.api.Assertions.assertThat(data.get(0).getValue())
+        .isEqualTo("Neue Nachricht auf Beispielplattform");
+    org.assertj.core.api.Assertions.assertThat(data.get(1).getValue())
+        .isEqualTo("Bitte melden Sie sich an.");
   }
 
   // ---------------------------------------------------------------------------
-  // ADR-002 §2 / #1201: the inquiry-accepted mail goes to the advice seeker, so the counsellor's
-  // real name has no place in it. The predecessor of these three tests asserted the opposite --
-  // it required getFullName() in the body and so locked the leak in.
+  // The mailbox subject and preview must reveal neither the counsellor nor the case.
   // ---------------------------------------------------------------------------
 
   @Test
-  void sendInquiryAcceptedNotification_Should_UseThePublicDisplayName_And_NeverTheRealName() {
+  void sendInquiryAcceptedNotification_Should_NotExposeAnyConsultantName() {
     emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT_WITH_PSEUDONYM, null);
 
     org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
-        .contains("Frau M.")
+        .doesNotContain("Frau M.")
         .doesNotContain(REAL_FIRST_NAME)
         .doesNotContain(REAL_LAST_NAME);
   }
 
   @Test
-  void sendInquiryAcceptedNotification_Should_NotFallBackToTheRealName_When_NoDisplayNameIsSet() {
-    // The exact condition the sibling fix exists for: with no pseudonym stored, the fallback must
-    // be the name the advice seeker already sees, never the real name.
+  void sendInquiryAcceptedNotification_Should_NotExposeUsername_When_NoDisplayNameIsSet() {
     emailNotificationFacade.sendInquiryAcceptedNotification(
         USER, CONSULTANT_WITHOUT_PSEUDONYM, null);
 
     org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
-        .contains("beraterin1")
+        .doesNotContain("beraterin1")
         .doesNotContain(REAL_FIRST_NAME)
         .doesNotContain(REAL_LAST_NAME);
   }
 
   @Test
-  void sendInquiryAcceptedNotification_Should_UseTheNeutralFallback_When_NoPublicNameExists() {
+  void sendInquiryAcceptedNotification_Should_KeepBodyNeutral_When_NoPublicNameExists() {
     emailNotificationFacade.sendInquiryAcceptedNotification(
         USER, CONSULTANT_WITHOUT_ANY_PUBLIC_NAME, null);
 
     org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
-        .contains("Ihre Beraterin/Ihr Berater")
+        .doesNotContain("Beraterin")
         .doesNotContain(REAL_FIRST_NAME)
         .doesNotContain(REAL_LAST_NAME);
   }
@@ -713,6 +707,40 @@ class EmailNotificationFacadeTest {
     var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(captor.capture());
     return captor.getValue().getMails().get(0).getTemplateData().get(1).getValue();
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_LocalizeBothMailboxFieldsForAllSevenVariants() {
+    Object[][] variants = {
+      {LanguageCode.de, true, "Neue Nachricht auf Beispielplattform", "Bitte melden Sie sich an."},
+      {LanguageCode.de, false, "Neue Nachricht auf Beispielplattform", "Bitte melde dich an."},
+      {LanguageCode.en, false, "New message on Beispielplattform", "Please sign in."},
+      {LanguageCode.fr, false, "Nouveau message sur Beispielplattform", "Veuillez vous connecter."},
+      {
+        LanguageCode.ru,
+        false,
+        "Новое сообщение на Beispielplattform",
+        "Пожалуйста, войдите в систему."
+      },
+      {LanguageCode.ti, false, "ሓድሽ መልእኽቲ ኣብ Beispielplattform", "በጃኹም እተዉ።"},
+      {LanguageCode.tr, false, "Beispielplattform üzerinde yeni mesaj", "Lütfen giriş yapın."}
+    };
+
+    for (Object[] variant : variants) {
+      USER.setLanguageCode((LanguageCode) variant[0]);
+      USER.setLanguageFormal((boolean) variant[1]);
+      emailNotificationFacade.sendInquiryAcceptedNotification(
+          USER, CONSULTANT_WITH_PSEUDONYM, null);
+
+      var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+      verify(mailService).sendEmailNotification(captor.capture());
+      var data = captor.getValue().getMails().get(0).getTemplateData();
+      org.assertj.core.api.Assertions.assertThat(data.get(0).getValue()).isEqualTo(variant[2]);
+      org.assertj.core.api.Assertions.assertThat(data.get(1).getValue())
+          .contains((String) variant[3])
+          .doesNotContain("Frau M.", REAL_FIRST_NAME, REAL_LAST_NAME, "suchtberatung");
+      Mockito.clearInvocations(mailService);
+    }
   }
 
   @Test

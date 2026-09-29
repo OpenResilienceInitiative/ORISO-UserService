@@ -8,7 +8,6 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.NotificationsAware;
 import de.caritas.cob.userservice.api.model.Session;
@@ -60,13 +59,12 @@ public class EmailNotificationFacade {
   private final @NonNull TenantTemplateSupplier tenantTemplateSupplier;
 
   private final @NonNull ReleaseToggleService releaseToggleService;
-  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
 
-  /** Shown when no publishable counsellor name exists, and when no counsellor is assigned yet. */
-  private static final String NEUTRAL_CONSULTANT_NAME = "Ihre Beraterin/Ihr Berater";
+  @Value("${email.brand.platform-name:Online-Beratung}")
+  private String platformName;
 
   /**
    * Sends email notifications according to the corresponding consultant(s) when a new enquiry was
@@ -249,19 +247,12 @@ public class EmailNotificationFacade {
         return;
       }
 
-      var consultantName = publicConsultantNameOf(consultant);
+      var copy = neutralInquiryAcceptedCopy(user);
 
       var templateAttributes = new ArrayList<TemplateDataDTO>();
       templateAttributes.add(
-          new TemplateDataDTO().key("subject").value("Ihre Anfrage wurde angenommen"));
-      templateAttributes.add(
-          new TemplateDataDTO()
-              .key("text")
-              .value(
-                  String.format(
-                      "Gute Nachrichten: %s hat Ihre Anfrage angenommen. "
-                          + "Melden Sie sich an, um die Antwort zu lesen.",
-                      consultantName)));
+          new TemplateDataDTO().key("subject").value(copy.subject().formatted(platformName)));
+      templateAttributes.add(new TemplateDataDTO().key("text").value(copy.text()));
 
       if (!multiTenancyEnabled) {
         templateAttributes.add(new TemplateDataDTO().key("url").value(applicationBaseUrl));
@@ -286,25 +277,24 @@ public class EmailNotificationFacade {
     TenantContext.clear();
   }
 
-  /**
-   * The counsellor name an <em>advice seeker</em> may be shown in an e-mail.
-   *
-   * <p>ADR-002 §2 / #1201: this mail lands in the advice seeker's own mailbox, so it must never
-   * carry the counsellor's real name. {@link ConsultantDisplayNameResolver} is the single place
-   * that decides which name may be published — public display name, else the (decoded) username the
-   * advice seeker already sees in the room. The rule is not restated here.
-   *
-   * <p>The neutral wording stays as the last resort, for a counsellor with no publishable name at
-   * all and for the unassigned case. It is deliberately the <em>last</em> resort rather than the
-   * fallback for a missing display name: "Ihre Beraterin/Ihr Berater" cannot tell two counsellors
-   * apart, and the pseudonym is what the advice seeker recognises from the conversation.
-   */
-  private String publicConsultantNameOf(Consultant consultant) {
-    if (consultant == null) {
-      return NEUTRAL_CONSULTANT_NAME;
-    }
-    var publicName = consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
-    return isNotBlank(publicName) ? publicName : NEUTRAL_CONSULTANT_NAME;
+  private record NeutralInquiryAcceptedCopy(String subject, String text) {}
+
+  /** Mailbox-visible copy cannot contain the case, the counsellor, or the acceptance event. */
+  private NeutralInquiryAcceptedCopy neutralInquiryAcceptedCopy(User user) {
+    String language = user.getLanguageCode() == null ? "de" : user.getLanguageCode().name();
+    return switch (language) {
+      case "en" -> new NeutralInquiryAcceptedCopy("New message on %s", "Please sign in.");
+      case "fr" ->
+          new NeutralInquiryAcceptedCopy("Nouveau message sur %s", "Veuillez vous connecter.");
+      case "ru" ->
+          new NeutralInquiryAcceptedCopy("Новое сообщение на %s", "Пожалуйста, войдите в систему.");
+      case "ti" -> new NeutralInquiryAcceptedCopy("ሓድሽ መልእኽቲ ኣብ %s", "በጃኹም እተዉ።");
+      case "tr" -> new NeutralInquiryAcceptedCopy("%s üzerinde yeni mesaj", "Lütfen giriş yapın.");
+      default ->
+          user.isLanguageFormal()
+              ? new NeutralInquiryAcceptedCopy("Neue Nachricht auf %s", "Bitte melden Sie sich an.")
+              : new NeutralInquiryAcceptedCopy("Neue Nachricht auf %s", "Bitte melde dich an.");
+    };
   }
 
   private boolean shouldSendReassignmentNotificationForConsultant(
