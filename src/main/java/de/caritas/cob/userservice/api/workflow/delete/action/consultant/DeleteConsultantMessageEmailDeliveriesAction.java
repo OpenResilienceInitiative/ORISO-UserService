@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.workflow.delete.action.consultant;
 
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.workflow.delete.model.DeletionSourceType.CONSULTANT;
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.actions.ActionCommand;
 import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.RecipientKind;
@@ -27,6 +28,13 @@ public class DeleteConsultantMessageEmailDeliveriesAction
     try {
       repository.deleteByRecipientKindAndRecipientUserId(
           RecipientKind.CONSULTANT, target.getConsultant().getId());
+      repository.deleteByRecipientKindAndRecipientUserId(
+          RecipientKind.FEEDBACK, target.getConsultant().getId());
+      repository.deleteByRecipientKindAndRecipientUserId(
+          RecipientKind.FEEDBACK_INTENT, target.getConsultant().getId());
+      if (isNotBlank(target.getConsultant().getMatrixUserId())) {
+        repository.deleteBySourceMatrixUserId(target.getConsultant().getMatrixUserId());
+      }
     } catch (Exception failure) {
       log.error("UserService delete workflow error: ", failure);
       target

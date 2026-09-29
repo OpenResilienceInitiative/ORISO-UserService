@@ -22,7 +22,9 @@ import lombok.Setter;
 public class ReplyEmailDelivery {
   public enum RecipientKind {
     ASKER,
-    CONSULTANT
+    CONSULTANT,
+    FEEDBACK_INTENT,
+    FEEDBACK
   }
 
   public enum Status {
@@ -30,6 +32,7 @@ public class ReplyEmailDelivery {
     SENDING,
     SENT,
     REJECTED,
+    RESOLVED,
     UNCERTAIN
   }
 
@@ -50,6 +53,10 @@ public class ReplyEmailDelivery {
 
   @Column(name = "source_room_id", length = 255)
   private String sourceRoomId;
+
+  /** Matrix event identity for a protected feedback intent; never message content. */
+  @Column(name = "source_event_id", length = 255)
+  private String sourceEventId;
 
   @Column(name = "event_key", nullable = false, length = 64)
   private String eventKey;

@@ -7,6 +7,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.RecipientKind;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
@@ -24,6 +25,7 @@ class ReplyEmailDeliverySchedulerTest {
   @InjectMocks private ReplyEmailDeliveryScheduler scheduler;
   @Mock private ReplyEmailDeliveryWriter writer;
   @Mock private AdviceSeekerReplyEmailService service;
+  @Mock private FeedbackMessageEmailService feedback;
   @Mock private ScheduledTaskClaimService claims;
 
   @Test
@@ -34,6 +36,8 @@ class ReplyEmailDeliverySchedulerTest {
     when(claims.tryClaimLease(eq("reply-email-delivery"), any(Duration.class)))
         .thenReturn(Optional.of(lease));
     when(writer.pendingIds()).thenReturn(List.of(1L, 2L));
+    when(writer.kindOf(1L)).thenReturn(Optional.of(RecipientKind.ASKER));
+    when(writer.kindOf(2L)).thenReturn(Optional.of(RecipientKind.ASKER));
     doThrow(new IllegalStateException("uncertain SMTP outcome")).when(service).deliverPending(1L);
 
     scheduler.deliverPending();

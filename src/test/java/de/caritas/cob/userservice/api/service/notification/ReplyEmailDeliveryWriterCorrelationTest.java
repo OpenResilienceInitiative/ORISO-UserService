@@ -2,11 +2,15 @@ package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.model.ReplyEmailDelivery;
 import de.caritas.cob.userservice.api.model.ReplyEmailDelivery.RecipientKind;
 import de.caritas.cob.userservice.api.port.out.ReplyEmailDeliveryRepository;
+import java.time.Duration;
+import java.time.LocalDateTime;
+import java.util.List;
 import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -74,5 +78,25 @@ class ReplyEmailDeliveryWriterCorrelationTest {
     org.mockito.Mockito.verify(repository).saveAndFlush(saved.capture());
     assertThat(saved.getValue().getRecipientKind()).isEqualTo(RecipientKind.CONSULTANT);
     assertThat(saved.getValue().getRecipientUserId()).isEqualTo("consultant-id");
+  }
+
+  @Test
+  void crashedIntentCanRetryWithoutTreatingItAsAnUncertainSmtpOutcome() {
+    var intent = new ReplyEmailDelivery();
+    intent.setRecipientKind(RecipientKind.FEEDBACK_INTENT);
+    intent.setStatus(ReplyEmailDelivery.Status.SENDING);
+    var mail = new ReplyEmailDelivery();
+    mail.setRecipientKind(RecipientKind.FEEDBACK);
+    mail.setStatus(ReplyEmailDelivery.Status.SENDING);
+    when(repository.findByStatusAndAttemptedAtBefore(
+            eq(ReplyEmailDelivery.Status.SENDING), any(LocalDateTime.class)))
+        .thenReturn(List.of(intent, mail));
+
+    int uncertain = writer.markStaleSendingUncertain(Duration.ofMinutes(10));
+
+    assertThat(uncertain).isEqualTo(1);
+    assertThat(intent.getStatus()).isEqualTo(ReplyEmailDelivery.Status.PENDING);
+    assertThat(intent.getNextAttemptAt()).isNotNull();
+    assertThat(mail.getStatus()).isEqualTo(ReplyEmailDelivery.Status.UNCERTAIN);
   }
 }

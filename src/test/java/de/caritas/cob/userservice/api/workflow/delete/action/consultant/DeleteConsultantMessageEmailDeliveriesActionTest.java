@@ -23,12 +23,18 @@ class DeleteConsultantMessageEmailDeliveriesActionTest {
   void hardDeletionClearsOnlyConsultantDeliveryClaims() {
     var consultant = new Consultant();
     consultant.setId("consultant-id");
+    consultant.setMatrixUserId("@consultant:matrix.example");
     var target = new ConsultantDeletionWorkflowDTO(consultant, new ArrayList<>());
 
     action.execute(target);
 
     verify(repository)
         .deleteByRecipientKindAndRecipientUserId(RecipientKind.CONSULTANT, "consultant-id");
+    verify(repository)
+        .deleteByRecipientKindAndRecipientUserId(RecipientKind.FEEDBACK, "consultant-id");
+    verify(repository)
+        .deleteByRecipientKindAndRecipientUserId(RecipientKind.FEEDBACK_INTENT, "consultant-id");
+    verify(repository).deleteBySourceMatrixUserId("@consultant:matrix.example");
     assertThat(target.getDeletionWorkflowErrors()).isEmpty();
   }
 }

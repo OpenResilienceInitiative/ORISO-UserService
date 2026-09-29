@@ -375,7 +375,7 @@ public class AdviceSeekerReplyEmailService {
     }
   }
 
-  private static String requireBaseUrl(String value) {
+  static String requireBaseUrl(String value) {
     if (isBlank(value)) {
       throw new IllegalStateException("Reply email app URL is missing");
     }

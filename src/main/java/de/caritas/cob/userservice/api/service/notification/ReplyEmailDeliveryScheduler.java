@@ -19,6 +19,7 @@ public class ReplyEmailDeliveryScheduler {
   private static final String TASK_NAME = "reply-email-delivery";
   private final @NonNull ReplyEmailDeliveryWriter writer;
   private final @NonNull AdviceSeekerReplyEmailService service;
+  private final @NonNull FeedbackMessageEmailService feedback;
   private final @NonNull ScheduledTaskClaimService claims;
   private long lastObservedUncertainCount = -1;
 
@@ -59,7 +60,15 @@ public class ReplyEmailDeliveryScheduler {
 
   private void deliverSafely(long id) {
     try {
-      service.deliverPending(id);
+      var kind = writer.kindOf(id);
+      if (kind.isEmpty()) {
+        return;
+      }
+      switch (kind.get()) {
+        case FEEDBACK_INTENT -> feedback.resolveIntent(id);
+        case FEEDBACK -> feedback.deliverPending(id);
+        case ASKER, CONSULTANT -> service.deliverPending(id);
+      }
     } catch (RuntimeException failure) {
       log.error(
           "Reply-email delivery {} needs investigation ({})",

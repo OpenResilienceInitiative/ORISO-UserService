@@ -14,6 +14,8 @@ public interface ReplyEmailDeliveryRepository extends JpaRepository<ReplyEmailDe
   void deleteByRecipientKindAndRecipientUserId(
       ReplyEmailDelivery.RecipientKind recipientKind, String recipientUserId);
 
+  void deleteBySourceMatrixUserId(String sourceMatrixUserId);
+
   List<ReplyEmailDelivery> findTop100ByStatusAndNextAttemptAtLessThanEqualOrderByCreatedAtAsc(
       ReplyEmailDelivery.Status status, LocalDateTime now);
 

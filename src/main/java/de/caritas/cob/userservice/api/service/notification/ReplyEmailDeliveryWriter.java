@@ -29,11 +29,65 @@ public class ReplyEmailDeliveryWriter {
       String eventKey,
       long tenantId,
       long sessionId) {
+    return saveNew(
+        recipientKind,
+        recipientUserId,
+        sourceMatrixUserId,
+        sourceRoomId,
+        null,
+        eventKey,
+        tenantId,
+        sessionId);
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public long reserveFeedbackIntent(
+      String actorId,
+      String actorMatrixUserId,
+      String sourceRoomId,
+      String sourceEventId,
+      String eventKey,
+      long tenantId,
+      long sessionId) {
+    return saveNew(
+        RecipientKind.FEEDBACK_INTENT,
+        actorId,
+        actorMatrixUserId,
+        sourceRoomId,
+        sourceEventId,
+        eventKey,
+        tenantId,
+        sessionId);
+  }
+
+  @Transactional(propagation = Propagation.REQUIRES_NEW)
+  public long reserveFeedbackRecipient(String recipientId, ReplyEmailDelivery intent) {
+    return saveNew(
+        RecipientKind.FEEDBACK,
+        recipientId,
+        intent.getSourceMatrixUserId(),
+        intent.getSourceRoomId(),
+        intent.getSourceEventId(),
+        intent.getEventKey(),
+        intent.getTenantId(),
+        intent.getSessionId());
+  }
+
+  private long saveNew(
+      RecipientKind recipientKind,
+      String recipientUserId,
+      String sourceMatrixUserId,
+      String sourceRoomId,
+      String sourceEventId,
+      String eventKey,
+      long tenantId,
+      long sessionId) {
     var delivery = new ReplyEmailDelivery();
     delivery.setRecipientKind(recipientKind);
     delivery.setRecipientUserId(recipientUserId);
     delivery.setSourceMatrixUserId(sourceMatrixUserId);
     delivery.setSourceRoomId(sourceRoomId);
+    delivery.setSourceEventId(sourceEventId);
     delivery.setEventKey(eventKey);
     delivery.setCorrelationId(UUID.randomUUID().toString());
     delivery.setTenantId(tenantId);
@@ -42,6 +96,11 @@ public class ReplyEmailDeliveryWriter {
     delivery.setCreatedAt(LocalDateTime.now());
     delivery.setNextAttemptAt(delivery.getCreatedAt());
     return repository.saveAndFlush(delivery).getId();
+  }
+
+  @Transactional(readOnly = true)
+  public Optional<RecipientKind> kindOf(long id) {
+    return repository.findById(id).map(ReplyEmailDelivery::getRecipientKind);
   }
 
   @Transactional(readOnly = true)
@@ -84,8 +143,19 @@ public class ReplyEmailDeliveryWriter {
     var stale =
         repository.findByStatusAndAttemptedAtBefore(
             ReplyEmailDelivery.Status.SENDING, LocalDateTime.now().minus(age));
-    stale.forEach(delivery -> delivery.setStatus(ReplyEmailDelivery.Status.UNCERTAIN));
-    return stale.size();
+    int uncertain = 0;
+    for (ReplyEmailDelivery delivery : stale) {
+      if (delivery.getRecipientKind() == RecipientKind.FEEDBACK_INTENT) {
+        // Resolving an intent does not enter SMTP. A crash can safely re-run its idempotent
+        // fan-out.
+        delivery.setStatus(ReplyEmailDelivery.Status.PENDING);
+        delivery.setNextAttemptAt(LocalDateTime.now());
+      } else {
+        delivery.setStatus(ReplyEmailDelivery.Status.UNCERTAIN);
+        uncertain++;
+      }
+    }
+    return uncertain;
   }
 
   @Transactional(readOnly = true)
