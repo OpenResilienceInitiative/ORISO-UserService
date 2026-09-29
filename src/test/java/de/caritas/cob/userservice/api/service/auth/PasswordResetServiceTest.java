@@ -98,8 +98,7 @@ class PasswordResetServiceTest {
   @Test
   void requestPasswordReset_Should_CompleteSilently_When_AccountNotFound() {
     when(userService.findUserByUsername(anyString())).thenReturn(Optional.empty());
-    when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
-        .thenReturn(Optional.empty());
+    when(consultantService.findConsultantForSignIn(anyString())).thenReturn(Optional.empty());
 
     assertThatCode(() -> passwordResetService.requestPasswordReset("unknown-user", "de"))
         .doesNotThrowAnyException();
@@ -168,9 +167,7 @@ class PasswordResetServiceTest {
             .email("admin@example.com")
             .type(Admin.AdminType.SUPER)
             .build();
-    when(adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(
-            "admin@example.com", "admin@example.com"))
-        .thenReturn(Optional.of(admin));
+    when(adminRepository.findForSignIn("admin@example.com")).thenReturn(Optional.of(admin));
     when(applicationSettingsService.getGlobalSmtpCredentials())
         .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
@@ -182,19 +179,18 @@ class PasswordResetServiceTest {
     assertThat(sentMails.get(0).resetUrl())
         .matches("https://admin\\.example\\.org/admin/password-reset/confirm\\?token=[0-9a-f]{64}");
     verify(userService, never()).findUserByUsername(anyString());
-    verify(consultantService, never()).findConsultantByUsernameOrEmail(anyString(), anyString());
+    verify(consultantService, never()).findConsultantForSignIn(anyString());
   }
 
   @Test
   void requestPasswordReset_Should_NotFallBackToAppAccounts_When_AdminIsUnknown() {
-    when(adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase("app-user", "app-user"))
-        .thenReturn(Optional.empty());
+    when(adminRepository.findForSignIn("app-user")).thenReturn(Optional.empty());
 
     passwordResetService.requestPasswordReset("app-user", "de", PasswordResetApplication.ADMIN);
 
     assertThat(sentMails).isEmpty();
     verify(userService, never()).findUserByUsername(anyString());
-    verify(consultantService, never()).findConsultantByUsernameOrEmail(anyString(), anyString());
+    verify(consultantService, never()).findConsultantForSignIn(anyString());
   }
 
   @Test
@@ -209,8 +205,7 @@ class PasswordResetServiceTest {
             .email("admin@example.com")
             .type(Admin.AdminType.SUPER)
             .build();
-    when(adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase("admin", "admin"))
-        .thenReturn(Optional.of(admin));
+    when(adminRepository.findForSignIn("admin")).thenReturn(Optional.of(admin));
 
     passwordResetService.requestPasswordReset("admin", "de", PasswordResetApplication.ADMIN);
 
@@ -249,12 +244,13 @@ class PasswordResetServiceTest {
     consultant.setId("c-1");
     consultant.setUsername("consultant1");
     consultant.setEmail("consultant@example.com");
-    when(consultantService.findConsultantByUsernameOrEmail(anyString(), anyString()))
+    when(consultantService.findConsultantForSignIn(anyString()))
         .thenReturn(Optional.of(consultant));
 
-    // SMTP not configured → completes silently, but proves consultant path was taken (no NPE)
+    // SMTP not configured → completes silently; the verify proves the consultant path ran.
     assertThatCode(() -> passwordResetService.requestPasswordReset("consultant1", "de"))
         .doesNotThrowAnyException();
+    verify(consultantService).findConsultantForSignIn("consultant1");
   }
 
   // --- confirmPasswordReset ---

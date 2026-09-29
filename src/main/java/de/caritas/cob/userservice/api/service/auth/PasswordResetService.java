@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.user.UserService;
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 import jakarta.mail.Authenticator;
@@ -161,7 +162,9 @@ public class PasswordResetService {
   private void processPasswordResetRequest(
       String username, String locale, PasswordResetApplication application) {
     try {
-      Optional<AccountResetTarget> accountOptional = resolveAccount(username, application);
+      // Usernames are unique across Träger, and this worker thread has no tenant.
+      Optional<AccountResetTarget> accountOptional =
+          TenantContext.supplyAcrossTenants(() -> resolveAccount(username, application));
       if (accountOptional.isEmpty()) {
         return;
       }
@@ -249,8 +252,7 @@ public class PasswordResetService {
       return Optional.of(new AccountResetTarget(user.getUserId(), user.getEmail()));
     }
 
-    Optional<Consultant> consultantOptional =
-        consultantService.findConsultantByUsernameOrEmail(username, username);
+    Optional<Consultant> consultantOptional = consultantService.findConsultantForSignIn(username);
     return consultantOptional.map(
         consultant -> new AccountResetTarget(consultant.getId(), consultant.getEmail()));
   }
@@ -258,8 +260,7 @@ public class PasswordResetService {
   private Optional<AccountResetTarget> resolveAccount(
       String username, PasswordResetApplication application) {
     if (application == PasswordResetApplication.ADMIN) {
-      Optional<Admin> adminOptional =
-          adminRepository.findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(username, username);
+      Optional<Admin> adminOptional = adminRepository.findForSignIn(username);
       return adminOptional.map(admin -> new AccountResetTarget(admin.getId(), admin.getEmail()));
     }
     return resolveAccount(username);
