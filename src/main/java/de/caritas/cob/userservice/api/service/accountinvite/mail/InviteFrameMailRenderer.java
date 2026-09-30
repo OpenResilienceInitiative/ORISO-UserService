@@ -108,8 +108,18 @@ public class InviteFrameMailRenderer {
 
     // The catalogue subject of this template is {{subject}} itself, so the rendered subject is the
     // operator's, unchanged — the Admin preview and the sent mail therefore show the same line.
+    String logoUrl = values.get("logoUrl");
+    boolean image = !isBlank(logoUrl);
     return new BrandedEmail(
-        rendered.subject(), rendered.html(), rendered.text().replaceAll("\n{3,}", "\n\n"));
+        rendered.subject(),
+        rendered.html(),
+        rendered.text().replaceAll("\n{3,}", "\n\n"),
+        new BrandedEmail.BrandingSnapshot(
+            values.get("platformName"),
+            image ? logoUrl : null,
+            values.get("accentColor"),
+            values.get("primaryColor"),
+            image ? BrandedEmail.LogoRendering.IMAGE : BrandedEmail.LogoRendering.TEXT_WORDMARK));
   }
 
   /** The hidden line mail clients show next to the subject in the inbox list. */
