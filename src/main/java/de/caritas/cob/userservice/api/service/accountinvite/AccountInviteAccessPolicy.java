@@ -106,6 +106,37 @@ public class AccountInviteAccessPolicy {
     adminScope.assertMay(Target.placedIn(invite.getTenantId(), invite.getAgencyId()));
   }
 
+  /** "Higher invites lower": may the caller give anybody this role, by invite or to an account? */
+  public void assertMayInvite(AccountInviteTargetRole role) {
+    boolean allowed =
+        switch (adminScope.current()) {
+          case AdminScope.Platform platform -> true;
+          case AdminScope.Tenant tenant -> invitableByTenantReach().contains(role);
+          case AdminScope.Agencies agencies -> role == AccountInviteTargetRole.COUNSELLOR;
+        };
+    if (!allowed) {
+      throw deny("give the role " + role);
+    }
+  }
+
+  /** May the caller add their own account as counsellor of this agency ("higher assigns lower")? */
+  public void authorizeSelfAssignment(long agencyId, Long agencyTenantId) {
+    switch (adminScope.current()) {
+      case AdminScope.Platform platform -> {}
+      case AdminScope.Tenant tenant -> {
+        if (!authenticatedUser.hasTenantLevelAdminRole()
+            || !tenant.tenantId().equals(agencyTenantId)) {
+          throw deny("assign themselves in agency " + agencyId);
+        }
+      }
+      case AdminScope.Agencies agencies -> {
+        if (!agencies.ids().contains(agencyId)) {
+          throw deny("assign themselves in agency " + agencyId);
+        }
+      }
+    }
+  }
+
   /**
    * The Träger a template the caller creates belongs to, or {@code null} when the caller is the
    * platform operator and the template is offered to everyone.
@@ -179,6 +210,9 @@ public class AccountInviteAccessPolicy {
     if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
       throw deny("invite a " + command.targetRole());
     }
+    if (IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())) {
+      throw deny("invite into tenant " + command.tenantId());
+    }
     if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
         || command.agencyId() == null
         || !agencies.ids().contains(command.agencyId())) {
@@ -190,14 +224,12 @@ public class AccountInviteAccessPolicy {
 
   private CreateAccountInviteCommand authorizeTenantAdminCreate(
       CreateAccountInviteCommand command, Long callerTenantId) {
-    Set<AccountInviteTargetRole> invitable =
-        authenticatedUser.hasTenantLevelAdminRole()
-            ? TENANT_ADMIN_INVITABLE_ROLES
-            : USER_ADMIN_INVITABLE_ROLES;
-    if (!invitable.contains(command.targetRole())) {
+    if (!invitableByTenantReach().contains(command.targetRole())) {
       throw deny("invite a " + command.targetRole());
     }
-    if (command.tenantIdAllocationMode() != null) {
+    if (command.tenantIdAllocationMode() != null
+        && command.tenantIdAllocationMode() != IdAllocationMode.EXISTING) {
+      // Onboarding a new Träger is the platform's job; EXISTING (their own Träger) is fine.
       throw deny("allocate a new tenant");
     }
     assertTenantIsOwn(command.tenantId(), callerTenantId);
@@ -207,6 +239,12 @@ public class AccountInviteAccessPolicy {
       adminScope.assertMay(Target.agencies(List.of(command.agencyId())));
     }
     return withCallerTenant(command, callerTenantId);
+  }
+
+  private Set<AccountInviteTargetRole> invitableByTenantReach() {
+    return authenticatedUser.hasTenantLevelAdminRole()
+        ? TENANT_ADMIN_INVITABLE_ROLES
+        : USER_ADMIN_INVITABLE_ROLES;
   }
 
   /** A named tenant is stored on the invite, so it must be the caller's own. */
@@ -223,17 +261,7 @@ public class AccountInviteAccessPolicy {
     if (command.tenantId() != null || callerTenantId == null) {
       return command;
     }
-    return new CreateAccountInviteCommand(
-        command.targetRole(),
-        callerTenantId,
-        command.recipientEmail(),
-        command.firstName(),
-        command.lastName(),
-        command.agencyId(),
-        command.departmentId(),
-        command.expiresInDays(),
-        command.tenantIdAllocationMode(),
-        command.agencyIdAllocationMode());
+    return command.withTenantId(callerTenantId);
   }
 
   private ForbiddenException denyTemplate(String attempt) {

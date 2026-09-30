@@ -4,6 +4,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -56,6 +58,7 @@ import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.onboarding.OperatorDpaContentClient;
@@ -73,6 +76,7 @@ import jakarta.servlet.http.Cookie;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.UUID;
 import org.apache.commons.lang3.RandomStringUtils;
 import org.junit.jupiter.api.AfterEach;
@@ -155,8 +159,13 @@ class MultiTenantRegistrationIT {
   private final List<String> createdUserIds = new ArrayList<>();
   private final List<Runnable> cleanups = new ArrayList<>();
 
+  /** The accept re-checks the agency with the service token (ORISO-Admin#1026 P2-3). */
+  @MockitoBean private AgencyFacts agencyFacts;
+
   @BeforeEach
   void oneAgencyOfTenantTwo() throws Exception {
+    when(agencyFacts.find(AGENCY))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, TENANT, false, List.of())));
     // The platform domain resolves to the main tenant, as with single-domain multitenancy.
     when(tenantResolverService.resolve(any())).thenReturn(1L);
     when(((IdentityAuthentication) identityClient).login(anyString(), anyString()))
@@ -392,6 +401,31 @@ class MultiTenantRegistrationIT {
   }
 
   @Test
+  void acceptCounsellorInvite_Should_BeRefused_When_TheAgencyHasNoTenant() throws Exception {
+    when(agencyFacts.find(AGENCY))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, null, false, List.of())));
+    var token = persistAccountInvite(AccountInviteTargetRole.COUNSELLOR);
+
+    var result = mockMvc.perform(acceptCounsellorInvite(token)).andReturn();
+
+    assertStatus(result, 404);
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+  }
+
+  @Test
+  void acceptCounsellorInvite_Should_BeRefused_When_TheAgencyBelongsToAnotherTenant()
+      throws Exception {
+    when(agencyFacts.find(AGENCY))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, TENANT + 1, false, List.of())));
+    var token = persistAccountInvite(AccountInviteTargetRole.COUNSELLOR);
+
+    var result = mockMvc.perform(acceptCounsellorInvite(token)).andReturn();
+
+    assertStatus(result, 404);
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+  }
+
+  @Test
   void registerTenantAdminFromInvite_Should_CreateTheAdminInTheInvitesTenant() throws Exception {
     when(operatorDpaContentClient.fetchPublishedDpa())
         .thenReturn(new OperatorDpaContentClient.OperatorDpa("dpa", "1"));
@@ -478,6 +512,16 @@ class MultiTenantRegistrationIT {
                 .build());
     cleanups.add(() -> agencyInviteLinkRepository.deleteById(link.getId()));
     return link;
+  }
+
+  private static org.springframework.test.web.servlet.RequestBuilder acceptCounsellorInvite(
+      String token) {
+    return post("/users/account-invites/{token}/accept", token)
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(
+            "{\"username\":\"invited_counsellor_"
+                + RandomStringUtils.randomAlphabetic(6)
+                + "\",\"password\":\"Valid-Test-Password-2026!\",\"formalLanguage\":true}");
   }
 
   private String persistAccountInvite(AccountInviteTargetRole role) {

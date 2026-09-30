@@ -13,7 +13,6 @@ import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.tenant.AsTechnicalUser;
@@ -50,7 +49,12 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
   AccountInviteAccessPolicy.class,
+  AccountInviteTopicPermissionService.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class
 })
 @AsTechnicalUser
@@ -69,7 +73,7 @@ class AccountInviteRecipientEmailGuardIT {
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
-  @MockitoBean private ExistingAgencyClient existingAgencyClient;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
 
@@ -157,14 +161,7 @@ class AccountInviteRecipientEmailGuardIT {
 
   private CreateAccountInviteCommand counsellorInviteFor(String recipientEmail) {
     return new CreateAccountInviteCommand(
-        AccountInviteTargetRole.COUNSELLOR,
-        7L,
-        recipientEmail,
-        "Ada",
-        "Lovelace",
-        null,
-        null,
-        null);
+        AccountInviteTargetRole.COUNSELLOR, 7L, recipientEmail, "Ada", "Lovelace", null, 11L, null);
   }
 
   private void persistInvite(

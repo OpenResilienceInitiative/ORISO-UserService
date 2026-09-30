@@ -21,6 +21,10 @@ public interface ConsultantRepository
   @Query("select c from Consultant c where c.id = :id")
   Optional<Consultant> findPictureOwnerForUpdate(@Param("id") String id);
 
+  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+  @Query("select c from Consultant c where c.id = :id and c.deleteDate is null")
+  Optional<Consultant> findActiveByIdForUpdate(@Param("id") String id);
+
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByIdAndDeleteDateIsNull(String id);
 

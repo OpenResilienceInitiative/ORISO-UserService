@@ -730,6 +730,8 @@
 									<sourceFolder>/</sourceFolder>
 									<useJakartaEe>true</useJakartaEe>
 									<useSpringBoot3>true</useSpringBoot3>
+									<!-- nullable arrays then default to null, so an omitted field differs from [] -->
+									<openApiNullable>false</openApiNullable>
 								</configOptions>
 							<inputSpec>${project.basedir}/api/useradminservice.yaml</inputSpec>
 							<generatorName>spring</generatorName>
