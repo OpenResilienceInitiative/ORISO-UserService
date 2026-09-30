@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService.SmtpSettingsUnavailableException;
 import de.caritas.cob.userservice.api.service.notification.GlobalSmtpTestEmailService;
 import jakarta.mail.AuthenticationFailedException;
 import jakarta.validation.Valid;
@@ -31,12 +32,19 @@ public class GlobalSmtpTestEmailController {
       return new ResponseEntity<>(HttpStatus.OK);
     } catch (Exception ex) {
       log.warn("Global SMTP test email failed ({})", ex.getClass().getSimpleName());
+      if (ex instanceof SmtpSettingsUnavailableException) {
+        return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
+            .body(
+                Map.of(
+                    "message",
+                    "Platform SMTP Admin Settings are unavailable. Please retry or contact a platform admin."));
+      }
       String reason = "SMTP test mail could not be sent. Please verify your SMTP settings.";
       if (ex instanceof GlobalSmtpTestEmailService.ConfigurationException) {
         reason = ex.getMessage();
       } else if (ex instanceof AuthenticationFailedException) {
         reason =
-            "SMTP authentication failed. Please verify deployment SMTP credentials and provider auth policy.";
+            "SMTP authentication failed. Please verify saved Admin SMTP credentials and provider auth policy.";
       }
       return ResponseEntity.badRequest().body(Map.of("message", reason));
     }

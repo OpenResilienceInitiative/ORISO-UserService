@@ -9,11 +9,14 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture;
 import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import jakarta.mail.internet.MimeMessage;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Properties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -40,21 +43,32 @@ class GlobalSmtpTestEmailServiceTest {
   }
 
   @Test
-  void missingDeploymentPasswordStopsBeforeAnyTransportCall() {
+  void missingStoredPasswordStopsBeforeAnyTransportCall() {
     when(platformSmtpSettings.requireConfigured())
         .thenThrow(
-            new IllegalStateException(
-                "Platform SMTP is not configured: smtp.password (SMTP_PASSWORD)"));
+            new PlatformSmtpSettingsProvider.ConfigurationException(
+                "Platform SMTP is not configured: SMTP password in Admin Settings"));
 
     assertThatThrownBy(() -> service.sendTestEmail(request()))
         .isInstanceOf(GlobalSmtpTestEmailService.ConfigurationException.class)
-        .hasMessageContaining("SMTP_PASSWORD");
+        .hasMessageContaining("SMTP password");
     verifyNoInteractions(transport);
   }
 
   @Test
-  void testMailUsesDeploymentServerAndDesignSystem() throws Exception {
-    givenDeploymentSettings(true);
+  void missingConfiguredProductNameStopsBeforeTransportWithANamedSafeError() {
+    givenAdminSettings(false);
+    when(emailBrand.platformName()).thenThrow(new IllegalStateException("configuration missing"));
+
+    assertThatThrownBy(() -> service.sendTestEmail(request()))
+        .isInstanceOf(GlobalSmtpTestEmailService.ConfigurationException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+    verifyNoInteractions(emailRenderer, transport);
+  }
+
+  @Test
+  void testMailUsesSavedAdminServerAndDesignSystem() throws Exception {
+    givenAdminSettings(true);
     givenRenderedMail();
 
     service.sendTestEmail(request());
@@ -65,14 +79,14 @@ class GlobalSmtpTestEmailServiceTest {
             eq(OrisoEmailRenderer.Tone.DE_FORMAL),
             org.mockito.ArgumentMatchers.argThat(
                 values ->
-                    "deployment-smtp.example.org:465".equals(values.get("smtpHost"))
-                        && "noreply@deployment.example.org".equals(values.get("smtpFrom"))));
+                    "stored-smtp.example.org:465".equals(values.get("smtpHost"))
+                        && "noreply@stored.example.org".equals(values.get("smtpFrom"))));
     MimeMessage sent = sentMessage();
     Properties session = sent.getSession().getProperties();
-    assertThat(session.getProperty("mail.smtp.host")).isEqualTo("deployment-smtp.example.org");
+    assertThat(session.getProperty("mail.smtp.host")).isEqualTo("stored-smtp.example.org");
     assertThat(session.getProperty("mail.smtp.port")).isEqualTo("465");
     assertThat(session.getProperty("mail.smtp.ssl.enable")).isEqualTo("true");
-    assertThat(sent.getFrom()[0].toString()).isEqualTo("noreply@deployment.example.org");
+    assertThat(sent.getFrom()[0].toString()).isEqualTo("noreply@stored.example.org");
     assertThat(sent.getAllRecipients()[0].toString()).isEqualTo("to@example.com");
     assertThat(sent.getSubject()).isEqualTo("ORISO SMTP-Test");
     assertThat(sent.getContentType()).contains("multipart/alternative");
@@ -80,7 +94,7 @@ class GlobalSmtpTestEmailServiceTest {
 
   @Test
   void startTlsIsRequiredAndTimeoutsAreBounded() throws Exception {
-    givenDeploymentSettings(false);
+    givenAdminSettings(false);
     givenRenderedMail();
 
     service.sendTestEmail(request());
@@ -96,7 +110,7 @@ class GlobalSmtpTestEmailServiceTest {
 
   @Test
   void legacyRequestThemeDoesNotChangePlatformMailBranding() throws Exception {
-    givenDeploymentSettings(false);
+    givenAdminSettings(false);
     givenRenderedMail();
     GlobalSmtpTestEmailDTO dto = request();
     dto.setEmailThemeColor("#00ff00");
@@ -106,16 +120,59 @@ class GlobalSmtpTestEmailServiceTest {
     verify(emailBrand).values("https://app.example.org", null);
   }
 
-  private void givenDeploymentSettings(boolean secure) {
+  @Test
+  void renderAndTransportUseOneSavedSnapshotEvenIfSettingsChangeDuringTheRequest()
+      throws Exception {
+    var adminSource = org.mockito.Mockito.mock(ApplicationSettingsService.class);
+    var first =
+        PlatformSmtpSettingsFixture.credentials("first-user", "first-password")
+            .globalSmtpHost("saved.example.org")
+            .globalSmtpFrom("first@example.org");
+    var next =
+        PlatformSmtpSettingsFixture.credentials("second-user", "second-password")
+            .globalSmtpHost("different.example.org")
+            .globalSmtpFrom("second@example.org");
+    when(adminSource.getGlobalSmtpSettingsSnapshot())
+        .thenReturn(Optional.of(first), Optional.of(next));
+    service =
+        new GlobalSmtpTestEmailService(
+            emailRenderer, emailBrand, new PlatformSmtpSettingsProvider(adminSource));
+    ReflectionTestUtils.setField(service, "appBaseUrl", "https://app.example.org");
+    ReflectionTestUtils.setField(service, "transport", transport);
+    givenRenderedMail();
+
+    service.sendTestEmail(request());
+
+    verify(adminSource).getGlobalSmtpSettingsSnapshot();
+    MimeMessage sent = sentMessage();
+    assertThat(sent.getSession().getProperty("mail.smtp.host")).isEqualTo("saved.example.org");
+    assertThat(sent.getFrom()[0].toString()).isEqualTo("first@example.org");
+    var authentication =
+        sent.getSession().requestPasswordAuthentication(null, 587, "smtp", null, null);
+    assertThat(authentication.getUserName()).isEqualTo("first-user");
+    assertThat(authentication.getPassword()).isEqualTo("first-password");
+    verify(emailRenderer)
+        .render(
+            eq("smtp-test"),
+            eq(OrisoEmailRenderer.Tone.DE_FORMAL),
+            org.mockito.ArgumentMatchers.argThat(
+                values ->
+                    "saved.example.org:587".equals(values.get("smtpHost"))
+                        && "first@example.org".equals(values.get("smtpFrom"))));
+    verifyNoInteractions(platformSmtpSettings);
+  }
+
+  private void givenAdminSettings(boolean secure) {
     when(platformSmtpSettings.requireConfigured())
         .thenReturn(
             new PlatformSmtpSettingsProvider.Settings(
-                "deployment-smtp.example.org",
+                "stored-smtp.example.org",
                 secure ? 465 : 587,
                 secure,
-                "deployment-user",
-                "deployment-password",
-                "noreply@deployment.example.org"));
+                "stored-user",
+                "stored-password",
+                "noreply@stored.example.org",
+                null));
   }
 
   private void givenRenderedMail() {

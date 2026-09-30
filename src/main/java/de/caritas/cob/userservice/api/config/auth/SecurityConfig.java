@@ -9,8 +9,6 @@ import de.caritas.cob.userservice.api.config.CsrfSecurityProperties;
 import java.math.BigDecimal;
 import java.util.Collection;
 import java.util.HashSet;
-import java.util.Map;
-import java.util.Objects;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -599,7 +597,7 @@ public class SecurityConfig {
     }
 
     Set<GrantedAuthority> roleAuthorities =
-        extractKeycloakRoles(jwt).stream()
+        KeycloakRoles.of(jwt.getClaims()).stream()
             .map(SimpleGrantedAuthority::new)
             .collect(Collectors.toSet());
     authorities.addAll(authorityMapper.mapAuthorities(roleAuthorities));
@@ -629,7 +627,7 @@ public class SecurityConfig {
     }
 
     Jwt jwt = jwtAuthentication.getToken();
-    Set<String> roles = extractKeycloakRoles(jwt);
+    Set<String> roles = KeycloakRoles.of(jwt.getClaims());
     boolean hasPlatformAdminRoles =
         roles.contains(UserRole.AGENCY_ADMIN.getValue())
             && roles.contains(UserRole.TENANT_ADMIN.getValue());
@@ -647,30 +645,6 @@ public class SecurityConfig {
       }
     }
     return tenantId != null && "0".equals(tenantId.toString());
-  }
-
-  @SuppressWarnings("unchecked")
-  private Set<String> extractKeycloakRoles(Jwt jwt) {
-    var roles = new HashSet<String>();
-    Object realmAccess = jwt.getClaims().get("realm_access");
-    if (realmAccess instanceof Map<?, ?> realmAccessMap) {
-      addRoles(roles, realmAccessMap.get("roles"));
-    }
-
-    Object resourceAccess = jwt.getClaims().get("resource_access");
-    if (resourceAccess instanceof Map<?, ?> resourceAccessMap) {
-      resourceAccessMap.values().stream()
-          .filter(Map.class::isInstance)
-          .map(Map.class::cast)
-          .forEach(clientAccess -> addRoles(roles, clientAccess.get("roles")));
-    }
-    return roles;
-  }
-
-  private void addRoles(Set<String> roles, Object rolesClaim) {
-    if (rolesClaim instanceof Collection<?> roleCollection) {
-      roleCollection.stream().filter(Objects::nonNull).map(Object::toString).forEach(roles::add);
-    }
   }
 
   private String principalName(Jwt jwt) {

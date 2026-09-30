@@ -1,93 +1,92 @@
 package de.caritas.cob.userservice.api.service.email;
 
-import jakarta.annotation.PostConstruct;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
 import jakarta.mail.internet.AddressException;
 import jakarta.mail.internet.InternetAddress;
 import java.util.ArrayList;
 import java.util.List;
-import org.springframework.beans.factory.annotation.Value;
+import lombok.NonNull;
+import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
 
-/** Deployment-owned SMTP settings for platform mail. Tenant SMTP has a separate owner. */
+/** Reads one coherent platform SMTP snapshot from Admin Settings via the technical identity. */
 @Component
+@RequiredArgsConstructor
 public class PlatformSmtpSettingsProvider {
-  private final String host;
-  private final String port;
-  private final String secure;
-  private final String username;
-  private final String password;
-  private final String from;
-  private final boolean requiredAtStartup;
-
-  public PlatformSmtpSettingsProvider(
-      @Value("${smtp.host:}") String host,
-      @Value("${smtp.port:}") String port,
-      @Value("${smtp.secure:}") String secure,
-      @Value("${smtp.user:}") String username,
-      @Value("${smtp.password:}") String password,
-      @Value("${smtp.from:}") String from,
-      @Value("${smtp.required:false}") boolean requiredAtStartup) {
-    this.host = host;
-    this.port = port;
-    this.secure = secure;
-    this.username = username;
-    this.password = password;
-    this.from = from;
-    this.requiredAtStartup = requiredAtStartup;
-  }
-
-  @PostConstruct
-  void validateAtStartup() {
-    if (requiredAtStartup) {
-      requireConfigured();
-    }
-  }
+  private final @NonNull ApplicationSettingsService applicationSettingsService;
 
   public Settings requireConfigured() {
+    return requireConfigured(applicationSettingsService);
+  }
+
+  public static Settings requireConfigured(ApplicationSettingsService applicationSettingsService) {
+    ApplicationSettingsSmtpCredentialsDTO source =
+        applicationSettingsService
+            .getGlobalSmtpSettingsSnapshot()
+            .orElseThrow(
+                () ->
+                    new ConfigurationException(
+                        "Platform SMTP is not configured in Admin Settings: SMTP settings are missing"));
+
     List<String> missing = new ArrayList<>();
-    if (blank(host)) missing.add("smtp.host (SMTP_HOST)");
-    if (blank(username)) missing.add("smtp.user (SMTP_USER)");
-    if (blank(password)) missing.add("smtp.password (SMTP_PASSWORD)");
-    if (blank(from)) missing.add("smtp.from (SMTP_FROM)");
+    if (!Boolean.TRUE.equals(source.getGlobalFeatureSystemNotificationEmailsEnabled()))
+      missing.add("system notification emails enabled");
+    if (!Boolean.TRUE.equals(source.getGlobalSmtpEnabled())) missing.add("SMTP enabled");
+    if (blank(source.getGlobalSmtpHost())) missing.add("SMTP host");
+    if (blank(source.getGlobalSmtpUsername())) missing.add("SMTP username");
+    if (blank(source.getGlobalSmtpPassword())) missing.add("SMTP password");
+    if (blank(source.getGlobalSmtpFrom())) missing.add("SMTP sender");
     else {
       try {
-        new InternetAddress(from.trim(), true).validate();
+        new InternetAddress(source.getGlobalSmtpFrom().trim(), true).validate();
       } catch (AddressException exception) {
-        missing.add("smtp.from (SMTP_FROM)");
+        missing.add("SMTP sender");
       }
     }
 
-    Integer parsedPort = null;
+    Integer port = null;
     try {
-      parsedPort = Integer.valueOf(blank(port) ? "" : port.trim());
-      if (parsedPort < 1 || parsedPort > 65535) missing.add("smtp.port (SMTP_PORT)");
-    } catch (NumberFormatException exception) {
-      missing.add("smtp.port (SMTP_PORT)");
+      port = Integer.valueOf(source.getGlobalSmtpPort().trim());
+      if (port < 1 || port > 65535) missing.add("SMTP port");
+    } catch (NullPointerException | NumberFormatException exception) {
+      missing.add("SMTP port");
     }
-    if (blank(secure)
-        || (!"true".equalsIgnoreCase(secure.trim()) && !"false".equalsIgnoreCase(secure.trim()))) {
-      missing.add("smtp.secure (SMTP_SECURE)");
-    }
+    if (source.getGlobalSmtpSecure() == null) missing.add("SMTP security mode");
 
     if (!missing.isEmpty()) {
-      throw new IllegalStateException(
-          "Platform SMTP is not configured: " + String.join(", ", missing));
+      throw new ConfigurationException(
+          "Platform SMTP is incomplete in Admin Settings: " + String.join(", ", missing));
     }
     return new Settings(
-        host.trim(),
-        parsedPort,
-        Boolean.parseBoolean(secure.trim()),
-        username.trim(),
-        password,
-        from.trim());
+        source.getGlobalSmtpHost().trim(),
+        port,
+        source.getGlobalSmtpSecure(),
+        source.getGlobalSmtpUsername().trim(),
+        source.getGlobalSmtpPassword(),
+        source.getGlobalSmtpFrom().trim(),
+        source.getGlobalSmtpEmailThemeColor());
   }
 
   private static boolean blank(String value) {
     return value == null || value.isBlank();
   }
 
+  /** Only provider-owned, value-free validation errors may be shown to an administrator. */
+  public static class ConfigurationException extends IllegalStateException {
+    public ConfigurationException(String message) {
+      super(message);
+    }
+  }
+
   public record Settings(
-      String host, int port, boolean secure, String username, String password, String from) {
+      String host,
+      int port,
+      boolean secure,
+      String username,
+      String password,
+      String from,
+      String emailThemeColor) {
     @Override
     public String toString() {
       return "PlatformSmtpSettings[host=" + host + ", port=" + port + ", secure=" + secure + "]";

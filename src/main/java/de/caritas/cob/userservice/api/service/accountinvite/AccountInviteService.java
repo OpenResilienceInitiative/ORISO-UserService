@@ -39,6 +39,7 @@ import java.util.HexFormat;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.regex.Pattern;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -185,6 +186,8 @@ public class AccountInviteService {
    * compensated; ambiguous transport failures retain the claim so a retry cannot duplicate mail.
    */
   public InviteSendResult createAndSendInvite(CreateAccountInviteCommand command, Long templateId) {
+    // Before the invite exists: a refused template must not reserve ids or write a row.
+    InviteEmailTemplate template = findTemplate(templateId);
     DirectInviteDispatch dispatch;
     AccountInvite[] claimedInvite = new AccountInvite[1];
     try {
@@ -194,7 +197,6 @@ public class AccountInviteService {
                   transaction -> {
                     AccountInvite invite = createInvite(command);
                     claimedInvite[0] = invite;
-                    InviteEmailTemplate template = findTemplate(templateId);
                     LocalDateTime now = LocalDateTime.now();
                     String rawToken = generateToken();
                     String acceptUrl =
@@ -484,7 +486,7 @@ public class AccountInviteService {
       int size) {
     String search = normalizeSearch(query);
     PageRequest pageRequest = PageRequest.of(Math.max(page, 0), clampSize(size));
-    // Cross-Träger guard: without it an absent tenant_id listed the invites of every Träger.
+    // Cross-Träger guard: an absent tenant_id would otherwise list the invites of every Träger.
     InviteListScope scope = accessPolicy.scopeForListing(tenantId, targetRole);
     if (scope.empty()) {
       return Page.empty(pageRequest);
@@ -867,7 +869,7 @@ public class AccountInviteService {
   }
 
   public AccountInvite waiveTwoFactor(Long inviteId, WaiveTwoFactorCommand command) {
-    return waiveTwoFactor(findInvite(inviteId), command);
+    return waiveTwoFactor(findAuthorizedInvite(inviteId), command);
   }
 
   /** Waives the 2FA gate; applies the cross-Träger guard itself, whichever overload is used. */
@@ -1036,9 +1038,16 @@ public class AccountInviteService {
 
   /** Loads an invite for an admin action and applies the cross-Träger guard. */
   private AccountInvite findAuthorizedInvite(Long inviteId) {
-    AccountInvite invite = findInvite(inviteId);
-    accessPolicy.authorizeAccess(invite);
-    return invite;
+    if (inviteId == null) {
+      throw new BadRequestException("inviteId is required");
+    }
+    Optional<AccountInvite> invite = accountInviteRepository.findById(inviteId);
+    if (invite.isEmpty()) {
+      accessPolicy.authorizeMissing(inviteId);
+      throw new NotFoundException("Account invite not found");
+    }
+    accessPolicy.authorizeAccess(invite.get());
+    return invite.get();
   }
 
   private AccountInvite findInvite(Long inviteId) {
@@ -1054,9 +1063,14 @@ public class AccountInviteService {
     if (templateId == null) {
       throw new BadRequestException("templateId is required");
     }
-    return templateRepository
-        .findById(templateId)
-        .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    InviteEmailTemplate template =
+        templateRepository
+            .findById(templateId)
+            .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
+    // Hiding another Träger's template from the list is not enough: the id travels in
+    // the send request body, so sending with it has to be refused too (ORISO-Admin#1026).
+    accessPolicy.authorizeTemplateUse(template.getTenantId());
+    return template;
   }
 
   /**

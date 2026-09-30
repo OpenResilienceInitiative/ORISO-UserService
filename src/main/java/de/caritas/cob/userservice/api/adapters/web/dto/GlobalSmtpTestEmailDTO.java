@@ -4,7 +4,7 @@ import jakarta.validation.constraints.Email;
 import jakarta.validation.constraints.NotBlank;
 import lombok.Data;
 
-/** The server comes from deployment settings; only the recipient affects sending. */
+/** The server comes from saved Admin Settings; only the recipient affects sending. */
 @Data
 public class GlobalSmtpTestEmailDTO {
 
