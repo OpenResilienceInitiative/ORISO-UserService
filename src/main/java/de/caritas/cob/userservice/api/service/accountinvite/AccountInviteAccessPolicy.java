@@ -114,12 +114,12 @@ public class AccountInviteAccessPolicy {
    * Träger A would write a text Träger B sees in its list and sends to its own people.
    */
   public Long templateOwnerTenantId() {
-    return templateReach().tenantId();
+    return adminScope.ownerReach().tenantId();
   }
 
   /** Whether the caller sees every Träger's templates, not just their own and the platform's. */
   public boolean seesEveryTemplate() {
-    return templateReach() instanceof AdminScope.Platform;
+    return adminScope.ownerReach() instanceof AdminScope.Platform;
   }
 
   /**
@@ -127,7 +127,7 @@ public class AccountInviteAccessPolicy {
    * may use a platform template ({@code null}); a Träger's own template is theirs alone.
    */
   public boolean canUseTemplate(Long templateTenantId) {
-    var reach = templateReach();
+    var reach = adminScope.ownerReach();
     return reach instanceof AdminScope.Platform
         || templateTenantId == null
         || templateTenantId.equals(reach.tenantId());
@@ -168,7 +168,7 @@ public class AccountInviteAccessPolicy {
    * hiding them (house rule "disable, don't hide").
    */
   public boolean canChangeTemplate(Long templateTenantId) {
-    var reach = templateReach();
+    var reach = adminScope.ownerReach();
     return reach instanceof AdminScope.Platform
         || (templateTenantId != null && templateTenantId.equals(reach.tenantId()));
   }
@@ -231,25 +231,6 @@ public class AccountInviteAccessPolicy {
         command.expiresInDays(),
         command.tenantIdAllocationMode(),
         command.agencyIdAllocationMode());
-  }
-
-  /**
-   * The caller's kind and Träger for templates, which never need the agency ids. Unlike {@link
-   * AdminScope#current()}, a missing tenant reads as a single-tenant deployment.
-   */
-  private AdminScope.Reach templateReach() {
-    if (authenticatedUser.hasRestrictedAgencyPriviliges()) {
-      return new AdminScope.Agencies(adminScope.ownTenantId(), Set.of());
-    }
-    if (authenticatedUser.getTenantId() == null) {
-      return new AdminScope.Platform();
-    }
-    return adminScope
-        .tenantReach()
-        .orElseThrow(
-            () ->
-                denyTemplate(
-                    "use invite e-mail templates from tenant 0 without platform-admin roles"));
   }
 
   private ForbiddenException denyTemplate(String attempt) {

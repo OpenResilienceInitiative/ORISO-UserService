@@ -31,13 +31,10 @@ import org.springframework.transaction.annotation.Propagation;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Invite e-mail templates are global: one row is used by every Träger.
- *
- * <p>Everyone who may send invites may also <b>create</b> a template — Träger admins and
- * Beratungsstellen admins alike (owner decision 2026-09-23, confirmed and widened by Frank
- * 2026-09-24, ORISO-Admin#1026 Q30/Q31). <b>Changing a stored one</b> stays with the platform admin
- * (tenant 0), because that row is the mail every other Träger sends. Reading and using templates
- * was never restricted.
+ * Who may write the ownerless platform template: every Träger sends it, so only the platform admin
+ * (tenant 0) creates or changes it. Everyone who may send invites may create a template of their
+ * own Träger (ORISO-Admin#1026 Q30/Q31); reading is scoped in {@link
+ * InviteEmailTemplateTenantScopeIT}.
  *
  * <p>The caller is a real {@link AuthenticatedUser}, so the role helpers the check relies on run
  * unchanged; the restricted agency admin is the seeded admin {@value #AGENCY_ADMIN_ID}.
