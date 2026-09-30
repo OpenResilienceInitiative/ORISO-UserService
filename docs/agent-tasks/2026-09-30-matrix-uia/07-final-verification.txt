@@ -1,6 +1,8 @@
 Final combined verification: Java21, local disposable Synapsev1.158.0, synthetic fixtures.
 Command: ./mvnw -B -q -Dtest=MatrixSynapseServiceTest,MatrixSynapseServiceCredentialLoggingTest,MatrixMessageControllerTest,MatrixBrowserDeviceConcurrencyTest,MatrixBrowserDeviceSynapseIT test
-Maven exit0. 90tests, zero failures/errors/skips.
+Maven exit0. 90tests, zero failures/errors/skips at a20fc5335.
+After the CodeRabbit setup-test strengthening: Synapse2 rerun green, zero failures/errors/skips; unchanged production/package.
+Artifact08 records additional original-code HTTP403 RED and focused2 GREEN.
 Classes: service65, outbound credential logging2, controller14, forced HTTP interleavings7, real Synapse2.
 No Dev deployment/browser acceptance claimed.
 Package: ./mvnw -B -q package -DskipTests -Dskip.unit-tests=true — exit0.

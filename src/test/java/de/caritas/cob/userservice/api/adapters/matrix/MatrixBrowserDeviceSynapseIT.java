@@ -170,6 +170,25 @@ class MatrixBrowserDeviceSynapseIT {
     assertDeviceIdentity(deviceB, userId, "SETUP_B");
     Thread.sleep(1500);
 
+    // First setup bypasses UIA, so also prove A's original password still authenticates with
+    // Synapse.
+    var reloggedDeviceA =
+        post(
+            "/_matrix/client/v3/login",
+            null,
+            Map.of(
+                "type",
+                "m.login.password",
+                "identifier",
+                Map.of("type", "m.id.user", "user", userId),
+                "password",
+                deviceA.get("interactive_auth_password"),
+                "device_id",
+                "SETUP_A"));
+    assertDeviceIdentity(reloggedDeviceA, userId, "SETUP_A");
+    assertDeviceIdentity(
+        get("/_matrix/client/v3/account/whoami", token(reloggedDeviceA)), userId, "SETUP_A");
+
     // Synapse permits first-time setup without UIA (MSC3967); replacement above must require it.
     var initialKey = masterKey(userId);
     assertThat(post(SIGNING_UPLOAD, token(deviceA), Map.of("master_key", initialKey))).isEmpty();

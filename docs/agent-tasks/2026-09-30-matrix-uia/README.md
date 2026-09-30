@@ -16,8 +16,10 @@ The MVC response also keeps credentials out of framework body logs.
 | MVC TRACE response logs | Synthetic password/token appears | Wire JSON unchanged, credentials absent from logs |
 
 The account-isolation mutation is explicitly separate: original UUID generation
-already isolated accounts. First-time setup is positive coverage and bypasses UIA
-by design in Synapse1.158.0; it is not presented as an original-code RED.
+already isolated accounts. First-time signing upload bypasses UIA by design in Synapse1.158.0.
+The strengthened setup case additionally performs a delayed real password login
+with A's original credential before upload; that request fails on the old backend.
+See the focused first-setup credential Red-Green evidence in artifact08.
 
 Final combined verification: **90 tests, zero failures/errors/skips**. Package,
 Spotless and CI-script syntax checks pass. Read [final verification](07-final-verification.txt)
