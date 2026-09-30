@@ -99,7 +99,8 @@ class TenantSystemEmailClientTest {
   }
 
   @org.junit.jupiter.params.ParameterizedTest
-  @org.junit.jupiter.params.provider.ValueSource(strings = {"NEW_MESSAGE", "SELF_HELP_APPOINTMENT_REMINDER"})
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {"NEW_MESSAGE", "SELF_HELP_APPOINTMENT_REMINDER"})
   void durableDeliveryPassesTheStoredCorrelationIdToTheOwnTransport(String purpose) {
     UUID correlation = UUID.fromString("ab2e5141-2f26-456a-9e46-0ff642918115");
     server

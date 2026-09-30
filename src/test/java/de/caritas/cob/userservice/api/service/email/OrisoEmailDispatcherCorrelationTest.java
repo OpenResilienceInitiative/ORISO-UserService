@@ -5,10 +5,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.CALLS_REAL_METHODS;
 
 import jakarta.mail.Message;
+import jakarta.mail.Session;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
 import java.util.Map;
+import java.util.Properties;
 import java.util.UUID;
+import java.util.concurrent.atomic.AtomicReference;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.EnumSource;
@@ -93,11 +96,12 @@ class OrisoEmailDispatcherCorrelationTest {
               "PRIVATE_PERSON_MARKER", "PRIVATE_CASE_MARKER", "PRIVATE_CENTRE_MARKER", "{{");
     }
   }
+
   @Test
   void durableCorrelationIsWrittenIntoThePlatformMimeHeader() throws Exception {
     var smtp =
         new PlatformSmtpSettingsProvider.Settings(
-            "smtp.example.org", 587, false, "account", "secret", "sender@example.org");
+            "smtp.example.org", 587, false, "account", "secret", "sender@example.org", null);
     var email = new OrisoEmailRenderer.RenderedEmail("Date", "<p>Date</p>", "Date");
     UUID correlation = UUID.fromString("f7e8bbfe-7ca9-4e8e-8c55-54575ceca5a9");
     var sent = new AtomicReference<MimeMessage>();
@@ -118,7 +122,8 @@ class OrisoEmailDispatcherCorrelationTest {
           new OrisoEmailDispatcher().send(smtp, "recipient@example.org", email, correlation);
 
       assertThat(accepted).isTrue();
-      assertThat(sent.get().getHeader("X-ORISO-Delivery-ID", null)).isEqualTo(correlation.toString());
+      assertThat(sent.get().getHeader("X-ORISO-Delivery-ID", null))
+          .isEqualTo(correlation.toString());
     }
   }
 }

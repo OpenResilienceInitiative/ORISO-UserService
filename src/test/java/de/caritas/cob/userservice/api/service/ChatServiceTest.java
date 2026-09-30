@@ -769,7 +769,6 @@ class ChatServiceTest {
         chatService.getChatSessionsForConsultantByIds(Set.of(CHAT_ID), CONSULTANT), hasSize(0));
   }
 
-
   @Test
   void getChatSessionsByGroupIds_Should_returnUserSessionsForGivenGroupIds() {
     when(chatRepository.findByMatrixRoomIdIn(Set.of(MATRIX_ROOM_ID)))

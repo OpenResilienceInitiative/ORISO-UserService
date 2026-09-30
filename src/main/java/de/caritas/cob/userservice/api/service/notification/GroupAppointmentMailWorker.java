@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.service.notification;
 import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox;
 import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.Status;
 import de.caritas.cob.userservice.api.port.out.GroupAppointmentMailOutboxRepository;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.UUID;
@@ -74,6 +76,7 @@ public class GroupAppointmentMailWorker {
     if (!correlationId.toString().equals(mail.getCorrelationId())) {
       throw new IllegalArgumentException("Mail correlation ID must be a canonical UUID");
     }
+    delivery.requireConfigured(composed.get().route());
     if (!claims.claim(mail.getId())) {
       return;
     }
@@ -109,6 +112,13 @@ public class GroupAppointmentMailWorker {
               content.recipient(),
               content.email(),
               correlationId);
+    } catch (PlatformSmtpSettingsProvider.ConfigurationException
+        | ApplicationSettingsService.SmtpSettingsUnavailableException
+        | TenantSystemEmailRouteService.ConfigurationException exception) {
+      // These provider-owned failures occur before SMTP. OWN 204/422 likewise mean that
+      // TenantService rejected configuration before its transport call, so retry is safe.
+      claims.releaseBeforeHandoff(mail.getId());
+      throw exception;
     } catch (RuntimeException exception) {
       // The handoff outcome may be unknown. Replaying automatically would risk two mails.
       claims.finish(mail.getId(), Status.UNCERTAIN);

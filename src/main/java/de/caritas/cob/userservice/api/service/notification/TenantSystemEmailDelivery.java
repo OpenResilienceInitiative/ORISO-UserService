@@ -78,7 +78,8 @@ public class TenantSystemEmailDelivery {
       tenantClient.deliver(tenantId, purpose.name(), recipient, email, correlationId);
       return true;
     }
-    return platformDispatcher.send(platformSettings.requireConfigured(), recipient, email, correlationId);
+    return platformDispatcher.send(
+        platformSettings.requireConfigured(), recipient, email, correlationId);
   }
 
   /** For durable reply mail, any transport exception has an uncertain SMTP outcome. */

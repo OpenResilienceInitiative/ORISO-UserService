@@ -167,7 +167,13 @@ class TenantSystemEmailDeliveryTest {
     java.util.UUID correlation = java.util.UUID.fromString("f7e8bbfe-7ca9-4e8e-8c55-54575ceca5a9");
     var smtp =
         new PlatformSmtpSettingsProvider.Settings(
-            "smtp.platform.example", 587, false, "account", "secret", "sender@platform.example");
+            "smtp.platform.example",
+            587,
+            false,
+            "account",
+            "secret",
+            "sender@platform.example",
+            null);
     when(platformSettings.requireConfigured()).thenReturn(smtp);
 
     new TenantSystemEmailDelivery(tenantClient, platformSettings, platformDispatcher)

@@ -14,14 +14,21 @@ import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox;
 import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.Status;
 import de.caritas.cob.userservice.api.model.GroupAppointmentOccurrenceState;
 import de.caritas.cob.userservice.api.port.out.GroupAppointmentMailOutboxRepository;
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailDispatcher;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.UUID;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
@@ -156,15 +163,23 @@ class GroupAppointmentMailWorkerTest {
 
   @Test
   void missingSavedPlatformSettingsRemainPendingBeforeSmtpClaim() {
-    var platform = new GroupAppointmentMailComposer.Composed(
-        composed.tenantId(),
-        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null),
-        composed.purpose(), composed.recipient(), composed.email());
+    var platform =
+        new GroupAppointmentMailComposer.Composed(
+            composed.tenantId(),
+            new TenantSystemEmailRouteService.Route(
+                TenantSystemEmailRouteService.Mode.PLATFORM, null),
+            composed.purpose(),
+            composed.recipient(),
+            composed.email());
     when(eligibility.resolve(mail)).thenReturn(Optional.of(eligible));
     when(composer.compose(mail, eligible)).thenReturn(Optional.of(platform));
-    org.mockito.Mockito.lenient().doThrow(new IllegalStateException("SMTP_DISABLED_OR_INCOMPLETE"))
-        .when(delivery).requireConfigured(platform.route());
-    org.mockito.Mockito.lenient().when(claims.deferConfigurationFailure(eq(11L), any(LocalDateTime.class))).thenReturn(true);
+    org.mockito.Mockito.lenient()
+        .doThrow(new IllegalStateException("SMTP_DISABLED_OR_INCOMPLETE"))
+        .when(delivery)
+        .requireConfigured(platform.route());
+    org.mockito.Mockito.lenient()
+        .when(claims.deferConfigurationFailure(eq(11L), any(LocalDateTime.class)))
+        .thenReturn(true);
 
     worker.dispatchDue();
 
@@ -174,4 +189,96 @@ class GroupAppointmentMailWorkerTest {
     verify(delivery, never()).sendConfirmed(anyLong(), any(), any(), any(), any(), any());
   }
 
+  static Stream<RuntimeException> platformValidationFailures() {
+    return Stream.of(
+        new PlatformSmtpSettingsProvider.ConfigurationException("Missing saved settings"),
+        new ApplicationSettingsService.SmtpSettingsUnavailableException());
+  }
+
+  @ParameterizedTest
+  @MethodSource("platformValidationFailures")
+  void settingsChangeAfterPreflightDoesNotBecomeAnUncertainSmtpAttempt(RuntimeException failure) {
+    var platform =
+        new GroupAppointmentMailComposer.Composed(
+            composed.tenantId(),
+            new TenantSystemEmailRouteService.Route(
+                TenantSystemEmailRouteService.Mode.PLATFORM, null),
+            composed.purpose(),
+            composed.recipient(),
+            composed.email());
+    var settings = org.mockito.Mockito.mock(PlatformSmtpSettingsProvider.class);
+    var dispatcher = org.mockito.Mockito.mock(OrisoEmailDispatcher.class);
+    var client = org.mockito.Mockito.mock(TenantSystemEmailClient.class);
+    var actualDelivery = new TenantSystemEmailDelivery(client, settings, dispatcher);
+    var actualWorker =
+        new GroupAppointmentMailWorker(outbox, eligibility, composer, claims, actualDelivery);
+    when(settings.requireConfigured())
+        .thenReturn(
+            new PlatformSmtpSettingsProvider.Settings(
+                "smtp.example.org", 587, false, "account", "secret", "sender@example.org", null))
+        .thenThrow(failure);
+    when(eligibility.resolve(mail)).thenReturn(Optional.of(eligible));
+    when(composer.compose(mail, eligible)).thenReturn(Optional.of(platform));
+    when(claims.claim(11L)).thenReturn(true);
+    org.mockito.Mockito.lenient()
+        .when(claims.deferConfigurationFailure(eq(11L), any(LocalDateTime.class)))
+        .thenReturn(true);
+
+    actualWorker.dispatchDue();
+
+    var order = org.mockito.Mockito.inOrder(settings, claims);
+    order.verify(settings).requireConfigured();
+    order.verify(claims).claim(11L);
+    order.verify(settings).requireConfigured();
+    order.verify(claims).releaseBeforeHandoff(11L);
+    order.verify(claims).deferConfigurationFailure(eq(11L), any(LocalDateTime.class));
+    verify(claims, never()).finish(anyLong(), any());
+    org.mockito.Mockito.verifyNoInteractions(dispatcher, client);
+  }
+
+  @Test
+  void ownRelayValidationRejectionIsDeferredWithoutReadingPlatformSettings() {
+    var settings = org.mockito.Mockito.mock(PlatformSmtpSettingsProvider.class);
+    var dispatcher = org.mockito.Mockito.mock(OrisoEmailDispatcher.class);
+    var client = org.mockito.Mockito.mock(TenantSystemEmailClient.class);
+    var actualDelivery = new TenantSystemEmailDelivery(client, settings, dispatcher);
+    var actualWorker =
+        new GroupAppointmentMailWorker(outbox, eligibility, composer, claims, actualDelivery);
+    org.mockito.Mockito.doThrow(
+            new TenantSystemEmailRouteService.ConfigurationException(
+                "OWN tenant SMTP configuration is invalid"))
+        .when(client)
+        .deliver(
+            7L,
+            composed.purpose().name(),
+            composed.recipient(),
+            composed.email(),
+            UUID.fromString(mail.getCorrelationId()));
+    when(eligibility.resolve(mail)).thenReturn(Optional.of(eligible));
+    when(composer.compose(mail, eligible)).thenReturn(Optional.of(composed));
+    when(claims.claim(11L)).thenReturn(true);
+    org.mockito.Mockito.lenient()
+        .when(claims.deferConfigurationFailure(eq(11L), any(LocalDateTime.class)))
+        .thenReturn(true);
+
+    actualWorker.dispatchDue();
+
+    verify(claims).releaseBeforeHandoff(11L);
+    verify(claims).deferConfigurationFailure(eq(11L), any(LocalDateTime.class));
+    verify(claims, never()).finish(anyLong(), any());
+    org.mockito.Mockito.verifyNoInteractions(settings, dispatcher);
+  }
+
+  @Test
+  void falseTransportAcknowledgementRemainsUncertainWithoutAutomaticReplay() {
+    when(eligibility.resolve(mail)).thenReturn(Optional.of(eligible));
+    when(composer.compose(mail, eligible)).thenReturn(Optional.of(composed));
+    when(claims.claim(11L)).thenReturn(true);
+
+    worker.dispatchDue();
+
+    verify(claims).finish(11L, Status.UNCERTAIN);
+    verify(claims, never()).releaseBeforeHandoff(anyLong());
+    verify(claims, never()).deferConfigurationFailure(anyLong(), any());
+  }
 }
