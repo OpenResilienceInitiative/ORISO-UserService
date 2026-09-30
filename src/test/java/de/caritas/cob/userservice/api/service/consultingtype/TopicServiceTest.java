@@ -17,15 +17,21 @@ import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpHeaders;
+import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @ExtendWith(MockitoExtension.class)
 @MockitoSettings(strictness = Strictness.LENIENT)
@@ -48,6 +54,53 @@ class TopicServiceTest {
     when(controllerApi.getApiClient()).thenReturn(apiClient);
     when(securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders()).thenReturn(new HttpHeaders());
     doNothing().when(tenantHeaderSupplier).addTenantHeader(any(HttpHeaders.class));
+  }
+
+  @AfterEach
+  void clearRequestContext() {
+    RequestContextHolder.resetRequestAttributes();
+  }
+
+  @ParameterizedTest
+  @CsvSource({"en,en", "de,de", "en-US,en", "fr,de", "invalid!,de", "'de;q=0.5,en;q=0.9',en"})
+  void getAllActiveTopics_Should_ForwardOnlySupportedLanguageCookie(
+      String acceptLanguage, String expectedLanguage) {
+    var request = new MockHttpServletRequest();
+    request.addHeader(HttpHeaders.ACCEPT_LANGUAGE, acceptLanguage);
+    request.addHeader(HttpHeaders.COOKIE, "session=test-session; arbitrary=value");
+    RequestContextHolder.setRequestAttributes(new ServletRequestAttributes(request));
+
+    service.getAllActiveTopics();
+
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=" + expectedLanguage);
+    verify(apiClient, never())
+        .addDefaultHeader(HttpHeaders.COOKIE, request.getHeader(HttpHeaders.COOKIE));
+    verify(securityHeaderSupplier, never()).getKeycloakAndCsrfHttpHeaders();
+  }
+
+  @Test
+  void getAllActiveTopics_Should_DefaultToGermanWithoutRequest() {
+    service.getAllActiveTopics();
+
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=de");
+  }
+
+  @Test
+  void getAllActiveTopics_Should_DefaultToGermanWithoutLanguageHeader() {
+    RequestContextHolder.setRequestAttributes(
+        new ServletRequestAttributes(new MockHttpServletRequest()));
+
+    service.getAllActiveTopics();
+
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=de");
+  }
+
+  @Test
+  void getAllTopics_Should_NotAddPublicLanguageCookieToAuthenticatedLookup() {
+    service.getAllTopics();
+
+    verify(apiClient, never())
+        .addDefaultHeader(org.mockito.ArgumentMatchers.eq(HttpHeaders.COOKIE), any());
   }
 
   // ─── getAllTopics ──────────────────────────────────────────────────────────

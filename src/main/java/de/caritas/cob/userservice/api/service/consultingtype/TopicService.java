@@ -21,6 +21,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.cache.annotation.Cacheable;
 import org.springframework.http.HttpHeaders;
 import org.springframework.stereotype.Service;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 @Service
 @RequiredArgsConstructor
@@ -43,6 +45,9 @@ public class TopicService {
     // Public endpoints needs to be called without Authentication header as not to cause a 401 error
     TopicControllerApi controllerApi = topicServiceApiControllerFactory.createControllerApi();
     addTenantHeaders(controllerApi.getApiClient());
+    controllerApi
+        .getApiClient()
+        .addDefaultHeader(HttpHeaders.COOKIE, "lang=" + publicTopicLanguage());
     log.info("Calling topic service to get all active topics");
     return controllerApi.getAllActiveTopics();
   }
@@ -60,6 +65,26 @@ public class TopicService {
       return null;
     }
     return getAllActiveTopicsMap().get(topicId);
+  }
+
+  /** The public topic service selects translated names from its allowlisted lang cookie. */
+  private String publicTopicLanguage() {
+    var attributes = RequestContextHolder.getRequestAttributes();
+    if (!(attributes instanceof ServletRequestAttributes servlet)) {
+      return "de";
+    }
+    var acceptLanguage = servlet.getRequest().getHeader(HttpHeaders.ACCEPT_LANGUAGE);
+    if (acceptLanguage == null || acceptLanguage.isBlank()) {
+      return "de";
+    }
+    var headers = new HttpHeaders();
+    headers.set(HttpHeaders.ACCEPT_LANGUAGE, acceptLanguage);
+    try {
+      var locales = headers.getAcceptLanguageAsLocales();
+      return !locales.isEmpty() && "en".equals(locales.getFirst().getLanguage()) ? "en" : "de";
+    } catch (IllegalArgumentException ignored) {
+      return "de";
+    }
   }
 
   private void addTenantHeaders(ApiClient apiClient) {
