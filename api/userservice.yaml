@@ -1221,6 +1221,7 @@ paths:
         - user-controller
       summary: 'Create a new group chat with chat_agency relation so that all advice seekers from that agency can see this chat. [Authorization: Role: consultant with authority
         CREATE_NEW_CHAT]'
+      description: External SELF_HELP creation requires a current serving-owner signature or permitted renewal grace. Internal colleague chats are exempt. Creating or assigning a group does not commence participation.
       operationId: createChatV1
       requestBody:
         content:
@@ -1238,9 +1239,29 @@ paths:
         400:
           description: BAD REQUEST - invalid/incomplete request or body object
         403:
-          description: FORBIDDEN - no/invalid CSRF token
+          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         409:
           description: CONFLICT - group chat with same name already existing
+        502:
+          description: BAD GATEWAY - serving-owner facts conflict or are unavailable, or AVV owner response is unavailable/invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1251,6 +1272,7 @@ paths:
         - user-controller
       summary: 'Create a new group chat that will be visible to the user only by invitation [Authorization: Role: consultant with authority
         CREATE_NEW_CHAT]'
+      description: External SELF_HELP creation requires a current serving-owner signature or permitted renewal grace. Internal colleague chats are exempt. Creating or assigning a group does not commence participation.
       operationId: createChatV2
       requestBody:
         content:
@@ -1268,9 +1290,29 @@ paths:
         400:
           description: BAD REQUEST - invalid/incomplete request or body object
         403:
-          description: FORBIDDEN - no/invalid CSRF token
+          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         409:
           description: CONFLICT - group chat with same name already existing
+        502:
+          description: BAD GATEWAY - serving-owner facts conflict or are unavailable, or AVV owner response is unavailable/invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1281,6 +1323,7 @@ paths:
         - user-controller
       summary: 'Update a group chat [Authorization: Role: consultant with authority
         UPDATE_CHAT]'
+      description: Adding previously absent co-moderators to SELF_HELP groups requires current owner permission before settings or Matrix membership changes. Existing participants, removals and settings-only updates are exempt.
       operationId: updateChat
       parameters:
         - name: chatId
@@ -1306,10 +1349,29 @@ paths:
         400:
           description: BAD REQUEST - invalid/incomplete request or body object
         403:
-          description: FORBIDDEN - No permission for chat update / Consultant is not
-            owner
+          description: FORBIDDEN - no chat permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         409:
           description: CONFLICT - Chat is already startet
+        502:
+          description: BAD GATEWAY - membership or serving-owner facts are unavailable or invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1355,6 +1417,7 @@ paths:
       tags:
         - user-controller
       summary: 'Start a chat [Authorization: Role: consultant with authority START_CHAT]'
+      description: Opening the first external SELF_HELP occurrence (index 0) requires a current serving-owner signature or permitted renewal grace. Internal colleague chats are exempt.
       operationId: startChat
       parameters:
         - name: chatId
@@ -1372,10 +1435,29 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - No permission for chat / Consultant is not assigned
-            to chat-agency
+          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         409:
           description: CONFLICT - Chat is already startet
+        502:
+          description: BAD GATEWAY - serving-owner facts conflict or are unavailable, or AVV owner response is unavailable/invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1447,6 +1529,7 @@ paths:
       tags:
         - user-controller
       summary: 'Assign the user to the given chat [Authorization: Role: consultant or user]'
+      description: Genuinely new SELF_HELP enrolment requires the serving group owner to permit new counselling, including for invite recipients from another tenant. Enrolment does not establish begun participation. Existing enrolment remains a conflict.
       operationId: assignChat
       parameters:
         - name: matrixRoomId
@@ -1470,9 +1553,31 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - No permission for chat
+          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         404:
           description: NOT FOUND - Chat not found
+        409:
+          description: CONFLICT - user is already enrolled in the group
+        502:
+          description: BAD GATEWAY - serving-owner facts conflict or are unavailable, or AVV owner response is unavailable/invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1482,6 +1587,7 @@ paths:
       tags:
         - user-controller
       summary: 'Join a chat [Authorization: Role: consultant or user]'
+      description: First SELF_HELP occurrence admission checks current JOIN membership. An already joined caller continues without a new owner decision; a newcomer requires owner permission. Internal chats are exempt. Later occurrences retain legacy behavior pending the recurrence decision.
       operationId: joinChat
       parameters:
         - name: chatId
@@ -1499,11 +1605,31 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - No permission for chat
+          description: FORBIDDEN - no chat permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         404:
           description: NOT FOUND - Chat not found
         409:
           description: CONFLICT - Chat has not startet yet
+        502:
+          description: BAD GATEWAY - membership or serving-owner facts are unavailable or invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:

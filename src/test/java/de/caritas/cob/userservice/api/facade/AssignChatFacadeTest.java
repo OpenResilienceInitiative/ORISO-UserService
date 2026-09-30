@@ -19,20 +19,36 @@ import de.caritas.cob.userservice.api.service.user.UserService;
 import java.util.Optional;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 
 @ExtendWith(MockitoExtension.class)
 class AssignChatFacadeTest {
 
-  @InjectMocks private AssignChatFacade assignChatFacade;
+  private AssignChatFacade assignChatFacade;
 
   @Mock private ChatService chatService;
 
   @Mock private AuthenticatedUser authenticatedUser;
 
   @Mock private UserService userService;
+
+  @Mock private de.caritas.cob.userservice.api.port.out.UserChatRepository userChats;
+
+  @org.junit.jupiter.api.BeforeEach
+  void wireRealGroupPolicy() {
+    var policy = de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy();
+    var realAgencies =
+        (de.caritas.cob.userservice.api.service.agency.AgencyService)
+            org.springframework.test.util.ReflectionTestUtils.getField(policy, "agencyService");
+    var groupPolicy =
+        new de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy(
+            policy,
+            org.mockito.Mockito.mock(
+                de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
+            realAgencies);
+    assignChatFacade = new AssignChatFacade(chatService, userService, userChats, groupPolicy);
+  }
 
   @Test
   void assignChat_Should_ThrowNotFoundException_WhenChatDoesNotExist() {
@@ -77,12 +93,15 @@ class AssignChatFacadeTest {
 
   @Test
   void assignChatBySeriesId_Should_AddUserToChat_When_InviteTokenMatches() {
+    var owner = new de.caritas.cob.userservice.api.model.Consultant();
+    owner.setTenantId(41L);
     var selfHelpGroup =
         Chat.builder()
             .id(ACTIVE_CHAT.getId())
             .topic("group")
             .initialStartDate(ACTIVE_CHAT.getStartDate())
             .startDate(ACTIVE_CHAT.getStartDate())
+            .chatOwner(owner)
             .conversationType(ConversationType.SELF_HELP)
             .inviteToken("link-token")
             .build();
