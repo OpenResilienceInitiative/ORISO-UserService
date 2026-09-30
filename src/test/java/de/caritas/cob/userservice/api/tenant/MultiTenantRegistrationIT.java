@@ -344,6 +344,8 @@ class MultiTenantRegistrationIT {
         mockMvc
             .perform(
                 put("/users/chat/{chatId}/assign", chat.getId())
+                    // The number alone is refused; the link carries the secret token (#1237).
+                    .queryParam("inviteToken", chat.getInviteToken())
                     .with(
                         org.springframework.security.test.web.servlet.request
                             .SecurityMockMvcRequestPostProcessors.user(createdUserIds.get(0))
@@ -559,6 +561,8 @@ class MultiTenantRegistrationIT {
           chatRepository.save(
               Chat.builder()
                   .topic("Synthetic group")
+                  .conversationType(
+                      de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP)
                   .consultingTypeId(1)
                   .initialStartDate(java.time.LocalDateTime.now())
                   .startDate(java.time.LocalDateTime.now())
