@@ -65,7 +65,12 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
   AccountInviteAccessPolicy.class,
+  AccountInviteTopicPermissionService.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class
 })
 @AsTechnicalUser
@@ -83,6 +88,7 @@ class AccountInviteReservationOrchestrationIT {
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
 
   // TEN-INV-U6 collaborators of the send path — not exercised by these creation-focused tests.
@@ -167,7 +173,7 @@ class AccountInviteReservationOrchestrationIT {
   }
 
   @Test
-  void parallelManualInvitesForSameId_Should_LetExactlyOneSucceed() throws Exception {
+  void parallelManualInvitesForSameId_Should_ReserveTheIdExactlyOnce() throws Exception {
     List<Object> outcomes =
         runConcurrentlyCollectingErrors(
             () -> createTenantAdminInvite(21L, IdAllocationMode.MANUAL, "manual-a@example.org"),
@@ -180,10 +186,15 @@ class AccountInviteReservationOrchestrationIT {
             .toList();
     List<Object> conflicts = outcomes.stream().filter(ConflictException.class::isInstance).toList();
 
-    assertThat(successes).hasSize(1);
-    assertThat(conflicts).hasSize(1);
-    assertThat(successes.get(0).getTenantId()).isEqualTo(21L);
-    assertThat(accountInviteRepository.count()).isEqualTo(1);
+    // Timing decides whether the second invite joins the first reservation or gets the 409;
+    // either way the ID is reserved exactly once.
+    assertThat(successes.size() + conflicts.size()).isEqualTo(2);
+    assertThat(successes).isNotEmpty();
+    assertThat(successes).extracting(AccountInvite::getTenantId).containsOnly(21L);
+    assertThat(successes)
+        .extracting(AccountInvite::getTenantIdReservationToken)
+        .containsOnly("token-21");
+    assertThat(accountInviteRepository.count()).isEqualTo(successes.size());
     // The winner's reservation is still held — the loser's conflict released nothing.
     assertThat(tenantIdLedger).containsExactly(21L);
   }

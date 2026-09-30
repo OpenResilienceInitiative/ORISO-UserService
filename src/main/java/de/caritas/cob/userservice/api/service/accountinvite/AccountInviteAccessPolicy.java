@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -24,6 +25,9 @@ import org.springframework.stereotype.Component;
 public class AccountInviteAccessPolicy {
 
   static final String OUT_OF_SCOPE_MESSAGE = "Account invite is outside the caller's scope";
+
+  static final String TEMPLATE_DENIED_MESSAGE =
+      "Invite e-mail template is outside the caller's scope";
 
   private static final Set<AccountInviteTargetRole> TENANT_ADMIN_INVITABLE_ROLES =
       EnumSet.of(
@@ -56,7 +60,7 @@ public class AccountInviteAccessPolicy {
     return switch (adminScope.current()) {
       case AdminScope.Platform platform -> command;
       case AdminScope.Tenant tenant -> authorizeTenantAdminCreate(command, tenant.tenantId());
-      case AdminScope.Agencies agencies -> authorizeAgencyAdminCreate(command, agencies.tenantId());
+      case AdminScope.Agencies agencies -> authorizeAgencyAdminCreate(command, agencies);
     };
   }
 
@@ -102,37 +106,145 @@ public class AccountInviteAccessPolicy {
     adminScope.assertMay(Target.placedIn(invite.getTenantId(), invite.getAgencyId()));
   }
 
+  /** "Higher invites lower": may the caller give anybody this role, by invite or to an account? */
+  public void assertMayInvite(AccountInviteTargetRole role) {
+    boolean allowed =
+        switch (adminScope.current()) {
+          case AdminScope.Platform platform -> true;
+          case AdminScope.Tenant tenant -> invitableByTenantReach().contains(role);
+          case AdminScope.Agencies agencies -> role == AccountInviteTargetRole.COUNSELLOR;
+        };
+    if (!allowed) {
+      throw deny("give the role " + role);
+    }
+  }
+
+  /** May the caller add their own account as counsellor of this agency ("higher assigns lower")? */
+  public void authorizeSelfAssignment(long agencyId, Long agencyTenantId) {
+    switch (adminScope.current()) {
+      case AdminScope.Platform platform -> {}
+      case AdminScope.Tenant tenant -> {
+        if (!authenticatedUser.hasTenantLevelAdminRole()
+            || !tenant.tenantId().equals(agencyTenantId)) {
+          throw deny("assign themselves in agency " + agencyId);
+        }
+      }
+      case AdminScope.Agencies agencies -> {
+        if (!agencies.ids().contains(agencyId)) {
+          throw deny("assign themselves in agency " + agencyId);
+        }
+      }
+    }
+  }
+
+  /**
+   * The Träger a template the caller creates belongs to, or {@code null} when the caller is the
+   * platform operator and the template is offered to everyone.
+   *
+   * <p>Creating a template is open to every admin who may send invites (ORISO-Admin#1026 Q30/Q31).
+   * That is only safe because the row gets an owner here: without one, a Beratungsstellen admin of
+   * Träger A would write a text Träger B sees in its list and sends to its own people.
+   */
+  public Long templateOwnerTenantId() {
+    return adminScope.ownerReach().tenantId();
+  }
+
+  /** Whether the caller sees every Träger's templates, not just their own and the platform's. */
+  public boolean seesEveryTemplate() {
+    return adminScope.ownerReach() instanceof AdminScope.Platform;
+  }
+
+  /**
+   * Whether the caller may see and send with a template owned by {@code templateTenantId}. Everyone
+   * may use a platform template ({@code null}); a Träger's own template is theirs alone.
+   */
+  public boolean canUseTemplate(Long templateTenantId) {
+    var reach = adminScope.ownerReach();
+    return reach instanceof AdminScope.Platform
+        || templateTenantId == null
+        || templateTenantId.equals(reach.tenantId());
+  }
+
+  /**
+   * Guards reading, previewing and <b>sending with</b> a template. Hiding a foreign template from
+   * the list is not enough: its id travels in the send request, so the id has to be refused too.
+   *
+   * @throws ForbiddenException if the template belongs to another Träger
+   */
+  public void authorizeTemplateUse(Long templateTenantId) {
+    if (!canUseTemplate(templateTenantId)) {
+      throw denyTemplate("use invite e-mail template of tenant " + templateTenantId);
+    }
+  }
+
+  /**
+   * Guards changing a stored template. A Träger may change its own; a <b>platform template</b>
+   * ({@code tenantId == null}) is the text every other Träger sends, so only the platform operator
+   * may change that one (ORISO-Admin#1026, and what dev #1052 already enforces in the Admin).
+   *
+   * @throws ForbiddenException if the template is not the caller's to change
+   */
+  public void authorizeTemplateUpdate(Long templateTenantId) {
+    if (canChangeTemplate(templateTenantId)) {
+      return;
+    }
+    throw denyTemplate(
+        templateTenantId == null
+            ? "change the shared platform invite e-mail template"
+            : "change the invite e-mail template of tenant " + templateTenantId);
+  }
+
+  /**
+   * The same rule as {@link #authorizeTemplateUpdate(Long)} as a question, so the API can tell the
+   * Admin which templates are the caller's to change. The Admin greys the others out rather than
+   * hiding them (house rule "disable, don't hide").
+   */
+  public boolean canChangeTemplate(Long templateTenantId) {
+    var reach = adminScope.ownerReach();
+    return reach instanceof AdminScope.Platform
+        || (templateTenantId != null && templateTenantId.equals(reach.tenantId()));
+  }
+
   private CreateAccountInviteCommand authorizeAgencyAdminCreate(
-      CreateAccountInviteCommand command, Long callerTenantId) {
+      CreateAccountInviteCommand command, AdminScope.Agencies agencies) {
     if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
       throw deny("invite a " + command.targetRole());
     }
-    if (command.agencyIdAllocationMode() != null || command.agencyId() == null) {
+    if (IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())) {
+      throw deny("invite into tenant " + command.tenantId());
+    }
+    if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
+        || command.agencyId() == null
+        || !agencies.ids().contains(command.agencyId())) {
       throw deny("invite a counsellor into agency " + command.agencyId());
     }
-    adminScope.assertMay(Target.agencies(List.of(command.agencyId())));
-    assertTenantIsOwn(command.tenantId(), callerTenantId);
-    return withCallerTenant(command, callerTenantId);
+    assertTenantIsOwn(command.tenantId(), agencies.tenantId());
+    return withCallerTenant(command, agencies.tenantId());
   }
 
   private CreateAccountInviteCommand authorizeTenantAdminCreate(
       CreateAccountInviteCommand command, Long callerTenantId) {
-    Set<AccountInviteTargetRole> invitable =
-        authenticatedUser.hasTenantLevelAdminRole()
-            ? TENANT_ADMIN_INVITABLE_ROLES
-            : USER_ADMIN_INVITABLE_ROLES;
-    if (!invitable.contains(command.targetRole())) {
+    if (!invitableByTenantReach().contains(command.targetRole())) {
       throw deny("invite a " + command.targetRole());
     }
-    if (command.tenantIdAllocationMode() != null) {
+    if (command.tenantIdAllocationMode() != null
+        && command.tenantIdAllocationMode() != IdAllocationMode.EXISTING) {
+      // Onboarding a new Träger is the platform's job; EXISTING (their own Träger) is fine.
       throw deny("allocate a new tenant");
     }
     assertTenantIsOwn(command.tenantId(), callerTenantId);
-    if (command.agencyId() != null && command.agencyIdAllocationMode() == null) {
+    if (command.agencyId() != null
+        && !IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
       // The accepted invite would attach the new account to that agency.
       adminScope.assertMay(Target.agencies(List.of(command.agencyId())));
     }
     return withCallerTenant(command, callerTenantId);
+  }
+
+  private Set<AccountInviteTargetRole> invitableByTenantReach() {
+    return authenticatedUser.hasTenantLevelAdminRole()
+        ? TENANT_ADMIN_INVITABLE_ROLES
+        : USER_ADMIN_INVITABLE_ROLES;
   }
 
   /** A named tenant is stored on the invite, so it must be the caller's own. */
@@ -149,17 +261,16 @@ public class AccountInviteAccessPolicy {
     if (command.tenantId() != null || callerTenantId == null) {
       return command;
     }
-    return new CreateAccountInviteCommand(
-        command.targetRole(),
-        callerTenantId,
-        command.recipientEmail(),
-        command.firstName(),
-        command.lastName(),
-        command.agencyId(),
-        command.departmentId(),
-        command.expiresInDays(),
-        command.tenantIdAllocationMode(),
-        command.agencyIdAllocationMode());
+    return command.withTenantId(callerTenantId);
+  }
+
+  private ForbiddenException denyTemplate(String attempt) {
+    log.warn(
+        "Admin {} (tenant {}) may not {}",
+        authenticatedUser.getUserId(),
+        authenticatedUser.getTenantId(),
+        attempt);
+    return new ForbiddenException(TEMPLATE_DENIED_MESSAGE);
   }
 
   private ForbiddenException deny(String attempt) {

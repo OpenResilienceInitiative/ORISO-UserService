@@ -20,7 +20,6 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocat
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.time.LocalDateTime;
@@ -54,6 +53,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
+  AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AccountInviteTenantScopeIT.CallerConfig.class
@@ -85,14 +89,15 @@ class AccountInviteTenantScopeIT {
   @Autowired private AuthenticatedUser caller;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
-  @MockitoBean private AgencyService agencyService;
 
   private AccountInvite ownTenantCounsellorInvite;
   private AccountInvite foreignTenantCounsellorInvite;
@@ -236,7 +241,9 @@ class AccountInviteTenantScopeIT {
     actAsTenantAdmin();
 
     AccountInvite created =
-        service.createInvite(invite(AccountInviteTargetRole.AGENCY_ADMIN, OWN_TENANT, null));
+        // An agency-admin invite always names its agency.
+        service.createInvite(
+            invite(AccountInviteTargetRole.AGENCY_ADMIN, OWN_TENANT, OWN_AGENCY_ID));
 
     assertThat(created.getId()).isNotNull();
     assertThat(created.getTenantId()).isEqualTo(OWN_TENANT);
@@ -446,6 +453,9 @@ class AccountInviteTenantScopeIT {
   }
 
   private void givenAgency(long agencyId, long tenantId) {
+    when(agencyFacts.find(agencyId))
+        .thenReturn(
+            Optional.of(new AgencyFacts.Agency(agencyId, tenantId, false, java.util.List.of(11L))));
     var agency = new AgencyDTO().id(agencyId).tenantId(tenantId);
     when(agencyService.getAgencyWithoutCaching(agencyId)).thenReturn(agency);
     knownAgencies.put(agencyId, agency);
