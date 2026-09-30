@@ -51,6 +51,14 @@ class SessionAdminServiceTest {
   // ---------------------------------------------------------------------------
 
   @Test
+  void findSessions_Should_TreatAMissingFilterAsEmpty_When_TheCallerIsTenantWide() {
+    when(sessionRepository.findAll(any(Pageable.class))).thenReturn(emptyPage(0));
+
+    assertThat(sessionAdminService.findSessions(1, 10, null)).isNotNull();
+    verify(sessionRepository).findAll(any(Pageable.class));
+  }
+
+  @Test
   void findSessions_Should_UseZeroBasedIndex_When_PageIsOne() {
     when(sessionRepository.findAll(any(Pageable.class))).thenReturn(emptyPage(0));
     ArgumentCaptor<Pageable> captor = ArgumentCaptor.forClass(Pageable.class);
@@ -212,6 +220,27 @@ class SessionAdminServiceTest {
     sessionAdminService.findSessions(1, 10, null);
 
     verify(sessionRepository).findByAgencyIdIn(eq(Set.of(7L)), any(Pageable.class));
+  }
+
+  @Test
+  void findSessions_Should_ListNothing_When_RestrictedCallerFiltersByAForeignAgency() {
+    when(adminScope.current()).thenReturn(new AdminScope.Agencies(1L, Set.of(7L)));
+
+    SessionAdminResultDTO result =
+        sessionAdminService.findSessions(1, 10, new SessionFilter().agency(99));
+
+    assertThat(result.getEmbedded()).isEmpty();
+    verifyNoInteractions(sessionRepository);
+  }
+
+  @Test
+  void findSessions_Should_ListThatAgency_When_RestrictedCallerFiltersByAnOwnAgency() {
+    when(adminScope.current()).thenReturn(new AdminScope.Agencies(1L, Set.of(7L)));
+    when(sessionRepository.findByAgencyId(eq(7L), any(Pageable.class))).thenReturn(emptyPage(0));
+
+    sessionAdminService.findSessions(1, 10, new SessionFilter().agency(7));
+
+    verify(sessionRepository).findByAgencyId(eq(7L), any(Pageable.class));
   }
 
   private Page<Session> emptyPage(int totalElements) {

@@ -286,6 +286,26 @@ class MultiTenantRegistrationIT {
     assertCreatedInTenant();
   }
 
+  // --- anonymous enquiry: the real facade writes user and session in the resolved tenant ------
+
+  @Test
+  void anonymousEnquiry_Should_WriteTheUserAndTheSessionInTheResolvedTenant() throws Exception {
+    when(tenantResolverService.resolve(any())).thenReturn(TENANT);
+
+    var result =
+        mockMvc
+            .perform(
+                post("/conversations/askers/anonymous/new")
+                    .cookie(CSRF_COOKIE)
+                    .header(CSRF_HEADER, CSRF_VALUE)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .content("{\"consultingType\": 1}"))
+            .andReturn();
+
+    assertStatus(result, 201);
+    assertCreatedInTenant();
+  }
+
   // --- group-chat invite link: registration with the link's agency, then joining the chat ------
 
   @Test
