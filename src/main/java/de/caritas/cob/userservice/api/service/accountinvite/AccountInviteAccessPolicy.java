@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -59,7 +60,7 @@ public class AccountInviteAccessPolicy {
     return switch (adminScope.current()) {
       case AdminScope.Platform platform -> command;
       case AdminScope.Tenant tenant -> authorizeTenantAdminCreate(command, tenant.tenantId());
-      case AdminScope.Agencies agencies -> authorizeAgencyAdminCreate(command, agencies.tenantId());
+      case AdminScope.Agencies agencies -> authorizeAgencyAdminCreate(command, agencies);
     };
   }
 
@@ -103,6 +104,37 @@ public class AccountInviteAccessPolicy {
       throw deny("act on invite " + invite.getId());
     }
     adminScope.assertMay(Target.placedIn(invite.getTenantId(), invite.getAgencyId()));
+  }
+
+  /** "Higher invites lower": may the caller give anybody this role, by invite or to an account? */
+  public void assertMayInvite(AccountInviteTargetRole role) {
+    boolean allowed =
+        switch (adminScope.current()) {
+          case AdminScope.Platform platform -> true;
+          case AdminScope.Tenant tenant -> invitableByTenantReach().contains(role);
+          case AdminScope.Agencies agencies -> role == AccountInviteTargetRole.COUNSELLOR;
+        };
+    if (!allowed) {
+      throw deny("give the role " + role);
+    }
+  }
+
+  /** May the caller add their own account as counsellor of this agency ("higher assigns lower")? */
+  public void authorizeSelfAssignment(long agencyId, Long agencyTenantId) {
+    switch (adminScope.current()) {
+      case AdminScope.Platform platform -> {}
+      case AdminScope.Tenant tenant -> {
+        if (!authenticatedUser.hasTenantLevelAdminRole()
+            || !tenant.tenantId().equals(agencyTenantId)) {
+          throw deny("assign themselves in agency " + agencyId);
+        }
+      }
+      case AdminScope.Agencies agencies -> {
+        if (!agencies.ids().contains(agencyId)) {
+          throw deny("assign themselves in agency " + agencyId);
+        }
+      }
+    }
   }
 
   /**
@@ -174,36 +206,45 @@ public class AccountInviteAccessPolicy {
   }
 
   private CreateAccountInviteCommand authorizeAgencyAdminCreate(
-      CreateAccountInviteCommand command, Long callerTenantId) {
+      CreateAccountInviteCommand command, AdminScope.Agencies agencies) {
     if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
       throw deny("invite a " + command.targetRole());
     }
-    if (command.agencyIdAllocationMode() != null || command.agencyId() == null) {
+    if (IdAllocationMode.reservesAnId(command.tenantIdAllocationMode())) {
+      throw deny("invite into tenant " + command.tenantId());
+    }
+    if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
+        || command.agencyId() == null
+        || !agencies.ids().contains(command.agencyId())) {
       throw deny("invite a counsellor into agency " + command.agencyId());
     }
-    adminScope.assertMay(Target.agencies(List.of(command.agencyId())));
-    assertTenantIsOwn(command.tenantId(), callerTenantId);
-    return withCallerTenant(command, callerTenantId);
+    assertTenantIsOwn(command.tenantId(), agencies.tenantId());
+    return withCallerTenant(command, agencies.tenantId());
   }
 
   private CreateAccountInviteCommand authorizeTenantAdminCreate(
       CreateAccountInviteCommand command, Long callerTenantId) {
-    Set<AccountInviteTargetRole> invitable =
-        authenticatedUser.hasTenantLevelAdminRole()
-            ? TENANT_ADMIN_INVITABLE_ROLES
-            : USER_ADMIN_INVITABLE_ROLES;
-    if (!invitable.contains(command.targetRole())) {
+    if (!invitableByTenantReach().contains(command.targetRole())) {
       throw deny("invite a " + command.targetRole());
     }
-    if (command.tenantIdAllocationMode() != null) {
+    if (command.tenantIdAllocationMode() != null
+        && command.tenantIdAllocationMode() != IdAllocationMode.EXISTING) {
+      // Onboarding a new Träger is the platform's job; EXISTING (their own Träger) is fine.
       throw deny("allocate a new tenant");
     }
     assertTenantIsOwn(command.tenantId(), callerTenantId);
-    if (command.agencyId() != null && command.agencyIdAllocationMode() == null) {
+    if (command.agencyId() != null
+        && !IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
       // The accepted invite would attach the new account to that agency.
       adminScope.assertMay(Target.agencies(List.of(command.agencyId())));
     }
     return withCallerTenant(command, callerTenantId);
+  }
+
+  private Set<AccountInviteTargetRole> invitableByTenantReach() {
+    return authenticatedUser.hasTenantLevelAdminRole()
+        ? TENANT_ADMIN_INVITABLE_ROLES
+        : USER_ADMIN_INVITABLE_ROLES;
   }
 
   /** A named tenant is stored on the invite, so it must be the caller's own. */
@@ -220,17 +261,7 @@ public class AccountInviteAccessPolicy {
     if (command.tenantId() != null || callerTenantId == null) {
       return command;
     }
-    return new CreateAccountInviteCommand(
-        command.targetRole(),
-        callerTenantId,
-        command.recipientEmail(),
-        command.firstName(),
-        command.lastName(),
-        command.agencyId(),
-        command.departmentId(),
-        command.expiresInDays(),
-        command.tenantIdAllocationMode(),
-        command.agencyIdAllocationMode());
+    return command.withTenantId(callerTenantId);
   }
 
   private ForbiddenException denyTemplate(String attempt) {

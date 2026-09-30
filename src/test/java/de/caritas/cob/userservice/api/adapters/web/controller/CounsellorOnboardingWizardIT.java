@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.verify;
@@ -28,6 +29,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityLogin;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.EmailVerificationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -115,8 +117,16 @@ class CounsellorOnboardingWizardIT {
    */
   @MockitoBean private AgencyService agencyService;
 
+  /** The accept re-checks the agency with the service token (ORISO-Admin#1026 P2-3). */
+  @MockitoBean private AgencyFacts agencyFacts;
+
   @BeforeEach
   void configureProvisioning() {
+    when(agencyFacts.find(anyLong()))
+        .thenAnswer(
+            invocation ->
+                Optional.of(
+                    new AgencyFacts.Agency(invocation.getArgument(0), 79L, false, List.of())));
     agencyIsHealthy();
     when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
         .thenReturn(
@@ -347,6 +357,54 @@ class CounsellorOnboardingWizardIT {
     assertThat(accountInviteRepository.findById(expired.getId()))
         .hasValueSatisfying(
             persisted -> assertThat(persisted.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED));
+  }
+
+  @Test
+  void registerWithoutTopics_intoAnExistingSingleTopicAgency_attachesToItWithItsOnlyTopic()
+      throws Exception {
+    String token = "existing-single-topic-token-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+    when(agencyService.getAgencyWithoutCaching(AGENCY_ID))
+        .thenReturn(new AgencyDTO().id(AGENCY_ID).topicIds(List.of(DEPARTMENT_TOPIC_ID)));
+
+    mockMvc.perform(registerWithoutTopics(token)).andExpect(status().isOk());
+
+    ArgumentCaptor<CreateConsultantDTO> consultantCaptor =
+        ArgumentCaptor.forClass(CreateConsultantDTO.class);
+    verify(consultantAdminFacade).createNewConsultant(consultantCaptor.capture());
+    assertThat(consultantCaptor.getValue().getTopicIds()).containsExactly(DEPARTMENT_TOPIC_ID);
+    ArgumentCaptor<CreateConsultantAgencyDTO> agencyCaptor =
+        ArgumentCaptor.forClass(CreateConsultantAgencyDTO.class);
+    verify(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(eq(CONSULTANT_ID), agencyCaptor.capture());
+    assertThat(agencyCaptor.getValue().getAgencyId()).isEqualTo(AGENCY_ID);
+  }
+
+  @Test
+  void registerWithoutTopics_whenTheAgencyOffersSeveralTopics_answers400() throws Exception {
+    String token = "existing-multi-topic-token-" + java.util.UUID.randomUUID();
+    seedInvite(token);
+
+    mockMvc
+        .perform(registerWithoutTopics(token))
+        .andExpect(status().isBadRequest())
+        .andExpect(jsonPath("$.message").value(containsString("At least one topic")));
+
+    assertInviteStillResolvesUnconsumed(token);
+  }
+
+  private MockHttpServletRequestBuilder registerWithoutTopics(String token) {
+    return post("/users/account-invites/{token}/onboarding/register", token)
+        .header("X-CSRF-Token", CSRF)
+        .cookie(CSRF_COOKIE)
+        .contentType(MediaType.APPLICATION_JSON)
+        .content(
+            """
+            {
+              "account": { "username": "codex_wizard_counsellor", "password": "Valid-Test-Password-2026!" },
+              "topicIds": []
+            }
+            """);
   }
 
   private static String sha256(String value) throws Exception {

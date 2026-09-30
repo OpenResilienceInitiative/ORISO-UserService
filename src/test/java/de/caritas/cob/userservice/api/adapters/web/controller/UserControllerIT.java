@@ -290,6 +290,11 @@ class UserControllerIT {
   @MockitoBean private ChatOccurrenceCommandService chatOccurrenceCommandService;
   @MockitoBean private ChatOccurrenceQueryService chatOccurrenceQueryService;
   @MockitoBean private GroupChatRoleService groupChatRoleService;
+
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService
+      groupChatPermissionService;
+
   @MockitoBean private SessionService sessionService;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;

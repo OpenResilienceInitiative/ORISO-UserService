@@ -7,6 +7,7 @@ import static org.assertj.core.api.Assertions.within;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
 import java.io.IOException;
+import java.util.Map;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
@@ -14,6 +15,8 @@ import org.junit.jupiter.params.provider.EnumSource;
 import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.core.io.support.ResourcePropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -25,7 +28,44 @@ class OrisoEmailBrandTest {
 
   @BeforeEach
   void configurePlatformName() {
-    ReflectionTestUtils.setField(brand, "platformName", "Wayfinder");
+    ReflectionTestUtils.setField(brand, "platformName", "Independent Platform");
+  }
+
+  @Test
+  void usesTheCanonicalConfiguredNameInTheSharedFooter() {
+    try (var context = canonicalContext("  Independent Platform  ")) {
+      assertThat(context.getBean(OrisoEmailBrand.class).values("https://app.example.org", null))
+          .containsEntry("platformName", "Independent Platform")
+          .containsEntry("offeringName", "Independent Platform");
+    }
+  }
+
+  @Test
+  void rejectsAMissingCanonicalPlatformNameRatherThanInventingOne() {
+    for (String name : new String[] {null, "", "  "}) {
+      try (var context = canonicalContext(name)) {
+        assertThatThrownBy(
+                () ->
+                    context.getBean(OrisoEmailBrand.class).values("https://app.example.org", null))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("EMAIL_BRANDING_NAME");
+      }
+    }
+  }
+
+  private AnnotationConfigApplicationContext canonicalContext(String name) {
+    var context = new AnnotationConfigApplicationContext();
+    context
+        .getEnvironment()
+        .getPropertySources()
+        .addFirst(
+            new MapPropertySource(
+                "mail-test", name == null ? Map.of() : Map.of("email.branding.name", name)));
+    context.registerBean(
+        OrisoEmailBrand.class,
+        () -> new OrisoEmailBrand(SenderOrganisationFixture.platformOwner()));
+    context.refresh();
+    return context;
   }
 
   @ParameterizedTest
@@ -143,9 +183,11 @@ class OrisoEmailBrandTest {
     var values = brand.values("https://app.example.org/", "#1c4f8f");
 
     assertThat(values.get("appUrl")).isEqualTo("https://app.example.org");
+    assertThat(values.get("settingsUrl"))
+        .isEqualTo("https://app.example.org/profile/einstellungen");
     assertThat(values.get("privacyUrl")).isEqualTo("https://app.example.org/datenschutz");
     assertThat(values.get("unsubscribeUrl"))
-        .isEqualTo("https://app.example.org/profile/settings/notifications");
+        .isEqualTo("https://app.example.org/profile/einstellungen/email");
   }
 
   @Test
@@ -161,9 +203,9 @@ class OrisoEmailBrandTest {
   /** Frank, 2026-09-23: nothing entered means nothing shown — no built-in sample organisation. */
   @Test
   void theSenderBlockStaysBlank_When_thePlatformOwnerEnteredNothing() {
-    var unconfigured = new OrisoEmailBrand(SenderOrganisationFixture.nobody());
-    ReflectionTestUtils.setField(unconfigured, "platformName", "Wayfinder");
-    var values = unconfigured.values("https://app.example.org", null);
+    var emptySenderBrand = new OrisoEmailBrand(SenderOrganisationFixture.nobody());
+    ReflectionTestUtils.setField(emptySenderBrand, "platformName", "Independent Platform");
+    var values = emptySenderBrand.values("https://app.example.org", null);
 
     assertThat(values)
         .containsEntry("orgName", "")

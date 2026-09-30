@@ -28,6 +28,27 @@ class OrisoEmailRendererTest {
 
   private final OrisoEmailRenderer renderer = new OrisoEmailRenderer();
 
+  @Test
+  void pendingLocalesUseReviewedCopyUnlessDevExplicitlyOptsIn() {
+    var devRenderer = new OrisoEmailRenderer(true);
+    var reviewed = renderer.render("willkommen", OrisoEmailRenderer.Tone.DE_FORMAL, brand());
+
+    for (var tone :
+        List.of(
+            OrisoEmailRenderer.Tone.FR,
+            OrisoEmailRenderer.Tone.RU,
+            OrisoEmailRenderer.Tone.TI,
+            OrisoEmailRenderer.Tone.TR)) {
+      var defaultMail = renderer.render("willkommen", tone, brand());
+      assertThat(defaultMail).as("unreviewed %s uses reviewed copy", tone).isEqualTo(reviewed);
+
+      var devMail = devRenderer.render("willkommen", tone, brand());
+      assertThat(devMail.subject()).isNotEqualTo(reviewed.subject());
+      assertThat(devMail.html()).contains("<html lang=\"" + tone.directory() + "\"");
+      assertThat(devMail.text()).isNotEqualTo(reviewed.text());
+    }
+  }
+
   private static Map<String, String> brand() {
     Map<String, String> values = new LinkedHashMap<>();
     values.put("platformName", "Online-Beratung");
@@ -93,11 +114,17 @@ class OrisoEmailRendererTest {
   }
 
   @Test
-  void picksTheEnglishTemplateForEnglishSpeakers() {
-    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.en)).isEqualTo(OrisoEmailRenderer.Tone.EN);
+  void selectsEveryStoredLanguageWithoutGermanFallback() {
     assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.de))
         .isEqualTo(OrisoEmailRenderer.Tone.DE_FORMAL);
-    assertThat(OrisoEmailRenderer.Tone.of(null)).isEqualTo(OrisoEmailRenderer.Tone.DE_FORMAL);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.en)).isEqualTo(OrisoEmailRenderer.Tone.EN);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.fr)).isEqualTo(OrisoEmailRenderer.Tone.FR);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.ru)).isEqualTo(OrisoEmailRenderer.Tone.RU);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.ti)).isEqualTo(OrisoEmailRenderer.Tone.TI);
+    assertThat(OrisoEmailRenderer.Tone.of(LanguageCode.tr)).isEqualTo(OrisoEmailRenderer.Tone.TR);
+    assertThatThrownBy(() -> OrisoEmailRenderer.Tone.of(null))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("language");
   }
 
   @Test
@@ -159,10 +186,11 @@ class OrisoEmailRendererTest {
   void everyTemplateInTheCatalogueRendersInEveryTone() {
     List<String> templateIds = catalogueTemplateIds();
     assertThat(templateIds).as("catalogue.json mails").isNotEmpty();
+    var devRenderer = new OrisoEmailRenderer(true);
 
     for (String id : templateIds) {
       for (OrisoEmailRenderer.Tone tone : OrisoEmailRenderer.Tone.values()) {
-        var email = renderer.render(id, tone, brand());
+        var email = devRenderer.render(id, tone, brand());
         assertThat(email.subject()).as("subject of %s/%s", id, tone).isNotBlank();
         assertThat(email.html()).as("html of %s/%s", id, tone).contains("<!DOCTYPE html>");
         assertThat(email.text()).as("text of %s/%s", id, tone).isNotBlank();
