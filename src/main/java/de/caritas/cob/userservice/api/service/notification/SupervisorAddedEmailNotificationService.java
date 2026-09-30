@@ -238,7 +238,10 @@ public class SupervisorAddedEmailNotificationService {
     try {
       sendEmailSafely(tenantId, route, purpose, recipientEmail, render.get());
     } catch (Exception ex) {
-      log.error("Failed to render team-change notification for {}", recipientRole, ex);
+      log.error(
+          "Failed to render team-change notification for {}: {}",
+          recipientRole,
+          ex.getClass().getSimpleName());
     }
   }
 

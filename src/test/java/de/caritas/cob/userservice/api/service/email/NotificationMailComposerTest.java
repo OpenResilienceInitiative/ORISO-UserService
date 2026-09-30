@@ -28,7 +28,7 @@ class NotificationMailComposerTest {
   @BeforeEach
   void setUp() {
     composer =
-        new NotificationMailComposer(new OrisoEmailRenderer(), brandingResolver, brandValues);
+        new NotificationMailComposer(new OrisoEmailRenderer(true), brandingResolver, brandValues);
     brand(7L, "Träger Sieben");
     brand(8L, "Träger Acht");
   }
@@ -55,6 +55,46 @@ class NotificationMailComposerTest {
         .contains("https://tenant.example.org/profile/einstellungen/email?mail=" + designTemplate);
     assertThat(result.text())
         .contains("https://tenant.example.org/profile/einstellungen/email?mail=" + designTemplate);
+  }
+
+  @ParameterizedTest
+  @CsvSource({
+    "DE,FORMAL,Neue Nachricht auf Independent Platform,Bitte melden Sie sich an.",
+    "DE,INFORMAL,Neue Nachricht auf Independent Platform,Bitte melde dich an.",
+    "EN,FORMAL,New message on Independent Platform,Please sign in.",
+    "FR,FORMAL,Nouveau message sur Independent Platform,Veuillez vous connecter.",
+    "RU,FORMAL,Новое сообщение на Independent Platform,'Пожалуйста, войдите в систему.'",
+    "TI,FORMAL,ሓድሽ መልእኽቲ ኣብ Independent Platform,በጃኹም እተዉ።",
+    "TR,FORMAL,Independent Platform üzerinde yeni mesaj,Lütfen giriş yapın."
+  })
+  void automaticInquiryAcceptedRendersNeutralSubjectAndBothMimePartsInEveryVariant(
+      LanguageCode language, Dialect dialect, String subject, String prompt) throws Exception {
+    var mail = mail("inquiry-accepted-notification").language(language).dialect(dialect);
+    mail.addTemplateDataItem(new TemplateDataDTO().key("subject").value("PrivateTopic"));
+    mail.addTemplateDataItem(new TemplateDataDTO().key("text").value("CounsellorName"));
+    mail.addTemplateDataItem(new TemplateDataDTO().key("messageBody").value("ConfidentialCase"));
+
+    var result = composer.compose(mail, 7L);
+    assertThat(result.subject()).isEqualTo(subject).doesNotContain("Träger Sieben");
+    var mime = OrisoEmailMime.alternative(result);
+    assertThat(mime.getContentType()).contains("multipart/alternative");
+    assertThat(mime.getCount()).isEqualTo(2);
+    for (int index = 0; index < mime.getCount(); index++) {
+      assertThat(mime.getBodyPart(index).getContent().toString())
+          .contains("https://tenant.example.org", "Independent Platform")
+          .doesNotContain("PrivateTopic", "CounsellorName", "ConfidentialCase", "Housing", "{{");
+    }
+    assertThat(result.html()).contains(prompt);
+    assertThat(result.text()).contains(prompt);
+  }
+
+  @Test
+  void automaticNoticeRejectsMissingCanonicalPlatformName() {
+    var branding = new EmailBranding("Träger Sieben", null, "#1c4f8f", null, null);
+    when(brandValues.values(branding, 7L)).thenReturn(Map.of("platformName", "Träger Sieben"));
+    assertThatThrownBy(() -> composer.compose(mail("inquiry-accepted-notification"), 7L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
   }
 
   @Test
@@ -127,6 +167,7 @@ class NotificationMailComposerTest {
         .thenReturn(branding);
     Map<String, String> values = new LinkedHashMap<>();
     values.put("platformName", name);
+    values.put("offeringName", "Independent Platform");
     values.put("orgName", name);
     values.put("orgAddress", "Example Street 1");
     values.put("contactLine", "contact@example.org");

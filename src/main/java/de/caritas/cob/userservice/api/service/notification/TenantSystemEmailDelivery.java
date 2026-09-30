@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.notification;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailDispatcher;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
+import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -19,12 +20,23 @@ public class TenantSystemEmailDelivery {
     DIRECT_ENQUIRY,
     ENQUIRY_ASSIGNED,
     DAILY_ENQUIRY_DIGEST,
+    FREE_TEXT_NOTICE,
+    HANDOVER_REQUESTED,
+    HANDOVER_CONFIRMED,
+    NEW_MESSAGE,
     CONTACT_SHEET
   }
 
   private final @NonNull TenantSystemEmailClient tenantClient;
   private final @NonNull PlatformSmtpSettingsProvider platformSettings;
   private final @NonNull OrisoEmailDispatcher platformDispatcher;
+
+  /** Fail before entering an SMTP attempt when the selected platform route is unconfigured. */
+  public void requireConfigured(TenantSystemEmailRouteService.Route route) {
+    if (route.mode() == TenantSystemEmailRouteService.Mode.PLATFORM) {
+      platformSettings.requireConfigured();
+    }
+  }
 
   public void send(
       long tenantId,
@@ -47,6 +59,21 @@ public class TenantSystemEmailDelivery {
       return true;
     } else {
       return platformDispatcher.send(platformSettings.requireConfigured(), recipient, email);
+    }
+  }
+
+  /** For durable reply mail, any transport exception has an uncertain SMTP outcome. */
+  public void sendReply(
+      long tenantId,
+      TenantSystemEmailRouteService.Route route,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email,
+      UUID correlationId) {
+    if (route.mode() == TenantSystemEmailRouteService.Mode.OWN) {
+      tenantClient.deliver(tenantId, Purpose.NEW_MESSAGE.name(), recipient, email, correlationId);
+    } else {
+      platformDispatcher.sendOrThrow(
+          platformSettings.requireConfigured(), recipient, email, correlationId);
     }
   }
 }

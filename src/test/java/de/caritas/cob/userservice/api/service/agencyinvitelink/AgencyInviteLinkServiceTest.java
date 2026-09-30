@@ -195,6 +195,90 @@ class AgencyInviteLinkServiceTest {
     Mockito.verify(repository, Mockito.never()).save(Mockito.any());
   }
 
+  /** A real, enforcing AdminScope for an agency admin of Träger 1 who administers agency 10. */
+  private void actAsAgencyAdminOfAgencyTen() {
+    Mockito.when(authenticatedUser.getUserId()).thenReturn("agency-admin");
+    Mockito.when(authenticatedUser.getTenantId()).thenReturn(1L);
+    Mockito.when(authenticatedUser.hasRestrictedAgencyPriviliges()).thenReturn(true);
+    var adminAgencies =
+        Mockito.mock(de.caritas.cob.userservice.api.port.out.AdminAgencyRepository.class);
+    Mockito.when(adminAgencies.findByAdminId("agency-admin"))
+        .thenReturn(
+            java.util.List.of(
+                de.caritas.cob.userservice.api.model.AdminAgency.builder().agencyId(10L).build()));
+    var realScope =
+        new AdminScope(
+            authenticatedUser,
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.AdminRepository.class),
+            adminAgencies,
+            consultantRepository,
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.ConsultantAgencyRepository.class),
+            agencyService,
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.UserRepository.class),
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.SessionRepository.class),
+            Mockito.mock(de.caritas.cob.userservice.api.port.out.UserAgencyRepository.class));
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        realScope, "multitenancyEnabled", true);
+    org.springframework.test.util.ReflectionTestUtils.setField(service, "adminScope", realScope);
+  }
+
+  @Test
+  void create_Should_ThrowForbidden_When_AgencyAdminNamesAnotherAgencyOfItsTraeger() {
+    actAsAgencyAdminOfAgencyTen();
+    Mockito.when(agencyService.getAgencyWithoutCaching(11L))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO().id(11L).tenantId(1L));
+    CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();
+    cmd.setAgencyId(11L);
+
+    assertThatThrownBy(() -> service.create(cmd)).isInstanceOf(ForbiddenException.class);
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
+  void create_Should_ThrowForbidden_When_AgencyAdminCreatesALinkForTheWholeTraeger() {
+    actAsAgencyAdminOfAgencyTen();
+    CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();
+
+    assertThatThrownBy(() -> service.create(cmd)).isInstanceOf(ForbiddenException.class);
+    Mockito.verify(repository, Mockito.never()).save(Mockito.any());
+  }
+
+  @Test
+  void list_Should_QueryOnlyTheOwnAgencies_When_AgencyAdmin() {
+    actAsAgencyAdminOfAgencyTen();
+    Mockito.when(
+            repository.findAllByTenantIdAndAgencyIdsAndFilters(
+                Mockito.eq(1L),
+                Mockito.eq(java.util.Set.of(10L)),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any(),
+                Mockito.any()))
+        .thenReturn(org.springframework.data.domain.Page.empty());
+
+    service.list(null, null, null, "ACTIVE", 0, 20);
+
+    Mockito.verify(repository)
+        .findAllByTenantIdAndAgencyIdsAndFilters(
+            Mockito.eq(1L),
+            Mockito.eq(java.util.Set.of(10L)),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any());
+    Mockito.verify(repository, Mockito.never())
+        .findAllByTenantIdAndFilters(
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any(),
+            Mockito.any());
+  }
+
   @Test
   void create_Should_ThrowForbidden_When_ConsultantIsOutsideTenant() {
     CreateInviteLinkCommand cmd = new CreateInviteLinkCommand();

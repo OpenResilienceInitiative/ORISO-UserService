@@ -8,7 +8,6 @@ import static org.apache.commons.lang3.StringUtils.isNotBlank;
 import de.caritas.cob.userservice.api.adapters.web.dto.NotificationsSettingsDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationDTO;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.NotificationsAware;
 import de.caritas.cob.userservice.api.model.Session;
@@ -18,6 +17,7 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.api.service.email.NotificationRequestFacts;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.emailsupplier.AssignEnquiryEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.NewDirectEnquiryEmailSupplier;
@@ -37,6 +37,7 @@ import java.util.List;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -52,23 +53,23 @@ public class EmailNotificationFacade {
   private String applicationBaseUrl;
 
   private final @NonNull MailService mailService;
+  private final @NonNull OrisoEmailBrand emailBrand;
   private final @NonNull SessionService sessionService;
   private final @NonNull ConsultantService consultantService;
   private final @NonNull IdentityClientConfig identityClientConfig;
-  private final @NonNull NewEnquiryEmailSupplier newEnquiryEmailSupplier;
-  private final @NonNull NewDirectEnquiryEmailSupplier newDirectEnquiryEmailSupplier;
-  private final @NonNull AssignEnquiryEmailSupplier assignEnquiryEmailSupplier;
+  // These suppliers carry request data in fields. Resolve a prototype for every dispatch.
+  private final @NonNull ObjectProvider<NewEnquiryEmailSupplier> newEnquiryEmailSupplierProvider;
+  private final @NonNull ObjectProvider<NewDirectEnquiryEmailSupplier>
+      newDirectEnquiryEmailSupplierProvider;
+  private final @NonNull ObjectProvider<AssignEnquiryEmailSupplier>
+      assignEnquiryEmailSupplierProvider;
   private final @NonNull TenantTemplateSupplier tenantTemplateSupplier;
   private final @NonNull NotificationRequestFacts notificationRequestFacts;
 
   private final @NonNull ReleaseToggleService releaseToggleService;
-  private final @NonNull ConsultantDisplayNameResolver consultantDisplayNameResolver;
 
   @Value("${multitenancy.enabled}")
   private boolean multiTenancyEnabled;
-
-  /** Shown when no publishable counsellor name exists, and when no counsellor is assigned yet. */
-  private static final String NEUTRAL_CONSULTANT_NAME = "Ihre Beraterin/Ihr Berater";
 
   /**
    * Sends email notifications according to the corresponding consultant(s) when a new enquiry was
@@ -86,6 +87,7 @@ public class EmailNotificationFacade {
             "Preparing to send NEW_ENQUIRY_EMAIL_NOTIFICATION email for session: {}",
             session.getId());
         TenantContext.setCurrentTenantData(tenantData);
+        var newEnquiryEmailSupplier = newEnquiryEmailSupplierProvider.getObject();
         newEnquiryEmailSupplier.setCurrentSession(session);
         sendMailTasksToMailService(newEnquiryEmailSupplier, session);
       } catch (Exception ex) {
@@ -109,6 +111,7 @@ public class EmailNotificationFacade {
 
     try {
       TenantContext.setCurrentTenantData(tenantData);
+      var newDirectEnquiryEmailSupplier = newDirectEnquiryEmailSupplierProvider.getObject();
       newDirectEnquiryEmailSupplier.setAgencyId(session.getAgencyId());
       newDirectEnquiryEmailSupplier.setConsultantId(session.getConsultant().getId());
       newDirectEnquiryEmailSupplier.setPostCode(session.getPostcode());
@@ -163,6 +166,7 @@ public class EmailNotificationFacade {
         "Preparing to send ASSIGN_ENQUIRY_NOTIFICATION email to consultant: {}",
         receiverConsultant != null ? receiverConsultant.getId() : "No consultant selected");
     try {
+      var assignEnquiryEmailSupplier = assignEnquiryEmailSupplierProvider.getObject();
       assignEnquiryEmailSupplier.setReceiverConsultant(receiverConsultant);
       assignEnquiryEmailSupplier.setSenderUserId(senderUserId);
       assignEnquiryEmailSupplier.setAskerUserName(askerUserName);
@@ -266,19 +270,28 @@ public class EmailNotificationFacade {
         return;
       }
 
-      var consultantName = publicConsultantNameOf(consultant);
+      emailBrand.platformName();
+      Long recipientTenantId = user.getTenantId();
+      Long requestTenantId = tenantData == null ? null : tenantData.getTenantId();
+      if (requestTenantId == null && !multiTenancyEnabled) {
+        requestTenantId = recipientTenantId;
+      }
+      if (recipientTenantId == null
+          || recipientTenantId <= 0
+          || requestTenantId == null
+          || requestTenantId <= 0) {
+        throw new IllegalStateException("Inquiry accepted notification tenant metadata is missing");
+      }
+      if (!recipientTenantId.equals(requestTenantId)) {
+        throw new IllegalStateException(
+            "Inquiry accepted notification recipient and request tenants differ");
+      }
 
       var templateAttributes = new ArrayList<TemplateDataDTO>();
       templateAttributes.add(
-          new TemplateDataDTO().key("subject").value("Ihre Anfrage wurde angenommen"));
+          new TemplateDataDTO().key("tenantId").value(requestTenantId.toString()));
       templateAttributes.add(
-          new TemplateDataDTO()
-              .key("text")
-              .value(
-                  String.format(
-                      "Gute Nachrichten: %s hat Ihre Anfrage angenommen. "
-                          + "Melden Sie sich an, um die Antwort zu lesen.",
-                      consultantName)));
+          new TemplateDataDTO().key("recipientTenantId").value(recipientTenantId.toString()));
 
       if (!multiTenancyEnabled) {
         templateAttributes.add(new TemplateDataDTO().key("url").value(applicationBaseUrl));
@@ -288,40 +301,21 @@ public class EmailNotificationFacade {
 
       var language =
           de.caritas.cob.userservice.mailservice.generated.web.model.LanguageCode.fromValue(
-              user.getLanguageCode().toString());
+              user.getLanguageCode() == null ? "de" : user.getLanguageCode().toString());
       var mailDTO =
           new MailDTO()
-              .template(EmailSupplier.TEMPLATE_FREE_TEXT)
+              .template(EmailSupplier.TEMPLATE_INQUIRY_ACCEPTED_NOTIFICATION)
               .email(user.getEmail())
               .language(language)
+              .dialect(user.getDialect())
               .templateData(templateAttributes);
       mailService.sendEmailNotification(new MailsDTO().mails(List.of(mailDTO)));
     } catch (Exception exception) {
       log.error(
           "EmailNotificationFacade error: Failed to send inquiry accepted notification", exception);
+    } finally {
+      TenantContext.clear();
     }
-    TenantContext.clear();
-  }
-
-  /**
-   * The counsellor name an <em>advice seeker</em> may be shown in an e-mail.
-   *
-   * <p>ADR-002 §2 / #1201: this mail lands in the advice seeker's own mailbox, so it must never
-   * carry the counsellor's real name. {@link ConsultantDisplayNameResolver} is the single place
-   * that decides which name may be published — public display name, else the (decoded) username the
-   * advice seeker already sees in the room. The rule is not restated here.
-   *
-   * <p>The neutral wording stays as the last resort, for a counsellor with no publishable name at
-   * all and for the unassigned case. It is deliberately the <em>last</em> resort rather than the
-   * fallback for a missing display name: "Ihre Beraterin/Ihr Berater" cannot tell two counsellors
-   * apart, and the pseudonym is what the advice seeker recognises from the conversation.
-   */
-  private String publicConsultantNameOf(Consultant consultant) {
-    if (consultant == null) {
-      return NEUTRAL_CONSULTANT_NAME;
-    }
-    var publicName = consultantDisplayNameResolver.resolveMatrixDisplayName(consultant);
-    return isNotBlank(publicName) ? publicName : NEUTRAL_CONSULTANT_NAME;
   }
 
   private boolean shouldSendReassignmentNotificationForConsultant(

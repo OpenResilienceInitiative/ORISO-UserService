@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
+import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
@@ -66,6 +67,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
+  AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   IdReservationReleaseProcessor.class
@@ -89,6 +95,7 @@ class AccountInviteDirectSendAtomicIT {
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
@@ -389,7 +396,7 @@ class AccountInviteDirectSendAtomicIT {
 
   @Test
   void resendInvite_ShouldRejectExistingRecipientClaimBeforeMailDispatch() {
-    AccountInvite oldInvite = persistedInvite(AccountInviteStatus.EXPIRED, RECIPIENT);
+    AccountInvite oldInvite = persistedInvite(AccountInviteStatus.EMAIL_SENT, RECIPIENT);
     oldInvite.setActiveRecipientKey(null);
     oldInvite = accountInviteRepository.saveAndFlush(oldInvite);
     AccountInvite legacyConflict = persistedInvite(AccountInviteStatus.EMAIL_SENT, RECIPIENT);
@@ -404,6 +411,57 @@ class AccountInviteDirectSendAtomicIT {
         .isInstanceOf(CustomValidationHttpStatusException.class);
 
     verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+  }
+
+  @Test
+  void sendInvite_ShouldRejectExpiredInvite() {
+    AccountInvite expired = persistedInvite(AccountInviteStatus.EXPIRED, RECIPIENT);
+    expired.setActiveRecipientKey(null);
+    Long expiredId = accountInviteRepository.saveAndFlush(expired).getId();
+
+    assertThatThrownBy(
+            () ->
+                service.sendInvite(
+                    new AccountInviteService.SendInviteCommand(expiredId, templateId)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be sent");
+
+    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    assertThat(accountInviteRepository.findById(expiredId))
+        .get()
+        .extracting(AccountInvite::getStatus)
+        .isEqualTo(AccountInviteStatus.EXPIRED);
+  }
+
+  @Test
+  void resendInvite_ShouldRejectInviteThatTheRecipientCleanupExpires() {
+    // The cleanup releases reservation-17; a replacement must not inherit the dead token.
+    AccountInvite elapsed = persistedInvite(AccountInviteStatus.EMAIL_SENT, RECIPIENT);
+    elapsed.setExpiresAt(LocalDateTime.now().minusMinutes(1));
+    Long elapsedId = accountInviteRepository.saveAndFlush(elapsed).getId();
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
+        .thenReturn("https://example.org/invite/replacement");
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+        .thenReturn(
+            new de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt(
+                RECIPIENT, java.time.Instant.parse("2026-09-10T10:00:00Z")));
+
+    assertThatThrownBy(
+            () ->
+                service.resendInvite(
+                    new AccountInviteService.SendInviteCommand(elapsedId, templateId)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be resent");
+
+    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    assertThat(accountInviteRepository.findAll())
+        .singleElement()
+        .satisfies(
+            invite -> {
+              assertThat(invite.getId()).isEqualTo(elapsedId);
+              assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+              assertThat(invite.getActiveRecipientKey()).isNull();
+            });
   }
 
   @Test
@@ -569,7 +627,7 @@ class AccountInviteDirectSendAtomicIT {
         firstName,
         "Lovelace",
         null,
-        null,
+        11L,
         30L,
         null,
         null);

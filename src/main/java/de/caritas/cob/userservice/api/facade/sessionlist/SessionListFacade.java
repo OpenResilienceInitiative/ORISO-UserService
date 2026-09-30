@@ -120,7 +120,9 @@ public class SessionListFacade {
 
   public GroupSessionListResponseDTO retrieveChatsForUserByChatIds(
       String userId, List<Long> chatIds) {
-    var userChatSessions = userSessionListService.retrieveChatsForUserAndChatIds(userId, chatIds);
+    // A copy: the service may hand back an unmodifiable list, and sorting that was a 500.
+    var userChatSessions =
+        new ArrayList<>(userSessionListService.retrieveChatsForUserAndChatIds(userId, chatIds));
     userChatSessions.sort(
         comparing(UserSessionResponseDTO::getLatestMessage, nullsLast(reverseOrder())));
 

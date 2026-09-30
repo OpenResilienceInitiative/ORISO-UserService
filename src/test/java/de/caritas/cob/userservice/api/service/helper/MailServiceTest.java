@@ -13,6 +13,7 @@ import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.email.NotificationMailSender;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailRouteService;
 import de.caritas.cob.userservice.mailservice.generated.ApiClient;
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
 import de.caritas.cob.userservice.mailservice.generated.web.model.ErrorMailDTO;
@@ -76,6 +77,16 @@ public class MailServiceTest {
   }
 
   @Test
+  void automaticNoticeUsesLocalDeliveryAndNeverFallsBackOnFailure() {
+    var notice = new MailDTO().template("inquiry-accepted-notification");
+    doThrow(new IllegalStateException("SMTP failed")).when(notificationMailSender).send(notice);
+
+    assertThat(mailService.sendEmailNotification(new MailsDTO().mails(List.of(notice)))).isFalse();
+    verify(notificationMailSender).send(notice);
+    verifyNoInteractions(mailsControllerApi);
+  }
+
+  @Test
   void unrelatedMailsStillUseUpstreamInAMixedBatch() {
     when(securityHeaderSupplier.getCsrfHttpHeaders()).thenReturn(getCsrfHttpHeaders());
     var notification = new MailDTO().template("daily-enquiry-notification");
@@ -120,6 +131,65 @@ public class MailServiceTest {
 
     verify(notificationMailSender).send(later);
     verifyNoInteractions(mailsControllerApi);
+  }
+
+  @Test
+  void notificationConfigurationFailureNamesMissingSettingWithoutLeakingRecipient() {
+    var notification =
+        new MailDTO().template("enquiry-notification-consultant").email("private@example.org");
+    doThrow(
+            new TenantSystemEmailRouteService.ConfigurationException(
+                "OWN tenant SMTP configuration is incomplete"))
+        .when(notificationMailSender)
+        .send(notification);
+
+    try (var logCaptor = LogbackCaptor.forClass(MailService.class)) {
+      assertThat(mailService.sendEmailNotification(new MailsDTO().mails(List.of(notification))))
+          .isFalse();
+
+      assertThat(logCaptor.contains(Level.ERROR, "OWN tenant SMTP configuration is incomplete"))
+          .isTrue();
+      assertThat(logCaptor.messages(Level.ERROR))
+          .noneMatch(message -> message.contains("private@example.org"));
+    }
+  }
+
+  @Test
+  void notificationFailureDoesNotLogUntrustedExceptionText() {
+    var notification =
+        new MailDTO().template("enquiry-notification-consultant").email("private@example.org");
+    doThrow(new IllegalStateException("private@example.org contains confidential case text"))
+        .when(notificationMailSender)
+        .send(notification);
+
+    try (var logCaptor = LogbackCaptor.forClass(MailService.class)) {
+      assertThat(mailService.sendEmailNotification(new MailsDTO().mails(List.of(notification))))
+          .isFalse();
+
+      assertThat(logCaptor.contains(Level.ERROR, "IllegalStateException")).isTrue();
+      assertThat(logCaptor.messages(Level.ERROR))
+          .noneMatch(message -> message.contains("private@example.org"));
+    }
+  }
+
+  @Test
+  void platformSmtpConfigurationFailureLogsActionableHintWithoutExceptionDetails() {
+    var notification =
+        new MailDTO().template("enquiry-notification-consultant").email("private@example.org");
+    doThrow(
+            new IllegalStateException(
+                "Platform SMTP is incomplete in Admin Settings: private@example.org"))
+        .when(notificationMailSender)
+        .send(notification);
+
+    try (var logCaptor = LogbackCaptor.forClass(MailService.class)) {
+      assertThat(mailService.sendEmailNotification(new MailsDTO().mails(List.of(notification))))
+          .isFalse();
+
+      assertThat(logCaptor.contains(Level.ERROR, "check enablement, host, port")).isTrue();
+      assertThat(logCaptor.messages(Level.ERROR))
+          .noneMatch(message -> message.contains("private@example.org"));
+    }
   }
 
   @Test

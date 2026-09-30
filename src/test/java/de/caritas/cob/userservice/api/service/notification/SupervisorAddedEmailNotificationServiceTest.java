@@ -3,12 +3,16 @@ package de.caritas.cob.userservice.api.service.notification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
@@ -19,6 +23,7 @@ import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSuppli
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -217,6 +222,65 @@ class SupervisorAddedEmailNotificationServiceTest {
             eq(TenantSystemEmailDelivery.Purpose.EMAIL_ADDRESS_CHANGED),
             eq("john@example.com"),
             any());
+  }
+
+  @Test
+  void deliveryFailureDoesNotLogRecipientOrProviderReply() {
+    var route = routeSettings();
+    when(emailRoutes.resolve(4L)).thenReturn(Optional.of(route));
+    String privateReply = "550 john@example.com mailbox unavailable";
+    doThrow(new IllegalStateException(privateReply))
+        .when(emailDelivery)
+        .send(eq(4L), eq(route), any(), eq("john@example.com"), any());
+
+    try (var logs = LogbackCaptor.forClass(SupervisorAddedEmailNotificationService.class)) {
+      service.notifyEmailAddressChanged(
+          "johndoe", "john@example.com", 4L, null, null, LanguageCode.de);
+
+      verify(emailDelivery).send(eq(4L), eq(route), any(), eq("john@example.com"), any());
+      assertThat(logs.events()).isNotEmpty();
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                assertThat(event.getThrowableProxy()).isNull();
+                assertThat(event.getFormattedMessage()).contains("IllegalStateException");
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain("john@example.com", "mailbox unavailable", privateReply);
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+    }
+  }
+
+  @Test
+  void teamChangeRenderFailureDoesNotLogPrivatePayloadOrThrowable() {
+    when(emailRoutes.resolve(4L)).thenReturn(Optional.of(routeSettings()));
+    User recipient = new User();
+    recipient.setTenantId(4L);
+    recipient.setEmail("john@example.com");
+    recipient.setLanguageCode(LanguageCode.de);
+    String privateReply = "private case for john@example.com, SMTP password canary";
+    doThrow(new IllegalStateException(privateReply))
+        .when(emailRenderer)
+        .render(eq("team-aenderung"), any(), any());
+
+    try (var logs = LogbackCaptor.forClass(SupervisorAddedEmailNotificationService.class)) {
+      service.notifySupervisorAdded(recipient, null, 42L, null, null);
+
+      verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+      assertThat(logs.events()).isNotEmpty();
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                assertThat(event.getThrowableProxy()).isNull();
+                assertThat(event.getFormattedMessage()).contains("IllegalStateException");
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain(
+                        "john@example.com", "private case", "password canary", privateReply);
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+    }
   }
 
   // ── resolveUserWithEmail ──────────────────────────────────────────────────
@@ -423,7 +487,14 @@ class SupervisorAddedEmailNotificationServiceTest {
         .doesNotThrowAnyException();
 
     verify(emailRenderer)
-        .render(eq("team-aenderung"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
+        .render(
+            eq("team-aenderung"),
+            eq(OrisoEmailRenderer.Tone.DE_FORMAL),
+            argThat(
+                values ->
+                    "#5".equals(values.get("caseReference"))
+                        && "Sie wurden als Supervisor-Berater:in zu diesem Vorgang hinzugefügt."
+                            .equals(values.get("teamChangeStatement"))));
     verify(emailDelivery)
         .send(
             eq(1L),

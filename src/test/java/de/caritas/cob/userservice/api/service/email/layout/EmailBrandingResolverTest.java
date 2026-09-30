@@ -34,6 +34,11 @@ class EmailBrandingResolverTest {
         "https://app.example.org/");
   }
 
+  private EmailBrandingResolver resolverWithPlatformName(String platformName) {
+    return new EmailBrandingResolver(
+        tenantService, tenantTemplateSupplier, platformName, "", "https://app.example.org/");
+  }
+
   private void givenNoTemplateAttributes() {
     lenient().when(tenantTemplateSupplier.getTenantBaseUrl(any())).thenReturn(null);
   }
@@ -70,6 +75,19 @@ class EmailBrandingResolverTest {
     assertThatThrownBy(() -> resolver("").resolveNotification(7L, "https://app.oriso.org"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("tenant is unavailable");
+  }
+
+  @Test
+  void notificationBrandingRequiresAConfiguredNameWhenTenantHasNone() {
+    var unnamedTenant = tenant("  ", null);
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(unnamedTenant);
+    var subject =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "  ", "", "https://app.example.org/");
+
+    assertThatThrownBy(() -> subject.resolveNotification(7L, "https://app.example.org"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
   }
 
   // --- logo -----------------------------------------------------------------------------
@@ -280,6 +298,21 @@ class EmailBrandingResolverTest {
     resolver("").resolve(null);
 
     org.mockito.Mockito.verify(tenantService).getPlatformTenantData();
+  }
+
+  @Test
+  void resolve_ShouldRejectMissingPlatformName_WhenNoTenantNameIsAvailable() {
+    assertThatThrownBy(() -> resolverWithPlatformName(" ").resolve(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
+  @Test
+  void resolve_ShouldUseTenantName_WhenPlatformNameIsMissing() {
+    RestrictedTenantDTO resolvedTenant = tenant("Nord", null);
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolvedTenant);
+
+    assertThat(resolverWithPlatformName("").resolve(7L).brandName()).isEqualTo("Nord");
   }
 
   // --- footer ---------------------------------------------------------------------------

@@ -35,7 +35,6 @@ import de.caritas.cob.userservice.api.adapters.web.dto.ReassignmentNotificationD
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.EmailNotificationException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
-import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
 import de.caritas.cob.userservice.api.helper.json.JsonSerializationUtils;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
@@ -48,6 +47,8 @@ import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggle;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
 import de.caritas.cob.userservice.api.service.email.NotificationRequestFacts;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.emailsupplier.AssignEnquiryEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.NewDirectEnquiryEmailSupplier;
 import de.caritas.cob.userservice.api.service.emailsupplier.NewEnquiryEmailSupplier;
@@ -70,20 +71,27 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.MapPropertySource;
 import org.springframework.test.util.ReflectionTestUtils;
 
 @ExtendWith(MockitoExtension.class)
@@ -332,24 +340,26 @@ class EmailNotificationFacadeTest {
               .roles(null)
               .registration(null);
 
-  @InjectMocks private EmailNotificationFacade emailNotificationFacade;
+  private EmailNotificationFacade emailNotificationFacade;
 
   @Mock private NewEnquiryEmailSupplier newEnquiryEmailSupplier;
+  @Mock private ObjectProvider<NewEnquiryEmailSupplier> newEnquiryEmailSupplierProvider;
 
   @SuppressWarnings("unused")
   @Mock
   private NewDirectEnquiryEmailSupplier newDirectEnquiryEmailSupplier;
 
-  @Spy private AssignEnquiryEmailSupplier assignEnquiryEmailSupplier;
+  @Mock private ObjectProvider<NewDirectEnquiryEmailSupplier> newDirectEnquiryEmailSupplierProvider;
 
-  // The real rule, not a mock: ConsultantDisplayNameResolver is the single place that decides
-  // which counsellor name may be published (ADR-002 §2).
-  @Spy
-  private ConsultantDisplayNameResolver consultantDisplayNameResolver =
-      new ConsultantDisplayNameResolver();
+  @Spy private AssignEnquiryEmailSupplier assignEnquiryEmailSupplier;
+  @Mock private ObjectProvider<AssignEnquiryEmailSupplier> assignEnquiryEmailSupplierProvider;
 
   @Mock private MailService mailService;
   @Mock private NotificationRequestFacts notificationRequestFacts;
+
+  @Spy
+  private OrisoEmailBrand emailBrand =
+      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
 
   @Mock SessionService sessionService;
   @Mock ConsultantService consultantService;
@@ -366,10 +376,29 @@ class EmailNotificationFacadeTest {
 
   @BeforeEach
   void setup() throws SecurityException {
+    USER.setTenantId(1L);
+    emailNotificationFacade =
+        new EmailNotificationFacade(
+            mailService,
+            emailBrand,
+            sessionService,
+            consultantService,
+            identityClientConfig,
+            newEnquiryEmailSupplierProvider,
+            newDirectEnquiryEmailSupplierProvider,
+            assignEnquiryEmailSupplierProvider,
+            tenantTemplateSupplier,
+            notificationRequestFacts,
+            releaseToggleService);
+    when(newEnquiryEmailSupplierProvider.getObject()).thenReturn(newEnquiryEmailSupplier);
+    when(newDirectEnquiryEmailSupplierProvider.getObject())
+        .thenReturn(newDirectEnquiryEmailSupplier);
+    when(assignEnquiryEmailSupplierProvider.getObject()).thenReturn(assignEnquiryEmailSupplier);
     when(identityClientConfig.getEmailDummySuffix()).thenReturn(FIELD_VALUE_EMAIL_DUMMY_SUFFIX);
     when(notificationRequestFacts.forSession(any())).thenReturn(List.of());
     ReflectionTestUtils.setField(
         emailNotificationFacade, APPLICATION_BASE_URL_FIELD_NAME, APPLICATION_BASE_URL);
+    ReflectionTestUtils.setField(emailBrand, "platformName", "Beispielplattform");
     ReflectionTestUtils.setField(
         assignEnquiryEmailSupplier, "consultantService", consultantService);
     facadeLogCaptor = LogbackCaptor.forClass(EmailNotificationFacade.class);
@@ -426,6 +455,119 @@ class EmailNotificationFacadeTest {
   private void givenNewEnquiryMailSupplierReturnNonEmptyMails() {
     List<MailDTO> mails = getMailDTOS();
     when(newEnquiryEmailSupplier.generateEmails()).thenReturn(mails);
+  }
+
+  @Test
+  void concurrentNewEnquiriesKeepSupplierStateFactsAndTenantSeparate() throws Exception {
+    var first = givenEnquirySession();
+    first.setId(101L);
+    var second = givenEnquirySession();
+    second.setId(202L);
+    var firstSupplier = Mockito.mock(NewEnquiryEmailSupplier.class);
+    var secondSupplier = Mockito.mock(NewEnquiryEmailSupplier.class);
+    var firstSession = new AtomicReference<Session>();
+    var secondSession = new AtomicReference<Session>();
+    var firstInsideGeneration = new CountDownLatch(1);
+    var releaseFirst = new CountDownLatch(1);
+    when(newEnquiryEmailSupplierProvider.getObject()).thenReturn(firstSupplier, secondSupplier);
+    Mockito.doAnswer(
+            invocation -> {
+              firstSession.set(invocation.getArgument(0));
+              return null;
+            })
+        .when(firstSupplier)
+        .setCurrentSession(any());
+    Mockito.doAnswer(
+            invocation -> {
+              secondSession.set(invocation.getArgument(0));
+              return null;
+            })
+        .when(secondSupplier)
+        .setCurrentSession(any());
+    when(firstSupplier.generateEmails())
+        .thenAnswer(
+            invocation -> {
+              firstInsideGeneration.countDown();
+              if (!releaseFirst.await(5, TimeUnit.SECONDS)) {
+                throw new IllegalStateException("First dispatch was never released");
+              }
+              return List.of(
+                  new MailDTO()
+                      .email("first@example.test")
+                      .templateData(
+                          List.of(
+                              new TemplateDataDTO()
+                                  .key("sourceSession")
+                                  .value(firstSession.get().getId().toString()))));
+            });
+    when(secondSupplier.generateEmails())
+        .thenAnswer(
+            invocation ->
+                List.of(
+                    new MailDTO()
+                        .email("second@example.test")
+                        .templateData(
+                            List.of(
+                                new TemplateDataDTO()
+                                    .key("sourceSession")
+                                    .value(secondSession.get().getId().toString())))));
+    when(notificationRequestFacts.forSession(any()))
+        .thenAnswer(
+            invocation ->
+                List.of(
+                    new TemplateDataDTO()
+                        .key("factSession")
+                        .value(((Session) invocation.getArgument(0)).getId().toString())));
+    var deliveries = new java.util.concurrent.ConcurrentHashMap<String, String>();
+    Mockito.doAnswer(
+            invocation -> {
+              var mail = ((MailsDTO) invocation.getArgument(0)).getMails().getFirst();
+              var details =
+                  mail.getTemplateData().stream()
+                      .filter(
+                          value ->
+                              "sourceSession".equals(value.getKey())
+                                  || "factSession".equals(value.getKey()))
+                      .collect(
+                          java.util.stream.Collectors.toMap(
+                              TemplateDataDTO::getKey, TemplateDataDTO::getValue));
+              deliveries.put(
+                  mail.getEmail(),
+                  TenantContext.getCurrentTenant()
+                      + ":"
+                      + details.get("sourceSession")
+                      + ":"
+                      + details.get("factSession"));
+              return null;
+            })
+        .when(mailService)
+        .sendEmailNotification(any());
+
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var firstDispatch =
+          executor.submit(
+              () ->
+                  emailNotificationFacade.sendNewEnquiryEmailNotification(
+                      first, new TenantData(11L, "first")));
+      try {
+        assertThat(firstInsideGeneration.await(5, TimeUnit.SECONDS)).isTrue();
+        var secondDispatch =
+            executor.submit(
+                () ->
+                    emailNotificationFacade.sendNewEnquiryEmailNotification(
+                        second, new TenantData(22L, "second")));
+        secondDispatch.get(5, TimeUnit.SECONDS);
+      } finally {
+        releaseFirst.countDown();
+      }
+      firstDispatch.get(5, TimeUnit.SECONDS);
+    }
+
+    assertThat(deliveries)
+        .containsEntry("first@example.test", "11:101:101")
+        .containsEntry("second@example.test", "22:202:202")
+        .hasSize(2);
+    verify(newEnquiryEmailSupplierProvider, times(2)).getObject();
   }
 
   private List<MailDTO> getMailDTOS() {
@@ -671,6 +813,83 @@ class EmailNotificationFacadeTest {
   }
 
   @Test
+  void automaticNoticeEmitsExplicitOccasionTenantScopeAndGermanDialect() {
+    USER.setTenantId(7L);
+    USER.setLanguageFormal(false);
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT_WITH_PSEUDONYM, new TenantData(7L, "tenant"));
+
+    var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(captor.capture());
+    var mail = captor.getValue().getMails().get(0);
+    assertThat(mail.getTemplate()).isEqualTo("inquiry-accepted-notification");
+    assertThat(mail.getDialect())
+        .isEqualTo(de.caritas.cob.userservice.mailservice.generated.web.model.Dialect.INFORMAL);
+    assertThat(mail.getTemplateData())
+        .anySatisfy(
+            item -> {
+              assertThat(item.getKey()).isEqualTo("tenantId");
+              assertThat(item.getValue()).isEqualTo("7");
+            })
+        .anySatisfy(
+            item -> {
+              assertThat(item.getKey()).isEqualTo("recipientTenantId");
+              assertThat(item.getValue()).isEqualTo("7");
+            })
+        .noneSatisfy(item -> assertThat(item.getKey()).isIn("subject", "text", "name", "topic"));
+  }
+
+  @Test
+  void automaticNoticeRejectsDifferentRecipientAndRequestTenantsAndClearsContext() {
+    USER.setTenantId(7L);
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT_WITH_PSEUDONYM, new TenantData(8L, "other"));
+    verifyNoInteractions(mailService);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
+  void automaticNoticeRejectsAnUnidentifiedRecipientTenantInsteadOfAssumingOne() {
+    USER.setTenantId(null);
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT_WITH_PSEUDONYM, null);
+    verifyNoInteractions(mailService);
+    assertThat(facadeLogCaptor.events())
+        .anySatisfy(event -> assertThat(event.getThrowableProxy().getMessage()).contains("tenant"));
+  }
+
+  @Test
+  void automaticNoticeSingleTenantModeUsesTheActualUserTenantWithoutAContextGuess() {
+    USER.setTenantId(7L);
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+    var sent = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(sent.capture());
+    assertThat(sent.getValue().getMails().get(0).getTemplateData())
+        .filteredOn(item -> List.of("tenantId", "recipientTenantId").contains(item.getKey()))
+        .hasSize(2)
+        .allSatisfy(item -> assertThat(item.getValue()).isEqualTo("7"));
+  }
+
+  @Test
+  void automaticNoticeMultitenancyRequiresAnExplicitRequestTenant() {
+    USER.setTenantId(7L);
+    ReflectionTestUtils.setField(emailNotificationFacade, "multiTenancyEnabled", true);
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+    verifyNoInteractions(mailService);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
+  void automaticNoticeOptOutClearsTheCapturedContextBeforeReturning() {
+    USER.setTenantId(7L);
+    when(releaseToggleService.isToggleEnabled(ReleaseToggle.NEW_EMAIL_NOTIFICATIONS))
+        .thenReturn(true);
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT, new TenantData(7L, "tenant"));
+    verifyNoInteractions(mailService);
+    assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  @Test
   void sendInquiryAcceptedNotification_Should_SendEmail_When_ToggleDisabled() {
     emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
 
@@ -678,59 +897,147 @@ class EmailNotificationFacadeTest {
   }
 
   @Test
-  void sendInquiryAcceptedNotification_Should_UseDefaultConsultantName_When_ConsultantIsNull() {
+  void sendInquiryAcceptedNotification_Should_KeepSubjectAndBodyNeutral_When_ConsultantIsNull() {
+    USER.setLanguageFormal(true);
     emailNotificationFacade.sendInquiryAcceptedNotification(USER, null, null);
 
     var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(captor.capture());
-    var text = captor.getValue().getMails().get(0).getTemplateData().get(1).getValue();
-    org.assertj.core.api.Assertions.assertThat(text).contains("Ihre Beraterin/Ihr Berater");
+    var mail = captor.getValue().getMails().get(0);
+    assertThat(mail.getTemplate()).isEqualTo("inquiry-accepted-notification");
+    assertThat(mail.getDialect())
+        .isEqualTo(de.caritas.cob.userservice.mailservice.generated.web.model.Dialect.FORMAL);
+    assertThat(mail.getTemplateData())
+        .noneSatisfy(item -> assertThat(item.getKey()).isIn("subject", "text", "name"));
   }
 
   // ---------------------------------------------------------------------------
-  // ADR-002 §2 / #1201: the inquiry-accepted mail goes to the advice seeker, so the counsellor's
-  // real name has no place in it. The predecessor of these three tests asserted the opposite --
-  // it required getFullName() in the body and so locked the leak in.
+  // The mailbox subject and preview must reveal neither the counsellor nor the case.
   // ---------------------------------------------------------------------------
 
   @Test
-  void sendInquiryAcceptedNotification_Should_UseThePublicDisplayName_And_NeverTheRealName() {
+  void sendInquiryAcceptedNotification_Should_NotExposeAnyConsultantName() {
     emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT_WITH_PSEUDONYM, null);
 
-    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
-        .contains("Frau M.")
+    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedMetadata())
+        .doesNotContain("Frau M.")
         .doesNotContain(REAL_FIRST_NAME)
         .doesNotContain(REAL_LAST_NAME);
   }
 
   @Test
-  void sendInquiryAcceptedNotification_Should_NotFallBackToTheRealName_When_NoDisplayNameIsSet() {
-    // The exact condition the sibling fix exists for: with no pseudonym stored, the fallback must
-    // be the name the advice seeker already sees, never the real name.
+  void sendInquiryAcceptedNotification_Should_NotExposeUsername_When_NoDisplayNameIsSet() {
     emailNotificationFacade.sendInquiryAcceptedNotification(
         USER, CONSULTANT_WITHOUT_PSEUDONYM, null);
 
-    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
-        .contains("beraterin1")
+    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedMetadata())
+        .doesNotContain("beraterin1")
         .doesNotContain(REAL_FIRST_NAME)
         .doesNotContain(REAL_LAST_NAME);
   }
 
   @Test
-  void sendInquiryAcceptedNotification_Should_UseTheNeutralFallback_When_NoPublicNameExists() {
+  void sendInquiryAcceptedNotification_Should_KeepBodyNeutral_When_NoPublicNameExists() {
     emailNotificationFacade.sendInquiryAcceptedNotification(
         USER, CONSULTANT_WITHOUT_ANY_PUBLIC_NAME, null);
 
-    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedText())
-        .contains("Ihre Beraterin/Ihr Berater")
+    org.assertj.core.api.Assertions.assertThat(capturedInquiryAcceptedMetadata())
+        .doesNotContain("Beraterin")
         .doesNotContain(REAL_FIRST_NAME)
         .doesNotContain(REAL_LAST_NAME);
   }
 
-  private String capturedInquiryAcceptedText() {
+  private String capturedInquiryAcceptedMetadata() {
     var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(captor.capture());
-    return captor.getValue().getMails().get(0).getTemplateData().get(1).getValue();
+    return captor.getValue().getMails().get(0).getTemplateData().stream()
+        .map(de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO::getValue)
+        .collect(java.util.stream.Collectors.joining(" "));
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_PreserveAllSevenVariantsAndGermanNullLocale() {
+    Object[][] variants = {
+      {null, true}, {LanguageCode.de, true}, {LanguageCode.de, false},
+      {LanguageCode.en, false}, {LanguageCode.fr, false}, {LanguageCode.ru, false},
+      {LanguageCode.ti, false}, {LanguageCode.tr, false}
+    };
+    for (Object[] variant : variants) {
+      USER.setLanguageCode((LanguageCode) variant[0]);
+      USER.setLanguageFormal((boolean) variant[1]);
+      emailNotificationFacade.sendInquiryAcceptedNotification(
+          USER, CONSULTANT_WITH_PSEUDONYM, null);
+      var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+      verify(mailService).sendEmailNotification(captor.capture());
+      var sentMail = captor.getValue().getMails().get(0);
+      assertThat(sentMail.getLanguage().toString())
+          .isEqualTo(variant[0] == null ? "de" : variant[0].toString());
+      assertThat(sentMail.getTemplate()).isEqualTo("inquiry-accepted-notification");
+      assertThat(sentMail.getDialect())
+          .isEqualTo(
+              (boolean) variant[1]
+                  ? de.caritas.cob.userservice.mailservice.generated.web.model.Dialect.FORMAL
+                  : de.caritas.cob.userservice.mailservice.generated.web.model.Dialect.INFORMAL);
+      assertThat(sentMail.getTemplateData())
+          .allSatisfy(
+              item ->
+                  assertThat(item.getValue())
+                      .doesNotContain("Frau M.", REAL_FIRST_NAME, REAL_LAST_NAME, "suchtberatung"));
+      Mockito.clearInvocations(mailService);
+    }
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_ValidateCanonicalConfiguredPlatformName() {
+    bindCanonicalPlatformName("  Independent Platform  ");
+    USER.setLanguageCode(LanguageCode.en);
+
+    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT_WITH_PSEUDONYM, null);
+
+    var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(captor.capture());
+    assertThat(captor.getValue().getMails().get(0).getTemplate())
+        .isEqualTo("inquiry-accepted-notification");
+    org.assertj.core.api.Assertions.assertThat(emailBrand.values("https://app.example.org", null))
+        .containsEntry("platformName", "Independent Platform")
+        .containsEntry("offeringName", "Independent Platform");
+  }
+
+  @Test
+  void sendInquiryAcceptedNotification_Should_NotSendAndReportMissingCanonicalPlatformName() {
+    bindCanonicalPlatformName("  ");
+
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT_WITH_PSEUDONYM, new TenantData(42L, "tenant"));
+
+    verifyNoInteractions(mailService);
+    org.assertj.core.api.Assertions.assertThat(facadeLogCaptor.events())
+        .anySatisfy(
+            event ->
+                org.assertj.core.api.Assertions.assertThat(event.getThrowableProxy().getMessage())
+                    .contains("EMAIL_BRANDING_NAME"));
+    org.assertj.core.api.Assertions.assertThat(TenantContext.getCurrentTenant()).isNull();
+  }
+
+  private void bindCanonicalPlatformName(String name) {
+    try (var context = new AnnotationConfigApplicationContext()) {
+      context
+          .getEnvironment()
+          .getPropertySources()
+          .addFirst(
+              new MapPropertySource(
+                  "mail-test",
+                  Map.of(
+                      "email.branding.name",
+                      name,
+                      "app.base.url",
+                      APPLICATION_BASE_URL,
+                      "multitenancy.enabled",
+                      "false")));
+      context.registerBean(OrisoEmailBrand.class, () -> emailBrand);
+      context.registerBean(EmailNotificationFacade.class, () -> emailNotificationFacade);
+      context.refresh();
+    }
   }
 
   @Test
@@ -744,7 +1051,8 @@ class EmailNotificationFacadeTest {
                     .key("tenantKey")
                     .value("tenantValue")));
 
-    emailNotificationFacade.sendInquiryAcceptedNotification(USER, CONSULTANT, null);
+    emailNotificationFacade.sendInquiryAcceptedNotification(
+        USER, CONSULTANT, new TenantData(1L, "tenant"));
 
     var captor = org.mockito.ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService).sendEmailNotification(captor.capture());

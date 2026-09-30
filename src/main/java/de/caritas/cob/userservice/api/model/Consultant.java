@@ -283,6 +283,16 @@ public class Consultant implements TenantAware, NotificationsAware {
   @Builder.Default
   private Boolean twoFactorRequired = false;
 
+  /** Column default CREATE keeps the old behaviour for every existing counsellor. */
+  @Enumerated(EnumType.STRING)
+  @Column(
+      name = "topic_permission",
+      nullable = false,
+      length = 32,
+      columnDefinition = "varchar(32) default 'CREATE'")
+  @Builder.Default
+  private TopicPermission topicPermission = TopicPermission.CREATE;
+
   /**
    * Whether this counsellor must replace their password before using the account. Set for logins
    * provisioned through the admin API, where the password is shared with at least one other person.
