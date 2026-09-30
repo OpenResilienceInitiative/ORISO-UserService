@@ -193,13 +193,11 @@ public class EmailBrandingResolver {
    * secondaryColor}; {@code theming.accent} is dropped on save and is tracked as
    * OpenResilienceInitiative/ORISO-TenantService#154. Deriving a substitute rose here would hide
    * that gap, so nothing is derived and the mail renders light-only (see the {@code color-scheme:
-   * light only} opt-out in {@code branded-email.html}).
+   * light only} opt-out in canonical generated mail resources).
    *
-   * <p>Once #154 lands, the dark half is: add {@code resolveDarkRenderingAccent(theming)} next to
-   * this method returning {@code firstValid(theming.getAccent())} with a light-accent platform
-   * fallback, carry it as a second component on {@link EmailBranding}, and let {@link
-   * BrandedEmailLayoutRenderer} emit it in a {@code prefers-color-scheme: dark} block alongside the
-   * dark-surface neutrals. Nothing else in this resolver changes.
+   * <p>Once #154 lands, carry a separate light-accent value for dark rendering and update the
+   * canonical frontend mail generator. Keep the renderer and resource generation aligned; no
+   * substitute accent is derived here.
    */
   private String resolveAccentColor(Theming theming) {
     String color = theming == null ? null : EmailColors.firstValid(theming.getPrimaryColor());
