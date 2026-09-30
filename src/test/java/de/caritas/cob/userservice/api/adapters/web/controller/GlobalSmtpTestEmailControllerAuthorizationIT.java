@@ -137,6 +137,21 @@ class GlobalSmtpTestEmailControllerAuthorizationIT {
         .andExpect(jsonPath("$.password").doesNotExist());
   }
 
+  @Test
+  void forbiddenRolesCannotReadTheSavedSettingsProvider() throws Exception {
+    for (var token :
+        List.of(
+            adminToken(1, TENANT_ADMIN),
+            jwt().authorities(new SimpleGrantedAuthority(TECHNICAL_DEFAULT)),
+            jwt().authorities(new SimpleGrantedAuthority(SINGLE_TENANT_ADMIN)))) {
+      mvc.perform(get("/users/system-notification-emails/platform-settings").with(token))
+          .andExpect(status().isForbidden());
+    }
+
+    verifyNoInteractions(platformSmtpSettingsProvider);
+    verifyNoInteractions(globalSmtpTestEmailService);
+  }
+
   private static MockHttpServletRequestBuilder request() {
     return post(ENDPOINT)
         .contentType(MediaType.APPLICATION_JSON)
