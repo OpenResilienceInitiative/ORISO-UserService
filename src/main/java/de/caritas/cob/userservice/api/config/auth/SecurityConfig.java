@@ -318,6 +318,12 @@ public class SecurityConfig {
                 .access(this::isPlatformAdmin)
                 .requestMatchers("/users/system-notification-emails/test")
                 .access(this::isPlatformAdmin)
+                .requestMatchers(
+                    "/users/admin/service-notices/drafts",
+                    "/users/admin/service-notices/drafts/**",
+                    "/service/users/admin/service-notices/drafts",
+                    "/service/users/admin/service-notices/drafts/**")
+                .access(this::isPlatformAdmin)
                 .requestMatchers("/users/chat/{chatId:[0-9]+}/verify")
                 .hasAnyAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers("/users/password/change")
