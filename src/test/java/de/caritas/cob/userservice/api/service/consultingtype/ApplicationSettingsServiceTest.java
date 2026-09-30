@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.service.consultingtype;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import de.caritas.cob.userservice.api.adapters.web.controller.GlobalSmtpTestEmailController;
+import de.caritas.cob.userservice.api.adapters.web.dto.GlobalSmtpTestEmailDTO;
 import de.caritas.cob.userservice.api.config.CacheManagerConfig;
 import de.caritas.cob.userservice.api.config.apiclient.ApplicationSettingsApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
@@ -10,9 +12,14 @@ import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
 import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
+import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.httpheader.HttpHeadersResolver;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
+import de.caritas.cob.userservice.api.service.notification.GlobalSmtpTestEmailService;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.ApiClient;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.ApplicationsettingsControllerApi;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsDTO;
@@ -117,6 +124,136 @@ class ApplicationSettingsServiceTest {
     assertThatThrownBy(() -> applicationSettingsService.getApplicationSettings())
         .isInstanceOf(RestClientException.class)
         .hasMessage("settings down");
+  }
+
+  @Test
+  void diagnosticSettingsOutageReturnsSafeDownstreamError() {
+    controllerApi.smtpException =
+        new RestClientException("private-account@example.org password=private-secret");
+
+    var response = diagnosticController().sendGlobalSmtpTestEmail(diagnosticRequest());
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
+    assertThat(response.getBody().toString()).doesNotContain("private-account", "private-secret");
+    assertThat(controllerApi.smtpCallCount.get()).isEqualTo(1);
+  }
+
+  @Test
+  void strictSnapshotRetainsPartialSavedValuesAndUsesTheTechnicalIdentityOnlyOnce() {
+    var partial = PlatformSmtpSettingsFixture.credentials("", " ");
+    controllerApi.smtpResult = partial;
+
+    assertThat(applicationSettingsService.getGlobalSmtpSettingsSnapshot()).containsSame(partial);
+    assertThat(controllerApi.smtpCallCount.get()).isEqualTo(1);
+    assertThat(identityAuthentication.loginCount.get()).isEqualTo(1);
+    assertThat(apiClient.recordedHeaders).containsEntry(AUTH_HEADER, TECHNICAL_AUTH_VALUE);
+    assertThat(apiClient.recordedHeaders).doesNotContainEntry(AUTH_HEADER, AUTH_VALUE);
+  }
+
+  @Test
+  void strictSnapshotNullPayloadIsAnEmptyConfigurationRatherThanAnOutage() {
+    controllerApi.smtpResult = null;
+
+    assertThat(applicationSettingsService.getGlobalSmtpSettingsSnapshot()).isEmpty();
+    assertThat(controllerApi.smtpCallCount.get()).isEqualTo(1);
+  }
+
+  @Test
+  void diagnosticTechnicalLoginFailureIsSafeDownstreamErrorWithoutCallerFallback() {
+    identityAuthentication.failure =
+        new IllegalStateException("private-account@example.org password=private-secret");
+
+    withCapturedLogs(
+        appender -> {
+          var response = diagnosticController().sendGlobalSmtpTestEmail(diagnosticRequest());
+
+          assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
+          assertThat(response.getBody().toString())
+              .doesNotContain("private-account", "private-secret");
+          assertThat(controllerApi.smtpCallCount.get()).isZero();
+          assertThat(apiClient.recordedHeaders).doesNotContainEntry(AUTH_HEADER, AUTH_VALUE);
+          assertThat(appender.list)
+              .allSatisfy(
+                  event -> {
+                    assertThat(event.getThrowableProxy()).isNull();
+                    assertThat(event.getFormattedMessage())
+                        .doesNotContain("private-account", "private-secret");
+                  });
+        });
+  }
+
+  @Test
+  void strictLookupAvailabilityErrorIsTypedFixedAndDoesNotRetainTheUpstreamCause() {
+    controllerApi.smtpException = new RestClientException("private-secret");
+
+    assertThatThrownBy(applicationSettingsService::getGlobalSmtpSettingsSnapshot)
+        .isInstanceOf(ApplicationSettingsService.SmtpSettingsUnavailableException.class)
+        .hasMessageContaining("Admin Settings are unavailable")
+        .hasMessageNotContaining("private-secret")
+        .hasNoCause();
+  }
+
+  @Test
+  void diagnosticMissingTechnicalConfigurationFailsWithoutCallingCts() {
+    applicationSettingsService =
+        new ApplicationSettingsService(
+            new StubApplicationSettingsApiControllerFactory(controllerApi),
+            securityHeaderSupplier,
+            tenantHeaderSupplier,
+            createIdentityClientConfig(new TechnicalUserConfig()),
+            identityAuthentication);
+
+    var response = diagnosticController().sendGlobalSmtpTestEmail(diagnosticRequest());
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
+    assertThat(controllerApi.smtpCallCount.get()).isZero();
+    assertThat(identityAuthentication.loginCount.get()).isZero();
+  }
+
+  @Test
+  void diagnosticMissingSavedPasswordReturnsNamedConfigurationError() {
+    controllerApi.smtpResult = PlatformSmtpSettingsFixture.credentials("stored-user", " ");
+
+    var response = diagnosticController().sendGlobalSmtpTestEmail(diagnosticRequest());
+
+    assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
+    assertThat(response.getBody().toString())
+        .contains("SMTP password")
+        .doesNotContain("stored-user");
+    assertThat(controllerApi.smtpCallCount.get()).isEqualTo(1);
+  }
+
+  @Test
+  void diagnosticLookupFailureDoesNotLogProviderPayloadOrThrowable() {
+    withCapturedLogs(
+        appender -> {
+          controllerApi.smtpException =
+              new RestClientException("private-account@example.org password=private-secret");
+
+          diagnosticController().sendGlobalSmtpTestEmail(diagnosticRequest());
+
+          assertThat(appender.list)
+              .allSatisfy(
+                  event -> {
+                    assertThat(event.getFormattedMessage())
+                        .doesNotContain("private-account", "private-secret");
+                    assertThat(event.getThrowableProxy()).isNull();
+                  });
+        });
+  }
+
+  private GlobalSmtpTestEmailController diagnosticController() {
+    var renderer = org.mockito.Mockito.mock(OrisoEmailRenderer.class);
+    var brand = org.mockito.Mockito.mock(OrisoEmailBrand.class);
+    return new GlobalSmtpTestEmailController(
+        new GlobalSmtpTestEmailService(
+            renderer, brand, new PlatformSmtpSettingsProvider(applicationSettingsService)));
+  }
+
+  private static GlobalSmtpTestEmailDTO diagnosticRequest() {
+    var request = new GlobalSmtpTestEmailDTO();
+    request.setRecipientEmail("recipient@example.org");
+    return request;
   }
 
   // Super-admin SMTP test flow needs fully populated credentials from settings service.
@@ -308,10 +445,7 @@ class ApplicationSettingsServiceTest {
                     assertThat(event.getFormattedMessage())
                         .contains("SMTP credentials")
                         .contains("403");
-                    // Review 3893332413: the exception itself (root cause + stack trace) must
-                    // reach the log, not just its message.
-                    assertThat(event.getThrowableProxy()).isNotNull();
-                    assertThat(event.getThrowableProxy().getClassName()).contains("Forbidden");
+                    assertThat(event.getThrowableProxy()).isNull();
                   });
         });
   }
@@ -331,9 +465,7 @@ class ApplicationSettingsServiceTest {
                     assertThat(event.getFormattedMessage())
                         .contains("SMTP credentials")
                         .contains("RestClientException");
-                    assertThat(event.getThrowableProxy()).isNotNull();
-                    assertThat(event.getThrowableProxy().getClassName())
-                        .contains("RestClientException");
+                    assertThat(event.getThrowableProxy()).isNull();
                   });
         });
   }

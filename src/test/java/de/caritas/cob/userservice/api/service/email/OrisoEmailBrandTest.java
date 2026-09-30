@@ -1,25 +1,139 @@
 package de.caritas.cob.userservice.api.service.email;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
-import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
+import java.io.IOException;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.support.ResourcePropertySource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class OrisoEmailBrandTest {
 
+  private final EmailBrandingResolver brandingResolver =
+      new EmailBrandingResolver(
+          mock(TenantService.class),
+          mock(TenantTemplateSupplier.class),
+          "Wayfinder",
+          "",
+          "https://app.example.org");
+
   private final OrisoEmailBrand brand =
-      new OrisoEmailBrand(
-          SenderOrganisationFixture.platformOwner(),
-          EmailBrandingFixture.platform("https://app.example.org"));
+      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner(), brandingResolver);
+
+  @BeforeEach
+  void configurePlatformName() {
+    ReflectionTestUtils.setField(brandingResolver, "platformName", "Wayfinder");
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = {" ", "\t"})
+  void missingPlatformNameRejectsMailBeforeInventingBrandValues(String name) {
+    ReflectionTestUtils.setField(brandingResolver, "platformName", name);
+
+    assertThatThrownBy(() -> brand.valuesForTenant("https://app.example.org", null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
+  @Test
+  void actualApplicationConfigurationUsesTheCanonicalNameInsteadOfTheLegacyKey() {
+    context()
+        .withPropertyValues(
+            "EMAIL_BRANDING_NAME=Wayfinder", "email.brand.platform-name=Legacy platform")
+        .run(
+            context ->
+                assertThat(
+                        context
+                            .getBean(OrisoEmailBrand.class)
+                            .valuesForTenant("https://app.example.org", null))
+                    .containsEntry("platformName", "Wayfinder")
+                    .containsEntry("offeringName", "Wayfinder"));
+  }
+
+  @Test
+  void aLegacyNameCannotReplaceMissingCanonicalConfiguration() {
+    context()
+        .withPropertyValues("EMAIL_BRANDING_NAME=", "email.brand.platform-name=Legacy platform")
+        .run(
+            context ->
+                assertThatThrownBy(
+                        () ->
+                            context
+                                .getBean(OrisoEmailBrand.class)
+                                .valuesForTenant("https://app.example.org", null))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("EMAIL_BRANDING_NAME"));
+  }
+
+  @ParameterizedTest
+  @EnumSource(OrisoEmailRenderer.Tone.class)
+  void contactFootersUseTheConfiguredNameForEveryCurrentLanguage(OrisoEmailRenderer.Tone tone) {
+    ReflectionTestUtils.setField(brandingResolver, "platformName", "  Wayfinder  ");
+    var values = brand.valuesForTenant("https://app.example.org", null);
+    values.put("consultantName", "Maintained centre");
+    values.put("consultantPhone", "+49 30 123");
+    values.put("consultantEmail", "centre@example.org");
+    values.put("consultantHours", "");
+    values.put("messageUrl", "https://app.example.org/sessions/user/view/session/42");
+
+    var email = new OrisoEmailRenderer().render("beraterin-kontakt", tone, values);
+
+    assertThat(values)
+        .containsEntry("platformName", "Wayfinder")
+        .containsEntry("offeringName", "Wayfinder");
+    assertThat(email.html()).contains("Wayfinder").doesNotContain("Online-Beratung");
+    assertThat(email.text()).contains("Wayfinder").doesNotContain("Online-Beratung");
+    assertThat(email.subject()).doesNotContain("Online-Beratung", "Wayfinder");
+  }
+
+  private static ApplicationContextRunner context() {
+    return new ApplicationContextRunner()
+        .withBean(
+            PropertySourcesPlaceholderConfigurer.class, PropertySourcesPlaceholderConfigurer::new)
+        .withUserConfiguration(EmailBrandingResolver.class)
+        .withPropertyValues("app.base.url=https://app.example.org")
+        .withInitializer(
+            context -> {
+              context
+                  .getBeanFactory()
+                  .registerSingleton("tenantService", mock(TenantService.class));
+              context
+                  .getBeanFactory()
+                  .registerSingleton("tenantTemplateSupplier", mock(TenantTemplateSupplier.class));
+              try {
+                context
+                    .getEnvironment()
+                    .getPropertySources()
+                    .addLast(
+                        new ResourcePropertySource(
+                            new ClassPathResource("application.properties")));
+              } catch (IOException failure) {
+                throw new IllegalStateException(failure);
+              }
+            })
+        .withBean(SenderOrganisationResolver.class, SenderOrganisationFixture::platformOwner)
+        .withBean(OrisoEmailBrand.class);
+  }
 
   @Test
   void keepsATenantColourThatCarriesWhiteText() {
@@ -73,11 +187,8 @@ class OrisoEmailBrandTest {
   /** Frank, 2026-09-23: nothing entered means nothing shown — no built-in sample organisation. */
   @Test
   void theSenderBlockStaysBlank_When_thePlatformOwnerEnteredNothing() {
-    var values =
-        new OrisoEmailBrand(
-                SenderOrganisationFixture.nobody(),
-                EmailBrandingFixture.platform("https://app.example.org"))
-            .valuesForTenant("https://app.example.org", null);
+    var unconfigured = new OrisoEmailBrand(SenderOrganisationFixture.nobody(), brandingResolver);
+    var values = unconfigured.valuesForTenant("https://app.example.org", null);
 
     assertThat(values)
         .containsEntry("orgName", "")
