@@ -50,11 +50,11 @@
 		<jakarta.ws.rs-api.version>3.1.0</jakarta.ws.rs-api.version>
 		<javax.ws.rs-api.version>2.1.1</javax.ws.rs-api.version>
 		<json-smart.version>2.6.0</json-smart.version>
-		<!-- Spring Boot 4.0.7 manages Jackson 2.21.4 and 3.1.4; 2.21.6 and 3.1.6
-		     fix CVE-2026-68497. Override both BOMs to keep their modules aligned.
-		     Drop these overrides once the Boot BOM manages the fixed versions. -->
-		<jackson-2-bom.version>2.21.6</jackson-2-bom.version>
-		<jackson-bom.version>3.1.6</jackson-bom.version>
+		<!-- Spring Boot 4.0.7 manages Jackson 2.21.4 and 3.1.4; 2.21.7 and 3.1.7 fix
+		     CVE-2026-68497, CVE-2026-89407 and CVE-2026-89425. Keep modules aligned
+		     via both BOMs; drop these overrides once Boot manages the fixed versions. -->
+		<jackson-2-bom.version>2.21.7</jackson-2-bom.version>
+		<jackson-bom.version>3.1.7</jackson-bom.version>
 		<!-- Spring Boot 4.0.7 still manages Netty 4.2.15; 4.2.17 fixes CVE-2026-75595
 		     in addition to the vulnerabilities already fixed by 4.2.16 (image CVE gate). -->
 		<netty.version>4.2.17.Final</netty.version>
