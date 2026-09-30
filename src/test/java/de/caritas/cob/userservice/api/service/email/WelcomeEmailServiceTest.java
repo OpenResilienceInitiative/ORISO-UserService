@@ -42,7 +42,7 @@ class WelcomeEmailServiceTest {
 
   private final PlatformSmtpSettingsProvider.Settings smtp =
       new PlatformSmtpSettingsProvider.Settings(
-          "smtp.example.org", 587, false, "user", "secret", "no-reply@example.org");
+          "smtp.example.org", 587, false, "user", "secret", "no-reply@example.org", null);
 
   @BeforeEach
   void setUp() {
