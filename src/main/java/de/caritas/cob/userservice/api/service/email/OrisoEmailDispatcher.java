@@ -1,9 +1,9 @@
 package de.caritas.cob.userservice.api.service.email;
 
-import de.caritas.cob.userservice.api.service.notification.SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings;
 import jakarta.mail.Message;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -16,33 +16,49 @@ public class OrisoEmailDispatcher {
    * @return whether the mail was handed to the SMTP server
    */
   public boolean send(
-      SupervisorAddedEmailSettings smtp, String recipient, OrisoEmailRenderer.RenderedEmail email) {
+      PlatformSmtpSettingsProvider.Settings smtp,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email) {
+    try {
+      sendOrThrow(smtp, recipient, email);
+      return true;
+    } catch (RuntimeException exception) {
+      // Existing best-effort callers use a boolean; their send failure is still observable.
+      return false;
+    }
+  }
+
+  /** Preserves an ambiguous SMTP outcome for callers that must never replay blindly. */
+  public void sendOrThrow(
+      PlatformSmtpSettingsProvider.Settings smtp,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email) {
+    sendOrThrow(smtp, recipient, email, null);
+  }
+
+  /** The correlation header lets an operator match an uncertain reply to one stored claim. */
+  public void sendOrThrow(
+      PlatformSmtpSettingsProvider.Settings smtp,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email,
+      UUID correlationId) {
     try {
       MimeMessage message =
           new MimeMessage(
               OrisoSmtpTransport.session(
-                  smtp.getHost(),
-                  smtp.getPort(),
-                  smtp.isSecure(),
-                  smtp.getUsername(),
-                  smtp.getPassword()));
-      message.setFrom(new InternetAddress(smtp.getFrom()));
+                  smtp.host(), smtp.port(), smtp.secure(), smtp.username(), smtp.password()));
+      message.setFrom(new InternetAddress(smtp.from()));
       message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
       // UTF-8 rather than the platform default: these subjects carry umlauts.
       message.setSubject(email.subject(), "UTF-8");
       message.setContent(OrisoEmailMime.alternative(email));
+      if (correlationId != null) {
+        message.setHeader("X-ORISO-Delivery-ID", correlationId.toString());
+      }
       OrisoSmtpTransport.send(message);
-      return true;
     } catch (Exception exception) {
-      // A mail that cannot be sent must not fail the operation that triggered
-      // it — a registration that rolls back because the welcome mail bounced
-      // would be a far worse outcome than a missing mail.
-      log.error(
-          "Failed to send '{}' to a recipient of tenant SMTP host {}",
-          email.subject(),
-          smtp.getHost(),
-          exception);
-      return false;
+      log.error("Platform mail send failed: {}", exception.getClass().getSimpleName());
+      throw new IllegalStateException("Platform SMTP outcome is uncertain", exception);
     }
   }
 }

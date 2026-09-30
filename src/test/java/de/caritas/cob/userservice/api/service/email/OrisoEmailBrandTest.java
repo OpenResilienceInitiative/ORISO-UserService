@@ -1,15 +1,153 @@
 package de.caritas.cob.userservice.api.service.email;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
+import java.io.IOException;
+import java.util.Map;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.annotation.AnnotationConfigApplicationContext;
+import org.springframework.core.env.MapPropertySource;
+import org.springframework.core.io.ClassPathResource;
+import org.springframework.core.io.support.ResourcePropertySource;
+import org.springframework.test.util.ReflectionTestUtils;
 
 class OrisoEmailBrandTest {
 
   private final OrisoEmailBrand brand =
       new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
+
+  @BeforeEach
+  void configurePlatformName() {
+    ReflectionTestUtils.setField(brand, "platformName", "Independent Platform");
+  }
+
+  @Test
+  void usesTheCanonicalConfiguredNameInTheSharedFooter() {
+    try (var context = canonicalContext("  Independent Platform  ")) {
+      assertThat(context.getBean(OrisoEmailBrand.class).values("https://app.example.org", null))
+          .containsEntry("platformName", "Independent Platform")
+          .containsEntry("offeringName", "Independent Platform");
+    }
+  }
+
+  @Test
+  void rejectsAMissingCanonicalPlatformNameRatherThanInventingOne() {
+    for (String name : new String[] {null, "", "  "}) {
+      try (var context = canonicalContext(name)) {
+        assertThatThrownBy(
+                () ->
+                    context.getBean(OrisoEmailBrand.class).values("https://app.example.org", null))
+            .isInstanceOf(IllegalStateException.class)
+            .hasMessageContaining("EMAIL_BRANDING_NAME");
+      }
+    }
+  }
+
+  private AnnotationConfigApplicationContext canonicalContext(String name) {
+    var context = new AnnotationConfigApplicationContext();
+    context
+        .getEnvironment()
+        .getPropertySources()
+        .addFirst(
+            new MapPropertySource(
+                "mail-test", name == null ? Map.of() : Map.of("email.branding.name", name)));
+    context.registerBean(
+        OrisoEmailBrand.class,
+        () -> new OrisoEmailBrand(SenderOrganisationFixture.platformOwner()));
+    context.refresh();
+    return context;
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = {" ", "\t"})
+  void missingPlatformNameRejectsMailBeforeInventingBrandValues(String name) {
+    ReflectionTestUtils.setField(brand, "platformName", name);
+
+    assertThatThrownBy(() -> brand.values("https://app.example.org", null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
+  @Test
+  void actualApplicationConfigurationUsesTheCanonicalNameInsteadOfTheLegacyKey() {
+    context()
+        .withPropertyValues(
+            "EMAIL_BRANDING_NAME=Wayfinder", "email.brand.platform-name=Legacy platform")
+        .run(
+            context ->
+                assertThat(
+                        context
+                            .getBean(OrisoEmailBrand.class)
+                            .values("https://app.example.org", null))
+                    .containsEntry("platformName", "Wayfinder")
+                    .containsEntry("offeringName", "Wayfinder"));
+  }
+
+  @Test
+  void aLegacyNameCannotReplaceMissingCanonicalConfiguration() {
+    context()
+        .withPropertyValues("EMAIL_BRANDING_NAME=", "email.brand.platform-name=Legacy platform")
+        .run(
+            context ->
+                assertThatThrownBy(
+                        () ->
+                            context
+                                .getBean(OrisoEmailBrand.class)
+                                .values("https://app.example.org", null))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("EMAIL_BRANDING_NAME"));
+  }
+
+  @ParameterizedTest
+  @EnumSource(OrisoEmailRenderer.Tone.class)
+  void contactFootersUseTheConfiguredNameForEveryCurrentLanguage(OrisoEmailRenderer.Tone tone) {
+    ReflectionTestUtils.setField(brand, "platformName", "  Wayfinder  ");
+    var values = brand.values("https://app.example.org", null);
+    values.put("consultantName", "Maintained centre");
+    values.put("consultantPhone", "+49 30 123");
+    values.put("consultantEmail", "centre@example.org");
+    values.put("consultantHours", "");
+    values.put("messageUrl", "https://app.example.org/sessions/user/view/session/42");
+
+    var email = new OrisoEmailRenderer().render("beraterin-kontakt", tone, values);
+
+    assertThat(values)
+        .containsEntry("platformName", "Wayfinder")
+        .containsEntry("offeringName", "Wayfinder");
+    assertThat(email.html()).contains("Wayfinder").doesNotContain("Online-Beratung");
+    assertThat(email.text()).contains("Wayfinder").doesNotContain("Online-Beratung");
+    assertThat(email.subject()).doesNotContain("Online-Beratung", "Wayfinder");
+  }
+
+  private static ApplicationContextRunner context() {
+    return new ApplicationContextRunner()
+        .withInitializer(
+            context -> {
+              try {
+                context
+                    .getEnvironment()
+                    .getPropertySources()
+                    .addLast(
+                        new ResourcePropertySource(
+                            new ClassPathResource("application.properties")));
+              } catch (IOException failure) {
+                throw new IllegalStateException(failure);
+              }
+            })
+        .withBean(SenderOrganisationResolver.class, SenderOrganisationFixture::platformOwner)
+        .withBean(OrisoEmailBrand.class);
+  }
 
   @Test
   void keepsATenantColourThatCarriesWhiteText() {
@@ -45,9 +183,11 @@ class OrisoEmailBrandTest {
     var values = brand.values("https://app.example.org/", "#1c4f8f");
 
     assertThat(values.get("appUrl")).isEqualTo("https://app.example.org");
+    assertThat(values.get("settingsUrl"))
+        .isEqualTo("https://app.example.org/profile/einstellungen");
     assertThat(values.get("privacyUrl")).isEqualTo("https://app.example.org/datenschutz");
     assertThat(values.get("unsubscribeUrl"))
-        .isEqualTo("https://app.example.org/profile/settings/notifications");
+        .isEqualTo("https://app.example.org/profile/einstellungen/email");
   }
 
   @Test
@@ -63,9 +203,9 @@ class OrisoEmailBrandTest {
   /** Frank, 2026-09-23: nothing entered means nothing shown — no built-in sample organisation. */
   @Test
   void theSenderBlockStaysBlank_When_thePlatformOwnerEnteredNothing() {
-    var values =
-        new OrisoEmailBrand(SenderOrganisationFixture.nobody())
-            .values("https://app.example.org", null);
+    var emptySenderBrand = new OrisoEmailBrand(SenderOrganisationFixture.nobody());
+    ReflectionTestUtils.setField(emptySenderBrand, "platformName", "Independent Platform");
+    var values = emptySenderBrand.values("https://app.example.org", null);
 
     assertThat(values)
         .containsEntry("orgName", "")

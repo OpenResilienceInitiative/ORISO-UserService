@@ -6,10 +6,13 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
@@ -21,6 +24,10 @@ import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.applicationsettingsservice.generated.web.model.ApplicationSettingsSmtpCredentialsDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
+import jakarta.mail.Message;
+import jakarta.mail.MessagingException;
+import jakarta.mail.Transport;
 import java.time.Instant;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -32,6 +39,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
@@ -333,6 +341,35 @@ class MagicLinkLoginServiceTest {
   // ── sendMagicLinkEmailSafely — happy path entered ────────────────────────
 
   @Test
+  void requestMagicLink_Should_KeepSmtpLookupFailurePrivate_WithoutCreatingLoginToken() {
+    when(userService.findUserByUsername("testuser"))
+        .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
+    String smtpFailure = "550 real@example.com mailbox unavailable for testuser";
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
+        .thenThrow(new IllegalStateException(smtpFailure));
+
+    try (var logs = LogbackCaptor.forClass(MagicLinkLoginService.class)) {
+      assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+          .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+      assertThat(logs.events()).isNotEmpty();
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain("testuser", "real@example.com", "mailbox unavailable");
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+      assertThat(logs.contains(Level.WARN, "Platform SMTP unavailable for magic link mail"))
+          .isTrue();
+      assertThat(logs.messages(Level.WARN))
+          .anyMatch(message -> message.contains("(IllegalStateException)"));
+    }
+
+    verify(applicationSettingsService).getGlobalSmtpSettingsSnapshot();
+    verifyNoInteractions(oneTimeTokenStore, emailRenderer, emailBrand);
+  }
+
+  @Test
   @SuppressWarnings("unchecked")
   void requestMagicLink_Should_AttemptSmtpSend_When_ValidSmtpSettingsReturned() {
     // resolveGlobalSmtpSettings returns present → sendMagicLinkEmailSafely entered,
@@ -341,7 +378,7 @@ class MagicLinkLoginServiceTest {
     User user = validUserWithMagicLinkEnabled();
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
     ApplicationSettingsSmtpCredentialsDTO credentials = smtpCredentials("user", "pass");
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(credentials));
     Map<String, String> brandValues = new HashMap<>();
     brandValues.put("appUrl", "https://app.example.org");
@@ -349,11 +386,38 @@ class MagicLinkLoginServiceTest {
     when(emailRenderer.render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("subject", "<html></html>", "text"));
 
-    assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
-        .doesNotThrowAnyException();
+    String smtpReply = "550 real@example.com mailbox unavailable";
+    try (var logs = LogbackCaptor.forClass(MagicLinkLoginService.class);
+        MockedStatic<Transport> transport = mockStatic(Transport.class)) {
+      transport
+          .when(() -> Transport.send(any(Message.class)))
+          .thenThrow(new MessagingException(smtpReply));
+      assertThatCode(() -> magicLinkLoginService.requestMagicLink("testuser"))
+          .doesNotThrowAnyException();
+      transport.verify(() -> Transport.send(any(Message.class)));
+      assertThat(logs.events()).isNotEmpty();
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain("testuser", "real@example.com", "mailbox unavailable");
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+      var failure =
+          logs.events().stream()
+              .filter(
+                  event ->
+                      event.getFormattedMessage().startsWith("Magic link email dispatch failed"))
+              .findFirst()
+              .orElseThrow();
+      assertThat(failure.getLevel()).isEqualTo(Level.WARN);
+      assertThat(failure.getFormattedMessage()).contains("(MessagingException)");
+      assertThat(failure.getFormattedMessage())
+          .doesNotContain("real@example.com", "mailbox unavailable", smtpReply);
+    }
 
     verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
-    verify(applicationSettingsService).getGlobalSmtpCredentials();
+    verify(applicationSettingsService).getGlobalSmtpSettingsSnapshot();
   }
 
   // ── consumeMagicLink — happy path returns provider-neutral session ────────
@@ -417,7 +481,7 @@ class MagicLinkLoginServiceTest {
   void requestMagicLink_Should_NotIssueToken_When_AdminSmtpIsDisabled() {
     when(userService.findUserByUsername("testuser"))
         .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(smtpCredentials("user", "pass").globalSmtpEnabled(false)));
 
     assertThat(magicLinkLoginService.requestMagicLink("testuser"))
@@ -439,7 +503,7 @@ class MagicLinkLoginServiceTest {
                 smtpCredentials("user", "pass").globalSmtpSecure(null),
                 smtpCredentials(" ", "pass"),
                 smtpCredentials("user", " ")));
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenAnswer(invocation -> Optional.of(incomplete.remove(0)));
 
     for (int index = 0; index < 6; index++) {
@@ -456,7 +520,7 @@ class MagicLinkLoginServiceTest {
   void requestMagicLink_Should_IssueToken_When_TechnicalSettingsAreComplete() {
     when(userService.findUserByUsername("testuser"))
         .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     assertThat(magicLinkLoginService.requestMagicLink("testuser"))
@@ -470,7 +534,7 @@ class MagicLinkLoginServiceTest {
   void requestMagicLink_Should_NotIssueToken_When_AuthenticatedCredentialsAreUnavailable() {
     when(userService.findUserByUsername("testuser"))
         .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
-    when(applicationSettingsService.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot()).thenReturn(Optional.empty());
 
     // Unavailable SMTP must not be observable to the caller — the result stays ACCEPTED so the
     // endpoint cannot be used to enumerate accounts; only the token issue is skipped.
