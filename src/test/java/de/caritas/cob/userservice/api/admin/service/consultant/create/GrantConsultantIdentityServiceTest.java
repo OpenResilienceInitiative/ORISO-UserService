@@ -20,7 +20,8 @@ import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.adapters.web.dto.GrantConsultantIdentityDTO;
-import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.admin.service.consultant.validation.ConsultantTopicAgencyCompatibilityValidator;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -86,7 +87,7 @@ class GrantConsultantIdentityServiceTest {
   @Mock private ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService;
   @Mock private UserHelper userHelper;
 
-  @Mock private AdminCallerScope adminCallerScope;
+  @Mock private AdminScope adminScope;
 
   @Mock
   private ConsultantTopicAgencyCompatibilityValidator consultantTopicAgencyCompatibilityValidator;
@@ -140,8 +141,8 @@ class GrantConsultantIdentityServiceTest {
     var admin = validAdmin();
     when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(admin));
     doThrow(new ForbiddenException("out of scope"))
-        .when(adminCallerScope)
-        .assertMayActOnAdmin(admin);
+        .when(adminScope)
+        .assertMay(Target.admin(ADMIN_ID));
 
     assertThrows(
         ForbiddenException.class,
@@ -154,9 +155,10 @@ class GrantConsultantIdentityServiceTest {
   @Test
   void refuseBeforeConflictLookup_When_callerMayNotUseAgencies() {
     when(adminRepository.findById(ADMIN_ID)).thenReturn(Optional.of(validAdmin()));
-    doThrow(new ForbiddenException("out of scope"))
-        .when(adminCallerScope)
-        .assertMayUseAgencies(dto.getAgencyIds());
+    org.mockito.Mockito.lenient()
+        .doThrow(new ForbiddenException("out of scope"))
+        .when(adminScope)
+        .assertMay(Target.agencies(dto.getAgencyIds()));
 
     assertThrows(
         ForbiddenException.class,

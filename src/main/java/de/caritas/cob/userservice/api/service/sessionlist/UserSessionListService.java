@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.service.sessionlist;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.UserChatDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserSessionResponseDTO;
-import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.matrix.MatrixRoomMembershipProvider;
 import de.caritas.cob.userservice.api.service.session.SessionService;
@@ -106,13 +105,12 @@ public class UserSessionListService {
             .map(UserChatDTO::getId)
             .collect(Collectors.toSet());
 
+    // Only groups the client belongs to (#1237). A self-help group is joined through its invite
+    // link first; it is not readable by id for every client of every Träger.
     return candidates.stream()
         .filter(UserSessionListService::hasChat)
-        .filter(
-            candidate ->
-                candidate.getChat().getConversationType() == ConversationType.SELF_HELP
-                    || assignedChatIds.contains(candidate.getChat().getId()))
-        .toList();
+        .filter(candidate -> assignedChatIds.contains(candidate.getChat().getId()))
+        .collect(Collectors.toCollection(ArrayList::new));
   }
 
   private static boolean hasChat(UserSessionResponseDTO candidate) {
