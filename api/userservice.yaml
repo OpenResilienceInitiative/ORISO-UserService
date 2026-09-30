@@ -163,6 +163,57 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/enquiry/permission:
+    get:
+      tags:
+        - user-controller
+      summary: 'Check whether the authenticated asker may send their first enquiry before submitting an encrypted Matrix event [Authorization: Role: user]'
+      operationId: checkEnquiryPermission
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        204:
+          description: NO CONTENT - first enquiry may be sent; finalization checks permission again
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+        400:
+          description: BAD REQUEST - session is missing, belongs to another asker, or is anonymous
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - invalid role or AVV does not permit new counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
+        409:
+          description: CONFLICT - enquiry already written or session is no longer open for an enquiry
+        502:
+          description: BAD GATEWAY - AVV owner unavailable or response invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
+      security:
+        - Bearer: [ ]
   /users/sessions/{sessionId}/enquiry/new:
     post:
       tags:
@@ -2810,6 +2861,15 @@ components:
           maxLength: 64
           example: "motif-24"
           description: Id of the chosen counsellor motif; only set together with avatarKind = ICON.
+
+    DpaPolicyErrorDTO:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          enum: [DPA_NEW_COUNSELLING_NOT_ALLOWED, DPA_POLICY_UNAVAILABLE]
 
     EnquiryMessageDTO:
       type: object

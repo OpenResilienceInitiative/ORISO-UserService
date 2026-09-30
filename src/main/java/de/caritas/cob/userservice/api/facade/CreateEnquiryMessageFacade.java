@@ -57,14 +57,7 @@ public class CreateEnquiryMessageFacade {
   public CreateEnquiryMessageResponseDTO createEnquiryMessage(EnquiryData enquiryData) {
     try {
       Session session =
-          fetchSessionForEnquiryMessage(enquiryData.getSessionId(), enquiryData.getUser());
-      checkIfNotAnonymousEnquiry(session);
-      checkIfEnquiryMessageIsAlreadyWrittenForSession(session);
-      // INITIAL has a room but no first enquiry; NEW is still unaccepted counselling.
-      if (session.getStatus() == SessionStatus.INITIAL
-          || session.getStatus() == SessionStatus.NEW) {
-        dpaPolicy.requireForAgency(session.getAgencyId());
-      }
+          validateEnquiryPermission(enquiryData.getSessionId(), enquiryData.getUser());
 
       List<ConsultantAgency> agencyList = resolveConsultantAgenciesForEnquiry(session);
       return createMatrixEnquiryMessage(enquiryData, session, agencyList);
@@ -72,6 +65,26 @@ public class CreateEnquiryMessageFacade {
       log.error("CreateEnquiryMessageFacade error: ", exception);
       throw new InternalServerErrorException(exception.getMessage(), exception);
     }
+  }
+
+  public void checkEnquiryPermission(Long sessionId, User user) {
+    var session = validateEnquiryPermission(sessionId, user);
+    if (session.getStatus() != SessionStatus.INITIAL
+        && session.getStatus() != SessionStatus.NEW
+        && session.getStatus() != SessionStatus.IN_PROGRESS) {
+      throw new ConflictException("Session is no longer open for an enquiry");
+    }
+  }
+
+  private Session validateEnquiryPermission(Long sessionId, User user) {
+    var session = fetchSessionForEnquiryMessage(sessionId, user);
+    checkIfNotAnonymousEnquiry(session);
+    checkIfEnquiryMessageIsAlreadyWrittenForSession(session);
+    // INITIAL has a room but no first enquiry; NEW is still unaccepted counselling.
+    if (session.getStatus() == SessionStatus.INITIAL || session.getStatus() == SessionStatus.NEW) {
+      dpaPolicy.requireForAgency(session.getAgencyId());
+    }
+    return session;
   }
 
   private CreateEnquiryMessageResponseDTO createMatrixEnquiryMessage(

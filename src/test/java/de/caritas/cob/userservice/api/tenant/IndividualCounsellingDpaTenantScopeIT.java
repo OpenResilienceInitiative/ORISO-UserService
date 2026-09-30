@@ -148,6 +148,62 @@ class IndividualCounsellingDpaTenantScopeIT {
   }
 
   @Test
+  void firstEnquiryPreflightCannotLoadAnOwnedSessionFromAnotherTenantOrReadItsDpa()
+      throws Exception {
+    var ownerReads = new java.util.concurrent.atomic.AtomicInteger();
+    when(identity.login(anyString(), anyString()))
+        .thenReturn(new IdentityLogin("synthetic-service-token", 60, 60, "synthetic-refresh"));
+    downstream = MockRestServiceServer.bindTo(transport).build();
+    downstream
+        .expect(ExpectedCount.manyTimes(), anything())
+        .andRespond(
+            request -> {
+              var path = request.getURI().getPath();
+              String body;
+              if (path.equals("/tenant/public/single") || path.equals("/tenant/public/id/41")) {
+                body = "{\"id\":41,\"subdomain\":\"synthetic41\"}";
+              } else if (path.endsWith("/agencies/420")) {
+                body = "[{\"id\":420,\"tenantId\":42,\"consultingType\":1}]";
+              } else if (path.equals("/tenantadmin/42/dpa/gate")) {
+                ownerReads.incrementAndGet();
+                body = "{\"dpaPublished\":true,\"dpaSigned\":true}";
+              } else {
+                throw new AssertionError("Unexpected external operation: " + path);
+              }
+              return withSuccess(body, MediaType.APPLICATION_JSON).createResponse(request);
+            });
+    var caller = fixtures.adviceSeeker(41);
+    // The asker id matches, so only the real tenant boundary can hide this foreign row.
+    var foreignSession = new de.caritas.cob.userservice.api.model.Session();
+    foreignSession.setUser(caller);
+    foreignSession.setTenantId(42L);
+    foreignSession.setAgencyId(420L);
+    foreignSession.setConsultingTypeId(1);
+    foreignSession.setStatus(de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL);
+    foreignSession.setRegistrationType(
+        de.caritas.cob.userservice.api.model.Session.RegistrationType.REGISTERED);
+    foreignSession.setPostcode("12345");
+    foreignSession.setLanguageCode(com.neovisionaries.i18n.LanguageCode.de);
+    foreignSession.setTeamSession(false);
+    foreignSession.setIsConsultantDirectlySet(false);
+    foreignSession.setMatrixRoomId("!synthetic-foreign-initial:synthetic.oriso.test");
+    createdSessionId = Tenants.in(42L, () -> sessions.save(foreignSession)).getId();
+    when(jwtDecoder.decode("synthetic-token"))
+        .thenReturn(
+            Jwt.withTokenValue("synthetic-token")
+                .header("alg", "none")
+                .subject(caller.getUserId())
+                .claim("username", caller.getUsername())
+                .claim("tenantId", 41L)
+                .claim("realm_access", Map.of("roles", List.of("user")))
+                .build());
+    var result = send("GET", "/users/sessions/" + createdSessionId + "/enquiry/permission", "");
+    assertEquals(400, result.statusCode(), result.body());
+    assertEquals(0, ownerReads.get());
+    org.mockito.Mockito.verifyNoInteractions(matrix);
+  }
+
+  @Test
   void createdSessionRemainsAccessibleInItsServingTenantAfterTheTechnicalOwnerRead()
       throws Exception {
     when(identity.login(anyString(), anyString()))

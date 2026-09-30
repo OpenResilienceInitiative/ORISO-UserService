@@ -150,6 +150,7 @@ class AssignEnquiryFacadeTest {
     USER_WITH_MATRIX_ID.setMatrixUserId(null);
     USER_WITH_MATRIX_ID.setUsername(USERNAME);
     CONSULTANT_WITH_AGENCY.setMatrixUserId(null);
+    CONSULTANT_WITH_AGENCY.setTenantId(null);
     ANONYMOUS_ENQUIRY_WITHOUT_CONSULTANT.setUser(null);
 
     TenantContext.clear();

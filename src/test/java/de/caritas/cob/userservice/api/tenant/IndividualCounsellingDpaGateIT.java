@@ -94,6 +94,8 @@ class IndividualCounsellingDpaGateIT {
   private boolean requireTechnicalOwnerHeader;
   private long agencyTenant = SERVING_TENANT;
   private int ownerStatus = 200;
+  private final java.util.concurrent.atomic.AtomicInteger ownerReads =
+      new java.util.concurrent.atomic.AtomicInteger();
   private String otherTenantGate = "{\"dpaPublished\":true,\"dpaSigned\":false}";
   private String gate =
       """
@@ -191,10 +193,12 @@ class IndividualCounsellingDpaGateIT {
                     .createResponse(request);
               }
               if (path.equals("/tenantadmin/42/dpa/gate")) {
+                ownerReads.incrementAndGet();
                 return withSuccess(otherTenantGate, MediaType.APPLICATION_JSON)
                     .createResponse(request);
               }
               if (path.equals("/tenantadmin/41/dpa/gate")) {
+                ownerReads.incrementAndGet();
                 if (ownerStatus != 200) {
                   return org.springframework.test.web.client.response.MockRestResponseCreators
                       .withStatus(org.springframework.http.HttpStatus.valueOf(ownerStatus))
@@ -593,6 +597,15 @@ class IndividualCounsellingDpaGateIT {
     org.junit.jupiter.api.Assertions.assertEquals(403, result.statusCode(), result.body());
     org.junit.jupiter.api.Assertions.assertTrue(
         result.body().contains("DPA_NEW_COUNSELLING_NOT_ALLOWED"), result.body());
+    org.mockito.Mockito.verify(identityAuthentication, org.mockito.Mockito.never())
+        .createUser(
+            org.mockito.ArgumentMatchers.any(
+                de.caritas.cob.userservice.api.adapters.web.dto.UserDTO.class));
+    org.mockito.Mockito.verify(matrix, org.mockito.Mockito.never())
+        .createUser(
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString(),
+            org.mockito.ArgumentMatchers.anyString());
   }
 
   @org.junit.jupiter.params.ParameterizedTest
@@ -650,6 +663,218 @@ class IndividualCounsellingDpaGateIT {
     org.junit.jupiter.api.Assertions.assertEquals(403, result.statusCode(), result.body());
     org.junit.jupiter.api.Assertions.assertTrue(
         result.body().contains("DPA_NEW_COUNSELLING_NOT_ALLOWED"), result.body());
+  }
+
+  @Test
+  void permittedFirstEnquiryPreflightIsBodylessUncachedAndFinalizationRechecksExpiry()
+      throws Exception {
+    var session = storedSession(de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL);
+    var expired = gate;
+    gate = "{\"dpaPublished\":true,\"dpaSigned\":true}";
+    for (int attempt = 0; attempt < 2; attempt++) {
+      var result = enquiryPermission(session);
+      org.junit.jupiter.api.Assertions.assertEquals(204, result.statusCode(), result.body());
+      org.junit.jupiter.api.Assertions.assertEquals("", result.body());
+      org.junit.jupiter.api.Assertions.assertEquals(
+          "no-store", result.headers().firstValue("Cache-Control").orElse(""));
+    }
+    org.junit.jupiter.api.Assertions.assertEquals(2, ownerReads.get());
+    org.mockito.Mockito.verifyNoInteractions(matrix);
+    gate = expired;
+    var denied = enquiryPermission(session);
+    org.junit.jupiter.api.Assertions.assertEquals(403, denied.statusCode(), denied.body());
+    var finalization =
+        request(
+            "/users/sessions/" + session.getId() + "/enquiry/new",
+            asker.getUserId(),
+            asker.getUsername(),
+            "user",
+            "{\"message\":\"\",\"matrixEventId\":\"$encrypted-enquiry\"}");
+    org.junit.jupiter.api.Assertions.assertEquals(403, finalization.statusCode());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        finalization.body().contains("DPA_NEW_COUNSELLING_NOT_ALLOWED"), finalization.body());
+    org.junit.jupiter.api.Assertions.assertEquals(4, ownerReads.get());
+    org.mockito.Mockito.verifyNoInteractions(matrix);
+  }
+
+  private java.net.http.HttpResponse<String> enquiryPermission(
+      de.caritas.cob.userservice.api.model.Session session) throws Exception {
+    return request(
+        "GET",
+        "/users/sessions/" + session.getId() + "/enquiry/permission",
+        asker.getUserId(),
+        asker.getUsername(),
+        "user",
+        "");
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = de.caritas.cob.userservice.api.model.Session.SessionStatus.class,
+      names = {"INITIAL", "NEW"})
+  void expiredRenewalBlocksFirstEnquiryPreflightForAnUnbegunSession(
+      de.caritas.cob.userservice.api.model.Session.SessionStatus status) throws Exception {
+    var session = storedSession(status);
+    var finalization =
+        request(
+            "/users/sessions/" + session.getId() + "/enquiry/new",
+            asker.getUserId(),
+            asker.getUsername(),
+            "user",
+            "{\"message\":\"\",\"matrixEventId\":\"$encrypted-enquiry\"}");
+    org.junit.jupiter.api.Assertions.assertEquals(403, finalization.statusCode());
+    org.junit.jupiter.api.Assertions.assertTrue(
+        finalization.body().contains("DPA_NEW_COUNSELLING_NOT_ALLOWED"), finalization.body());
+    var result =
+        request(
+            "GET",
+            "/users/sessions/" + session.getId() + "/enquiry/permission",
+            asker.getUserId(),
+            asker.getUsername(),
+            "user",
+            "");
+    org.junit.jupiter.api.Assertions.assertEquals(403, result.statusCode(), result.body());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "DPA_NEW_COUNSELLING_NOT_ALLOWED", result.headers().firstValue("X-Reason").orElse(""));
+    org.junit.jupiter.api.Assertions.assertTrue(
+        result.body().contains("DPA_NEW_COUNSELLING_NOT_ALLOWED"), result.body());
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.MethodSource("permittedFirstEnquiryGates")
+  void currentGraceAndLegacyOwnersPermitUnbegunFirstEnquiryPreflight(
+      de.caritas.cob.userservice.api.model.Session.SessionStatus status, String response)
+      throws Exception {
+    gate = response;
+    requireTechnicalOwnerHeader = true;
+    var result = enquiryPermission(storedSession(status));
+    org.junit.jupiter.api.Assertions.assertEquals(204, result.statusCode(), result.body());
+    org.junit.jupiter.api.Assertions.assertEquals("", result.body());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "no-store", result.headers().firstValue("Cache-Control").orElse(""));
+    org.junit.jupiter.api.Assertions.assertEquals(1, ownerReads.get());
+    org.mockito.Mockito.verifyNoInteractions(matrix);
+  }
+
+  private static java.util.stream.Stream<org.junit.jupiter.params.provider.Arguments>
+      permittedFirstEnquiryGates() {
+    return java.util.stream.Stream.of(
+            de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL,
+            de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW)
+        .flatMap(
+            status ->
+                java.util.stream.Stream.of(
+                        "{\"dpaPublished\":true,\"dpaSigned\":true}",
+                        "{\"dpaPublished\":true,\"dpaSigned\":true,\"dpaStatus\":\"VALID\",\"currentDpaVersion\":\"v2\",\"signingDeadlineAt\":null,\"renewalGraceActive\":false,\"newCounsellingAllowed\":true}",
+                        "{\"dpaPublished\":true,\"dpaSigned\":false,\"dpaStatus\":\"OUTDATED\",\"currentDpaVersion\":\"v2\",\"signingDeadlineAt\":\"2999-01-01T00:00:00Z\",\"renewalGraceActive\":true,\"newCounsellingAllowed\":true}")
+                    .map(gate -> org.junit.jupiter.params.provider.Arguments.of(status, gate)));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = de.caritas.cob.userservice.api.model.Session.SessionStatus.class,
+      names = {"INITIAL", "NEW"})
+  void ownerOutagePreventsFirstEnquiryPreflightWithASanitizedDependencyFailure(
+      de.caritas.cob.userservice.api.model.Session.SessionStatus status) throws Exception {
+    ownerStatus = 503;
+    var result = enquiryPermission(storedSession(status));
+    org.junit.jupiter.api.Assertions.assertEquals(502, result.statusCode(), result.body());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "DPA_POLICY_UNAVAILABLE", result.headers().firstValue("X-Reason").orElse(""));
+    org.junit.jupiter.api.Assertions.assertFalse(result.body().contains("synthetic-owner-private"));
+    org.junit.jupiter.api.Assertions.assertEquals(1, ownerReads.get());
+    org.mockito.Mockito.verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void malformedOwnerPreventsFirstEnquiryPreflightAsADependencyFailure() throws Exception {
+    gate = "{\"newCounsellingAllowed\":false}";
+    var result =
+        enquiryPermission(
+            storedSession(de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL));
+    org.junit.jupiter.api.Assertions.assertEquals(502, result.statusCode(), result.body());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "DPA_POLICY_UNAVAILABLE", result.headers().firstValue("X-Reason").orElse(""));
+    org.mockito.Mockito.verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void anotherAskerCannotPreflightTheOwnersSessionOrReadItsDpa() throws Exception {
+    var session = storedSession(de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL);
+    var other = fixtures.adviceSeeker(SERVING_TENANT);
+    var result =
+        request(
+            "GET",
+            "/users/sessions/" + session.getId() + "/enquiry/permission",
+            other.getUserId(),
+            other.getUsername(),
+            "user",
+            "");
+    org.junit.jupiter.api.Assertions.assertEquals(400, result.statusCode(), result.body());
+    org.junit.jupiter.api.Assertions.assertEquals(0, ownerReads.get());
+    org.mockito.Mockito.verifyNoInteractions(matrix);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(strings = {"consultant", "anonymous"})
+  void nonAskerAuthoritiesCannotPreflightOrReadTheOwnerDpa(String role) throws Exception {
+    var session = storedSession(de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL);
+    var result =
+        request(
+            "GET",
+            "/users/sessions/" + session.getId() + "/enquiry/permission",
+            asker.getUserId(),
+            asker.getUsername(),
+            role,
+            "");
+    org.junit.jupiter.api.Assertions.assertEquals(403, result.statusCode(), result.body());
+    org.junit.jupiter.api.Assertions.assertEquals(0, ownerReads.get());
+    org.mockito.Mockito.verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void anOwnedAnonymousSessionCannotUseTheRegisteredFirstEnquiryPreflight() throws Exception {
+    var result = enquiryPermission(anonymousSession(AGENCY));
+    org.junit.jupiter.api.Assertions.assertEquals(400, result.statusCode(), result.body());
+    org.junit.jupiter.api.Assertions.assertEquals(0, ownerReads.get());
+    org.mockito.Mockito.verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void anAlreadyWrittenEnquiryCannotBePreflightedAgainOrReadOwnerDpa() throws Exception {
+    var session = storedSession(de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW);
+    session.setEnquiryMessageDate(java.time.LocalDateTime.of(2026, 1, 1, 0, 0));
+    sessions.save(session);
+    var result = enquiryPermission(session);
+    org.junit.jupiter.api.Assertions.assertEquals(409, result.statusCode(), result.body());
+    org.junit.jupiter.api.Assertions.assertEquals(0, ownerReads.get());
+    org.mockito.Mockito.verifyNoInteractions(matrix);
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.EnumSource(
+      value = de.caritas.cob.userservice.api.model.Session.SessionStatus.class,
+      names = {"DONE", "IN_ARCHIVE"})
+  void terminalSessionsCannotPreflightAnEnquiryOrReadOwnerDpa(
+      de.caritas.cob.userservice.api.model.Session.SessionStatus status) throws Exception {
+    var result = enquiryPermission(storedSession(status));
+    org.junit.jupiter.api.Assertions.assertEquals(409, result.statusCode(), result.body());
+    org.junit.jupiter.api.Assertions.assertEquals(0, ownerReads.get());
+    org.mockito.Mockito.verifyNoInteractions(matrix);
+  }
+
+  @Test
+  void begunDirectCounsellingCanPreflightItsFirstEnquiryAfterExpiryWithoutOwnerRead()
+      throws Exception {
+    var result =
+        enquiryPermission(
+            storedSession(de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS));
+    org.junit.jupiter.api.Assertions.assertEquals(204, result.statusCode(), result.body());
+    org.junit.jupiter.api.Assertions.assertEquals("", result.body());
+    org.junit.jupiter.api.Assertions.assertEquals(
+        "no-store", result.headers().firstValue("Cache-Control").orElse(""));
+    org.junit.jupiter.api.Assertions.assertEquals(0, ownerReads.get());
+    org.mockito.Mockito.verifyNoInteractions(matrix);
   }
 
   @Test

@@ -340,6 +340,9 @@ public class SecurityConfig {
                     "/service/users/statistics/consultant")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
+                    HttpMethod.GET, "/users/sessions/{sessionId:[0-9]+}/enquiry/permission")
+                .hasAuthority(USER_DEFAULT)
+                .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/users/askers/consultingType/new",
