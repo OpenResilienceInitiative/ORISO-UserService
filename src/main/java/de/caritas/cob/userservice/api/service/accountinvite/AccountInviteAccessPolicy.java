@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -59,7 +60,7 @@ public class AccountInviteAccessPolicy {
     return switch (adminScope.current()) {
       case AdminScope.Platform platform -> command;
       case AdminScope.Tenant tenant -> authorizeTenantAdminCreate(command, tenant.tenantId());
-      case AdminScope.Agencies agencies -> authorizeAgencyAdminCreate(command, agencies.tenantId());
+      case AdminScope.Agencies agencies -> authorizeAgencyAdminCreate(command, agencies);
     };
   }
 
@@ -174,16 +175,17 @@ public class AccountInviteAccessPolicy {
   }
 
   private CreateAccountInviteCommand authorizeAgencyAdminCreate(
-      CreateAccountInviteCommand command, Long callerTenantId) {
+      CreateAccountInviteCommand command, AdminScope.Agencies agencies) {
     if (command.targetRole() != AccountInviteTargetRole.COUNSELLOR) {
       throw deny("invite a " + command.targetRole());
     }
-    if (command.agencyIdAllocationMode() != null || command.agencyId() == null) {
+    if (IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())
+        || command.agencyId() == null
+        || !agencies.ids().contains(command.agencyId())) {
       throw deny("invite a counsellor into agency " + command.agencyId());
     }
-    adminScope.assertMay(Target.agencies(List.of(command.agencyId())));
-    assertTenantIsOwn(command.tenantId(), callerTenantId);
-    return withCallerTenant(command, callerTenantId);
+    assertTenantIsOwn(command.tenantId(), agencies.tenantId());
+    return withCallerTenant(command, agencies.tenantId());
   }
 
   private CreateAccountInviteCommand authorizeTenantAdminCreate(
@@ -199,7 +201,8 @@ public class AccountInviteAccessPolicy {
       throw deny("allocate a new tenant");
     }
     assertTenantIsOwn(command.tenantId(), callerTenantId);
-    if (command.agencyId() != null && command.agencyIdAllocationMode() == null) {
+    if (command.agencyId() != null
+        && !IdAllocationMode.reservesAnId(command.agencyIdAllocationMode())) {
       // The accepted invite would attach the new account to that agency.
       adminScope.assertMay(Target.agencies(List.of(command.agencyId())));
     }
