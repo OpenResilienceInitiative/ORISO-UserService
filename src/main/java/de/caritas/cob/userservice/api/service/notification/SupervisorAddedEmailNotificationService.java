@@ -265,10 +265,11 @@ public class SupervisorAddedEmailNotificationService {
     try {
       return resolveAppFrontendUrl(tenantData);
     } catch (RuntimeException urlFailure) {
+      // Exceptions from URL parsing can contain private values from the configured URL.
       log.warn(
-          "Skipping system notification mail for tenant {}: frontend URL resolution failed",
+          "Skipping system notification mail for tenant {}: frontend URL resolution failed ({})",
           tenantId,
-          urlFailure);
+          urlFailure.getClass().getSimpleName());
       return null;
     }
   }
@@ -289,8 +290,8 @@ public class SupervisorAddedEmailNotificationService {
       }
       String base = url.trim();
       return base.endsWith("/") ? base.substring(0, base.length() - 1) : base;
-    } catch (IllegalArgumentException ex) {
-      throw new IllegalStateException(setting + " must be an absolute http(s) URL", ex);
+    } catch (IllegalArgumentException ignored) {
+      throw new IllegalStateException(setting + " must be an absolute http(s) URL");
     }
   }
 

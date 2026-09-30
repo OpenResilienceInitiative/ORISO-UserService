@@ -12,6 +12,8 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ThrowableProxyUtil;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
@@ -24,6 +26,7 @@ import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSuppli
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import jakarta.mail.Message;
 import jakarta.mail.internet.MimeMessage;
 import jakarta.mail.internet.MimeMultipart;
@@ -422,6 +425,38 @@ class SupervisorAddedEmailNotificationServiceTest {
     assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
         .doesNotThrowAnyException();
     verify(emailBrand, never()).valuesForTenant(any(), any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void malformedTenantUrlCannotReachLogsOrTransport(boolean added) {
+    String privateAddress = "url-privacy-sentinel@example.invalid";
+    String privateToken = "private-token-sentinel-1306";
+    String malformedUrl = "https://" + privateAddress + "/invalid path?token=" + privateToken;
+    TenantData tenantData = new TenantData();
+    tenantData.setTenantId(42L);
+    var urlAttribute = new TemplateDataDTO().key("url").value(malformedUrl);
+    when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(List.of(urlAttribute));
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(eq(42L), any()))
+        .thenReturn(Optional.of(smtpSettings()));
+
+    try (var logs = LogbackCaptor.forClass(SupervisorAddedEmailNotificationService.class);
+        var transport = mockStatic(OrisoSmtpTransport.class)) {
+      if (added) service.notifySupervisorAdded(null, null, 7L, tenantData, null);
+      else service.notifySupervisorRemoved(null, null, 7L, tenantData, null);
+
+      assertThat(logs.events()).hasSize(1);
+      var warning = logs.events().getFirst();
+      assertThat(warning.getLevel()).isEqualTo(Level.WARN);
+      String visibleLog = warning.getFormattedMessage();
+      if (warning.getThrowableProxy() != null) {
+        visibleLog += ThrowableProxyUtil.asString(warning.getThrowableProxy());
+      }
+      assertThat(visibleLog).doesNotContain(privateAddress, privateToken, malformedUrl);
+      assertThat(warning.getThrowableProxy()).isNull();
+      verify(emailBrand, never()).valuesForTenant(any(), any());
+      transport.verifyNoInteractions();
+    }
   }
 
   // ── languageCodeOf — non-German (English) localization paths ─────────────
