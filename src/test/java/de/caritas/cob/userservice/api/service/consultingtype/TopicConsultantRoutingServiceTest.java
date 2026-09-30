@@ -246,6 +246,34 @@ class TopicConsultantRoutingServiceTest {
   }
 
   @Test
+  void findEligibleConsultantIds_Should_QueryAcrossTenants_AndRestoreCallerContext() {
+    TenantContext.setCurrentTenant(84L);
+    try {
+      when(consultantTopicRepository.findConsultantIdsByTopicId(9L))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TenantContext.getCurrentTenant())
+                    .isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
+                return List.of("tenant-84-consultant");
+              });
+      when(consultantRepository.findAllByIdIn(List.of("tenant-84-consultant")))
+          .thenAnswer(
+              invocation -> {
+                assertThat(TenantContext.getCurrentTenant())
+                    .isEqualTo(TenantContext.TECHNICAL_TENANT_ID);
+                return List.of(
+                    consultantWithMatrix("tenant-84-consultant", "@c:matrix.org", false));
+              });
+      when(matrixSynapseService.findOnlineMatrixUserIds(any())).thenReturn(Optional.empty());
+
+      assertThat(service.findEligibleConsultantIds(9L)).containsExactly("tenant-84-consultant");
+      assertThat(TenantContext.getCurrentTenant()).isEqualTo(84L);
+    } finally {
+      TenantContext.clear();
+    }
+  }
+
+  @Test
   void findEligibleConsultantIds_Should_ReturnActiveIds_When_MatrixPresenceIsUnavailable() {
     Consultant c1 = consultantWithMatrix("c1", "@c1:matrix.org", false);
     when(consultantTopicRepository.findConsultantIdsByTopicId(5L)).thenReturn(List.of("c1"));

@@ -3,12 +3,16 @@ package de.caritas.cob.userservice.api.service.notification;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyLong;
+import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import ch.qos.logback.classic.Level;
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
@@ -19,6 +23,7 @@ import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSuppli
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -36,7 +41,8 @@ import org.springframework.test.util.ReflectionTestUtils;
 @MockitoSettings(strictness = Strictness.LENIENT)
 class SupervisorAddedEmailNotificationServiceTest {
 
-  @Mock private SystemNotificationEmailSettingsService emailSettingsService;
+  @Mock private TenantSystemEmailRouteService emailRoutes;
+  @Mock private TenantSystemEmailDelivery emailDelivery;
   @Mock private UserService userService;
   @Mock private TenantTemplateSupplier tenantTemplateSupplier;
   // Real instances rather than mocks: these tests exercise the whole send path,
@@ -53,17 +59,29 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @BeforeEach
   void injectValues() {
+    ReflectionTestUtils.setField(emailBrand, "platformName", "Independent Platform");
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org");
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.example.org");
+  }
+
+  @Test
+  void missingPublicFrontendUrlFailsSendWithSettingName() {
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "");
+    when(emailRoutes.resolve(1L)).thenReturn(Optional.of(routeSettings()));
+
+    org.assertj.core.api.Assertions.assertThatThrownBy(
+            () ->
+                service.notifyEmailAddressChanged(
+                    "user", "user@example.com", 1L, null, null, LanguageCode.de))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
+        .hasMessageContaining("system.notification.frontend.base-url");
   }
 
   // ── notifySupervisorAdded early-return paths ──────────────────────────────
 
   @Test
   void notifySupervisorAdded_Should_ReturnEarly_When_SmtpSettingsNotAvailable() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.empty());
+    when(emailRoutes.resolve(any())).thenReturn(Optional.empty());
 
     User user = new User();
     user.setTenantId(1L);
@@ -73,7 +91,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     service.notifySupervisorAdded(user, supervisor, 42L, null, "token");
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(1L), eq("token"));
+    verify(emailRoutes).resolve(eq(1L));
   }
 
   @Test
@@ -85,13 +103,12 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     service.notifySupervisorAdded(user, supervisor, 1L, null, null);
 
-    verify(emailSettingsService, never()).resolveSupervisorAddedEmailSettings(any(), any());
+    verify(emailRoutes, never()).resolve(any());
   }
 
   @Test
   void notifySupervisorAdded_Should_UseSupervisorTenantId_When_UserTenantIdIsNull() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.empty());
+    when(emailRoutes.resolve(any())).thenReturn(Optional.empty());
 
     User user = new User();
     // user.tenantId == null
@@ -100,13 +117,12 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     service.notifySupervisorAdded(user, supervisor, 1L, null, null);
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(5L), any());
+    verify(emailRoutes).resolve(eq(5L));
   }
 
   @Test
   void notifySupervisorAdded_Should_PreferTenantDataTenantId_When_Provided() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.empty());
+    when(emailRoutes.resolve(any())).thenReturn(Optional.empty());
 
     User user = new User();
     user.setTenantId(99L);
@@ -115,16 +131,14 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     service.notifySupervisorAdded(user, null, 1L, tenantData, null);
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(7L), any());
+    verify(emailRoutes).resolve(eq(7L));
   }
 
   @Test
   void notifySupervisorAdded_Should_NotSendEmail_When_UserHasDummyEmailSuffix() {
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 25, false, "user", "pass", "from@invalid", null);
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(settings));
+    TenantSystemEmailRouteService.Route settings =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
 
     User user = new User();
     user.setTenantId(1L);
@@ -133,7 +147,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     Consultant supervisor = new Consultant();
     supervisor.setEmail("sup@dummy.invalid");
 
-    // Both have dummy emails — smtp attempt is skipped (no real connection), method completes
+    // Both have dummy emails, so no delivery is attempted.
     service.notifySupervisorAdded(user, supervisor, 10L, null, null);
 
     // No exception should escape; the method exits cleanly
@@ -143,8 +157,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifySupervisorRemoved_Should_ReturnEarly_When_SmtpSettingsNotAvailable() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.empty());
+    when(emailRoutes.resolve(any())).thenReturn(Optional.empty());
 
     User user = new User();
     user.setTenantId(3L);
@@ -152,14 +165,14 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     service.notifySupervisorRemoved(user, supervisor, 20L, null, "tok");
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(3L), eq("tok"));
+    verify(emailRoutes).resolve(eq(3L));
   }
 
   @Test
   void notifySupervisorRemoved_Should_ReturnEarly_When_TenantIdIsNull() {
     service.notifySupervisorRemoved(null, null, 1L, null, null);
 
-    verify(emailSettingsService, never()).resolveSupervisorAddedEmailSettings(any(), any());
+    verify(emailRoutes, never()).resolve(any());
   }
 
   // ── notifyEmailAddressChanged early-return paths ──────────────────────────
@@ -168,55 +181,115 @@ class SupervisorAddedEmailNotificationServiceTest {
   void notifyEmailAddressChanged_Should_ReturnEarly_When_EmailBlank() {
     service.notifyEmailAddressChanged("user", "  ", 1L, null, null, LanguageCode.de);
 
-    verify(emailSettingsService, never()).resolveSupervisorAddedEmailSettings(any(), any());
+    verify(emailRoutes, never()).resolve(any());
   }
 
   @Test
   void notifyEmailAddressChanged_Should_ReturnEarly_When_UsernameBlank() {
     service.notifyEmailAddressChanged("", "new@example.com", 1L, null, null, LanguageCode.de);
 
-    verify(emailSettingsService, never()).resolveSupervisorAddedEmailSettings(any(), any());
+    verify(emailRoutes, never()).resolve(any());
   }
 
   @Test
   void notifyEmailAddressChanged_Should_ReturnEarly_When_TenantIdNull() {
     service.notifyEmailAddressChanged("user", "new@example.com", null, null, null, LanguageCode.de);
 
-    verify(emailSettingsService, never()).resolveSupervisorAddedEmailSettings(any(), any());
+    verify(emailRoutes, never()).resolve(any());
   }
 
   @Test
   void notifyEmailAddressChanged_Should_ReturnEarly_When_SmtpSettingsNotAvailable() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(eq(2L), any()))
-        .thenReturn(Optional.empty());
+    when(emailRoutes.resolve(eq(2L))).thenReturn(Optional.empty());
 
     service.notifyEmailAddressChanged("user1", "new@example.com", 2L, null, "tok", LanguageCode.de);
 
-    verify(emailSettingsService).resolveSupervisorAddedEmailSettings(eq(2L), eq("tok"));
+    verify(emailRoutes).resolve(eq(2L));
   }
 
   @Test
   void notifyEmailAddressChanged_Should_AttemptEmail_When_SmtpSettingsPresent() {
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 587, false, "u", "p", "from@invalid", null);
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(eq(4L), any()))
-        .thenReturn(Optional.of(settings));
+    TenantSystemEmailRouteService.Route settings =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(emailRoutes.resolve(eq(4L))).thenReturn(Optional.of(settings));
 
-    // sendEmailSafely catches any smtp connection error — no exception should escape
     service.notifyEmailAddressChanged(
         "johndoe", "john@example.com", 4L, null, null, LanguageCode.de);
+    verify(emailDelivery)
+        .send(
+            eq(4L),
+            eq(settings),
+            eq(TenantSystemEmailDelivery.Purpose.EMAIL_ADDRESS_CHANGED),
+            eq("john@example.com"),
+            any());
+  }
+
+  @Test
+  void deliveryFailureDoesNotLogRecipientOrProviderReply() {
+    var route = routeSettings();
+    when(emailRoutes.resolve(4L)).thenReturn(Optional.of(route));
+    String privateReply = "550 john@example.com mailbox unavailable";
+    doThrow(new IllegalStateException(privateReply))
+        .when(emailDelivery)
+        .send(eq(4L), eq(route), any(), eq("john@example.com"), any());
+
+    try (var logs = LogbackCaptor.forClass(SupervisorAddedEmailNotificationService.class)) {
+      service.notifyEmailAddressChanged(
+          "johndoe", "john@example.com", 4L, null, null, LanguageCode.de);
+
+      verify(emailDelivery).send(eq(4L), eq(route), any(), eq("john@example.com"), any());
+      assertThat(logs.events()).isNotEmpty();
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                assertThat(event.getThrowableProxy()).isNull();
+                assertThat(event.getFormattedMessage()).contains("IllegalStateException");
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain("john@example.com", "mailbox unavailable", privateReply);
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+    }
+  }
+
+  @Test
+  void teamChangeRenderFailureDoesNotLogPrivatePayloadOrThrowable() {
+    when(emailRoutes.resolve(4L)).thenReturn(Optional.of(routeSettings()));
+    User recipient = new User();
+    recipient.setTenantId(4L);
+    recipient.setEmail("john@example.com");
+    recipient.setLanguageCode(LanguageCode.de);
+    String privateReply = "private case for john@example.com, SMTP password canary";
+    doThrow(new IllegalStateException(privateReply))
+        .when(emailRenderer)
+        .render(eq("team-aenderung"), any(), any());
+
+    try (var logs = LogbackCaptor.forClass(SupervisorAddedEmailNotificationService.class)) {
+      service.notifySupervisorAdded(recipient, null, 42L, null, null);
+
+      verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+      assertThat(logs.events()).isNotEmpty();
+      assertThat(logs.events())
+          .allSatisfy(
+              event -> {
+                assertThat(event.getLevel()).isEqualTo(Level.ERROR);
+                assertThat(event.getThrowableProxy()).isNull();
+                assertThat(event.getFormattedMessage()).contains("IllegalStateException");
+                assertThat(event.getFormattedMessage())
+                    .doesNotContain(
+                        "john@example.com", "private case", "password canary", privateReply);
+                assertThat(event.getThrowableProxy()).isNull();
+              });
+    }
   }
 
   // ── resolveUserWithEmail ──────────────────────────────────────────────────
 
   @Test
   void notifySupervisorAdded_Should_FetchUserFromRepo_When_UserEmailIsDummyButHasUserId() {
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 25, false, "u", "p", "from@invalid", null);
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(settings));
+    TenantSystemEmailRouteService.Route settings =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
 
     User user = new User();
     user.setTenantId(1L);
@@ -228,7 +301,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     fetchedUser.setLanguageCode(LanguageCode.de);
     when(userService.getUser("user-abc")).thenReturn(Optional.of(fetchedUser));
 
-    // fetchedUser has real email → smtp attempt is made (caught by sendEmailSafely)
+    // A fetched real address may be delivered through the selected tenant route.
     service.notifySupervisorAdded(user, null, 10L, null, null);
 
     verify(userService).getUser("user-abc");
@@ -239,11 +312,9 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Test
   void notifySupervisorAdded_Should_NotThrowNPE_When_EmailDummySuffixIsNull() {
     ReflectionTestUtils.setField(service, "emailDummySuffix", null);
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 25, false, "u", "p", "from@invalid", null);
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(settings));
+    TenantSystemEmailRouteService.Route settings =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
 
     User user = new User();
     user.setTenantId(1L);
@@ -258,11 +329,9 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Test
   void notifySupervisorAdded_Should_NotThrowNPE_ForConsultant_When_EmailDummySuffixIsNull() {
     ReflectionTestUtils.setField(service, "emailDummySuffix", null);
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 25, false, "u", "p", "from@invalid", null);
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(settings));
+    TenantSystemEmailRouteService.Route settings =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
 
     User user = new User();
     user.setTenantId(1L);
@@ -279,11 +348,9 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifySupervisorAdded_Should_NotFetchUser_When_UserIsNull() {
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 25, false, "u", "p", "from@invalid", null);
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(settings));
+    TenantSystemEmailRouteService.Route settings =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
     Consultant supervisor = new Consultant();
     supervisor.setTenantId(5L);
 
@@ -295,11 +362,9 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifySupervisorAdded_Should_NotSendToUser_When_UserEmailIsBlank() {
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 25, false, "u", "p", "from@invalid", null);
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(settings));
+    TenantSystemEmailRouteService.Route settings =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
 
     User user = new User();
     user.setTenantId(1L);
@@ -311,18 +376,16 @@ class SupervisorAddedEmailNotificationServiceTest {
     verify(userService, never()).getUser(any());
   }
 
-  // ── sanitizeFrontendUrl — localhost fallback ──────────────────────────────
+  // ── public frontend URL validation ──────────────────────────────
 
   @Test
-  void notifyEmailAddressChanged_Should_FallbackToPublicFrontendUrl_When_AppBaseIsLocalhost() {
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "http://localhost:8080");
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 587, false, "u", "p", "from@invalid", null);
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(settings));
+  void notifyEmailAddressChanged_Should_AllowExplicitLocalUrl_When_ConfigIsLocalhost() {
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://localhost:8080");
+    TenantSystemEmailRouteService.Route settings =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
 
-    // sendEmailSafely catches SMTP connection error — no exception escapes
+    // Explicit loopback addresses remain usable in the local test profile.
     assertThatCode(
             () ->
                 service.notifyEmailAddressChanged(
@@ -334,11 +397,9 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifySupervisorRemoved_Should_AttemptSend_When_ConsultantEmailIsValid() {
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 587, false, "u", "p", "from@invalid", null);
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(settings));
+    TenantSystemEmailRouteService.Route settings =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
 
     User user = new User();
     user.setTenantId(1L);
@@ -354,8 +415,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifySupervisorAdded_Should_UseUrlFromTemplateSupplier_When_TenantDataProvided() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
     TenantData tenantData = new TenantData();
     tenantData.setTenantId(1L);
     TemplateDataDTO urlAttr = mock(TemplateDataDTO.class);
@@ -372,22 +432,20 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void notifySupervisorAdded_Should_FallbackToAppBaseUrl_When_TemplateSupplierThrows() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+  void notifySupervisorAdded_Should_RejectMissingTenantUrl_When_TemplateSupplierThrows() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
     TenantData tenantData = new TenantData();
     tenantData.setTenantId(1L);
     when(tenantTemplateSupplier.getTemplateAttributes())
         .thenThrow(new RuntimeException("service unavailable"));
 
     assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
-        .doesNotThrowAnyException();
+        .isInstanceOf(RuntimeException.class);
   }
 
   @Test
-  void notifySupervisorAdded_Should_FallbackToAppBaseUrl_When_TemplateSupplierReturnsNoUrlAttr() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+  void notifySupervisorAdded_Should_RejectMissingTenantUrl_When_TemplateSupplierReturnsNoUrlAttr() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
     TenantData tenantData = new TenantData();
     tenantData.setTenantId(1L);
     TemplateDataDTO attr = mock(TemplateDataDTO.class);
@@ -396,15 +454,14 @@ class SupervisorAddedEmailNotificationServiceTest {
     when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(List.of(attr));
 
     assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
-        .doesNotThrowAnyException();
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
   }
 
   // ── languageCodeOf — non-German (English) localization paths ─────────────
 
   @Test
   void notifySupervisorAdded_Should_LocalizeInEnglish_When_UserLanguageCodeIsEnglish() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     User user = new User();
     user.setTenantId(1L);
@@ -417,8 +474,8 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifySupervisorAdded_Should_StillRenderCounsellor_WhenSeekerLanguageIsMissing() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+    var route = routeSettings();
+    when(emailRoutes.resolve(1L)).thenReturn(Optional.of(route));
     User user = new User();
     user.setTenantId(1L);
     user.setEmail("user@example.com");
@@ -430,13 +487,26 @@ class SupervisorAddedEmailNotificationServiceTest {
         .doesNotThrowAnyException();
 
     verify(emailRenderer)
-        .render(eq("team-aenderung"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
+        .render(
+            eq("team-aenderung"),
+            eq(OrisoEmailRenderer.Tone.DE_FORMAL),
+            argThat(
+                values ->
+                    "#5".equals(values.get("caseReference"))
+                        && "Sie wurden als Supervisor-Berater:in zu diesem Vorgang hinzugefügt."
+                            .equals(values.get("teamChangeStatement"))));
+    verify(emailDelivery)
+        .send(
+            eq(1L),
+            eq(route),
+            eq(TenantSystemEmailDelivery.Purpose.SUPERVISOR_ADDED),
+            eq("sup@example.com"),
+            any());
   }
 
   @Test
   void notifySupervisorAdded_Should_LocalizeInEnglish_When_ConsultantLanguageCodeIsEnglish() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     User user = new User();
     user.setTenantId(1L);
@@ -451,8 +521,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Test
   void
       notifySupervisorRemoved_Should_LocalizeInEnglish_When_UserAndConsultantLanguageCodeIsEnglish() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     User user = new User();
     user.setTenantId(1L);
@@ -466,13 +535,12 @@ class SupervisorAddedEmailNotificationServiceTest {
         .doesNotThrowAnyException();
   }
 
-  // ── isLocalUrl — 127.0.0.1, ::1, malformed URL ────────────────────────────
+  // ── reject loopback and malformed URLs ────────────────────────────
 
   @Test
-  void notifyEmailAddressChanged_Should_FallbackToPublicFrontendUrl_When_AppBaseIs127_0_0_1() {
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "http://127.0.0.1:8080");
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+  void notifyEmailAddressChanged_Should_AllowExplicitLocalUrl_When_ConfigIs127_0_0_1() {
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://127.0.0.1:8080");
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     assertThatCode(
             () ->
@@ -482,10 +550,9 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void notifyEmailAddressChanged_Should_FallbackToPublicFrontendUrl_When_AppBaseIsIPv6Loopback() {
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "http://[::1]:8080");
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+  void notifyEmailAddressChanged_Should_AllowExplicitLocalUrl_When_ConfigIsIPv6Loopback() {
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "http://[::1]:8080");
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     assertThatCode(
             () ->
@@ -495,28 +562,26 @@ class SupervisorAddedEmailNotificationServiceTest {
   }
 
   @Test
-  void notifyEmailAddressChanged_Should_FallbackToPublicFrontendUrl_When_AppBaseUrlIsMalformed() {
-    // isLocalUrl: URI.create("not-a-valid-url").getHost() == null → treated as local → fallback
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "not-a-valid-url");
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+  void notifyEmailAddressChanged_Should_RejectInvalidPublicFrontendUrl_When_ConfigUrlIsMalformed() {
+    // A malformed URL is rejected; no replacement URL is selected.
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "not-a-valid-url");
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     assertThatCode(
             () ->
                 service.notifyEmailAddressChanged(
                     "user", "user@example.com", 1L, null, null, LanguageCode.de))
-        .doesNotThrowAnyException();
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
   }
 
   // ── resolveHexColor — valid hex passes through, invalid → default ─────────
 
   @Test
   void notifySupervisorAdded_Should_AcceptValidHexColor_When_SettingsProvideValidHex() {
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 25, false, "u", "p", "from@invalid", "#1a2b3c");
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(settings));
+    TenantSystemEmailRouteService.Route settings =
+        new TenantSystemEmailRouteService.Route(
+            TenantSystemEmailRouteService.Mode.PLATFORM, "#1a2b3c");
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
 
     User user = new User();
     user.setTenantId(1L);
@@ -529,11 +594,10 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Test
   void notifySupervisorAdded_Should_UseDefaultHexColor_When_SettingsProvideInvalidHex() {
     // resolveHexColor: "not-a-color" doesn't match ^#([A-Fa-f0-9]{6})$ → DEFAULT_EMAIL_THEME_COLOR
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings settings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 25, false, "u", "p", "from@invalid", "not-a-color");
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(settings));
+    TenantSystemEmailRouteService.Route settings =
+        new TenantSystemEmailRouteService.Route(
+            TenantSystemEmailRouteService.Mode.PLATFORM, "not-a-color");
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(settings));
 
     User user = new User();
     user.setTenantId(1L);
@@ -548,8 +612,7 @@ class SupervisorAddedEmailNotificationServiceTest {
   @Test
   void notifySupervisorAdded_Should_BuildUrlWithEmptySessionPath_When_SessionIdIsNull() {
     // buildSessionUrl: sessionId == null → sessionPath = "" → no NPE
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     User user = new User();
     user.setTenantId(1L);
@@ -563,8 +626,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifySupervisorRemoved_Should_LocalizeInGerman_When_UserLanguageCodeIsGerman() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     User user = new User();
     user.setTenantId(1L);
@@ -579,8 +641,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifyEmailAddressChanged_Should_UseUrlFromTenantData_When_TenantDataProvided() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
     TenantData tenantData = new TenantData();
     tenantData.setTenantId(8L);
     TemplateDataDTO urlAttr = mock(TemplateDataDTO.class);
@@ -600,8 +661,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifySupervisorAdded_Should_FallBackToOriginalUser_When_UserServiceReturnsEmpty() {
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     User user = new User();
     user.setTenantId(1L);
@@ -619,13 +679,11 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifyEmailAddressChanged_Should_UseSslSmtp_When_SettingsIsSecureIsTrue() {
-    SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings sslSettings =
-        new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-            "smtp.invalid", 465, true, "u", "p", "from@invalid", null);
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(sslSettings));
+    TenantSystemEmailRouteService.Route sslSettings =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(sslSettings));
 
-    // sendEmailSafely catches SMTP connection error — no exception escapes
+    // Invalid configuration fails before delivery.
     assertThatCode(
             () ->
                 service.notifyEmailAddressChanged(
@@ -637,9 +695,8 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifyEmailAddressChanged_Should_StripTrailingSlash_When_AppBaseUrlEndsWithSlash() {
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org/");
-    when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
-        .thenReturn(Optional.of(smtpSettings()));
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.example.org/");
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
 
     assertThatCode(
             () ->
@@ -650,9 +707,9 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   // ── helpers ───────────────────────────────────────────────────────────────
 
-  private SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings smtpSettings() {
-    return new SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings(
-        "smtp.invalid", 25, false, "u", "p", "from@invalid", null);
+  private TenantSystemEmailRouteService.Route routeSettings() {
+    return new TenantSystemEmailRouteService.Route(
+        TenantSystemEmailRouteService.Mode.PLATFORM, null);
   }
 
   // ── the design system, and the anonymity rule it enforces ─────────────────

@@ -15,6 +15,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.util.HtmlUtils;
 
@@ -125,9 +127,17 @@ public class OrisoEmailRenderer {
   private final Map<String, String> templateCache = new ConcurrentHashMap<>();
 
   private final JsonNode catalogue;
+  private final boolean allowUnreviewedLocales;
 
   public OrisoEmailRenderer() {
+    this(false);
+  }
+
+  @Autowired
+  public OrisoEmailRenderer(
+      @Value("${email.allow-unreviewed-locales:false}") boolean allowUnreviewedLocales) {
     this.catalogue = loadCatalogue();
+    this.allowUnreviewedLocales = allowUnreviewedLocales;
   }
 
   /** Both MIME parts plus the subject, ready to hand to a {@code MimeMessage}. */
@@ -202,6 +212,7 @@ public class OrisoEmailRenderer {
    */
   public RenderedEmail render(
       String templateId, Tone tone, Map<String, String> values, Map<String, String> fragments) {
+    tone = deliveryTone(tone);
     values = withOccasionOnUnsubscribeLink(templateId, values);
     String html =
         substitute(
@@ -244,18 +255,38 @@ public class OrisoEmailRenderer {
 
   /** The subject line, from the generated catalogue rather than from the document. */
   public String subjectOf(String templateId, Tone tone) {
+    return catalogueCopy(templateId, tone, "subject");
+  }
+
+  /** Trusted mailbox preview copy from the same generated catalogue as the subject. */
+  public String preheaderOf(String templateId, Tone tone) {
+    return catalogueCopy(templateId, tone, "preheader");
+  }
+
+  private String catalogueCopy(String templateId, Tone tone, String field) {
+    tone = deliveryTone(tone);
     JsonNode node =
-        catalogue
-            .path("mails")
-            .path(templateId)
-            .path("tones")
-            .path(tone.directory())
-            .path("subject");
+        catalogue.path("mails").path(templateId).path("tones").path(tone.directory()).path(field);
     if (node.isMissingNode() || !isNotBlank(node.asText())) {
       throw new IllegalStateException(
-          "no subject for e-mail template '" + templateId + "' in tone " + tone.directory());
+          "no " + field + " for e-mail template '" + templateId + "' in tone " + tone.directory());
     }
     return node.asText();
+  }
+
+  public Tone deliveryTone(Tone tone) {
+    String release = catalogue.path("locales").path(tone.directory()).path("release").asText();
+    if ("released".equals(release)
+        || ("pending-human-review".equals(release) && allowUnreviewedLocales)) {
+      return tone;
+    }
+    if ("pending-human-review".equals(release)) {
+      log.warn(
+          "E-mail locale {} awaits human review; using reviewed German copy", tone.directory());
+      return Tone.DE_FORMAL;
+    }
+    throw new IllegalStateException(
+        "Unknown e-mail locale release state for " + tone.directory() + ": " + release);
   }
 
   /** Whether the footer of this occasion offers an unsubscribe link (ADR-019). */

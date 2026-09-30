@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api.service.emailsupplier;
 
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.hamcrest.Matchers.is;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -37,6 +38,19 @@ class TenantTemplateSupplierTest {
   @Mock ApplicationSettingsService applicationSettingsService;
 
   private final EasyRandom easyRandom = new EasyRandom();
+
+  @Test
+  void notificationUrlRejectsMissingTenantSubdomainInStandardMultitenancy() {
+    RestrictedTenantDTO tenant = new RestrictedTenantDTO().subdomain(null);
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://onlineberatung.net");
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenant));
+
+    assertThat(failure.getMessage(), is("Tenant subdomain is required for an email URL"));
+  }
 
   @AfterEach
   void tearDown() {
