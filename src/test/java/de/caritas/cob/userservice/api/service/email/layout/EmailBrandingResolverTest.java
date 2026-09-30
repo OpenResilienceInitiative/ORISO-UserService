@@ -23,6 +23,7 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.HttpClientErrorException;
 
 /** Branding resolution and its fallbacks (ORISO-UserService#914). */
@@ -109,7 +110,10 @@ class EmailBrandingResolverTest {
                   .registerSingleton("tenantTemplateSupplier", tenantTemplateSupplier);
             })
         .withUserConfiguration(EmailBrandingResolver.class)
-        .withPropertyValues("app.base.url=https://app.example.org")
+        .withPropertyValues(
+            "app.base.url=https://app.example.org",
+            "multitenancy.enabled=false",
+            "feature.multitenancy.with.single.domain.enabled=false")
         .run(
             context ->
                 assertThatThrownBy(() -> context.getBean(EmailBrandingResolver.class).resolve(null))
@@ -131,11 +135,51 @@ class EmailBrandingResolverTest {
             })
         .withUserConfiguration(EmailBrandingResolver.class)
         .withPropertyValues(
-            "app.base.url=https://app.example.org", "email.branding.name=Beratung Mitten")
+            "app.base.url=https://app.example.org",
+            "email.branding.name=Beratung Mitten",
+            "multitenancy.enabled=false",
+            "feature.multitenancy.with.single.domain.enabled=false")
         .run(
             context ->
                 assertThat(context.getBean(EmailBrandingResolver.class).resolve(null).brandName())
                     .isEqualTo("Beratung Mitten"));
+  }
+
+  @Test
+  void notificationBrandingRequiresTheExactTenantUrl() {
+    var resolved = tenant("Nord", null);
+    resolved.setSubdomain("nord");
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolved);
+    when(tenantTemplateSupplier.getTenantBaseUrl(resolved))
+        .thenReturn("https://nord.app.oriso.org");
+    var subject = resolver("");
+    ReflectionTestUtils.setField(subject, "multitenancyEnabled", true);
+
+    var branding = subject.resolveNotification(7L, "https://nord.app.oriso.org");
+
+    assertThat(branding.imprintUrl()).isEqualTo("https://nord.app.oriso.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://nord.app.oriso.org/datenschutz");
+    assertThatThrownBy(() -> subject.resolveNotification(7L, "https://other.app.oriso.org"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("does not match");
+  }
+
+  @Test
+  void notificationBrandingDoesNotUsePlatformWhenTenantIsUnavailable() {
+    assertThatThrownBy(() -> resolver("").resolveNotification(7L, "https://app.oriso.org"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tenant is unavailable");
+  }
+
+  @Test
+  void notificationBrandingRequiresAConfiguredNameWhenTenantHasNone() {
+    var subject =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "  ", "", "https://app.example.org/");
+
+    assertThatThrownBy(() -> subject.resolveNotification(7L, "https://app.example.org"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
   }
 
   // --- logo -----------------------------------------------------------------------------

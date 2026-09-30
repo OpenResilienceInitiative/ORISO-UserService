@@ -41,6 +41,19 @@ class TenantTemplateSupplierTest {
 
   private final EasyRandom easyRandom = new EasyRandom();
 
+  @Test
+  void notificationUrlRejectsMissingTenantSubdomainInStandardMultitenancy() {
+    RestrictedTenantDTO tenant = new RestrictedTenantDTO().subdomain(null);
+    ReflectionTestUtils.setField(
+        tenantTemplateSupplier, "applicationBaseUrl", "https://onlineberatung.net");
+
+    IllegalStateException failure =
+        assertThrows(
+            IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenant));
+
+    assertThat(failure.getMessage(), is("Tenant subdomain is required for an email URL"));
+  }
+
   @AfterEach
   void tearDown() {
     ReflectionTestUtils.setField(tenantTemplateSupplier, "multitenancyWithSingleDomain", false);
@@ -163,7 +176,7 @@ class TenantTemplateSupplierTest {
         assertThrows(
             IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenantData));
 
-    assertThat(error.getMessage(), is("Tenant subdomain is missing or invalid for mail URL"));
+    assertThat(error.getMessage(), is("Tenant subdomain is required for an email URL"));
   }
 
   @Test
