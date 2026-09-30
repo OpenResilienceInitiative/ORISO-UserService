@@ -4,13 +4,20 @@ import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValu
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.TECHNICAL_DEFAULT;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.TENANT_ADMIN;
 import static de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue.USER_ADMIN;
+import static org.hamcrest.Matchers.containsString;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.when;
 import static org.springframework.security.test.web.servlet.request.SecurityMockMvcRequestPostProcessors.jwt;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService.SmtpSettingsUnavailableException;
+import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.notification.GlobalSmtpTestEmailService;
 import jakarta.servlet.http.Cookie;
 import java.util.List;
@@ -42,6 +49,7 @@ class GlobalSmtpTestEmailControllerAuthorizationIT {
   @Autowired private MockMvc mvc;
 
   @MockitoBean private GlobalSmtpTestEmailService globalSmtpTestEmailService;
+  @MockitoBean private PlatformSmtpSettingsProvider platformSmtpSettingsProvider;
 
   @Test
   void platformAdminCanSendTheTestMail() throws Exception {
@@ -79,6 +87,54 @@ class GlobalSmtpTestEmailControllerAuthorizationIT {
         .andExpect(status().isForbidden());
 
     verifyNoInteractions(globalSmtpTestEmailService);
+  }
+
+  @Test
+  void onlyPlatformAdminCanReadRedactedSavedSettings() throws Exception {
+    when(platformSmtpSettingsProvider.summary())
+        .thenReturn(
+            new PlatformSmtpSettingsProvider.Summary(
+                "saved.smtp.example.org", 587, false, "saved@example.org", false, false));
+
+    mvc.perform(
+            get("/users/system-notification-emails/platform-settings")
+                .with(adminToken(0, TENANT_ADMIN)))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Cache-Control", containsString("no-store")))
+        .andExpect(jsonPath("$.host").value("saved.smtp.example.org"))
+        .andExpect(jsonPath("$.port").value(587))
+        .andExpect(jsonPath("$.secure").value(false))
+        .andExpect(jsonPath("$.from").value("saved@example.org"))
+        .andExpect(jsonPath("$.configured").value(false))
+        .andExpect(jsonPath("$.credentialsPresent").value(false))
+        .andExpect(jsonPath("$.username").doesNotExist())
+        .andExpect(jsonPath("$.password").doesNotExist());
+
+    mvc.perform(
+            get("/users/system-notification-emails/platform-settings")
+                .with(adminToken(1, TENANT_ADMIN)))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            get("/users/system-notification-emails/platform-settings")
+                .with(jwt().authorities(new SimpleGrantedAuthority(TECHNICAL_DEFAULT))))
+        .andExpect(status().isForbidden());
+  }
+
+  @Test
+  void unavailableAdminSnapshotReturnsSafeNoStoreBadGateway() throws Exception {
+    when(platformSmtpSettingsProvider.summary()).thenThrow(new SmtpSettingsUnavailableException());
+
+    mvc.perform(
+            get("/users/system-notification-emails/platform-settings")
+                .with(adminToken(0, TENANT_ADMIN)))
+        .andExpect(status().isBadGateway())
+        .andExpect(header().string("Cache-Control", containsString("no-store")))
+        .andExpect(
+            jsonPath("$.message")
+                .value(
+                    "Platform SMTP Admin Settings are unavailable. Please retry or contact a platform admin."))
+        .andExpect(jsonPath("$.host").doesNotExist())
+        .andExpect(jsonPath("$.password").doesNotExist());
   }
 
   private static MockHttpServletRequestBuilder request() {

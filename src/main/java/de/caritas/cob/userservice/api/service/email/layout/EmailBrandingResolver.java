@@ -183,7 +183,7 @@ public class EmailBrandingResolver {
       throw new IllegalArgumentException("Notification tenant id is missing");
     }
     String configuredPlatformName = platformName();
-    RestrictedTenantDTO tenant = tenantService.getRestrictedTenantData(tenantId);
+    RestrictedTenantDTO tenant = tenantService.getRestrictedTenantDataFresh(tenantId);
     if (tenant == null || !Objects.equals(tenant.getId(), tenantId)) {
       throw new IllegalArgumentException("Notification tenant is unavailable");
     }
