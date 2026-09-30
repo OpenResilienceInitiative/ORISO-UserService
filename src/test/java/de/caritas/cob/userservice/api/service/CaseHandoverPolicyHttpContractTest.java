@@ -107,6 +107,9 @@ class CaseHandoverPolicyHttpContractTest {
             mock(de.caritas.cob.userservice.api.service.user.UserAccountService.class),
             mock(
                 de.caritas.cob.userservice.api.service.notification.EventNotificationService.class),
+            mock(
+                de.caritas.cob.userservice.api.service.notification.CaseHandoverEmailNotification
+                    .class),
             mock(de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService.class),
             mock(de.caritas.cob.userservice.api.service.CaseHandoverMatrixRepairService.class),
             mock(

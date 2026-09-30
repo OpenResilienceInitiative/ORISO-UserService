@@ -85,6 +85,7 @@ public class AssignEnquiryEmailSupplierTest {
     when(receiverConsultant.getEmail()).thenReturn("Valid email");
     when(receiverConsultant.getFullName()).thenReturn("Moritz Mustermann");
     when(receiverConsultant.getLanguageCode()).thenReturn(LanguageCode.de);
+    when(receiverConsultant.getTenantId()).thenReturn(7L);
     Consultant validConsultant = new Consultant();
     validConsultant.setFirstName("Max");
     validConsultant.setLastName("Mustermann");
@@ -100,14 +101,16 @@ public class AssignEnquiryEmailSupplierTest {
         generatedMail.getLanguage(),
         is(de.caritas.cob.userservice.mailservice.generated.web.model.LanguageCode.DE));
     List<TemplateDataDTO> templateData = generatedMail.getTemplateData();
-    assertThat(templateData, hasSize(4));
+    assertThat(templateData, hasSize(5));
     assertThat(templateData.get(0).getKey(), is("name_sender"));
     assertThat(templateData.get(0).getValue(), is("Max Mustermann"));
     assertThat(templateData.get(1).getKey(), is("name_recipient"));
     assertThat(templateData.get(1).getValue(), is("Moritz Mustermann"));
     assertThat(templateData.get(2).getKey(), is("name_user"));
     assertThat(templateData.get(2).getValue(), is("asker user name"));
-    assertThat(templateData.get(3).getKey(), is("url"));
-    assertThat(templateData.get(3).getValue(), is("application base url"));
+    assertThat(templateData.get(3).getKey(), is("recipientTenantId"));
+    assertThat(templateData.get(3).getValue(), is("7"));
+    assertThat(templateData.get(4).getKey(), is("url"));
+    assertThat(templateData.get(4).getValue(), is("application base url"));
   }
 }
