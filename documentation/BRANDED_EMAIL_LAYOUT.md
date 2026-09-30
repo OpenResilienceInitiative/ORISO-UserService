@@ -33,7 +33,7 @@ targets still come from `InviteAcceptUrlBuilder`.
 
 | Value | Order |
 |---|---|
-| Brand name | tenant name → `email.branding.name` (default `ORISO`) |
+| Brand name | tenant name → configured `email.branding.name`; sending fails clearly if both are absent |
 | Logo | tenant `theming.logo` → tenant `theming.associationLogo` → `email.branding.logo-url` → **text wordmark** |
 | Accent colour | tenant `theming.primaryColor` → `#a5000a` |
 | Imprint / privacy | `TenantTemplateSupplier` attributes → `${app.base.url}/impressum`, `/datenschutz` |
@@ -177,6 +177,6 @@ preview output is byte-identical to what the dispatcher hands to the transport.
 
 | Property | Default | Purpose |
 |---|---|---|
-| `email.branding.name` | `ORISO` | wordmark / brand name when no tenant name is known |
+| `email.branding.name` | *(empty)* | configured wordmark / brand name when no tenant name is known; required before such mail is sent |
 | `email.branding.logo-url` | *(empty)* | absolute platform logo URL used when a tenant has none |
 | `app.base.url` | — | source of the imprint/privacy fallback URLs |

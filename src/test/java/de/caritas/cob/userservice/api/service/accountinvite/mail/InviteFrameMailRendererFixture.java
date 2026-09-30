@@ -30,11 +30,18 @@ public final class InviteFrameMailRendererFixture {
 
   public static InviteFrameMailRenderer inviteFrameMailRenderer(
       EmailBrandingResolver resolver, SenderOrganisationResolver senderOrganisations) {
+    return inviteFrameMailRenderer(resolver, senderOrganisations, true);
+  }
+
+  public static InviteFrameMailRenderer inviteFrameMailRenderer(
+      EmailBrandingResolver resolver,
+      SenderOrganisationResolver senderOrganisations,
+      boolean allowUnreviewedLocales) {
     return new InviteFrameMailRenderer(
         resolver,
         new EmailContentSanitizer(),
         tenantEmailBrandValues(senderOrganisations, APP_BASE_URL),
-        new OrisoEmailRenderer());
+        new OrisoEmailRenderer(allowUnreviewedLocales));
   }
 
   public static TenantEmailBrandValues tenantEmailBrandValues(

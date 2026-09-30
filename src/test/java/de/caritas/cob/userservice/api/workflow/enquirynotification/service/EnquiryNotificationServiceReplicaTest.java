@@ -11,6 +11,7 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -19,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
+import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import java.time.Duration;
@@ -107,6 +109,8 @@ class EnquiryNotificationServiceReplicaTest {
             sessionRepository,
             consultantAgencyService,
             agencyService,
+            mock(TenantService.class),
+            mock(TenantTemplateSupplier.class),
             releaseToggleService,
             taskClaimService);
     setField(service, "openEnquiryCheckHours", 12L);

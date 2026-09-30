@@ -120,6 +120,12 @@ public class TenantTemplateSupplier {
    * actually asked for.
    */
   public String getTenantBaseUrl(RestrictedTenantDTO tenantData) {
+    if (!multitenancyWithSingleDomain
+        && (tenantData == null
+            || tenantData.getSubdomain() == null
+            || tenantData.getSubdomain().isBlank())) {
+      throw new IllegalStateException("Tenant subdomain is required for an email URL");
+    }
     return getTenantBaseUrl(tenantData == null ? null : tenantData.getSubdomain());
   }
 
