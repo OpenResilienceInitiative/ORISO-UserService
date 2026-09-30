@@ -11,6 +11,7 @@ import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
@@ -468,6 +469,23 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
         .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
+  }
+
+  @Test
+  void notifySupervisorAdded_Should_RejectMalformedTenantUrlWithoutUsingPlatformOrigin() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    TenantData tenantData = new TenantData();
+    tenantData.setTenantId(1L);
+    TemplateDataDTO urlAttr = mock(TemplateDataDTO.class);
+    when(urlAttr.getKey()).thenReturn("url");
+    when(urlAttr.getValue()).thenReturn("https://tenant.example.com?redirect=other");
+    when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(List.of(urlAttr));
+
+    assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
+        .hasMessageContaining("tenant email URL");
+    verify(emailBrand, never()).valuesForTenant(any(), any());
+    verifyNoInteractions(emailDelivery);
   }
 
   // ── languageCodeOf — non-German (English) localization paths ─────────────
