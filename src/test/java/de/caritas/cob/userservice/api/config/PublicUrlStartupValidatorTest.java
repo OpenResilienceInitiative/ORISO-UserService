@@ -144,6 +144,89 @@ class PublicUrlStartupValidatorTest {
   }
 
   @Test
+  void rejectsReservedIpv4OriginsIncludingTheEdgesOfEachRange() {
+    for (String host :
+        new String[] {
+          "0.1.2.3",
+          "0.255.255.255",
+          "100.64.0.0",
+          "100.127.255.255",
+          "127.255.255.254",
+          "192.0.0.0",
+          "192.0.0.8",
+          "192.0.0.170",
+          "192.0.0.171",
+          "192.0.2.0",
+          "192.0.2.255",
+          "192.88.99.2",
+          "198.18.0.0",
+          "198.19.255.255",
+          "198.51.100.0",
+          "198.51.100.255",
+          "203.0.113.0",
+          "203.0.113.255",
+          "224.0.0.0",
+          "239.255.255.255",
+          "240.0.0.0",
+          "255.255.255.255"
+        }) {
+      environment.setProperty("magic.link.frontend.base-url", "https://" + host);
+
+      assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+          .as("deployed mail origin %s", host)
+          .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL")
+          .hasMessageContaining("public host");
+    }
+  }
+
+  @Test
+  void allowsPublicIpv4AddressesAdjacentToReservedRanges() {
+    for (String host :
+        new String[] {
+          "100.63.255.255",
+          "100.128.0.0",
+          "192.0.0.9",
+          "192.0.0.10",
+          "192.0.1.255",
+          "192.0.3.0",
+          "198.17.255.255",
+          "198.20.0.0",
+          "198.51.99.255",
+          "198.51.101.0",
+          "203.0.112.255",
+          "203.0.114.0",
+          "223.255.255.254"
+        }) {
+      environment.setProperty("magic.link.frontend.base-url", "https://" + host);
+
+      assertThatCode(() -> PublicUrlStartupValidator.validate(environment))
+          .as("deployed mail origin %s", host)
+          .doesNotThrowAnyException();
+    }
+  }
+
+  @Test
+  void appliesTheSameReservedIpv4RangesToMappedIpv6WithoutChangingLocalOrigins() {
+    for (String host :
+        new String[] {"[::ffff:100.64.0.1]", "[::ffff:192.0.2.1]", "[::ffff:203.0.113.5]"}) {
+      environment.setProperty("magic.link.frontend.base-url", "https://" + host);
+
+      assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+          .as("deployed mapped mail origin %s", host)
+          .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL");
+    }
+
+    environment.setProperty("magic.link.frontend.base-url", "https://[::ffff:203.0.114.5]");
+    assertThatCode(() -> PublicUrlStartupValidator.validate(environment))
+        .doesNotThrowAnyException();
+
+    environment.setActiveProfiles("local");
+    environment.setProperty("magic.link.frontend.base-url", "http://[::ffff:100.64.0.1]");
+    assertThatCode(() -> PublicUrlStartupValidator.validate(environment))
+        .doesNotThrowAnyException();
+  }
+
+  @Test
   void keepsPublicIpv4HostsAndLocalProfilePrivateOriginsAvailable() {
     for (String host : new String[] {"10.255.255.254", "172.15.255.254", "172.32.0.1"}) {
       environment.setProperty("magic.link.frontend.base-url", "https://" + host);
