@@ -295,6 +295,7 @@ class UserControllerIT {
   private de.caritas.cob.userservice.api.service.chat.GroupChatPermissionService
       groupChatPermissionService;
 
+  @MockitoBean private GroupChatJoinRequestControllerDelegate groupChatJoinRequestDelegate;
   @MockitoBean private SessionService sessionService;
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @MockitoBean private CreateEnquiryMessageFacade createEnquiryMessageFacade;

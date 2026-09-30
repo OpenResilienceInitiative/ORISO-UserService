@@ -106,7 +106,9 @@ class AdviceSeekerReplyEmailServiceTest {
             Optional.of(
                 new TenantSystemEmailRouteService.Route(
                     TenantSystemEmailRouteService.Mode.PLATFORM, null)));
-    when(emailBrand.values("https://tenant.example.net", null)).thenReturn(neutralBrand());
+    when(emailBrand.valuesForResolvedBrand(
+            eq("https://tenant.example.net"), any(EmailBranding.class)))
+        .thenReturn(neutralBrand());
     when(writer.reserve(
             eq(RecipientKind.ASKER),
             eq("asker"),
@@ -165,7 +167,8 @@ class AdviceSeekerReplyEmailServiceTest {
                 null,
                 null));
     when(emailBrand.readablePrimary("#112233")).thenReturn("#112233");
-    when(emailBrand.values("https://tenant.example.net", null))
+    when(emailBrand.valuesForResolvedBrand(
+            eq("https://tenant.example.net"), any(EmailBranding.class)))
         .thenAnswer(
             ignored -> {
               var values = neutralBrand();
@@ -464,7 +467,9 @@ class AdviceSeekerReplyEmailServiceTest {
     var route =
         new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.OWN, null);
     when(routes.resolve(7L)).thenReturn(Optional.of(route));
-    when(emailBrand.values("https://tenant.example.net", null)).thenReturn(neutralBrand());
+    when(emailBrand.valuesForResolvedBrand(
+            eq("https://tenant.example.net"), any(EmailBranding.class)))
+        .thenReturn(neutralBrand());
     when(branding.resolveNotification(7L, "https://tenant.example.net"))
         .thenReturn(
             new EmailBranding(
@@ -714,7 +719,9 @@ class AdviceSeekerReplyEmailServiceTest {
     var route =
         new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
     when(routes.resolve(7L)).thenReturn(Optional.of(route));
-    when(emailBrand.values("https://tenant.example.net", null)).thenReturn(neutralBrand());
+    when(emailBrand.valuesForResolvedBrand(
+            eq("https://tenant.example.net"), any(EmailBranding.class)))
+        .thenReturn(neutralBrand());
     return session;
   }
 
