@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
@@ -39,6 +40,8 @@ import de.caritas.cob.userservice.api.service.session.SessionTopicEnrichmentServ
 import de.caritas.cob.userservice.api.tenant.TenantResolverService;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import jakarta.servlet.http.Cookie;
+import java.util.Arrays;
+import java.util.stream.Collectors;
 import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -127,6 +130,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
     createAdminDTO.setTenantId(95);
     givenTenant();
     givenTenantSuperAdmin();
+    givenPlatformAdmin();
 
     // when
 
@@ -151,13 +155,15 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
-  void createNewAgencyAdmin_Should_return500_When_superAdminHasNullTenantID() throws Exception {
+  void createNewAgencyAdmin_Should_return500_When_platformAdminOmitsTargetTenantId()
+      throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(null);
     givenTenant();
     givenTenantSuperAdmin();
+    givenPlatformAdmin();
 
     // when
 
@@ -170,6 +176,29 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isInternalServerError())
         .andReturn();
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void createNewAgencyAdmin_Should_returnForbidden_When_tenantSuperAdminHasNoTenant()
+      throws Exception {
+    // given a tenant super admin whose token carries no tenant
+    CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setEmail("agencyadmin@email.com");
+    createAdminDTO.setTenantId(95);
+    givenTenant();
+    givenTenantSuperAdmin();
+    givenCallerBelongsToTenant(null);
+
+    // when, then
+    this.mockMvc
+        .perform(
+            post(AGENCY_ADMIN_PATH)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createAdminDTO)))
+        .andExpect(status().isForbidden());
   }
 
   @Test
@@ -271,7 +300,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
     createAdminDTO.setEmail("platformadmin@email.com");
     createAdminDTO.setTenantId(0);
     givenTenant();
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    givenPlatformAdmin();
 
     // when, then
     this.mockMvc
@@ -283,6 +312,25 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.tenantId", is("0")));
+  }
+
+  // Production only builds a platform admin from tenant 0 plus both super-admin roles: the real
+  // predicates run on that state, so a broken rule fails here instead of being stubbed to true.
+  private void givenPlatformAdmin() {
+    givenCaller(0L, UserRole.AGENCY_ADMIN, UserRole.TENANT_ADMIN);
+  }
+
+  private void givenCaller(Long tenantId, UserRole... roles) {
+    Mockito.doCallRealMethod().when(authenticatedUser).setRoles(any());
+    Mockito.doCallRealMethod().when(authenticatedUser).setTenantId(any());
+    authenticatedUser.setRoles(
+        Arrays.stream(roles).map(UserRole::getValue).collect(Collectors.toSet()));
+    authenticatedUser.setTenantId(tenantId);
+    Mockito.doCallRealMethod().when(authenticatedUser).getRoles();
+    Mockito.doCallRealMethod().when(authenticatedUser).isAgencySuperAdmin();
+    Mockito.doCallRealMethod().when(authenticatedUser).isTenantSuperAdmin();
+    Mockito.doCallRealMethod().when(authenticatedUser).isPlatformAdmin();
+    when(authenticatedUser.getTenantId()).thenReturn(tenantId);
   }
 
   private void givenCallerBelongsToTenant(Long tenantId) {

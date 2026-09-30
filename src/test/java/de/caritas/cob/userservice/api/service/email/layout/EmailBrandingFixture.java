@@ -17,6 +17,7 @@ public final class EmailBrandingFixture {
 
   public static EmailBrandingResolver platform(String origin) {
     EmailBrandingResolver resolver = mock(EmailBrandingResolver.class);
+    lenient().when(resolver.platformName()).thenReturn("Online-Beratung");
     lenient().when(resolver.resolve(nullable(Long.class))).thenReturn(resolvedPlatform(origin));
     return resolver;
   }

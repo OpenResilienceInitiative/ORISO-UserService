@@ -84,7 +84,7 @@ public class EmailBrandingResolver {
   public EmailBrandingResolver(
       @NonNull TenantService tenantService,
       @NonNull TenantTemplateSupplier tenantTemplateSupplier,
-      @Value("${email.branding.name:ORISO}") String platformName,
+      @Value("${email.branding.name:}") String platformName,
       @Value("${email.branding.logo-url:}") String platformLogoUrl,
       @Value("${app.base.url:}") String applicationBaseUrl,
       @Value("${email.branding.cache-ttl-seconds:10}") long cacheTtlSeconds) {
@@ -148,14 +148,22 @@ public class EmailBrandingResolver {
     return resolveBranding(tenantId, true);
   }
 
+  /** The configured product name is shared by platform subjects and the offered-by line. */
+  public String platformName() {
+    if (isBlank(platformName)) {
+      throw new IllegalStateException(
+          "EMAIL_BRANDING_NAME is missing; configure the platform name before sending email");
+    }
+    return platformName.trim();
+  }
+
   private EmailBranding resolveBranding(Long tenantId, boolean pendingTenantAllowed) {
+    String configuredPlatformName = platformName();
     RestrictedTenantDTO tenant = loadTenantQuietly(tenantId, pendingTenantAllowed);
     Theming theming = tenant == null ? null : tenant.getTheming();
 
     String brandName =
-        tenant != null && !isBlank(tenant.getName())
-            ? tenant.getName()
-            : (isBlank(platformName) ? "ORISO" : platformName);
+        tenant != null && !isBlank(tenant.getName()) ? tenant.getName() : configuredPlatformName;
 
     return new EmailBranding(
         brandName,

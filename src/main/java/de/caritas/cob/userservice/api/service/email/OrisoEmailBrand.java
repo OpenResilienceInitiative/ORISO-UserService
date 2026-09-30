@@ -49,6 +49,11 @@ public class OrisoEmailBrand {
     this.brandingResolver = brandingResolver;
   }
 
+  /** The platform name has one configuration source for subjects and shared mail frames. */
+  public String platformName() {
+    return brandingResolver.platformName();
+  }
+
   /** Values for the catalogue renderer, resolved from the same tenant source as invitation mail. */
   public Map<String, String> valuesForTenant(String appUrl, Long tenantId) {
     return valuesForResolvedBrand(appUrl, brandingResolver.resolve(tenantId));
@@ -62,7 +67,7 @@ public class OrisoEmailBrand {
     }
     Map<String, String> values = new LinkedHashMap<>();
     values.put("platformName", branding.brandName());
-    values.put("offeringName", brandingResolver.resolve(null).brandName());
+    values.put("offeringName", platformName());
     SenderOrganisation operator = senderOrganisations.platform();
     putSender(values, operator);
     values.put("operatorName", orBlank(operator.name()));

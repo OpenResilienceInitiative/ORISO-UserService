@@ -347,6 +347,22 @@
       "status": "safe"
     },
     {
+      "id": "account-invite-expiry-number-release-scheduler",
+      "source": "src/main/java/de/caritas/cob/userservice/api/service/accountinvite/ExpiredInviteReservationSweep.java",
+      "kind": "scheduler",
+      "owner": "agency-tenant",
+      "risk": "duplicate-side-effect",
+      "components": [
+        "expireElapsedInvites"
+      ],
+      "decision": "Lease each run via ScheduledTaskClaimService; expiry is a status transition and every number release is a durable release task, so a replayed batch cannot release a number twice.",
+      "signals": [
+        "userservice.scheduler.executions",
+        "userservice.scheduler.duration"
+      ],
+      "status": "safe"
+    },
+    {
       "id": "enquiry-notification-scheduler",
       "source": "src/main/java/de/caritas/cob/userservice/api/workflow/enquirynotification/scheduler/EnquiryNotificationScheduler.java",
       "kind": "scheduler",

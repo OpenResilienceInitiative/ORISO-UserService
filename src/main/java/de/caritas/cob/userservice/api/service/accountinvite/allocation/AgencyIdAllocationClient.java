@@ -6,6 +6,7 @@ import de.caritas.cob.userservice.agencyadminserivce.generated.web.model.AgencyI
 import de.caritas.cob.userservice.api.config.apiclient.AgencyAdminServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.service.httpheader.TenantHeaderSupplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -86,7 +87,11 @@ public class AgencyIdAllocationClient {
   }
 
   private void addDefaultHeaders(ApiClient apiClient) {
-    HttpHeaders headers = this.securityHeaderSupplier.getKeycloakAndCsrfHttpHeaders();
+    // A background job's service token is used for this request only, never ambiently.
+    HttpHeaders headers =
+        TechnicalAccessTokenContext.offered()
+            .map(this.securityHeaderSupplier::getKeycloakAndCsrfHttpHeaders)
+            .orElseGet(this.securityHeaderSupplier::getKeycloakAndCsrfHttpHeaders);
     tenantHeaderSupplier.addTenantHeader(headers);
     headers.forEach((key, value) -> apiClient.addDefaultHeader(key, value.iterator().next()));
   }

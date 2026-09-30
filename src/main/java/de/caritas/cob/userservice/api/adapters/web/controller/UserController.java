@@ -608,11 +608,12 @@ public class UserController implements UsersApi {
    * Assign a chat, resolved using its Matrix room ID or stable numeric series ID.
    *
    * @param matrixRoomId Matrix room ID or stable numeric series ID (required)
+   * @param inviteToken secret part of the invite link, required with a numeric series ID
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> assignChat(String matrixRoomId) {
-    return userChatControllerDelegate.assignChat(matrixRoomId);
+  public ResponseEntity<Void> assignChat(String matrixRoomId, String inviteToken) {
+    return userChatControllerDelegate.assignChat(matrixRoomId, inviteToken);
   }
 
   /**

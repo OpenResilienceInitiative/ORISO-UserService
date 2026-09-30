@@ -134,4 +134,20 @@ class OrisoEmailBrandTest {
         .containsEntry("accentColor", "#654321")
         .containsEntry("privacyUrl", "https://sued.example.org/datenschutz");
   }
+
+  @Test
+  void offeringNameUsesConfiguredProductNameRatherThanPlatformTenantDisplayName() {
+    TenantService tenants = mock(TenantService.class);
+    TenantTemplateSupplier urls = mock(TenantTemplateSupplier.class);
+    when(tenants.getPlatformTenantDataFresh())
+        .thenReturn(new RestrictedTenantDTO().id(0L).name("Platform Operator"));
+    OrisoEmailBrand realBrand =
+        new OrisoEmailBrand(
+            SenderOrganisationFixture.platformOwner(),
+            new EmailBrandingResolver(
+                tenants, urls, "Beratung Mitten", "", "https://app.example.org"));
+
+    assertThat(realBrand.valuesForTenant("https://app.example.org", null))
+        .containsEntry("offeringName", "Beratung Mitten");
+  }
 }

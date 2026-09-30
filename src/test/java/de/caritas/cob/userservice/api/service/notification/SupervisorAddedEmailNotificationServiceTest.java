@@ -4,7 +4,10 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.CALLS_REAL_METHODS;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,19 +17,28 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.OrisoSmtpTransport;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import jakarta.mail.Message;
+import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.internet.MimeMultipart;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
+import org.mockito.MockedStatic;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -729,5 +741,47 @@ class SupervisorAddedEmailNotificationServiceTest {
             1L);
 
     assertThat(email.html()).doesNotContain("#0f3b8f");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void teamChangeNotificationPreservesTenantBrandThroughAddedAndRemovedCallers(boolean added)
+      throws Exception {
+    var tenantValues = new HashMap<>(emailBrand.valuesForTenant("https://app.example.org", null));
+    tenantValues.put("platformName", "Nord Beratung");
+    tenantValues.put("primaryColor", "#123456");
+    tenantValues.put("accentColor", "#123456");
+    doReturn(tenantValues).when(emailBrand).valuesForTenant("https://app.example.org", 1L);
+    when(emailSettingsService.resolveSupervisorAddedEmailSettings(eq(1L), any()))
+        .thenReturn(Optional.of(smtpSettings()));
+    User user = new User();
+    user.setTenantId(1L);
+    user.setEmail("recipient@example.org");
+
+    var direct =
+        service.renderTeamChange(
+            LanguageCode.de,
+            "Etwas hat sich geändert.",
+            "https://app.example.org",
+            "https://app.example.org",
+            null,
+            1L);
+    assertThat(direct.html()).contains("Nord Beratung", "#123456");
+    assertThat(direct.text()).contains("Nord Beratung");
+
+    try (MockedStatic<OrisoSmtpTransport> transport =
+        mockStatic(OrisoSmtpTransport.class, CALLS_REAL_METHODS)) {
+      transport.when(() -> OrisoSmtpTransport.send(any(Message.class))).thenAnswer(call -> null);
+      if (added) service.notifySupervisorAdded(user, null, 42L, null, null);
+      else service.notifySupervisorRemoved(user, null, 42L, null, null);
+
+      ArgumentCaptor<Message> messages = ArgumentCaptor.forClass(Message.class);
+      transport.verify(() -> OrisoSmtpTransport.send(messages.capture()));
+      MimeMultipart parts = (MimeMultipart) ((MimeMessage) messages.getValue()).getContent();
+      assertThat(parts.getBodyPart(0).getContent().toString()).contains("Nord Beratung");
+      assertThat(parts.getBodyPart(1).getContent().toString()).contains("Nord Beratung", "#123456");
+      verify(emailBrand, org.mockito.Mockito.times(2))
+          .valuesForTenant("https://app.example.org", 1L);
+    }
   }
 }

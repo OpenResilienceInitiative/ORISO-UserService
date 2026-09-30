@@ -78,6 +78,7 @@ class GlobalSmtpTestEmailServiceTest {
 
     service.sendTestEmail(dto);
 
+    verify(emailBrand).valuesForTenant("https://app.example.org", null);
     verify(emailRenderer).render(eq("smtp-test"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
     ArgumentCaptor<MimeMessage> captor = ArgumentCaptor.forClass(MimeMessage.class);
     verify(transport).send(captor.capture());

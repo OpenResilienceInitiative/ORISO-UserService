@@ -17,9 +17,12 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.NullAndEmptySource;
 import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.boot.test.context.runner.ApplicationContextRunner;
+import org.springframework.context.support.PropertySourcesPlaceholderConfigurer;
 import org.springframework.web.client.HttpClientErrorException;
 
 /** Branding resolution and its fallbacks (ORISO-UserService#914). */
@@ -53,6 +56,86 @@ class EmailBrandingResolverTest {
     tenant.setName(name);
     tenant.setTheming(theming);
     return tenant;
+  }
+
+  @ParameterizedTest
+  @NullAndEmptySource
+  @ValueSource(strings = {"   "})
+  void resolve_Should_RejectMissingConfiguredPlatformName(String configuredName) {
+    EmailBrandingResolver subject =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, configuredName, "", "https://app.example.org");
+
+    assertThatThrownBy(() -> subject.resolve(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
+  @Test
+  void resolve_Should_RejectMissingPlatformNameEvenForANamedTenant() {
+    lenient().when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(tenant("Nord", null));
+    EmailBrandingResolver subject =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "", "", "https://app.example.org");
+
+    assertThatThrownBy(() -> subject.resolve(7L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
+  @Test
+  void resolve_Should_TrimTheConfiguredPlatformName() {
+    EmailBrandingResolver subject =
+        new EmailBrandingResolver(
+            tenantService,
+            tenantTemplateSupplier,
+            "  Beratung Mitten  ",
+            "",
+            "https://app.example.org");
+
+    assertThat(subject.resolve(null).brandName()).isEqualTo("Beratung Mitten");
+  }
+
+  @Test
+  void resolve_Should_NotInventANameWhenCanonicalConfigurationIsAbsent() {
+    new ApplicationContextRunner()
+        .withBean(
+            PropertySourcesPlaceholderConfigurer.class, PropertySourcesPlaceholderConfigurer::new)
+        .withInitializer(
+            context -> {
+              context.getBeanFactory().registerSingleton("tenantService", tenantService);
+              context
+                  .getBeanFactory()
+                  .registerSingleton("tenantTemplateSupplier", tenantTemplateSupplier);
+            })
+        .withUserConfiguration(EmailBrandingResolver.class)
+        .withPropertyValues("app.base.url=https://app.example.org")
+        .run(
+            context ->
+                assertThatThrownBy(() -> context.getBean(EmailBrandingResolver.class).resolve(null))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("EMAIL_BRANDING_NAME"));
+  }
+
+  @Test
+  void resolve_Should_UseCanonicalConfiguredNameInSpringBinding() {
+    new ApplicationContextRunner()
+        .withBean(
+            PropertySourcesPlaceholderConfigurer.class, PropertySourcesPlaceholderConfigurer::new)
+        .withInitializer(
+            context -> {
+              context.getBeanFactory().registerSingleton("tenantService", tenantService);
+              context
+                  .getBeanFactory()
+                  .registerSingleton("tenantTemplateSupplier", tenantTemplateSupplier);
+            })
+        .withUserConfiguration(EmailBrandingResolver.class)
+        .withPropertyValues(
+            "app.base.url=https://app.example.org", "email.branding.name=Beratung Mitten")
+        .run(
+            context ->
+                assertThat(context.getBean(EmailBrandingResolver.class).resolve(null).brandName())
+                    .isEqualTo("Beratung Mitten"));
   }
 
   // --- logo -----------------------------------------------------------------------------
