@@ -214,7 +214,8 @@ public class FeedbackMessageEmailService {
           AdviceSeekerReplyEmailService.requireBaseUrl(
               multitenancyEnabled ? tenantTemplates.getTenantBaseUrl(tenant) : applicationBaseUrl);
       var tenantBrand = branding.resolveNotification(claim.getTenantId(), baseUrl);
-      var values = emailBrand.values(baseUrl, route.emailThemeColor());
+      var values = emailBrand.valuesForResolvedBrand(baseUrl, tenantBrand);
+      values.put("platformName", values.get("offeringName"));
       if (tenantBrand.logoUrl() != null) {
         values.put("logoUrl", tenantBrand.logoUrl());
       }

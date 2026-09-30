@@ -6,29 +6,41 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.spi.ThrowableProxyUtil;
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
 import de.caritas.cob.userservice.testutils.LogbackCaptor;
 import java.util.List;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
@@ -53,13 +65,15 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Spy
   private OrisoEmailBrand emailBrand =
-      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
+      new OrisoEmailBrand(
+          SenderOrganisationFixture.platformOwner(),
+          EmailBrandingFixture.platform("https://app.example.org"));
 
   @InjectMocks private SupervisorAddedEmailNotificationService service;
 
   @BeforeEach
   void injectValues() {
-    ReflectionTestUtils.setField(emailBrand, "platformName", "Independent Platform");
+    doReturn("Wayfinder").when(emailBrand).platformName();
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
     ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.example.org");
   }
@@ -457,6 +471,23 @@ class SupervisorAddedEmailNotificationServiceTest {
         .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
   }
 
+  @Test
+  void notifySupervisorAdded_Should_RejectMalformedTenantUrlWithoutUsingPlatformOrigin() {
+    when(emailRoutes.resolve(any())).thenReturn(Optional.of(routeSettings()));
+    TenantData tenantData = new TenantData();
+    tenantData.setTenantId(1L);
+    TemplateDataDTO urlAttr = mock(TemplateDataDTO.class);
+    when(urlAttr.getKey()).thenReturn("url");
+    when(urlAttr.getValue()).thenReturn("https://tenant.example.com?redirect=other");
+    when(tenantTemplateSupplier.getTemplateAttributes()).thenReturn(List.of(urlAttr));
+
+    assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class)
+        .hasMessageContaining("tenant email URL");
+    verify(emailBrand, never()).valuesForTenant(any(), any());
+    verifyNoInteractions(emailDelivery);
+  }
+
   // ── languageCodeOf — non-German (English) localization paths ─────────────
 
   @Test
@@ -574,10 +605,10 @@ class SupervisorAddedEmailNotificationServiceTest {
         .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
   }
 
-  // ── resolveHexColor — valid hex passes through, invalid → default ─────────
+  // SMTP routing settings do not supply the resolved tenant design colour.
 
   @Test
-  void notifySupervisorAdded_Should_AcceptValidHexColor_When_SettingsProvideValidHex() {
+  void validLegacySmtpColourDoesNotOverrideResolvedBrand() {
     TenantSystemEmailRouteService.Route settings =
         new TenantSystemEmailRouteService.Route(
             TenantSystemEmailRouteService.Mode.PLATFORM, "#1a2b3c");
@@ -585,15 +616,19 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     User user = new User();
     user.setTenantId(1L);
-    user.setEmail("user@dummy.invalid");
+    user.setEmail("recipient@example.org");
+    user.setLanguageCode(LanguageCode.de);
 
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
-        .doesNotThrowAnyException();
+    service.notifySupervisorAdded(user, null, 1L, null, null);
+
+    var email = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(emailDelivery)
+        .send(eq(1L), eq(settings), any(), eq("recipient@example.org"), email.capture());
+    assertThat(email.getValue().html()).doesNotContain(settings.emailThemeColor());
   }
 
   @Test
-  void notifySupervisorAdded_Should_UseDefaultHexColor_When_SettingsProvideInvalidHex() {
-    // resolveHexColor: "not-a-color" doesn't match ^#([A-Fa-f0-9]{6})$ → DEFAULT_EMAIL_THEME_COLOR
+  void malformedLegacySmtpColourDoesNotOverrideResolvedBrand() {
     TenantSystemEmailRouteService.Route settings =
         new TenantSystemEmailRouteService.Route(
             TenantSystemEmailRouteService.Mode.PLATFORM, "not-a-color");
@@ -601,10 +636,15 @@ class SupervisorAddedEmailNotificationServiceTest {
 
     User user = new User();
     user.setTenantId(1L);
-    user.setEmail("user@dummy.invalid");
+    user.setEmail("recipient@example.org");
+    user.setLanguageCode(LanguageCode.de);
 
-    assertThatCode(() -> service.notifySupervisorAdded(user, null, 1L, null, null))
-        .doesNotThrowAnyException();
+    service.notifySupervisorAdded(user, null, 1L, null, null);
+
+    var email = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(emailDelivery)
+        .send(eq(1L), eq(settings), any(), eq("recipient@example.org"), email.capture());
+    assertThat(email.getValue().html()).doesNotContain(settings.emailThemeColor());
   }
 
   // ── buildSessionUrl — null sessionId ──────────────────────────────────────
@@ -737,7 +777,7 @@ class SupervisorAddedEmailNotificationServiceTest {
             "https://app.example.org",
             "https://app.example.org",
             null,
-            "#1c4f8f");
+            1L);
 
     assertThat(email.html())
         .doesNotContain("#4711")
@@ -757,7 +797,7 @@ class SupervisorAddedEmailNotificationServiceTest {
             "https://app.example.org",
             "https://app.example.org/sessions/consultant/sessionView/session/4711",
             4711L,
-            "#1c4f8f");
+            1L);
 
     assertThat(email.subject()).isEqualTo("Änderung in Ihrem Team");
     assertThat(email.html())
@@ -776,7 +816,7 @@ class SupervisorAddedEmailNotificationServiceTest {
             "https://app.example.org",
             "https://app.example.org",
             1L,
-            "#1c4f8f");
+            1L);
 
     // The old inline card: a 620px table on #f6f7fb with an #e5e7eb border, in
     // Arial. Checked by its own fingerprints — "620" on its own is no use,
@@ -790,6 +830,23 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void aTenantColourThatCannotCarryWhiteTextDoesNotReachTheButton() {
+    var tenants = mock(TenantService.class);
+    var tenant = new RestrictedTenantDTO();
+    tenant.setId(1L);
+    tenant.setName("Nord Beratung");
+    var theming = new Theming();
+    theming.setPrimaryColor("#ffd400");
+    tenant.setTheming(theming);
+    when(tenants.getRestrictedTenantDataFresh(1L)).thenReturn(tenant);
+    when(tenantTemplateSupplier.getTenantBaseUrl(tenant)).thenReturn("https://app.example.org");
+    var resolver =
+        new EmailBrandingResolver(
+            tenants, tenantTemplateSupplier, "Wayfinder", "", "https://app.example.org");
+    ReflectionTestUtils.setField(
+        service,
+        "emailBrand",
+        new OrisoEmailBrand(SenderOrganisationFixture.platformOwner(), resolver));
+
     var email =
         service.renderTeamChange(
             LanguageCode.de,
@@ -797,8 +854,102 @@ class SupervisorAddedEmailNotificationServiceTest {
             "https://app.example.org",
             "https://app.example.org",
             1L,
-            "#ffd400");
+            1L);
 
     assertThat(email.html()).doesNotContain("#ffd400");
+  }
+
+  @Test
+  void malformedTenantUrlIsRejectedWithoutUsingPlatformOrigin() {
+    when(emailRoutes.resolve(1L)).thenReturn(Optional.of(routeSettings()));
+    TenantData tenantData = new TenantData();
+    tenantData.setTenantId(1L);
+    when(tenantTemplateSupplier.getTemplateAttributes())
+        .thenReturn(
+            List.of(
+                new TemplateDataDTO()
+                    .key("url")
+                    .value("https://tenant.example.com?redirect=other")));
+
+    assertThatCode(() -> service.notifySupervisorAdded(null, null, 1L, tenantData, null))
+        .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
+    verify(emailBrand, never()).valuesForTenant(any(), any());
+    verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void malformedTenantUrlCannotReachLogsOrTransport(boolean added) {
+    String privateAddress = "url-privacy-sentinel@example.invalid";
+    String privateToken = "private-token-sentinel-1306";
+    String malformedUrl = "https://" + privateAddress + "/invalid path?token=" + privateToken;
+    TenantData tenantData = new TenantData();
+    tenantData.setTenantId(42L);
+    when(tenantTemplateSupplier.getTemplateAttributes())
+        .thenReturn(List.of(new TemplateDataDTO().key("url").value(malformedUrl)));
+    when(emailRoutes.resolve(42L)).thenReturn(Optional.of(routeSettings()));
+
+    try (var logs = LogbackCaptor.forClass(SupervisorAddedEmailNotificationService.class)) {
+      assertThatCode(
+              () -> {
+                if (added) service.notifySupervisorAdded(null, null, 7L, tenantData, null);
+                else service.notifySupervisorRemoved(null, null, 7L, tenantData, null);
+              })
+          .isInstanceOf(TenantSystemEmailRouteService.ConfigurationException.class);
+      assertThat(logs.events()).hasSize(1);
+      var warning = logs.events().getFirst();
+      assertThat(warning.getLevel()).isEqualTo(Level.WARN);
+      String visibleLog = warning.getFormattedMessage();
+      if (warning.getThrowableProxy() != null) {
+        visibleLog += ThrowableProxyUtil.asString(warning.getThrowableProxy());
+      }
+      assertThat(visibleLog).doesNotContain(privateAddress, privateToken, malformedUrl);
+      assertThat(warning.getThrowableProxy()).isNull();
+      verify(emailBrand, never()).valuesForTenant(any(), any());
+      verify(emailDelivery, never()).send(anyLong(), any(), any(), any(), any());
+    }
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {true, false})
+  void teamChangeNotificationPreservesTenantBrandThroughAddedAndRemovedCallers(boolean added) {
+    var resolver = EmailBrandingFixture.platform("https://app.example.org");
+    var tenantBrand =
+        new EmailBranding(
+            "Nord Beratung",
+            "https://app.example.org/nord-logo.png",
+            "#123456",
+            "https://app.example.org/nord/impressum",
+            "https://app.example.org/nord/datenschutz");
+    when(resolver.resolve(1L)).thenReturn(tenantBrand);
+    var resolvedBrand = new OrisoEmailBrand(SenderOrganisationFixture.platformOwner(), resolver);
+    ReflectionTestUtils.setField(service, "emailBrand", resolvedBrand);
+    var route = routeSettings();
+    when(emailRoutes.resolve(1L)).thenReturn(Optional.of(route));
+    User user = new User();
+    user.setTenantId(1L);
+    user.setEmail("recipient@example.org");
+    user.setLanguageCode(LanguageCode.de);
+
+    if (added) service.notifySupervisorAdded(user, null, 42L, null, null);
+    else service.notifySupervisorRemoved(user, null, 42L, null, null);
+
+    var email = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
+    verify(emailDelivery)
+        .send(
+            eq(1L),
+            eq(route),
+            eq(
+                added
+                    ? TenantSystemEmailDelivery.Purpose.SUPERVISOR_ADDED
+                    : TenantSystemEmailDelivery.Purpose.SUPERVISOR_REMOVED),
+            eq("recipient@example.org"),
+            email.capture());
+    assertThat(email.getValue().html())
+        .contains(
+            "Nord Beratung", "#123456", "nord-logo.png", "nord/impressum", "nord/datenschutz");
+    assertThat(email.getValue().text())
+        .contains("Nord Beratung", "nord/impressum", "nord/datenschutz");
+    verify(resolver).resolve(1L);
   }
 }
