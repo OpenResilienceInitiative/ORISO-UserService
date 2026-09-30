@@ -341,7 +341,7 @@ class MagicLinkLoginServiceTest {
     User user = validUserWithMagicLinkEnabled();
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
     ApplicationSettingsSmtpCredentialsDTO credentials = smtpCredentials("user", "pass");
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(credentials));
     Map<String, String> brandValues = new HashMap<>();
     brandValues.put("appUrl", "https://app.example.org");
@@ -353,7 +353,7 @@ class MagicLinkLoginServiceTest {
         .doesNotThrowAnyException();
 
     verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
-    verify(applicationSettingsService).getGlobalSmtpCredentials();
+    verify(applicationSettingsService).getGlobalSmtpSettingsSnapshot();
   }
 
   // ── consumeMagicLink — happy path returns provider-neutral session ────────
@@ -417,7 +417,7 @@ class MagicLinkLoginServiceTest {
   void requestMagicLink_Should_NotIssueToken_When_AdminSmtpIsDisabled() {
     when(userService.findUserByUsername("testuser"))
         .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(smtpCredentials("user", "pass").globalSmtpEnabled(false)));
 
     assertThat(magicLinkLoginService.requestMagicLink("testuser"))
@@ -439,7 +439,7 @@ class MagicLinkLoginServiceTest {
                 smtpCredentials("user", "pass").globalSmtpSecure(null),
                 smtpCredentials(" ", "pass"),
                 smtpCredentials("user", " ")));
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenAnswer(invocation -> Optional.of(incomplete.remove(0)));
 
     for (int index = 0; index < 6; index++) {
@@ -456,7 +456,7 @@ class MagicLinkLoginServiceTest {
   void requestMagicLink_Should_IssueToken_When_TechnicalSettingsAreComplete() {
     when(userService.findUserByUsername("testuser"))
         .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     assertThat(magicLinkLoginService.requestMagicLink("testuser"))
@@ -470,7 +470,7 @@ class MagicLinkLoginServiceTest {
   void requestMagicLink_Should_NotIssueToken_When_AuthenticatedCredentialsAreUnavailable() {
     when(userService.findUserByUsername("testuser"))
         .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
-    when(applicationSettingsService.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot()).thenReturn(Optional.empty());
 
     // Unavailable SMTP must not be observable to the caller — the result stays ACCEPTED so the
     // endpoint cannot be used to enumerate accounts; only the token issue is skipped.

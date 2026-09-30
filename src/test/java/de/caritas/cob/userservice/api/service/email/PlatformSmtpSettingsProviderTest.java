@@ -16,7 +16,7 @@ class PlatformSmtpSettingsProviderTest {
 
   @Test
   void readsOnlyTheAdminSettingsSnapshot() {
-    when(service.getGlobalSmtpCredentials())
+    when(service.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(PlatformSmtpSettingsFixture.credentials("sender", "secret")));
 
     var settings = provider.requireConfigured();
@@ -32,7 +32,7 @@ class PlatformSmtpSettingsProviderTest {
 
   @Test
   void namesMissingAdminSettingsWithoutRevealingCredentials() {
-    when(service.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
+    when(service.getGlobalSmtpSettingsSnapshot()).thenReturn(Optional.empty());
 
     assertThatThrownBy(provider::requireConfigured)
         .isInstanceOf(IllegalStateException.class)
@@ -45,7 +45,7 @@ class PlatformSmtpSettingsProviderTest {
     var settings =
         PlatformSmtpSettingsFixture.credentials("sender", "secret")
             .globalFeatureSystemNotificationEmailsEnabled(false);
-    when(service.getGlobalSmtpCredentials()).thenReturn(Optional.of(settings));
+    when(service.getGlobalSmtpSettingsSnapshot()).thenReturn(Optional.of(settings));
 
     assertThatThrownBy(provider::requireConfigured)
         .hasMessageContaining("system notification emails enabled");
@@ -58,7 +58,7 @@ class PlatformSmtpSettingsProviderTest {
             .globalSmtpPort("70000")
             .globalSmtpSecure(null)
             .globalSmtpFrom("not-an-address");
-    when(service.getGlobalSmtpCredentials()).thenReturn(Optional.of(settings));
+    when(service.getGlobalSmtpSettingsSnapshot()).thenReturn(Optional.of(settings));
 
     assertThatThrownBy(provider::requireConfigured)
         .hasMessageContaining("SMTP port")
@@ -69,7 +69,7 @@ class PlatformSmtpSettingsProviderTest {
 
   @Test
   void followsCredentialRotationOnTheNextSend() {
-    when(service.getGlobalSmtpCredentials())
+    when(service.getGlobalSmtpSettingsSnapshot())
         .thenReturn(
             Optional.of(PlatformSmtpSettingsFixture.credentials("sender", "first")),
             Optional.of(PlatformSmtpSettingsFixture.credentials("sender", "second")));
