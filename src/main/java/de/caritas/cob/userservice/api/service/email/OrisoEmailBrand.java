@@ -75,10 +75,10 @@ public class OrisoEmailBrand {
     values.put("primaryColor", branding.accentColor());
     values.put("accentColor", branding.accentColor());
     values.put("appUrl", base);
-    values.put("settingsUrl", base + "/profile/settings");
+    values.put("settingsUrl", base + "/profile/einstellungen/sicherheit");
     values.put("privacyUrl", branding.privacyUrl());
     values.put("imprintUrl", branding.imprintUrl());
-    values.put("unsubscribeUrl", base + "/profile/settings/notifications");
+    values.put("unsubscribeUrl", base + "/profile/einstellungen/email");
     return values;
   }
 

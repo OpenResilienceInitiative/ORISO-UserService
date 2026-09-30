@@ -9,6 +9,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Set;
+import java.util.regex.Pattern;
 import org.springframework.beans.factory.config.BeanFactoryPostProcessor;
 import org.springframework.beans.factory.config.ConfigurableListableBeanFactory;
 import org.springframework.context.EnvironmentAware;
@@ -35,6 +36,13 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
   /** Reserved example domains (RFC 2606); a real deployment never mails links to them. */
   private static final List<String> EXAMPLE_DOMAINS =
       List.of("example.com", "example.org", "example.net");
+
+  // Browsers accept legacy decimal, octal and hex IPv4 spellings that URI may either reject or
+  // treat as DNS names. Match only a numeric authority, optionally followed by its port.
+  private static final Pattern NUMERIC_AUTHORITY =
+      Pattern.compile(
+          "((?:[0-9]+|0x[0-9a-f]+)(?:\\.(?:[0-9]+|0x[0-9a-f]+))*\\.?)(?::[0-9]+)?",
+          Pattern.CASE_INSENSITIVE);
 
   private record PublicUrl(String property, String envVar, boolean required, String missing) {}
 
@@ -135,12 +143,19 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
       return "is not a valid URL";
     }
     String scheme = uri.getScheme() == null ? "" : uri.getScheme().toLowerCase(Locale.ROOT);
-    if (!("http".equals(scheme) || "https".equals(scheme)) || isBlank(uri.getHost())) {
+    if (!("http".equals(scheme) || "https".equals(scheme))) {
       return "must be an absolute http(s) URL with a host";
     }
     // Credentials in a mailed link would leak to every recipient.
     if (uri.getRawUserInfo() != null) {
       return "must carry no user info";
+    }
+    if (deployed && isNoncanonicalNumericHost(uri)) {
+      return "uses a noncanonical numeric IP alias,"
+          + " which cannot be this environment's public host";
+    }
+    if (isBlank(uri.getHost())) {
+      return "must be an absolute http(s) URL with a host";
     }
     // Routes are appended to these origins; a query or fragment would swallow them. A path
     // prefix stays allowed: the admin password-reset origin is <host>/admin.
@@ -148,26 +163,48 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
       return "must carry no query or fragment";
     }
     String host = uri.getHost().toLowerCase(Locale.ROOT);
+    // A final root dot is valid for a fully qualified DNS name. Normalize only classification;
+    // retain the explicitly configured URL and still reject localhost/example hosts with a dot.
+    if (host.endsWith(".")) {
+      host = host.substring(0, host.length() - 1);
+    }
     if (deployed && isPlaceholder(host)) {
       return "uses a reserved example or template host (example.com/.org/.net,"
           + " your-domain), loopback or private host (localhost, 127.0.0.1, [::1],"
-          + " private/documentation/multicast IPv6), numeric IP alias"
-          + " or noncanonical trailing dot,"
+          + " private/documentation/multicast IPv6),"
           + " which cannot be this environment's public host";
     }
     return null;
+  }
+
+  private static boolean isNoncanonicalNumericHost(URI uri) {
+    String authority = uri.getRawAuthority();
+    if (authority == null) {
+      return false;
+    }
+    var numericAuthority = NUMERIC_AUTHORITY.matcher(authority);
+    if (!numericAuthority.matches()) {
+      return false;
+    }
+    String host = numericAuthority.group(1);
+    if (!host.matches("(?:0|[1-9][0-9]{0,2})(?:\\.(?:0|[1-9][0-9]{0,2})){3}")) {
+      return true;
+    }
+    for (String octet : host.split("\\.")) {
+      if (Integer.parseInt(octet) > 255) {
+        return true;
+      }
+    }
+    return false;
   }
 
   private static boolean isPlaceholder(String host) {
     return host.contains("your-domain")
         || host.equals("localhost")
         || host.endsWith(".localhost")
-        || host.endsWith(".")
         || host.equals("0.0.0.0")
         || isPrivateIpv4(host)
         || isNonPublicIpv6(host)
-        // Browsers interpret single decimal/hex labels as IPv4 addresses.
-        || host.matches("[0-9]+|0x[0-9a-f]+")
         || host.matches("127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}")
         || EXAMPLE_DOMAINS.stream().anyMatch(d -> host.equals(d) || host.endsWith("." + d));
   }

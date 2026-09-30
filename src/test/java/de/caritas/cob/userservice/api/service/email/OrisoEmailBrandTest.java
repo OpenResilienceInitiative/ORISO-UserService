@@ -170,8 +170,10 @@ class OrisoEmailBrandTest {
 
     assertThat(values.get("appUrl")).isEqualTo("https://app.example.org");
     assertThat(values.get("privacyUrl")).isEqualTo("https://app.example.org/datenschutz");
+    assertThat(values.get("settingsUrl"))
+        .isEqualTo("https://app.example.org/profile/einstellungen/sicherheit");
     assertThat(values.get("unsubscribeUrl"))
-        .isEqualTo("https://app.example.org/profile/settings/notifications");
+        .isEqualTo("https://app.example.org/profile/einstellungen/email");
   }
 
   @Test

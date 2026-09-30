@@ -193,7 +193,7 @@ class DpaSigningMailDesignSystemTest {
   /** "zwischen … und" takes the dative; the subject's "für" keeps the accusative. */
   @Test
   void finePrint_putsTheFallbackInTheDative_When_theTenantIsOnlyReserved() {
-    when(tenantService.getRestrictedTenantData(TENANT_ID))
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
         .thenThrow(
             HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null));
 
@@ -215,7 +215,7 @@ class DpaSigningMailDesignSystemTest {
 
   @Test
   void subject_fallsBackToIhreOrganisation_When_theTenantIsOnlyReserved() {
-    when(tenantService.getRestrictedTenantData(TENANT_ID))
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
         .thenThrow(
             HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null));
 
