@@ -561,8 +561,7 @@ class MultiTenantRegistrationIT {
           chatRepository.save(
               Chat.builder()
                   .topic("Synthetic group")
-                  .conversationType(
-                      de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP)
+                  .conversationType(de.caritas.cob.userservice.api.model.ConversationType.SELF_HELP)
                   .consultingTypeId(1)
                   .initialStartDate(java.time.LocalDateTime.now())
                   .startDate(java.time.LocalDateTime.now())
