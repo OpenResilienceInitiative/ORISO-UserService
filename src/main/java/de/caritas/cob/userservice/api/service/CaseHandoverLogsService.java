@@ -81,6 +81,7 @@ public class CaseHandoverLogsService {
                 + "  chr.policy_authority AS policyAuthority,\n"
                 + "  chr.created_at AS createdAt,\n"
                 + "  chr.resolved_at AS resolvedAt,\n"
+                + "  chr.extended_at AS extendedAt,\n"
                 + "  chr.requester_consultant_id AS requesterConsultantId,\n"
                 + "  req.username AS requesterUsername,\n"
                 + "  COALESCE(NULLIF(req.display_name, ''), CONCAT(req.first_name, ' ', req.last_name)) AS requesterName,\n"
@@ -123,6 +124,7 @@ public class CaseHandoverLogsService {
           .policyAuthority(rs.getString("policyAuthority"))
           .createdAt(rs.getObject("createdAt", LocalDateTime.class))
           .resolvedAt(rs.getObject("resolvedAt", LocalDateTime.class))
+          .extendedAt(rs.getObject("extendedAt", LocalDateTime.class))
           .requesterConsultantId(rs.getString("requesterConsultantId"))
           .requesterUsername(rs.getString("requesterUsername"))
           .requesterName(rs.getString("requesterName"))
@@ -147,6 +149,7 @@ public class CaseHandoverLogsService {
     private String policyAuthority;
     private LocalDateTime createdAt;
     private LocalDateTime resolvedAt;
+    private LocalDateTime extendedAt;
     private String requesterConsultantId;
     private String requesterUsername;
     private String requesterName;
