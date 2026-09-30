@@ -23,12 +23,11 @@ public class PlatformSmtpSettingsProvider {
   public static Settings requireConfigured(ApplicationSettingsService applicationSettingsService) {
     ApplicationSettingsSmtpCredentialsDTO source =
         applicationSettingsService
-            .getGlobalSmtpCredentials()
+            .getGlobalSmtpSettingsSnapshot()
             .orElseThrow(
                 () ->
-                    new IllegalStateException(
-                        "Platform SMTP is unavailable in Admin Settings or the technical identity"
-                            + " cannot read it"));
+                    new ConfigurationException(
+                        "Platform SMTP is not configured in Admin Settings: SMTP settings are missing"));
 
     List<String> missing = new ArrayList<>();
     if (!Boolean.TRUE.equals(source.getGlobalFeatureSystemNotificationEmailsEnabled()))
@@ -56,7 +55,7 @@ public class PlatformSmtpSettingsProvider {
     if (source.getGlobalSmtpSecure() == null) missing.add("SMTP security mode");
 
     if (!missing.isEmpty()) {
-      throw new IllegalStateException(
+      throw new ConfigurationException(
           "Platform SMTP is incomplete in Admin Settings: " + String.join(", ", missing));
     }
     return new Settings(
@@ -71,6 +70,13 @@ public class PlatformSmtpSettingsProvider {
 
   private static boolean blank(String value) {
     return value == null || value.isBlank();
+  }
+
+  /** Only provider-owned, value-free validation errors may be shown to an administrator. */
+  public static class ConfigurationException extends IllegalStateException {
+    public ConfigurationException(String message) {
+      super(message);
+    }
   }
 
   public record Settings(

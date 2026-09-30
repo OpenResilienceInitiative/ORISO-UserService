@@ -44,11 +44,12 @@ class GlobalSmtpTestEmailControllerTest {
   }
 
   @Test
-  void sendGlobalSmtpTestEmail_illegalStateException_returnsBadRequestWithExceptionMessage()
-      throws Exception {
+  void sendGlobalSmtpTestEmail_configurationException_returnsNamedSetting() throws Exception {
     // Business reason: misconfiguration details should be surfaced directly for quick correction.
     var dto = validDto();
-    doThrow(new IllegalStateException("SMTP host missing"))
+    doThrow(
+            new GlobalSmtpTestEmailService.ConfigurationException(
+                "SMTP host is missing in Admin Settings"))
         .when(globalSmtpTestEmailService)
         .sendTestEmail(dto);
 
@@ -56,7 +57,23 @@ class GlobalSmtpTestEmailControllerTest {
 
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     assertNotNull(response.getBody());
-    assertEquals("SMTP host missing", ((Map<?, ?>) response.getBody()).get("message"));
+    assertEquals(
+        "SMTP host is missing in Admin Settings", ((Map<?, ?>) response.getBody()).get("message"));
+  }
+
+  @Test
+  void sendGlobalSmtpTestEmail_unexpectedIllegalStateDoesNotExposeSmtpReply() throws Exception {
+    var dto = validDto();
+    doThrow(new IllegalStateException("AUTH failed: secret value from provider"))
+        .when(globalSmtpTestEmailService)
+        .sendTestEmail(dto);
+
+    var response = controller.sendGlobalSmtpTestEmail(dto);
+
+    assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    assertEquals(
+        "SMTP test mail could not be sent. Please verify your SMTP settings.",
+        ((Map<?, ?>) response.getBody()).get("message"));
   }
 
   @Test
@@ -73,7 +90,7 @@ class GlobalSmtpTestEmailControllerTest {
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     assertNotNull(response.getBody());
     assertEquals(
-        "SMTP authentication failed. Please verify stored SMTP credentials and provider auth policy.",
+        "SMTP authentication failed. Please verify saved Admin SMTP credentials and provider auth policy.",
         ((Map<?, ?>) response.getBody()).get("message"));
   }
 
@@ -104,8 +121,8 @@ class GlobalSmtpTestEmailControllerTest {
   }
 
   @Test
-  void sendGlobalSmtpTestEmail_noPreAuthorize_endpointIsPublic() throws Exception {
-    // Endpoint is intentionally public — no role restriction
+  void sendGlobalSmtpTestEmail_noPreAuthorize_gateLivesInSecurityConfig() throws Exception {
+    // Platform-admin gate is in SecurityConfig; see GlobalSmtpTestEmailControllerAuthorizationIT.
     Method method =
         GlobalSmtpTestEmailController.class.getMethod(
             "sendGlobalSmtpTestEmail", GlobalSmtpTestEmailDTO.class);
@@ -116,10 +133,6 @@ class GlobalSmtpTestEmailControllerTest {
 
   private GlobalSmtpTestEmailDTO validDto() {
     var dto = new GlobalSmtpTestEmailDTO();
-    dto.setHost("smtp.example.org");
-    dto.setPort(587);
-    dto.setSecure(true);
-    dto.setFrom("from@example.org");
     dto.setRecipientEmail("to@example.org");
     dto.setEmailThemeColor("#123456");
     return dto;
