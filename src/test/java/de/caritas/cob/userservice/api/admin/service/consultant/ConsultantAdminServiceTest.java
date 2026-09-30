@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.inOrder;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
@@ -384,7 +385,11 @@ public class ConsultantAdminServiceTest {
 
     this.consultantAdminService.markConsultantForDeletion("id", false);
 
-    verify(this.consultantPreDeletionService, times(1)).performPreDeletionSteps(consultant, false);
+    var deletedAt = org.mockito.ArgumentCaptor.forClass(java.time.LocalDateTime.class);
+    verify(this.consultantPreDeletionService, times(1))
+        .performPreDeletionSteps(eq(consultant), eq(false), deletedAt.capture());
+    // The relations this deletion removes carry the counsellor's own delete date.
+    verify(consultant).setDeleteDate(deletedAt.getValue());
     verify(this.deletionLifecycleService, times(1)).beginConsultantDeletion(any(), any());
     verify(pictureStore).removeForConsultantDeletion("id");
     verify(consultant, times(1)).setStatus(ConsultantStatus.IN_DELETION);

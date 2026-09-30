@@ -10,6 +10,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
+import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -23,6 +24,7 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.InviteSendResult;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
@@ -30,6 +32,8 @@ import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReserva
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdReservation;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.tenant.AsTechnicalUser;
+import de.caritas.cob.userservice.api.tenant.Tenants;
 import java.time.LocalDateTime;
 import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
@@ -39,6 +43,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.mockito.Answers;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.data.jpa.test.autoconfigure.DataJpaTest;
 import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabase;
@@ -63,8 +68,10 @@ import org.springframework.transaction.annotation.Transactional;
 @Import({
   AccountInviteService.class,
   AccountInviteAccessPolicy.class,
+  de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   IdReservationReleaseProcessor.class
 })
+@AsTechnicalUser
 class AccountInviteDirectSendAtomicIT {
 
   private static final String RECIPIENT = "owner@example.org";
@@ -75,12 +82,15 @@ class AccountInviteDirectSendAtomicIT {
   @Autowired private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
   @MockitoSpyBean private InviteEmailDeliveryRepository deliveryRepository;
 
-  @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean(answers = Answers.CALLS_REAL_METHODS)
+  private AuthenticatedUser authenticatedUser;
+
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
+  @MockitoBean private ExistingAgencyClient existingAgencyClient;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
@@ -89,8 +99,14 @@ class AccountInviteDirectSendAtomicIT {
 
   @BeforeEach
   void setUp() {
-    when(authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(authenticatedUser.getUsername()).thenReturn("admin@example.org");
+    Tenants.actAs(
+        authenticatedUser,
+        "admin-1",
+        0L,
+        UserRole.TENANT_ADMIN,
+        UserRole.AGENCY_ADMIN,
+        UserRole.USER_ADMIN);
+    authenticatedUser.setUsername("admin@example.org");
     when(identityEmailOwnerLookup.findByEmail(RECIPIENT)).thenReturn(Optional.empty());
     when(tenantIdAllocationClient.reserve(null))
         .thenReturn(new TenantIdReservation(17L, "reservation-17"));

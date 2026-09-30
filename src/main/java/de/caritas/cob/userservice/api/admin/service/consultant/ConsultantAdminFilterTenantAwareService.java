@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.admin.service.consultant;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantFilter;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -19,8 +20,8 @@ public class ConsultantAdminFilterTenantAwareService extends ConsultantAdminFilt
   protected static final String TENANT_ID_SEARCH_FIELD = "tenantId";
 
   public ConsultantAdminFilterTenantAwareService(
-      @NonNull ConsultantRepository consultantRepository) {
-    super(consultantRepository);
+      @NonNull ConsultantRepository consultantRepository, @NonNull AdminScope adminScope) {
+    super(consultantRepository, adminScope);
   }
 
   @Override

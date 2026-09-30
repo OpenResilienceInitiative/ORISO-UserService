@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
@@ -17,6 +18,7 @@ import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -33,6 +35,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.SendInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.WaiveTwoFactorCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
+import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
@@ -68,6 +71,7 @@ class AccountInviteServiceTest {
   @Mock private TenantService tenantService;
   @Mock private TenantIdAllocationClient tenantIdAllocationClient;
   @Mock private AgencyIdAllocationClient agencyIdAllocationClient;
+  @Mock private ExistingAgencyClient existingAgencyClient;
   @Mock private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @Mock private InviteMailDispatchService inviteMailDispatchService;
   @Mock private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
@@ -99,7 +103,7 @@ class AccountInviteServiceTest {
   private void givenSuccessfulDispatch() {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenAnswer(
-            invocation -> "https://app.oriso.org/account-invite/" + invocation.getArgument(1));
+            invocation -> "https://app.example.org/account-invite/" + invocation.getArgument(1));
     when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenAnswer(
             invocation ->
@@ -181,6 +185,93 @@ class AccountInviteServiceTest {
     assertThat(result.invite().getRecipientEmail()).isEqualTo(oldInvite.getRecipientEmail());
   }
 
+  // --- another Träger's template is refused before any mail or write (ORISO-Admin#1026) ---
+
+  private InviteEmailTemplate givenForeignTemplate() {
+    InviteEmailTemplate foreign =
+        InviteEmailTemplate.builder()
+            .id(21L)
+            .tenantId(8L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("B's subject")
+            .body("B's body {{inviteLink}}")
+            .active(true)
+            .build();
+    lenient().when(templateRepository.findById(21L)).thenReturn(Optional.of(foreign));
+    doThrow(new ForbiddenException("foreign template")).when(accessPolicy).authorizeTemplateUse(8L);
+    return foreign;
+  }
+
+  @Test
+  void sendInvite_Should_RefuseAnotherTraegersTemplate_BeforeMailOrWrite() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(7L)
+            .recipientEmail("owner@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    lenient().when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
+    givenForeignTemplate();
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(10L, 21L)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    verifyNoInteractions(inviteMailDispatchService, deliveryRepository);
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void resendInvite_Should_RefuseAnotherTraegersTemplate_BeforeMailOrWrite() {
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(7L)
+            .recipientEmail("counsellor@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    lenient().when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
+    givenForeignTemplate();
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(10L, 21L)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    verifyNoInteractions(inviteMailDispatchService, deliveryRepository);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void createAndSendInvite_Should_RefuseAnotherTraegersTemplate_BeforeCreatingTheInvite() {
+    givenForeignTemplate();
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "new@example.org",
+            "New",
+            "Counsellor",
+            null,
+            null,
+            30L);
+
+    assertThatThrownBy(() -> service.createAndSendInvite(command, 21L))
+        .isInstanceOf(ForbiddenException.class);
+
+    verify(accessPolicy, never()).authorizeCreate(any());
+    verifyNoInteractions(
+        inviteMailDispatchService,
+        deliveryRepository,
+        tenantIdAllocationClient,
+        agencyIdAllocationClient,
+        identityEmailOwnerLookup);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+    verify(accountInviteRepository, never()).save(any());
+  }
+
   // --- TEN-INV-U6 (#890): SENT only after the transport confirmed the handover ---
 
   @Test
@@ -202,7 +293,7 @@ class AccountInviteServiceTest {
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
-        .thenReturn("https://app.oriso.org/admin/tenant-onboarding/x");
+        .thenReturn("https://app.example.org/admin/tenant-onboarding/x");
     when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenThrow(new SmtpSendException("SMTP refused the message"));
 
@@ -1394,7 +1485,7 @@ class AccountInviteServiceTest {
     verify(inviteAcceptUrlBuilder)
         .buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, result.rawToken());
     assertThat(result.acceptUrl())
-        .isEqualTo("https://app.oriso.org/account-invite/" + result.rawToken());
+        .isEqualTo("https://app.example.org/account-invite/" + result.rawToken());
     // The body no longer carries the link: the branded layout renders it as a button
     // plus a visible copy-paste line, so a body that also inlined it produced the same
     // URL twice in the received mail.
@@ -1475,14 +1566,14 @@ class AccountInviteServiceTest {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(eq(AccountInviteTargetRole.TENANT_ADMIN), any()))
         .thenAnswer(
             invocation ->
-                "https://app.oriso.org/admin/tenant-onboarding/" + invocation.getArgument(1));
+                "https://app.example.org/admin/tenant-onboarding/" + invocation.getArgument(1));
     when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("a@example.org", Instant.now()));
 
     var result = service.sendInvite(new SendInviteCommand(1L, 20L));
 
     assertThat(result.acceptUrl())
-        .isEqualTo("https://app.oriso.org/admin/tenant-onboarding/" + result.rawToken());
+        .isEqualTo("https://app.example.org/admin/tenant-onboarding/" + result.rawToken());
     // Body-only assertion inverted with the duplicate-link fix: the URL reaches the
     // recipient through the layout's CTA, not through the authored body.
     assertThat(result.delivery().getBodySnapshot()).doesNotContain("/admin/tenant-onboarding/");

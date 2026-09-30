@@ -84,7 +84,7 @@ public class AnonymousUsernameRegistry {
     // tenant 83 cannot see an anon user of tenant 1, hands the name out again, and Matrix rejects
     // it with M_USER_IN_USE -> 500 on every redeem (self-perpetuating: the same id is picked
     // again on each retry). Keycloak is already global and needs no bypass.
-    return runCrossTenant(
+    return TenantContext.supplyAcrossTenants(
             () ->
                 userService.findUserByUsername(username).isPresent()
                     || consultantService.getConsultantByUsername(username).isPresent())
@@ -105,25 +105,6 @@ public class AnonymousUsernameRegistry {
   private boolean existsInMatrix(String username) {
     return matrixSynapseService.userExists(matrixLocalpartTranscoder.encodeUsername(username))
         || matrixSynapseService.userExists(username);
-  }
-
-  /**
-   * Runs a lookup in technical tenant context so {@code TenantAspect} disables the Hibernate {@code
-   * tenantFilter}; the caller's tenant is restored afterwards so no other query in the same request
-   * leaks across tenants.
-   */
-  private boolean runCrossTenant(java.util.function.BooleanSupplier lookup) {
-    var callerTenant = TenantContext.getCurrentTenant();
-    try {
-      TenantContext.setCurrentTenant(TenantContext.TECHNICAL_TENANT_ID);
-      return lookup.getAsBoolean();
-    } finally {
-      if (callerTenant == null) {
-        TenantContext.clear();
-      } else {
-        TenantContext.setCurrentTenant(callerTenant);
-      }
-    }
   }
 
   private int obtainUsernameId(String username) {
