@@ -252,7 +252,8 @@ class UserAccountControllerDelegate {
 
     var updateAdminConsultantDTO =
         consultantDtoMapper.updateAdminConsultantOf(updateConsultantDTO, consultant);
-    consultantUpdateService.updateConsultant(consultantId, updateAdminConsultantDTO);
+    // Self-service: a requested public slug waits for admin approval instead of going live.
+    consultantUpdateService.updateConsultant(consultantId, updateAdminConsultantDTO, false);
 
     return new ResponseEntity<>(HttpStatus.OK);
   }

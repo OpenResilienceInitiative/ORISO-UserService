@@ -4,6 +4,7 @@ import static java.util.Objects.isNull;
 import static java.util.Objects.nonNull;
 import static org.hamcrest.Matchers.contains;
 import static org.hamcrest.Matchers.containsString;
+import static org.hamcrest.Matchers.everyItem;
 import static org.hamcrest.Matchers.greaterThan;
 import static org.hamcrest.Matchers.hasSize;
 import static org.hamcrest.Matchers.is;
@@ -633,11 +634,77 @@ class UserControllerConsultantE2EIT {
 
   @Test
   @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
+  void searchConsultantsShouldSortByUpdateDateFallingBackToCreateDate() throws Exception {
+    givenAnInfix();
+    givenAgencyServiceReturningDummyAgencies();
+    // "Zuletzt aktualisiert" = update_date, else create_date; ties broken by id.
+    givenConsultantMatchingWithDates("b1-sort-consultant-1", at(2020, 1), at(2020, 6));
+    givenConsultantMatchingWithDates("b1-sort-consultant-2", at(2025, 1), null);
+    givenConsultantMatchingWithDates("b1-sort-consultant-3", at(2019, 1), at(2022, 1));
+    givenConsultantMatchingWithDates("b1-sort-consultant-4", at(2025, 1), null);
+
+    assertConsultantSearchOrder(
+        "DESC",
+        "b1-sort-consultant-4",
+        "b1-sort-consultant-2",
+        "b1-sort-consultant-3",
+        "b1-sort-consultant-1");
+    assertConsultantSearchOrder(
+        "ASC",
+        "b1-sort-consultant-1",
+        "b1-sort-consultant-3",
+        "b1-sort-consultant-2",
+        "b1-sort-consultant-4");
+  }
+
+  private static LocalDateTime at(int year, int month) {
+    return LocalDateTime.of(year, month, 1, 12, 0);
+  }
+
+  private void givenConsultantMatchingWithDates(
+      String id, LocalDateTime createDate, LocalDateTime updateDate) {
+    var dbConsultant = consultantRepository.findAll().iterator().next();
+    var newConsultant = new Consultant();
+    BeanUtils.copyProperties(dbConsultant, newConsultant);
+    newConsultant.setId(id);
+    newConsultant.setUsername(RandomStringUtils.randomAlphabetic(8));
+    newConsultant.setMatrixUserId(RandomStringUtils.randomAlphabetic(8));
+    newConsultant.setFirstName(aStringWithoutInfix(infix));
+    newConsultant.setLastName(aStringWithInfix(infix));
+    newConsultant.setEmail(aValidEmailWithoutInfix(infix));
+    newConsultant.setStatus(ConsultantStatus.CREATED);
+    newConsultant.setDeleteDate(null);
+    newConsultant.setCreateDate(createDate);
+    newConsultant.setUpdateDate(updateDate);
+    consultantRepository.save(newConsultant);
+    consultantIdsToDelete.add(id);
+  }
+
+  private void assertConsultantSearchOrder(String order, String... expectedIds) throws Exception {
+    mockMvc
+        .perform(
+            get("/users/consultants/search")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept("application/hal+json")
+                .param("query", URLEncoder.encode(infix, StandardCharsets.UTF_8))
+                .param("page", "1")
+                .param("perPage", "10")
+                .param("field", "UPDATE_DATE")
+                .param("order", order))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("_embedded[*]._embedded.id", contains(expectedIds)));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_ADMIN)
   void searchConsultantsShouldRespondOkAndPayloadIfStarQueryIsGiven() throws Exception {
     givenAnInfix();
     givenConsultantsMatching(easyRandom.nextInt(20) + 11, infix);
     givenAgencyServiceReturningDummyAgencies();
     var numAll = (int) consultantRepository.countByDeleteDateIsNull();
+    // Seeded consultants may have no agency; assert on one this test created (one agency each).
+    var withAgency = "_embedded[?(@._embedded.id == '" + consultantIdsToDelete.get(0) + "')]";
 
     var pageUrlPrefix = "http://localhost/users/consultants/search?";
     var consultantUrlPrefix = "http://localhost/useradmin/consultants/";
@@ -661,18 +728,15 @@ class UserControllerConsultantE2EIT {
             .andExpect(jsonPath("_embedded[0]._embedded.status", not(contains(nullValue()))))
             .andExpect(jsonPath("_embedded[9]._embedded.status", not(contains(nullValue()))))
             .andExpect(jsonPath("_embedded[*]._embedded.email", not(contains(nullValue()))))
+            .andExpect(jsonPath(withAgency + "._embedded.agencies[0].id", hasSize(1)))
             .andExpect(
-                jsonPath("_embedded[0]._embedded.agencies[0].id", not(contains(nullValue()))))
+                jsonPath(withAgency + "._embedded.agencies[0].id", everyItem(notNullValue())))
+            .andExpect(jsonPath(withAgency + "._embedded.agencies[0].name", hasSize(1)))
             .andExpect(
-                jsonPath("_embedded[0]._embedded.agencies[0].name", not(contains(nullValue()))))
+                jsonPath(withAgency + "._embedded.agencies[0].name", everyItem(notNullValue())))
+            .andExpect(jsonPath(withAgency + "._embedded.agencies[0].postcode", hasSize(1)))
             .andExpect(
-                jsonPath("_embedded[0]._embedded.agencies[0].postcode", not(contains(nullValue()))))
-            .andExpect(
-                jsonPath("_embedded[9]._embedded.agencies[0].id", not(contains(nullValue()))))
-            .andExpect(
-                jsonPath("_embedded[9]._embedded.agencies[0].name", not(contains(nullValue()))))
-            .andExpect(
-                jsonPath("_embedded[9]._embedded.agencies[0].postcode", not(contains(nullValue()))))
+                jsonPath(withAgency + "._embedded.agencies[0].postcode", everyItem(notNullValue())))
             .andExpect(jsonPath("_embedded[0]._links.self.href", startsWith(consultantUrlPrefix)))
             .andExpect(jsonPath("_embedded[0]._links.self.method", is("GET")))
             .andExpect(jsonPath("_embedded[0]._links.self.templated", is(false)))

@@ -127,6 +127,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
     createAdminDTO.setTenantId(95);
     givenTenant();
     givenTenantSuperAdmin();
+    givenPlatformAdmin();
 
     // when
 
@@ -151,13 +152,15 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
 
   @Test
   @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
-  void createNewAgencyAdmin_Should_return500_When_superAdminHasNullTenantID() throws Exception {
+  void createNewAgencyAdmin_Should_return500_When_platformAdminOmitsTargetTenantId()
+      throws Exception {
     // given
     CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
     createAdminDTO.setEmail("agencyadmin@email.com");
     createAdminDTO.setTenantId(null);
     givenTenant();
     givenTenantSuperAdmin();
+    givenPlatformAdmin();
 
     // when
 
@@ -170,6 +173,29 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isInternalServerError())
         .andReturn();
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void createNewAgencyAdmin_Should_returnForbidden_When_tenantSuperAdminHasNoTenant()
+      throws Exception {
+    // given a tenant super admin whose token carries no tenant
+    CreateAdminDTO createAdminDTO = new EasyRandom().nextObject(CreateAdminDTO.class);
+    createAdminDTO.setEmail("agencyadmin@email.com");
+    createAdminDTO.setTenantId(95);
+    givenTenant();
+    givenTenantSuperAdmin();
+    givenCallerBelongsToTenant(null);
+
+    // when, then
+    this.mockMvc
+        .perform(
+            post(AGENCY_ADMIN_PATH)
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(objectMapper.writeValueAsString(createAdminDTO)))
+        .andExpect(status().isForbidden());
   }
 
   @Test
@@ -271,7 +297,7 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
     createAdminDTO.setEmail("platformadmin@email.com");
     createAdminDTO.setTenantId(0);
     givenTenant();
-    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    givenPlatformAdmin();
 
     // when, then
     this.mockMvc
@@ -283,6 +309,12 @@ class UserAdminControllerMultiTenancyTrueE2EIT {
                 .content(objectMapper.writeValueAsString(createAdminDTO)))
         .andExpect(status().isOk())
         .andExpect(jsonPath("_embedded.tenantId", is("0")));
+  }
+
+  // Production only builds a platform admin from tenant 0 plus both super-admin roles.
+  private void givenPlatformAdmin() {
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    when(authenticatedUser.getTenantId()).thenReturn(0L);
   }
 
   private void givenCallerBelongsToTenant(Long tenantId) {
