@@ -45,6 +45,8 @@ import de.caritas.cob.userservice.api.helper.AgencyVerifier;
 import de.caritas.cob.userservice.api.helper.PlainCredentialsHolder;
 import de.caritas.cob.userservice.api.helper.UserVerifier;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
+import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
@@ -69,6 +71,7 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTe
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Optional;
 import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -396,6 +399,43 @@ public class CreateUserFacadeTest {
   // ---------------------------------------------------------------------------
   // Extended coverage — 2026-07-06
   // ---------------------------------------------------------------------------
+
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_LeaveTheGroupBeforeDeletingTheUser_When_GroupJoinFails()
+          throws Exception {
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    givenMatrixProvisioningSucceeds();
+    User user = givenAFullyPersistedUser();
+    Chat group =
+        Chat.builder()
+            .id(4711L)
+            .topic("group")
+            .initialStartDate(LocalDateTime.now())
+            .startDate(LocalDateTime.now())
+            .conversationType(ConversationType.SELF_HELP)
+            .build();
+    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+    // The membership row may exist although the call failed, so compensation must still leave.
+    RuntimeException joinFailure = new RuntimeException("membership write failed");
+    doThrow(joinFailure).when(groupInviteRegistration).join(group, user);
+
+    RuntimeException propagated =
+        assertThrows(
+            RuntimeException.class,
+            () -> createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT));
+
+    assertThat(propagated, is(joinFailure));
+    // The membership references the user row, and the user row references the identity.
+    var compensation = inOrder(groupInviteRegistration, userService, identityAccountRemover);
+    compensation.verify(groupInviteRegistration).leave(group, user);
+    compensation.verify(userService).deleteUser(user);
+    compensation.verify(identityAccountRemover).rollbackUser(USER_ID);
+    verify(createNewSessionFacade, never())
+        .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
+  }
 
   private User givenAFullyPersistedUser() {
     User user = new User();
