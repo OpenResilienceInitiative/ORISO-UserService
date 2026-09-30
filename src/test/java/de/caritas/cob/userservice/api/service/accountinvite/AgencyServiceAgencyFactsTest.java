@@ -1,4 +1,4 @@
-package de.caritas.cob.userservice.api.service.accountinvite.allocation;
+package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
@@ -17,12 +17,12 @@ import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.web.client.HttpClientErrorException;
 
-class ExistingAgencyClientTest {
+class AgencyServiceAgencyFactsTest {
 
   private static final long AGENCY_ID = 7L;
 
   private final AdminAgencyControllerApi api = mock(AdminAgencyControllerApi.class);
-  private ExistingAgencyClient client;
+  private AgencyServiceAgencyFacts client;
 
   @BeforeEach
   void setUp() {
@@ -31,7 +31,7 @@ class ExistingAgencyClientTest {
     var factory = mock(AgencyAdminServiceApiControllerFactory.class);
     when(factory.createControllerApi()).thenReturn(api);
     when(api.getApiClient()).thenReturn(mock(ApiClient.class));
-    client = new ExistingAgencyClient(headers, mock(TenantHeaderSupplier.class), factory);
+    client = new AgencyServiceAgencyFacts(headers, mock(TenantHeaderSupplier.class), factory);
   }
 
   @ParameterizedTest
@@ -48,5 +48,37 @@ class ExistingAgencyClientTest {
   @Test
   void find_Should_ReturnEmpty_When_AgencyServiceAnswersWithoutAnAgency() {
     assertThat(client.find(AGENCY_ID)).isEmpty();
+  }
+
+  @Test
+  void find_Should_ReadTheAgency_When_AgencyServiceSendsASettingThisServiceDoesNotKnow() {
+    var restTemplate = new org.springframework.web.client.RestTemplate();
+    var server =
+        org.springframework.test.web.client.MockRestServiceServer.bindTo(restTemplate).build();
+    server
+        .expect(
+            org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo(
+                "http://agency/agencyadmin/agencies/" + AGENCY_ID))
+        .andRespond(
+            org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess(
+                """
+                {"_embedded": {"id": 7, "tenantId": 1, "deleteDate": "null",
+                  "settings": {"counsellorTopicPermission": "SOMETHING_NEW"}}}
+                """,
+                org.springframework.http.MediaType.APPLICATION_JSON));
+    var factory = mock(AgencyAdminServiceApiControllerFactory.class);
+    when(factory.createControllerApi())
+        .thenReturn(
+            new AdminAgencyControllerApi(new ApiClient(restTemplate).setBasePath("http://agency")));
+    var headers = mock(SecurityHeaderSupplier.class);
+    when(headers.getKeycloakAndCsrfHttpHeaders()).thenReturn(new HttpHeaders());
+    var facts = new AgencyServiceAgencyFacts(headers, mock(TenantHeaderSupplier.class), factory);
+
+    assertThat(facts.find(AGENCY_ID))
+        .hasValueSatisfying(
+            agency -> {
+              assertThat(agency.tenantId()).isEqualTo(1L);
+              assertThat(agency.deleted()).isFalse();
+            });
   }
 }

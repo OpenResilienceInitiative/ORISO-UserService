@@ -22,14 +22,11 @@ import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService.CreateAccountInviteCommand;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.AgencyIdAllocationClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient;
-import de.caritas.cob.userservice.api.service.accountinvite.allocation.ExistingAgencyClient.ExistingAgency;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdReservationReleaseProcessor;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.TenantIdAllocationClient;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
-import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.tenant.Tenants;
 import de.caritas.cob.userservice.api.tenant.WithTenant;
 import java.util.HashMap;
@@ -58,6 +55,11 @@ import org.springframework.transaction.annotation.Transactional;
 @Transactional(propagation = Propagation.NOT_SUPPORTED)
 @Import({
   AccountInviteService.class,
+  InviteTargetResolver.class,
+  ReservationLedger.class,
+  UnitQueue.class,
+  InviteDelivery.class,
+  AccountInviteTopicPermissionService.class,
   AccountInviteAccessPolicy.class,
   de.caritas.cob.userservice.api.admin.service.admin.AdminScope.class,
   AccountInviteExistingAgencyIT.CallerConfig.class
@@ -106,15 +108,15 @@ class AccountInviteExistingAgencyIT {
   @Autowired private AuthenticatedUser caller;
 
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
+  @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
   @MockitoBean private TenantService tenantService;
   @MockitoBean private TenantIdAllocationClient tenantIdAllocationClient;
   @MockitoBean private AgencyIdAllocationClient agencyIdAllocationClient;
-  @MockitoBean private ExistingAgencyClient existingAgencyClient;
+  @MockitoBean private AgencyFacts agencyFacts;
   @MockitoBean private IdReservationReleaseProcessor reservationReleaseProcessor;
   @MockitoBean private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @MockitoBean private InviteMailDispatchService inviteMailDispatchService;
   @MockitoBean private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
-  @MockitoBean private AgencyService agencyService;
 
   @BeforeEach
   void givenAgencies() {
@@ -124,7 +126,7 @@ class AccountInviteExistingAgencyIT {
     givenAgency(FOREIGN_TENANT_AGENCY, FOREIGN_TENANT, false, List.of(31L));
     givenAgency(DELETED_AGENCY, OWN_TENANT, true, List.of(41L));
     givenAgency(TOPICLESS_AGENCY, OWN_TENANT, false, List.of());
-    when(existingAgencyClient.find(MISSING_AGENCY)).thenReturn(Optional.empty());
+    when(agencyFacts.find(MISSING_AGENCY)).thenReturn(Optional.empty());
   }
 
   @AfterEach
@@ -245,27 +247,6 @@ class AccountInviteExistingAgencyIT {
   }
 
   @Test
-  void createInvite_Should_Refuse400_When_ExistingIsUsedForTheTenantId() {
-    actAsPlatformAdmin();
-
-    var command =
-        new CreateAccountInviteCommand(
-            AccountInviteTargetRole.TENANT_ADMIN,
-            OWN_TENANT,
-            "tenant-existing@example.org",
-            "Ada",
-            "Lovelace",
-            null,
-            null,
-            null,
-            IdAllocationMode.EXISTING,
-            null);
-
-    // Inviting into an existing Träger is not built yet.
-    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
-  }
-
-  @Test
   void createInvite_Should_StillReserve_When_TheAdminSendsManual() {
     actAsPlatformAdmin();
     when(agencyIdAllocationClient.reserve(500L, OWN_TENANT)).thenReturn(500L);
@@ -275,7 +256,8 @@ class AccountInviteExistingAgencyIT {
     AccountInvite invite =
         service.createInvite(
             new CreateAccountInviteCommand(
-                AccountInviteTargetRole.COUNSELLOR,
+                // A counsellor into a new agency waits; only the unit's admin invite reserves.
+                AccountInviteTargetRole.AGENCY_ADMIN,
                 OWN_TENANT,
                 "manual@example.org",
                 "Ada",
@@ -288,7 +270,7 @@ class AccountInviteExistingAgencyIT {
 
     assertThat(invite.getAgencyId()).isEqualTo(500L);
     verify(agencyIdAllocationClient).reserve(500L, OWN_TENANT);
-    verify(existingAgencyClient, never()).find(anyLong());
+    verify(agencyFacts, never()).find(anyLong());
   }
 
   private void actAsTenantAdmin() {
@@ -317,14 +299,14 @@ class AccountInviteExistingAgencyIT {
   }
 
   private void givenAgency(long agencyId, long tenantId, boolean deleted, List<Long> topicIds) {
-    knownAgencies.put(agencyId, new AgencyDTO().id(agencyId).tenantId(tenantId).topicIds(topicIds));
+    knownAgencies.put(agencyId, new AgencyDTO().id(agencyId).tenantId(tenantId));
     when(agencyService.getAgenciesWithoutCaching(anyList()))
         .thenAnswer(
             call ->
                 ((List<?>) call.getArgument(0))
                     .stream().map(knownAgencies::get).filter(Objects::nonNull).toList());
-    when(existingAgencyClient.find(agencyId))
-        .thenReturn(Optional.of(new ExistingAgency(agencyId, tenantId, deleted, topicIds)));
+    when(agencyFacts.find(agencyId))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(agencyId, tenantId, deleted, topicIds)));
   }
 
   private static CreateAccountInviteCommand existing(

@@ -57,6 +57,15 @@ public class CreateAdminService {
     return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY);
   }
 
+  /**
+   * Server-side flows only (public invite onboarding): there is no caller, so the tenant comes from
+   * the invite, never from the request.
+   */
+  public Admin createNewAgencyAdminInTenant(CreateAdminDTO createAdminDTO) {
+    notNull(createAdminDTO.getTenantId());
+    return createNewAdmin(createAdminDTO, Admin.AdminType.AGENCY);
+  }
+
   public Admin createNewTenantAdmin(CreateAdminDTO createAdminDTO) {
     return createNewAdmin(createAdminDTO, Admin.AdminType.TENANT);
   }
