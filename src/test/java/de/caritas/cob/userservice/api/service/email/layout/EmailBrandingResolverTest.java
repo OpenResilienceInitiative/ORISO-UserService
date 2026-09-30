@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.email.layout;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.lenient;
@@ -14,6 +15,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.web.client.HttpClientErrorException;
 
 /** Branding resolution and its fallbacks (ORISO-UserService#914). */
@@ -25,7 +27,16 @@ class EmailBrandingResolverTest {
 
   private EmailBrandingResolver resolver(String platformLogoUrl) {
     return new EmailBrandingResolver(
-        tenantService, tenantTemplateSupplier, "ORISO", platformLogoUrl, "https://app.oriso.org/");
+        tenantService,
+        tenantTemplateSupplier,
+        "ORISO",
+        platformLogoUrl,
+        "https://app.example.org/");
+  }
+
+  private EmailBrandingResolver resolverWithPlatformName(String platformName) {
+    return new EmailBrandingResolver(
+        tenantService, tenantTemplateSupplier, platformName, "", "https://app.example.org/");
   }
 
   private void givenNoTemplateAttributes() {
@@ -38,6 +49,45 @@ class EmailBrandingResolverTest {
     tenant.setName(name);
     tenant.setTheming(theming);
     return tenant;
+  }
+
+  @Test
+  void notificationBrandingRequiresTheExactTenantUrl() {
+    var resolved = tenant("Nord", null);
+    resolved.setSubdomain("nord");
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolved);
+    when(tenantTemplateSupplier.getTenantBaseUrl(resolved))
+        .thenReturn("https://nord.app.oriso.org");
+    var subject = resolver("");
+    ReflectionTestUtils.setField(subject, "multitenancyEnabled", true);
+
+    var branding = subject.resolveNotification(7L, "https://nord.app.oriso.org");
+
+    assertThat(branding.imprintUrl()).isEqualTo("https://nord.app.oriso.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://nord.app.oriso.org/datenschutz");
+    assertThatThrownBy(() -> subject.resolveNotification(7L, "https://other.app.oriso.org"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("does not match");
+  }
+
+  @Test
+  void notificationBrandingDoesNotUsePlatformWhenTenantIsUnavailable() {
+    assertThatThrownBy(() -> resolver("").resolveNotification(7L, "https://app.oriso.org"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("tenant is unavailable");
+  }
+
+  @Test
+  void notificationBrandingRequiresAConfiguredNameWhenTenantHasNone() {
+    var unnamedTenant = tenant("  ", null);
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(unnamedTenant);
+    var subject =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "  ", "", "https://app.example.org/");
+
+    assertThatThrownBy(() -> subject.resolveNotification(7L, "https://app.example.org"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
   }
 
   // --- logo -----------------------------------------------------------------------------
@@ -85,12 +135,12 @@ class EmailBrandingResolverTest {
     when(tenantService.getRestrictedTenantData(12L)).thenReturn(resolvedTenant);
     lenient()
         .when(tenantTemplateSupplier.getTenantBaseUrl(resolvedTenant))
-        .thenReturn("https://nord.app.oriso.org");
+        .thenReturn("https://nord.app.example.org");
 
     EmailBranding branding = resolver("").resolve(12L);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/12/logo");
+        .isEqualTo("https://app.example.org/service/tenant/public/branding/12/logo");
     assertThat(branding.hasLogo()).isTrue();
   }
 
@@ -106,7 +156,7 @@ class EmailBrandingResolverTest {
     EmailBranding branding = resolver("").resolve(null);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/1/logo");
+        .isEqualTo("https://app.example.org/service/tenant/public/branding/1/logo");
   }
 
   /**
@@ -129,7 +179,7 @@ class EmailBrandingResolverTest {
     EmailBranding branding = resolver("").resolve(12L);
 
     assertThat(branding.logoUrl())
-        .isEqualTo("https://app.oriso.org/service/tenant/public/branding/12/logo");
+        .isEqualTo("https://app.example.org/service/tenant/public/branding/12/logo");
   }
 
   @Test
@@ -156,8 +206,8 @@ class EmailBrandingResolverTest {
 
     EmailBranding branding = resolver("").resolve(12L);
 
-    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
-    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+    assertThat(branding.imprintUrl()).isEqualTo("https://app.example.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://app.example.org/datenschutz");
   }
 
   @Test
@@ -250,6 +300,21 @@ class EmailBrandingResolverTest {
     org.mockito.Mockito.verify(tenantService).getPlatformTenantData();
   }
 
+  @Test
+  void resolve_ShouldRejectMissingPlatformName_WhenNoTenantNameIsAvailable() {
+    assertThatThrownBy(() -> resolverWithPlatformName(" ").resolve(null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("EMAIL_BRANDING_NAME");
+  }
+
+  @Test
+  void resolve_ShouldUseTenantName_WhenPlatformNameIsMissing() {
+    RestrictedTenantDTO resolvedTenant = tenant("Nord", null);
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolvedTenant);
+
+    assertThat(resolverWithPlatformName("").resolve(7L).brandName()).isEqualTo("Nord");
+  }
+
   // --- footer ---------------------------------------------------------------------------
 
   @Test
@@ -291,8 +356,8 @@ class EmailBrandingResolverTest {
 
     EmailBranding branding = resolver("").resolve(7L);
 
-    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
-    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+    assertThat(branding.imprintUrl()).isEqualTo("https://app.example.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://app.example.org/datenschutz");
   }
 
   @Test
@@ -301,7 +366,7 @@ class EmailBrandingResolverTest {
 
     EmailBranding branding = resolver("").resolve(null);
 
-    assertThat(branding.imprintUrl()).isEqualTo("https://app.oriso.org/impressum");
-    assertThat(branding.privacyUrl()).isEqualTo("https://app.oriso.org/datenschutz");
+    assertThat(branding.imprintUrl()).isEqualTo("https://app.example.org/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo("https://app.example.org/datenschutz");
   }
 }

@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite.mail;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
 
@@ -28,9 +29,48 @@ import org.mockito.junit.jupiter.MockitoExtension;
 @ExtendWith(MockitoExtension.class)
 class InviteFrameMailRendererTest {
 
-  private static final String ACCEPT_URL = "https://admin.oriso.org/onboarding/accept?token=tok";
+  private static final String ACCEPT_URL = "https://admin.example.org/onboarding/accept?token=tok";
 
   @Mock private EmailBrandingResolver emailBrandingResolver;
+
+  @ParameterizedTest
+  @CsvSource({
+    "fr,Accepter l’invitation",
+    "ru,Принять приглашение",
+    "ti,ዕድመ ተቐበሉ",
+    "tr,Daveti kabul et"
+  })
+  void usesTheRequestedLanguageForTheInvitationFrame(String language, String actionLabel) {
+    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    BrandedEmail mail =
+        InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver)
+            .render("Invitation", "Body", ACCEPT_URL, 42L, language);
+
+    assertThat(mail.html()).contains("<html lang=\"" + language + "\">").contains(actionLabel);
+    assertThat(mail.plainText()).contains(actionLabel);
+  }
+
+  @Test
+  void unreviewedLanguageUsesReviewedGermanFrameAndLabelsByDefault() {
+    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    BrandedEmail mail =
+        InviteFrameMailRendererFixture.inviteFrameMailRenderer(
+                emailBrandingResolver, SenderOrganisationFixture.platformOwner(), false)
+            .render("Invitation", "Body", ACCEPT_URL, 42L, "fr");
+
+    assertThat(mail.html())
+        .contains("<html lang=\"de\"")
+        .contains("Einladung annehmen")
+        .doesNotContain("Accepter l’invitation");
+    assertThat(mail.plainText()).contains("Einladung annehmen");
+  }
+
+  @Test
+  void rejectsAnUnknownInvitationLanguage() {
+    assertThatThrownBy(() -> InviteFrameMailRenderer.Labels.forLanguage("uk"))
+        .isInstanceOf(IllegalArgumentException.class)
+        .hasMessageContaining("uk");
+  }
 
   private BrandedEmail render(EmailBranding branding, String subject, String body, String action) {
     when(emailBrandingResolver.resolve(any())).thenReturn(branding);
@@ -101,23 +141,23 @@ class InviteFrameMailRendererTest {
         render(
             new EmailBranding(
                 "Träger Nord e.V.",
-                "https://nord.oriso.org/service/tenant/public/branding/logo",
+                "https://nord.example.org/service/tenant/public/branding/logo",
                 "#1c4f8f",
-                "https://nord.oriso.org/impressum",
-                "https://nord.oriso.org/datenschutz"),
+                "https://nord.example.org/impressum",
+                "https://nord.example.org/datenschutz"),
             "Einladung",
             "Hallo",
             ACCEPT_URL);
 
     assertThat(mail.html())
-        .contains("<img src=\"https://nord.oriso.org/service/tenant/public/branding/logo\"")
+        .contains("<img src=\"https://nord.example.org/service/tenant/public/branding/logo\"")
         .as("the tenant name brands the header")
         .contains("Träger Nord e.V.")
         .as("the tenant colour reaches the accent bar and the button")
         .contains("#1c4f8f")
         .as("tenant imprint and privacy pointers, not the platform's")
-        .contains("https://nord.oriso.org/impressum")
-        .contains("https://nord.oriso.org/datenschutz");
+        .contains("https://nord.example.org/impressum")
+        .contains("https://nord.example.org/datenschutz");
   }
 
   /**

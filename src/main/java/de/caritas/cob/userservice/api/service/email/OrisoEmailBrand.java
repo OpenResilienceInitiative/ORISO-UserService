@@ -38,7 +38,7 @@ public class OrisoEmailBrand {
   private static final String DEFAULT_PRIMARY = "#a5000a";
   private static final String DEFAULT_ACCENT = "#cc1e1c";
 
-  @Value("${email.brand.platform-name:Online-Beratung}")
+  @Value("${email.branding.name:}")
   private String platformName;
 
   @Value("${email.brand.logo-url:}")
@@ -50,6 +50,15 @@ public class OrisoEmailBrand {
     this.senderOrganisations = senderOrganisations;
   }
 
+  /** The platform name has one configuration source for both subjects and shared mail frames. */
+  public String platformName() {
+    if (!isNotBlank(platformName)) {
+      throw new IllegalStateException(
+          "EMAIL_BRANDING_NAME is missing; configure the platform name before sending email");
+    }
+    return platformName.trim();
+  }
+
   /**
    * @param appUrl absolute base URL of the app this mail links into
    * @param tenantThemeColor the tenant's {@code emailThemeColor}, or null
@@ -57,7 +66,7 @@ public class OrisoEmailBrand {
   public Map<String, String> values(String appUrl, String tenantThemeColor) {
     if (!isNotBlank(appUrl)) {
       // Fail closed: a blank base turns every link in the mail into a bare path
-      // (e.g. "/profile/settings") with no origin to resolve against. That is
+      // (e.g. "/profile/einstellungen") with no origin to resolve against. That is
       // not a degraded mail, it is a broken one, so this must not go out.
       throw new IllegalStateException(
           "appUrl must not be blank: every ORISO mail links back into the app");
@@ -65,9 +74,10 @@ public class OrisoEmailBrand {
     String base = trimTrailingSlash(appUrl);
     Map<String, String> values = new LinkedHashMap<>();
 
-    values.put("platformName", platformName);
+    String configuredPlatformName = platformName();
+    values.put("platformName", configuredPlatformName);
     // The offered-by line describes the platform; unlike platformName, no sender brands it.
-    values.put("offeringName", platformName);
+    values.put("offeringName", configuredPlatformName);
     SenderOrganisation operator = senderOrganisations.platform();
     putSender(values, operator);
     // Y in "X ist ein Angebot von Y": always the platform operator, never a Träger that overlays
@@ -78,10 +88,10 @@ public class OrisoEmailBrand {
     values.put("accentColor", DEFAULT_ACCENT);
 
     values.put("appUrl", base);
-    values.put("settingsUrl", base + "/profile/settings");
+    values.put("settingsUrl", base + "/profile/einstellungen");
     values.put("privacyUrl", base + "/datenschutz");
     values.put("imprintUrl", base + "/impressum");
-    values.put("unsubscribeUrl", base + "/profile/settings/notifications");
+    values.put("unsubscribeUrl", base + "/profile/einstellungen/email");
 
     return values;
   }

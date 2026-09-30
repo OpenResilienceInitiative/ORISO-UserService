@@ -12,6 +12,7 @@ import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHt
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.IdentityDeactivator;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import java.time.LocalDateTime;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -33,8 +34,10 @@ public class ConsultantPreDeletionService {
    *
    * @param consultant the {@link Consultant} to be deleted
    * @param forceDeleteSessions
+   * @param deletedAt the counsellor's delete date, stamped on every relation this removes
    */
-  public void performPreDeletionSteps(Consultant consultant, Boolean forceDeleteSessions) {
+  public void performPreDeletionSteps(
+      Consultant consultant, Boolean forceDeleteSessions, LocalDateTime deletedAt) {
 
     if (isNotTrue(forceDeleteSessions) && hasConsultantActiveSessions(consultant)) {
       throw new CustomValidationHttpStatusException(CONSULTANT_HAS_ACTIVE_OR_ARCHIVE_SESSIONS);
@@ -42,7 +45,9 @@ public class ConsultantPreDeletionService {
     if (nonNull(consultant.getConsultantAgencies())) {
       consultant
           .getConsultantAgencies()
-          .forEach(agencyDeletionValidationService::validateAndMarkForDeletion);
+          .forEach(
+              relation ->
+                  agencyDeletionValidationService.validateAndMarkForDeletion(relation, deletedAt));
     }
     this.identityDeactivator.deactivateUser(consultant.getId());
   }
