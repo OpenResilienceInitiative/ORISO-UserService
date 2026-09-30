@@ -211,4 +211,5 @@
   <include file="db/changelog/changeset/20260924_invite_email_template_tenant/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_account_invite_timeline/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_id_reservation_lock/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260923_chat_invite_token_1237/changeSet.xml"/>
 </databaseChangeLog>
