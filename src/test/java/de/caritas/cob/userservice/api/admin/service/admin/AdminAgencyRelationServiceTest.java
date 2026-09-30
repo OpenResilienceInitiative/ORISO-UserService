@@ -22,12 +22,10 @@ import de.caritas.cob.userservice.api.model.AdminAgency;
 import de.caritas.cob.userservice.api.model.AdminAgency.AdminAgencyBase;
 import de.caritas.cob.userservice.api.port.out.AdminAgencyRepository;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.ArgumentCaptor;
 import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -45,7 +43,7 @@ class AdminAgencyRelationServiceTest {
 
   @InjectMocks private AdminAgencyRelationService service;
 
-  @Mock private AdminCallerScope adminCallerScope;
+  @Mock private AdminScope adminScope;
 
   // ─── createAdminAgencyRelation ────────────────────────────────────────────
 
@@ -98,8 +96,8 @@ class AdminAgencyRelationServiceTest {
   void createAdminAgencyRelation_Should_NotCreate_When_ScopeDenies() {
     var dto = new CreateAdminAgencyRelationDTO().agencyId(5L);
     doThrow(new ForbiddenException("out of scope"))
-        .when(adminCallerScope)
-        .assertMayUseAgencies(List.of(5L));
+        .when(adminScope)
+        .assertMay(AdminScope.Target.agencies(List.of(5L)));
 
     assertThatThrownBy(() -> service.createAdminAgencyRelation("admin1", dto))
         .isInstanceOf(ForbiddenException.class);
@@ -110,8 +108,8 @@ class AdminAgencyRelationServiceTest {
   @Test
   void deleteAdminAgencyRelation_Should_NotDelete_When_ScopeDenies() {
     doThrow(new ForbiddenException("out of scope"))
-        .when(adminCallerScope)
-        .assertMayActOnAdmin("admin1");
+        .when(adminScope)
+        .assertMay(AdminScope.Target.admin("admin1"));
 
     assertThatThrownBy(() -> service.deleteAdminAgencyRelation("admin1", 5L))
         .isInstanceOf(ForbiddenException.class);
@@ -121,9 +119,7 @@ class AdminAgencyRelationServiceTest {
 
   @Test
   void synchronizeAdminAgenciesRelation_Should_NotSynchronize_When_ScopeDenies() {
-    doThrow(new ForbiddenException("out of scope"))
-        .when(adminCallerScope)
-        .assertMayUseAgencies(any());
+    doThrow(new ForbiddenException("out of scope")).when(adminScope).assertMay(any());
 
     assertThatThrownBy(
             () -> service.synchronizeAdminAgenciesRelation("admin1", relationsTo(5L, 6L)))
@@ -138,7 +134,7 @@ class AdminAgencyRelationServiceTest {
 
     service.synchronizeAdminAgenciesRelation("admin1", relationsTo(5L));
 
-    assertThat(checkedAgencies()).containsExactly(6L);
+    assertCheckedAgencies(Set.of(), Set.of(6L));
   }
 
   @Test
@@ -147,7 +143,7 @@ class AdminAgencyRelationServiceTest {
 
     service.synchronizeAdminAgenciesRelation("admin1", relationsTo(6L, 5L));
 
-    assertThat(checkedAgencies()).isEmpty();
+    assertCheckedAgencies(Set.of(), Set.of());
   }
 
   @Test
@@ -156,7 +152,7 @@ class AdminAgencyRelationServiceTest {
 
     service.synchronizeAdminAgenciesRelation("admin1", null);
 
-    assertThat(checkedAgencies()).containsExactlyInAnyOrder(5L, 6L);
+    assertCheckedAgencies(Set.of(), Set.of(5L, 6L));
   }
 
   @Test
@@ -165,7 +161,7 @@ class AdminAgencyRelationServiceTest {
 
     service.synchronizeAdminAgenciesRelation("admin1", relationsTo(6L, 7L));
 
-    assertThat(checkedAgencies()).containsExactlyInAnyOrder(5L, 7L);
+    assertCheckedAgencies(Set.of(7L), Set.of(5L));
   }
 
   // ─── appendAgenciesForAdmins ──────────────────────────────────────────────
@@ -297,11 +293,9 @@ class AdminAgencyRelationServiceTest {
         .toList();
   }
 
-  @SuppressWarnings("unchecked")
-  private Collection<Long> checkedAgencies() {
-    ArgumentCaptor<Collection<Long>> captor = ArgumentCaptor.forClass(Collection.class);
-    verify(adminCallerScope).assertMayUseAgencies(captor.capture());
-    return captor.getValue();
+  private void assertCheckedAgencies(Set<Long> added, Set<Long> removed) {
+    verify(adminScope).assertMay(AdminScope.Target.agencies(added));
+    verify(adminScope).assertMay(AdminScope.Target.removedAgencies(removed));
   }
 
   private AdminDTO buildAdmin(String id) {

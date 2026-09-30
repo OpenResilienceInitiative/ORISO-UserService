@@ -986,6 +986,14 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/TopicDTO'
+        departments:
+          type: array
+          description: >
+            The agency's departments (one per assigned topic). Unlike topics, the topicId is
+            always present - it does not depend on the topic-name lookup in
+            ConsultingTypeService (ORISO-Admin#1026).
+          items:
+            $ref: '#/components/schemas/AgencyAdminDepartmentDTO'
         demographics:
           $ref: '#/components/schemas/DemographicsDTO'
         createDate:
@@ -1018,6 +1026,19 @@ components:
         settings:
           $ref: '#/components/schemas/Settings'
           description: Agency settings including platform-level agencyAdminControls
+    AgencyAdminDepartmentDTO:
+      type: object
+      description: One department (Fachbereich = agency x topic), mirrored from AgencyService.
+      properties:
+        topicId:
+          type: integer
+          format: int64
+          example: 7
+        hasPublishedDpp:
+          type: boolean
+        hasPublishedImprint:
+          type: boolean
+
     DataProtectionDTO:
       type: object
       properties:

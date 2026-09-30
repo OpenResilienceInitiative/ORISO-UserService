@@ -22,7 +22,8 @@ import de.caritas.cob.userservice.api.adapters.web.dto.Sort;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateAgencyAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UpdateTenantAdminDTO;
 import de.caritas.cob.userservice.api.admin.service.admin.AdminAgencyRelationService;
-import de.caritas.cob.userservice.api.admin.service.admin.AdminCallerScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.admin.AgencyAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.TenantAdminUserService;
 import de.caritas.cob.userservice.api.admin.service.admin.search.AdminFilterService;
@@ -42,7 +43,7 @@ class AdminUserFacadeTest {
 
   @InjectMocks private AdminUserFacade adminUserFacade;
 
-  @Mock private AdminCallerScope adminCallerScope;
+  @Mock private AdminScope adminScope;
 
   @Mock private AgencyAdminUserService agencyAdminUserService;
   @Mock private AdminAgencyRelationService adminAgencyRelationService;
@@ -206,14 +207,12 @@ class AdminUserFacadeTest {
 
     assertThat(adminUserFacade.findAgencyIdsOfAdminInCallerScope("123")).containsExactly(7L);
 
-    verify(adminCallerScope).assertMayActOnAdmin("123");
+    verify(adminScope).assertMay(Target.admin("123"));
   }
 
   @Test
   void findAgencyIdsOfAdminInCallerScope_Should_NotReadAgencies_When_ScopeDenies() {
-    doThrow(new ForbiddenException("out of scope"))
-        .when(adminCallerScope)
-        .assertMayActOnAdmin("123");
+    doThrow(new ForbiddenException("out of scope")).when(adminScope).assertMay(Target.admin("123"));
 
     assertThatThrownBy(() -> adminUserFacade.findAgencyIdsOfAdminInCallerScope("123"))
         .isInstanceOf(ForbiddenException.class);
