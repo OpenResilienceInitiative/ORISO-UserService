@@ -20,6 +20,7 @@ import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
 import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
@@ -234,6 +235,12 @@ class UserSessionControllerDelegate {
       return new ResponseEntity<>(HttpStatus.FORBIDDEN);
     }
 
+    if (!callerMayChangeConsultantsOf(session.get())) {
+      throw new ForbiddenException(
+          String.format(
+              "Caller (%s) may not assign session (%s) to a consultant", userId, sessionId));
+    }
+
     var consultantToAssign = userAccountProvider.retrieveValidatedConsultantById(consultantId);
     if (isNewEnquiry) {
       assignEnquiryFacade.assignRegisteredEnquiry(session.get(), consultantToAssign);
@@ -253,6 +260,16 @@ class UserSessionControllerDelegate {
     if (messenger.findSession(sessionId).isEmpty()) {
       throw new NotFoundException("Session (%s) not found", sessionId);
     }
+    if (!consultantId.toString().equals(authenticatedUser.getUserId())
+        && !sessionService
+            .getSession(sessionId)
+            .map(this::callerMayChangeConsultantsOf)
+            .orElse(false)) {
+      throw new ForbiddenException(
+          String.format(
+              "Consultant (%s) may not remove consultant (%s) from session (%s)",
+              authenticatedUser.getUserId(), consultantId, sessionId));
+    }
     if (!messenger.removeConsultantFromSession(sessionId, consultantId.toString())) {
       var message =
           String.format(
@@ -261,6 +278,21 @@ class UserSessionControllerDelegate {
     }
 
     return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * Only the session's advice seeker or a consultant with access to it changes its consultants.
+   * Only these two roles hold the route's authorities; AuthorityTest pins that.
+   */
+  private boolean callerMayChangeConsultantsOf(Session session) {
+    var callerId = authenticatedUser.getUserId();
+    if (authenticatedUser.isAdviceSeeker()) {
+      return session.getUser() != null && callerId.equals(session.getUser().getUserId());
+    }
+    return consultantService
+        .getConsultant(callerId)
+        .map(caller -> sessionService.isConsultantPermittedToSession(caller, session))
+        .orElse(false);
   }
 
   ResponseEntity<ConsultantSessionDTO> fetchSessionForConsultant(Long sessionId) {

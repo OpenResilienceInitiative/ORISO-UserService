@@ -15,6 +15,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.UserServiceApplication;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.UserDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -62,6 +63,7 @@ class CreateAdminServiceIT {
   private static final String VALID_EMAIL_ADDRESS = "valid@emailaddress.de";
 
   @Autowired private CreateAdminService createAdminService;
+  @Autowired private AdminScope adminScope;
 
   @MockitoBean(
       extraInterfaces = {
@@ -85,15 +87,26 @@ class CreateAdminServiceIT {
   @MockitoBean private AuthenticatedUser authenticatedUser;
   @Captor private ArgumentCaptor<UserDTO> userDTOArgumentCaptor;
   private final EasyRandom easyRandom = new EasyRandom();
+  private Object originalMultiTenancyEnabled;
+
+  // AdminScope is a singleton of the cached context; later classes must see its configured value.
+  private Object configuredMultitenancy;
 
   @BeforeEach
   void setUp() {
     MockitoAnnotations.openMocks(this);
+    configuredMultitenancy = ReflectionTestUtils.getField(adminScope, "multitenancyEnabled");
+    originalMultiTenancyEnabled =
+        ReflectionTestUtils.getField(createAdminService, "multiTenancyEnabled");
   }
 
   @AfterEach
   void afterTests() {
     TenantContext.clear();
+    // The service is a shared context bean; a leaked flag changes later tests' tenant handling.
+    ReflectionTestUtils.setField(
+        createAdminService, "multiTenancyEnabled", originalMultiTenancyEnabled);
+    ReflectionTestUtils.setField(adminScope, "multitenancyEnabled", configuredMultitenancy);
   }
 
   @Test
@@ -136,7 +149,9 @@ class CreateAdminServiceIT {
       createNewAdminAgency_Should_returnExpectedCreatedAdmin_When_inputDataIsCorrectAndMultitenancyEnabled() {
     // given
     ReflectionTestUtils.setField(createAdminService, "multiTenancyEnabled", true);
+    ReflectionTestUtils.setField(adminScope, "multitenancyEnabled", true);
     TenantContext.setCurrentTenant(1L);
+    when(authenticatedUser.getTenantId()).thenReturn(1L);
     when(identityClient.createUser(any(), anyString(), any()))
         .thenReturn(easyRandom.nextObject(CreatedIdentity.class));
     CreateAdminDTO createAdminDTO = this.easyRandom.nextObject(CreateAdminDTO.class);
