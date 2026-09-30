@@ -80,7 +80,7 @@ public class InviteFrameMailRenderer {
       String subject, String bodyContent, String primaryActionUrl, Long tenantId, Labels labels) {
     // Keep the invitation's labels in the same approved language as the template frame.
     labels = Labels.of(orisoEmailRenderer.deliveryTone(labels.tone()));
-    EmailBranding branding = emailBrandingResolver.resolve(tenantId);
+    EmailBranding branding = emailBrandingResolver.resolvePendingTenant(tenantId);
 
     String safeSubject = isBlank(subject) ? "" : subject.trim();
     String bodyHtml = sanitizer.toContentHtml(bodyContent, branding.linkColor());

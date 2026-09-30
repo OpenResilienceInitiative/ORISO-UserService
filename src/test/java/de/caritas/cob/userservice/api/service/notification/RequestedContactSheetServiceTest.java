@@ -1,10 +1,13 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
+import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
@@ -15,10 +18,11 @@ import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
-import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
@@ -63,10 +67,19 @@ class RequestedContactSheetServiceTest {
     var route =
         new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null);
     when(routes.resolve(7L)).thenReturn(Optional.of(route));
-    when(emailBrand.values("https://tenant.example.org", null))
-        .thenReturn(new LinkedHashMap<>(Map.of("platformName", "ORISO")));
-    when(renderer.render(eq("beraterin-kontakt"), any(), any()))
-        .thenReturn(new OrisoEmailRenderer.RenderedEmail("Contact", "<p>Contact</p>", "Contact"));
+    var resolvedBrand =
+        new EmailBranding(
+            "Neighbour support",
+            "https://assets.example.org/tenant-logo.png",
+            "#124078",
+            "https://tenant.example.org/impressum",
+            "https://tenant.example.org/datenschutz");
+    when(branding.resolveNotification(7L, "https://tenant.example.org")).thenReturn(resolvedBrand);
+    when(branding.platformName()).thenReturn("Wayfinder");
+    var actualBrand = new OrisoEmailBrand(SenderOrganisationFixture.platformOwner(), branding);
+    var actualRenderer = spy(new OrisoEmailRenderer(true));
+    ReflectionTestUtils.setField(service, "emailBrand", actualBrand);
+    ReflectionTestUtils.setField(service, "renderer", actualRenderer);
     when(delivery.sendConfirmed(
             eq(7L),
             eq(route),
@@ -78,20 +91,35 @@ class RequestedContactSheetServiceTest {
     service.send(42L, "asker");
 
     var values = ArgumentCaptor.forClass(Map.class);
-    verify(renderer)
+    verify(actualRenderer)
         .render(eq("beraterin-kontakt"), eq(OrisoEmailRenderer.Tone.EN), values.capture());
-    org.assertj.core.api.Assertions.assertThat(values.getValue())
+    assertThat(values.getValue())
         .containsEntry("consultantName", "Centre")
         .containsEntry("consultantHours", "")
         .containsEntry("messageUrl", "https://tenant.example.org/sessions/user/view/session/42")
         .doesNotContainKey("bookingUrl");
+    var rendered = ArgumentCaptor.forClass(OrisoEmailRenderer.RenderedEmail.class);
     verify(delivery)
         .sendConfirmed(
             eq(7L),
             eq(route),
             eq(TenantSystemEmailDelivery.Purpose.CONTACT_SHEET),
             eq("asker@example.org"),
-            any());
+            rendered.capture());
+    var email = rendered.getValue();
+    assertThat(email.subject()).doesNotContain("Neighbour support", "Centre", "Wayfinder");
+    assertThat(email.html())
+        .contains("Neighbour support", "https://assets.example.org/tenant-logo.png", "#124078")
+        .contains("https://tenant.example.org/impressum", "https://tenant.example.org/datenschutz")
+        .doesNotContain("{{", "Online-Beratung");
+    assertThat(email.text())
+        .contains("Neighbour support", "Centre", "centre@example.org", "+49 30 123")
+        .contains("https://tenant.example.org/impressum", "https://tenant.example.org/datenschutz")
+        .doesNotContain("{{", "Online-Beratung");
+    verify(branding).resolveNotification(7L, "https://tenant.example.org");
+    verify(branding).platformName();
+    verifyNoMoreInteractions(branding);
+    verifyNoInteractions(emailBrand, renderer);
   }
 
   @Test

@@ -95,8 +95,8 @@ public class RequestedContactSheetService {
         routes
             .resolve(tenantId)
             .orElseThrow(() -> new IllegalStateException("Contact-sheet SMTP route is missing"));
-    branding.resolveNotification(tenantId, baseUrl);
-    var values = emailBrand.values(baseUrl, route.emailThemeColor());
+    var resolvedBrand = branding.resolveNotification(tenantId, baseUrl);
+    var values = emailBrand.valuesForResolvedBrand(baseUrl, resolvedBrand);
     values.put("consultantName", contact.name());
     values.put("consultantPhone", emptyIfNull(contact.phone()));
     values.put("consultantEmail", emptyIfNull(contact.email()));

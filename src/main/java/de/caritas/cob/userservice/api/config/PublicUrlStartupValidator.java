@@ -2,7 +2,9 @@ package de.caritas.cob.userservice.api.config;
 
 import static org.apache.commons.lang3.StringUtils.isBlank;
 
+import java.net.InetAddress;
 import java.net.URI;
+import java.net.UnknownHostException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -147,7 +149,10 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
     }
     String host = uri.getHost().toLowerCase(Locale.ROOT);
     if (deployed && isPlaceholder(host)) {
-      return "uses a reserved example or template host (example.com/.org/.net, your-domain),"
+      return "uses a reserved example or template host (example.com/.org/.net,"
+          + " your-domain), loopback or private host (localhost, 127.0.0.1, [::1],"
+          + " private/documentation/multicast IPv6), numeric IP alias"
+          + " or noncanonical trailing dot,"
           + " which cannot be this environment's public host";
     }
     return null;
@@ -155,6 +160,54 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
 
   private static boolean isPlaceholder(String host) {
     return host.contains("your-domain")
+        || host.equals("localhost")
+        || host.endsWith(".localhost")
+        || host.endsWith(".")
+        || host.equals("0.0.0.0")
+        || isPrivateIpv4(host)
+        || isNonPublicIpv6(host)
+        // Browsers interpret single decimal/hex labels as IPv4 addresses.
+        || host.matches("[0-9]+|0x[0-9a-f]+")
+        || host.matches("127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}")
         || EXAMPLE_DOMAINS.stream().anyMatch(d -> host.equals(d) || host.endsWith("." + d));
+  }
+
+  private static boolean isPrivateIpv4(String host) {
+    if (!host.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}")) {
+      return false;
+    }
+    String[] octets = host.split("\\.");
+    int first = Integer.parseInt(octets[0]);
+    int second = Integer.parseInt(octets[1]);
+    return first == 10
+        || (first == 169 && second == 254)
+        || (first == 172 && second >= 16 && second <= 31)
+        || (first == 192 && second == 168);
+  }
+
+  private static boolean isNonPublicIpv6(String host) {
+    if (!host.startsWith("[") || !host.endsWith("]")) {
+      return false;
+    }
+    try {
+      var address = InetAddress.getByName(host);
+      byte[] bytes = address.getAddress();
+      boolean uniqueLocal = bytes.length == 16 && (bytes[0] & 0xfe) == 0xfc;
+      boolean documentation =
+          bytes.length == 16
+              && bytes[0] == 0x20
+              && bytes[1] == 0x01
+              && bytes[2] == 0x0d
+              && bytes[3] == (byte) 0xb8;
+      return address.isLoopbackAddress()
+          || address.isAnyLocalAddress()
+          || address.isLinkLocalAddress()
+          || address.isSiteLocalAddress()
+          || address.isMulticastAddress()
+          || documentation
+          || uniqueLocal;
+    } catch (UnknownHostException invalidLiteral) {
+      return true;
+    }
   }
 }

@@ -82,7 +82,7 @@ public class GlobalSmtpTestEmailService {
       throw new ConfigurationException(
           "EMAIL_BRANDING_NAME is missing; configure the platform name before sending email");
     }
-    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(appBaseUrl, null));
+    Map<String, String> values = new LinkedHashMap<>(emailBrand.valuesForTenant(appBaseUrl, null));
     values.put("smtpHost", configured.host() + ":" + configured.port());
     values.put("smtpFrom", configured.from());
     values.put("sentAt", OffsetDateTime.now().format(DateTimeFormatter.ISO_OFFSET_DATE_TIME));
