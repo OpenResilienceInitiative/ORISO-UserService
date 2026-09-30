@@ -149,7 +149,7 @@ class EmailBrandingResolverTest {
   void notificationBrandingRequiresTheExactTenantUrl() {
     var resolved = tenant("Nord", null);
     resolved.setSubdomain("nord");
-    when(tenantService.getRestrictedTenantData(7L)).thenReturn(resolved);
+    when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(resolved);
     when(tenantTemplateSupplier.getTenantBaseUrl(resolved))
         .thenReturn("https://nord.app.oriso.org");
     var subject = resolver("");
@@ -162,6 +162,40 @@ class EmailBrandingResolverTest {
     assertThatThrownBy(() -> subject.resolveNotification(7L, "https://other.app.oriso.org"))
         .isInstanceOf(IllegalArgumentException.class)
         .hasMessageContaining("does not match");
+  }
+
+  @ParameterizedTest
+  @ValueSource(booleans = {false, true})
+  void notificationBrandingUsesCurrentSavedTenantWhenCachedBrandOrSubdomainIsStale(
+      boolean subdomainChanged) {
+    var oldTheme = new Theming();
+    oldTheme.setLogo("https://app.example.org/old-logo.png");
+    oldTheme.setPrimaryColor("#804030");
+    var cachedTenant = tenant("Old tenant brand", oldTheme);
+    cachedTenant.setSubdomain("old");
+    var currentTheme = new Theming();
+    currentTheme.setLogo("https://app.example.org/current-logo.png");
+    currentTheme.setPrimaryColor("#1c4f8f");
+    var currentTenant = tenant("Current tenant brand", currentTheme);
+    currentTenant.setSubdomain(subdomainChanged ? "current" : "old");
+    var currentUrl =
+        subdomainChanged ? "https://current.app.example.org" : "https://old.app.example.org";
+    lenient().when(tenantService.getRestrictedTenantData(7L)).thenReturn(cachedTenant);
+    lenient().when(tenantService.getRestrictedTenantDataFresh(7L)).thenReturn(currentTenant);
+    lenient()
+        .when(tenantTemplateSupplier.getTenantBaseUrl(cachedTenant))
+        .thenReturn("https://old.app.example.org");
+    lenient().when(tenantTemplateSupplier.getTenantBaseUrl(currentTenant)).thenReturn(currentUrl);
+    var subject = resolver("");
+    ReflectionTestUtils.setField(subject, "multitenancyEnabled", true);
+
+    var branding = subject.resolveNotification(7L, currentUrl);
+
+    assertThat(branding.brandName()).isEqualTo("Current tenant brand");
+    assertThat(branding.logoUrl()).isEqualTo("https://app.example.org/current-logo.png");
+    assertThat(branding.accentColor()).isEqualTo("#1c4f8f");
+    assertThat(branding.imprintUrl()).isEqualTo(currentUrl + "/impressum");
+    assertThat(branding.privacyUrl()).isEqualTo(currentUrl + "/datenschutz");
   }
 
   @Test
