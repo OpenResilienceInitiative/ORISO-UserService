@@ -197,6 +197,12 @@ class AccountInviteRoleChangeIT {
   }
 
   @Test
+  void changeRole_Should_Answer403_When_TheInviteDoesNotExist() throws Exception {
+    // Same answer as for a foreign invite, so a Träger admin cannot probe which ids exist.
+    changeRole(987_654_321L, "{\"targetRole\":\"AGENCY_ADMIN\"}").andExpect(status().isForbidden());
+  }
+
+  @Test
   void changeRole_Should_Answer409RoleChangeNeedsNewInvite_When_TheRoleMovesToTheTraegerLevel()
       throws Exception {
     AccountInvite invite = seed(counsellorInvite(OWN_TENANT, AGENCY));
@@ -384,8 +390,12 @@ class AccountInviteRoleChangeIT {
   // --- helpers ----------------------------------------------------------------------------------
 
   private ResultActions changeRole(AccountInvite invite, String body) throws Exception {
+    return changeRole(invite.getId(), body);
+  }
+
+  private ResultActions changeRole(Long inviteId, String body) throws Exception {
     return mvc.perform(
-        put("/useradmin/account-invites/{id}/role", invite.getId())
+        put("/useradmin/account-invites/{id}/role", inviteId)
             .with(admin())
             .cookie(CSRF_COOKIE)
             .header(CSRF_HEADER, CSRF_VALUE)

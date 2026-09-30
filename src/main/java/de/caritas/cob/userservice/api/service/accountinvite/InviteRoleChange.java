@@ -59,10 +59,11 @@ public class InviteRoleChange {
     if (command == null || command.targetRole() == null) {
       throw new BadRequestException("targetRole is required");
     }
-    AccountInvite invite =
-        accountInviteRepository
-            .findById(inviteId)
-            .orElseThrow(() -> new NotFoundException("Account invite not found"));
+    AccountInvite invite = accountInviteRepository.findById(inviteId).orElse(null);
+    if (invite == null) {
+      accessPolicy.authorizeMissing(inviteId);
+      throw new NotFoundException("Account invite not found");
+    }
     accessPolicy.authorizeAccess(invite);
     LocalDateTime now = LocalDateTime.now();
     requirePending(invite, now);
