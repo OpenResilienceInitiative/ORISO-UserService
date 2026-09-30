@@ -13,13 +13,11 @@ import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettings
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.OrisoSmtpTransport;
 import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
-import jakarta.mail.Authenticator;
 import jakarta.mail.Message;
-import jakarta.mail.PasswordAuthentication;
-import jakarta.mail.Transport;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
 import java.net.URLEncoder;
@@ -29,7 +27,6 @@ import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Optional;
-import java.util.Properties;
 import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -179,26 +176,13 @@ public class MagicLinkLoginService {
       String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
       String magicUrl = buildMagicFrontendUrl(oneTimeToken);
 
-      Properties props = new Properties();
-      props.put("mail.smtp.auth", "true");
-      props.put("mail.smtp.host", smtpSettings.getHost());
-      props.put("mail.smtp.port", String.valueOf(smtpSettings.getPort()));
-      if (smtpSettings.isSecure()) {
-        props.put("mail.smtp.ssl.enable", "true");
-      } else {
-        props.put("mail.smtp.starttls.enable", "true");
-      }
-
       jakarta.mail.Session session =
-          jakarta.mail.Session.getInstance(
-              props,
-              new Authenticator() {
-                @Override
-                protected PasswordAuthentication getPasswordAuthentication() {
-                  return new PasswordAuthentication(
-                      smtpSettings.getUsername(), smtpSettings.getPassword());
-                }
-              });
+          OrisoSmtpTransport.session(
+              smtpSettings.getHost(),
+              smtpSettings.getPort(),
+              smtpSettings.isSecure(),
+              smtpSettings.getUsername(),
+              smtpSettings.getPassword());
 
       var email = renderMagicLink(magicUrl, smtpSettings.getEmailThemeColor());
       MimeMessage message = new MimeMessage(session);
@@ -206,7 +190,7 @@ public class MagicLinkLoginService {
       message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(target.getEmail()));
       message.setSubject(email.subject(), "UTF-8");
       message.setContent(OrisoEmailMime.alternative(email));
-      Transport.send(message);
+      OrisoSmtpTransport.send(message);
     } catch (Exception ex) {
       log.warn(
           "Magic link email dispatch failed for account {}, reason: {}",
