@@ -38,7 +38,7 @@ public class OrisoEmailBrand {
   private static final String DEFAULT_PRIMARY = "#a5000a";
   private static final String DEFAULT_ACCENT = "#cc1e1c";
 
-  @Value("${email.brand.platform-name:Online-Beratung}")
+  @Value("${email.branding.name:}")
   private String platformName;
 
   @Value("${email.brand.logo-url:}")
@@ -48,6 +48,15 @@ public class OrisoEmailBrand {
 
   public OrisoEmailBrand(@NonNull SenderOrganisationResolver senderOrganisations) {
     this.senderOrganisations = senderOrganisations;
+  }
+
+  /** The platform name has one configuration source for both subjects and shared mail frames. */
+  public String platformName() {
+    if (!isNotBlank(platformName)) {
+      throw new IllegalStateException(
+          "EMAIL_BRANDING_NAME is missing; configure the platform name before sending email");
+    }
+    return platformName.trim();
   }
 
   /**
@@ -65,9 +74,10 @@ public class OrisoEmailBrand {
     String base = trimTrailingSlash(appUrl);
     Map<String, String> values = new LinkedHashMap<>();
 
-    values.put("platformName", platformName);
+    String configuredPlatformName = platformName();
+    values.put("platformName", configuredPlatformName);
     // The offered-by line describes the platform; unlike platformName, no sender brands it.
-    values.put("offeringName", platformName);
+    values.put("offeringName", configuredPlatformName);
     SenderOrganisation operator = senderOrganisations.platform();
     putSender(values, operator);
     // Y in "X ist ein Angebot von Y": always the platform operator, never a Träger that overlays

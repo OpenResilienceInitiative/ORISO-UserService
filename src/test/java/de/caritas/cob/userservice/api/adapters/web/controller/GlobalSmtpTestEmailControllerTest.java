@@ -49,7 +49,9 @@ class GlobalSmtpTestEmailControllerTest {
   void sendGlobalSmtpTestEmail_configurationException_returnsNamedSetting() throws Exception {
     // Business reason: misconfiguration details should be surfaced directly for quick correction.
     var dto = validDto();
-    doThrow(new GlobalSmtpTestEmailService.ConfigurationException("SMTP_HOST is missing"))
+    doThrow(
+            new GlobalSmtpTestEmailService.ConfigurationException(
+                "SMTP host is missing in Admin Settings"))
         .when(globalSmtpTestEmailService)
         .sendTestEmail(dto);
 
@@ -57,7 +59,8 @@ class GlobalSmtpTestEmailControllerTest {
 
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     assertNotNull(response.getBody());
-    assertEquals("SMTP_HOST is missing", ((Map<?, ?>) response.getBody()).get("message"));
+    assertEquals(
+        "SMTP host is missing in Admin Settings", ((Map<?, ?>) response.getBody()).get("message"));
   }
 
   @Test
@@ -89,7 +92,7 @@ class GlobalSmtpTestEmailControllerTest {
     assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
     assertNotNull(response.getBody());
     assertEquals(
-        "SMTP authentication failed. Please verify deployment SMTP credentials and provider auth policy.",
+        "SMTP authentication failed. Please verify saved Admin SMTP credentials and provider auth policy.",
         ((Map<?, ?>) response.getBody()).get("message"));
   }
 
