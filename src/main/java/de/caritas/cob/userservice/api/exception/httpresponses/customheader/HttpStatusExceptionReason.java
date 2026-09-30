@@ -19,6 +19,8 @@ public enum HttpStatusExceptionReason {
   PASSWORD_NOT_VALID,
   CONSULTANT_IDENTITY_ALREADY_GRANTED,
   CHAT_RECOVERY_POLICY_UNAVAILABLE,
+  DPA_NEW_COUNSELLING_NOT_ALLOWED,
+  DPA_POLICY_UNAVAILABLE,
   ROLE_NOT_FOUND,
   /** The admin already holds the role they tried to assign themselves. */
   SELF_ASSIGNMENT_ALREADY_EXISTS,

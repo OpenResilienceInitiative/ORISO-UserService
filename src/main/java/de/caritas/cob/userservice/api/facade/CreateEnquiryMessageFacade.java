@@ -43,6 +43,8 @@ import org.springframework.stereotype.Service;
 public class CreateEnquiryMessageFacade {
 
   private final @NonNull SessionService sessionService;
+  private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
+      dpaPolicy;
   private final @NonNull MatrixSynapseService matrixSynapseService;
   private final @NonNull EmailNotificationFacade emailNotificationFacade;
   private final @NonNull ConsultantAgencyService consultantAgencyService;
@@ -58,6 +60,11 @@ public class CreateEnquiryMessageFacade {
           fetchSessionForEnquiryMessage(enquiryData.getSessionId(), enquiryData.getUser());
       checkIfNotAnonymousEnquiry(session);
       checkIfEnquiryMessageIsAlreadyWrittenForSession(session);
+      // INITIAL has a room but no first enquiry; NEW is still unaccepted counselling.
+      if (session.getStatus() == SessionStatus.INITIAL
+          || session.getStatus() == SessionStatus.NEW) {
+        dpaPolicy.requireForAgency(session.getAgencyId());
+      }
 
       List<ConsultantAgency> agencyList = resolveConsultantAgenciesForEnquiry(session);
       return createMatrixEnquiryMessage(enquiryData, session, agencyList);
