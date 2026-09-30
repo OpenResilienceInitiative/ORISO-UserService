@@ -6,6 +6,7 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
@@ -46,32 +47,39 @@ class InviteEmailPreviewServiceTest {
   private InviteMailDispatchService dispatchService;
   private InviteEmailPreviewService previewService;
 
+  /**
+   * A preview reads a stored template's subject and body, so it is scoped like a send
+   * (ORISO-Admin#1026). The mock passes everything except where a test makes it refuse.
+   */
+  @Mock private AccountInviteAccessPolicy accessPolicy;
+
   @BeforeEach
   void setUp() {
     acceptUrlBuilder =
         new InviteAcceptUrlBuilder("https://app.example.org", "https://admin.example.org");
     dispatchService =
         new InviteMailDispatchService(
-            new de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider(
-                "smtp.example.org",
-                "587",
-                "false",
-                "smtp-user",
-                "smtp-pass",
-                "noreply@example.org",
-                false),
+            de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture.configured(
+                "smtp-user", "smtp-pass"),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver));
     previewService =
         new InviteEmailPreviewService(
             templateRepository,
+            accessPolicy,
             acceptUrlBuilder,
             dispatchService,
             new de.caritas.cob.userservice.api.service.notification.AdminPanelUrl(
                 "https://admin.configured.example"));
 
-    when(emailBrandingResolver.resolve(any()))
-        .thenReturn(new EmailBranding("Nord", null, "#f8e71c", null, null));
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            new EmailBranding(
+                "Nord",
+                null,
+                "#f8e71c",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"));
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("to@example.org", Instant.now()));
   }
@@ -162,6 +170,27 @@ class InviteEmailPreviewServiceTest {
   }
 
   @Test
+  void preview_Should_refuseAnotherTraegersTemplate_BeforeRenderingIt() {
+    InviteEmailTemplate foreign =
+        InviteEmailTemplate.builder()
+            .id(6L)
+            .tenantId(2L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("B's subject")
+            .body("B's body")
+            .active(true)
+            .build();
+    when(templateRepository.findById(6L)).thenReturn(Optional.of(foreign));
+    org.mockito.Mockito.doThrow(new ForbiddenException("foreign template"))
+        .when(accessPolicy)
+        .authorizeTemplateUse(2L);
+
+    assertThatThrownBy(() -> previewService.preview(new PreviewCommand(6L, null, null, null, null)))
+        .isInstanceOf(ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(emailBrandingResolver, inviteMailTransport);
+  }
+
+  @Test
   void preview_Should_throwNotFound_When_TemplateDoesNotExist() {
     when(templateRepository.findById(99L)).thenReturn(Optional.empty());
 
@@ -174,7 +203,7 @@ class InviteEmailPreviewServiceTest {
   void preview_Should_resolveBrandingForTheRequestedTenant() {
     previewService.preview(new PreviewCommand(null, null, null, null, 21L));
 
-    verify(emailBrandingResolver).resolve(21L);
+    verify(emailBrandingResolver).resolvePendingTenant(21L);
   }
 
   @Test

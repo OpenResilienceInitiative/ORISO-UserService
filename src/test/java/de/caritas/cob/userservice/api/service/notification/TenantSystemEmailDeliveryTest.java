@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.notification;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -29,7 +30,13 @@ class TenantSystemEmailDeliveryTest {
   void platformNeverCallsTenantDelivery() {
     var smtp =
         new PlatformSmtpSettingsProvider.Settings(
-            "smtp.platform.example", 587, false, "account", "secret", "sender@platform.example");
+            "smtp.platform.example",
+            587,
+            false,
+            "account",
+            "secret",
+            "sender@platform.example",
+            "#123456");
     when(platformSettings.requireConfigured()).thenReturn(smtp);
 
     new TenantSystemEmailDelivery(tenantClient, platformSettings, platformDispatcher)
@@ -65,10 +72,40 @@ class TenantSystemEmailDeliveryTest {
   }
 
   @Test
+  void ownHandoverPurposesMatchTenantServiceRelayContract() {
+    var route =
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.OWN, null);
+    var sender = new TenantSystemEmailDelivery(tenantClient, platformSettings, platformDispatcher);
+
+    sender.sendConfirmed(
+        40L,
+        route,
+        TenantSystemEmailDelivery.Purpose.HANDOVER_REQUESTED,
+        "asker@example.org",
+        email);
+    sender.sendConfirmed(
+        40L,
+        route,
+        TenantSystemEmailDelivery.Purpose.HANDOVER_CONFIRMED,
+        "incoming@example.org",
+        email);
+
+    verify(tenantClient).deliver(40L, "HANDOVER_REQUESTED", "asker@example.org", email);
+    verify(tenantClient).deliver(40L, "HANDOVER_CONFIRMED", "incoming@example.org", email);
+    verify(platformSettings, never()).requireConfigured();
+  }
+
+  @Test
   void platformFailureIsObservableToNotificationSender() {
     var smtp =
         new PlatformSmtpSettingsProvider.Settings(
-            "smtp.platform.example", 587, false, "account", "secret", "sender@platform.example");
+            "smtp.platform.example",
+            587,
+            false,
+            "account",
+            "secret",
+            "sender@platform.example",
+            "#123456");
     when(platformSettings.requireConfigured()).thenReturn(smtp);
     when(platformDispatcher.send(smtp, "recipient@example.org", email)).thenReturn(false);
 
@@ -109,7 +146,7 @@ class TenantSystemEmailDeliveryTest {
 
   @Test
   void durableAppointmentCorrelationReachesOwnRelayWithoutPlatformCredentials() {
-    String correlation = "f7e8bbfe-7ca9-4e8e-8c55-54575ceca5a9";
+    java.util.UUID correlation = java.util.UUID.fromString("f7e8bbfe-7ca9-4e8e-8c55-54575ceca5a9");
     new TenantSystemEmailDelivery(tenantClient, platformSettings, platformDispatcher)
         .sendConfirmed(
             40L,
@@ -127,7 +164,7 @@ class TenantSystemEmailDeliveryTest {
 
   @Test
   void durableAppointmentCorrelationReachesPlatformMimeDispatcher() {
-    String correlation = "f7e8bbfe-7ca9-4e8e-8c55-54575ceca5a9";
+    java.util.UUID correlation = java.util.UUID.fromString("f7e8bbfe-7ca9-4e8e-8c55-54575ceca5a9");
     var smtp =
         new PlatformSmtpSettingsProvider.Settings(
             "smtp.platform.example", 587, false, "account", "secret", "sender@platform.example");
@@ -145,5 +182,39 @@ class TenantSystemEmailDeliveryTest {
 
     verify(platformDispatcher).send(smtp, "recipient@example.org", email, correlation);
     verifyNoInteractions(tenantClient);
+  }
+
+  @Test
+  void replyMailKeepsAnAmbiguousPlatformSmtpFailureVisible() {
+    var smtp =
+        new PlatformSmtpSettingsProvider.Settings(
+            "smtp.platform.example",
+            587,
+            false,
+            "account",
+            "secret",
+            "sender@platform.example",
+            "#123456");
+    when(platformSettings.requireConfigured()).thenReturn(smtp);
+    org.mockito.Mockito.doThrow(new IllegalStateException("SMTP acknowledgement lost"))
+        .when(platformDispatcher)
+        .sendOrThrow(
+            smtp,
+            "recipient@example.org",
+            email,
+            java.util.UUID.fromString("ab2e5141-2f26-456a-9e46-0ff642918115"));
+
+    assertThatThrownBy(
+            () ->
+                new TenantSystemEmailDelivery(tenantClient, platformSettings, platformDispatcher)
+                    .sendReply(
+                        40L,
+                        new TenantSystemEmailRouteService.Route(
+                            TenantSystemEmailRouteService.Mode.PLATFORM, null),
+                        "recipient@example.org",
+                        email,
+                        java.util.UUID.fromString("ab2e5141-2f26-456a-9e46-0ff642918115")))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("SMTP acknowledgement lost");
   }
 }

@@ -29,8 +29,6 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class SupervisorAddedEmailNotificationService {
-  private static final String DEFAULT_EMAIL_THEME_COLOR = "#0f3b8f";
-
   private static final DateTimeFormatter TIMESTAMP =
       DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm");
 
@@ -60,8 +58,7 @@ public class SupervisorAddedEmailNotificationService {
     if (route == null) {
       return;
     }
-    String appUrl = resolveAppFrontendUrl(tenantData);
-    String themeColor = resolveThemeColor(route);
+    String appUrl = resolveAppFrontendUrlSafely(tenantData, tenantId);
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
@@ -77,12 +74,7 @@ public class SupervisorAddedEmailNotificationService {
           () -> {
             LanguageCode language = languageCodeOf(recipientUser);
             return renderTeamChange(
-                language,
-                askerStatementSupervisorJoined(language),
-                appUrl,
-                appUrl,
-                null,
-                themeColor);
+                language, askerStatementSupervisorJoined(language), appUrl, appUrl, null, tenantId);
           });
     }
 
@@ -101,7 +93,7 @@ public class SupervisorAddedEmailNotificationService {
                 appUrl,
                 consultantChatUrl,
                 sessionId,
-                themeColor);
+                tenantId);
           });
     }
   }
@@ -119,8 +111,7 @@ public class SupervisorAddedEmailNotificationService {
     if (route == null) {
       return;
     }
-    String appUrl = resolveAppFrontendUrl(tenantData);
-    String themeColor = resolveThemeColor(route);
+    String appUrl = resolveAppFrontendUrlSafely(tenantData, tenantId);
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
@@ -134,7 +125,7 @@ public class SupervisorAddedEmailNotificationService {
           () -> {
             LanguageCode language = languageCodeOf(recipientUser);
             return renderTeamChange(
-                language, askerStatementSupervisorLeft(language), appUrl, appUrl, null, themeColor);
+                language, askerStatementSupervisorLeft(language), appUrl, appUrl, null, tenantId);
           });
     }
 
@@ -153,7 +144,7 @@ public class SupervisorAddedEmailNotificationService {
                 appUrl,
                 consultantChatUrl,
                 sessionId,
-                themeColor);
+                tenantId);
           });
     }
   }
@@ -174,14 +165,13 @@ public class SupervisorAddedEmailNotificationService {
     if (route == null) {
       return;
     }
-    String appUrl = resolveAppFrontendUrl(tenantData);
-    String themeColor = resolveThemeColor(route);
+    String appUrl = resolveAppFrontendUrlSafely(tenantData, tenantId);
     sendEmailSafely(
         tenantId,
         route,
         TenantSystemEmailDelivery.Purpose.EMAIL_ADDRESS_CHANGED,
         newEmail,
-        renderEmailChanged(username, appUrl, themeColor, tone));
+        renderEmailChanged(username, appUrl, tenantId, tone));
   }
 
   private Long resolveTenantId(User sessionUser, Consultant supervisor) {
@@ -238,7 +228,10 @@ public class SupervisorAddedEmailNotificationService {
     try {
       sendEmailSafely(tenantId, route, purpose, recipientEmail, render.get());
     } catch (Exception ex) {
-      log.error("Failed to render team-change notification for {}", recipientRole, ex);
+      log.error(
+          "Failed to render team-change notification for {}: {}",
+          recipientRole,
+          ex.getClass().getSimpleName());
     }
   }
 
@@ -257,6 +250,22 @@ public class SupervisorAddedEmailNotificationService {
           tenantId,
           ex.getClass().getSimpleName());
       return null;
+    }
+  }
+
+  private String resolveAppFrontendUrlSafely(TenantData tenantData, Long tenantId) {
+    try {
+      return resolveAppFrontendUrl(tenantData);
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Skipping system notification mail for tenant {}: frontend URL resolution failed ({})",
+          tenantId,
+          failure.getClass().getSimpleName());
+      if (failure instanceof TenantSystemEmailRouteService.ConfigurationException configuration) {
+        throw configuration;
+      }
+      throw new TenantSystemEmailRouteService.ConfigurationException(
+          "Tenant email URL resolution failed");
     }
   }
 
@@ -347,8 +356,9 @@ public class SupervisorAddedEmailNotificationService {
       String appBaseUrl,
       String ctaUrl,
       Long sessionId,
-      String themeColor) {
-    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(appBaseUrl, themeColor));
+      Long tenantId) {
+    Map<String, String> values =
+        new LinkedHashMap<>(emailBrand.valuesForTenant(appBaseUrl, tenantId));
     values.put("teamChangeStatement", statement);
     values.put("caseReference", sessionId == null ? "—" : "#" + sessionId);
     values.put("teamChangedAt", LocalDateTime.now().format(TIMESTAMP));
@@ -357,14 +367,14 @@ public class SupervisorAddedEmailNotificationService {
   }
 
   private OrisoEmailRenderer.RenderedEmail renderEmailChanged(
-      String username, String appUrl, String themeColor, OrisoEmailRenderer.Tone tone) {
-    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(appUrl, themeColor));
+      String username, String appUrl, Long tenantId, OrisoEmailRenderer.Tone tone) {
+    Map<String, String> values = new LinkedHashMap<>(emailBrand.valuesForTenant(appUrl, tenantId));
     values.put("username", username);
     return emailRenderer.render("email-geaendert", tone, values);
   }
 
   private String buildSessionUrl(String baseUrl, Long sessionId, boolean consultantView) {
-    String safeBase = baseUrl == null ? "" : baseUrl.trim();
+    String safeBase = requireFrontendUrl(baseUrl, "notification frontend URL").trim();
     if (safeBase.endsWith("/")) {
       safeBase = safeBase.substring(0, safeBase.length() - 1);
     }
@@ -374,17 +384,6 @@ public class SupervisorAddedEmailNotificationService {
             ? "/sessions/consultant/sessionView/session/" + sessionPath
             : "/sessions/user/view/session/" + sessionPath;
     return safeBase + path;
-  }
-
-  private String resolveThemeColor(TenantSystemEmailRouteService.Route route) {
-    return resolveHexColor(route != null ? route.emailThemeColor() : DEFAULT_EMAIL_THEME_COLOR);
-  }
-
-  private String resolveHexColor(String color) {
-    if (isNotBlank(color) && color.trim().matches("^#([A-Fa-f0-9]{6})$")) {
-      return color.trim();
-    }
-    return DEFAULT_EMAIL_THEME_COLOR;
   }
 
   private LanguageCode languageCodeOf(User user) {

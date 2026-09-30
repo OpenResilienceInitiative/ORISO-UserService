@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.helper;
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.service.email.NotificationMailSender;
 import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
+import de.caritas.cob.userservice.api.service.notification.TenantSystemEmailRouteService;
 import de.caritas.cob.userservice.mailservice.generated.ApiClient;
 import de.caritas.cob.userservice.mailservice.generated.web.MailsControllerApi;
 import de.caritas.cob.userservice.mailservice.generated.web.model.ErrorMailDTO;
@@ -45,9 +46,9 @@ public class MailService {
           notificationMailSender.send(mail);
         } catch (RuntimeException failure) {
           log.error(
-              "ORISO notification delivery failed for occasion {}: {}",
+              "Notification delivery failed for occasion {}: {}",
               mail.getTemplate(),
-              failure.getClass().getSimpleName());
+              safeFailureReason(failure));
           accepted = false;
         }
       }
@@ -57,6 +58,31 @@ public class MailService {
       return sendUpstream(new MailsDTO().mails(upstream)) && accepted;
     }
     return sendUpstream(mailsDTO);
+  }
+
+  public static String safeFailureReason(RuntimeException failure) {
+    if (failure instanceof TenantSystemEmailRouteService.ConfigurationException) {
+      return failure.getMessage();
+    }
+    String message = failure.getMessage();
+    if (message != null && message.startsWith("Platform SMTP is incomplete in Admin Settings:")) {
+      return "Platform SMTP is incomplete in Admin Settings; check enablement, host, port, security mode, username, password and sender";
+    }
+    if ("Notification attribute is missing: url".equals(message)
+        || "Notification URL is missing".equals(message)
+        || "Notification URL is invalid".equals(message)
+        || "Notification URL does not match recipient tenant".equals(message)
+        || "Tenant subdomain is required for an email URL".equals(message)
+        || "Takeover confirmation email requires a Matrix room".equals(message)
+        || "Notification url is invalid".equals(message)
+        || "Notification platform SMTP send failed".equals(message)
+        || "Platform SMTP is unavailable in Admin Settings or the technical identity cannot read it"
+            .equals(message)
+        || "Email branding name is missing: configure EMAIL_BRANDING_NAME before sending mail"
+            .equals(message)) {
+      return message;
+    }
+    return failure.getClass().getSimpleName();
   }
 
   private boolean sendUpstream(MailsDTO mailsDTO) {

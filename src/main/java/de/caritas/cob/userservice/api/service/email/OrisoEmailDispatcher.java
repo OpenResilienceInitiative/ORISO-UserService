@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.email;
 import jakarta.mail.Message;
 import jakarta.mail.internet.InternetAddress;
 import jakarta.mail.internet.MimeMessage;
+import java.util.UUID;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
@@ -18,15 +19,43 @@ public class OrisoEmailDispatcher {
       PlatformSmtpSettingsProvider.Settings smtp,
       String recipient,
       OrisoEmailRenderer.RenderedEmail email) {
-    return send(smtp, recipient, email, null);
+    try {
+      sendOrThrow(smtp, recipient, email);
+      return true;
+    } catch (RuntimeException exception) {
+      // Existing best-effort callers use a boolean; their send failure is still observable.
+      return false;
+    }
   }
 
-  /** Sends with an opaque, stable receipt key when the caller has a durable outbox row. */
+  /** A durable appointment retains the same delivery ID when handed to SMTP. */
   public boolean send(
       PlatformSmtpSettingsProvider.Settings smtp,
       String recipient,
       OrisoEmailRenderer.RenderedEmail email,
-      String correlationId) {
+      UUID correlationId) {
+    try {
+      sendOrThrow(smtp, recipient, email, correlationId);
+      return true;
+    } catch (RuntimeException exception) {
+      return false;
+    }
+  }
+
+  /** Preserves an ambiguous SMTP outcome for callers that must never replay blindly. */
+  public void sendOrThrow(
+      PlatformSmtpSettingsProvider.Settings smtp,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email) {
+    sendOrThrow(smtp, recipient, email, null);
+  }
+
+  /** The correlation header lets an operator match an uncertain reply to one stored claim. */
+  public void sendOrThrow(
+      PlatformSmtpSettingsProvider.Settings smtp,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email,
+      UUID correlationId) {
     try {
       MimeMessage message =
           new MimeMessage(
@@ -36,26 +65,14 @@ public class OrisoEmailDispatcher {
       message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
       // UTF-8 rather than the platform default: these subjects carry umlauts.
       message.setSubject(email.subject(), "UTF-8");
-      if (correlationId != null) {
-        message.setHeader("X-ORISO-Correlation-ID", requireCorrelationId(correlationId));
-      }
       message.setContent(OrisoEmailMime.alternative(email));
+      if (correlationId != null) {
+        message.setHeader("X-ORISO-Delivery-ID", correlationId.toString());
+      }
       OrisoSmtpTransport.send(message);
-      return true;
     } catch (Exception exception) {
-      // A mail that cannot be sent must not fail the operation that triggered
-      // it — a registration that rolls back because the welcome mail bounced
-      // would be a far worse outcome than a missing mail.
       log.error("Platform mail send failed: {}", exception.getClass().getSimpleName());
-      return false;
+      throw new IllegalStateException("Platform SMTP outcome is uncertain", exception);
     }
-  }
-
-  private static String requireCorrelationId(String correlationId) {
-    String canonical = java.util.UUID.fromString(correlationId).toString();
-    if (!canonical.equals(correlationId)) {
-      throw new IllegalArgumentException("Mail correlation ID must be a canonical UUID");
-    }
-    return canonical;
   }
 }

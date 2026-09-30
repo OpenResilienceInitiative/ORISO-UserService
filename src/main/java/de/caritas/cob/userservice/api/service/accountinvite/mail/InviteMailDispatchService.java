@@ -14,7 +14,7 @@ import org.springframework.stereotype.Service;
  * is no silent-failure path. Failures additionally say whether non-delivery is confirmed or the
  * SMTP outcome is uncertain, allowing callers with an existing deduplication claim to retry safely.
  *
- * <p>The platform transport comes only from deployment-owned SMTP settings.
+ * <p>The platform transport comes only from Admin Settings through the technical identity.
  *
  * <p>Since ORISO-UserService#914 this service is also the single choke point where the frame is
  * applied: callers hand over the <em>authored content</em> and the primary action, never finished

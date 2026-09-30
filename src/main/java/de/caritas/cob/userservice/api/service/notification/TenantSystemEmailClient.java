@@ -13,6 +13,7 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.client.HttpClientErrorException;
@@ -60,7 +61,7 @@ public class TenantSystemEmailClient {
 
   public void deliver(
       long tenantId, String purpose, String recipient, OrisoEmailRenderer.RenderedEmail email) {
-    deliver(tenantId, purpose, recipient, email, UUID.randomUUID().toString());
+    deliver(tenantId, purpose, recipient, email, UUID.randomUUID());
   }
 
   public void deliver(
@@ -68,32 +69,28 @@ public class TenantSystemEmailClient {
       String purpose,
       String recipient,
       OrisoEmailRenderer.RenderedEmail email,
-      String correlationId) {
-    if (!UUID.fromString(correlationId).toString().equals(correlationId)) {
-      throw new IllegalArgumentException("Mail correlation ID must be a canonical UUID");
-    }
+      UUID correlationId) {
     HttpHeaders headers = technicalHeaders();
     headers.setContentType(MediaType.APPLICATION_JSON);
     Map<String, Object> request =
         Map.of(
-            "purpose",
-            purpose,
-            "recipient",
-            recipient,
-            "subject",
-            email.subject(),
-            "html",
-            email.html(),
-            "text",
-            email.text(),
-            "correlationId",
-            correlationId);
+            "purpose", purpose,
+            "recipient", recipient,
+            "subject", email.subject(),
+            "html", email.html(),
+            "text", email.text(),
+            "correlationId", correlationId.toString());
     try {
-      restTemplate.exchange(
-          endpoint(tenantId, "/internal/system-email-deliveries"),
-          HttpMethod.POST,
-          new HttpEntity<>(request, headers),
-          Void.class);
+      var response =
+          restTemplate.exchange(
+              endpoint(tenantId, "/internal/system-email-deliveries"),
+              HttpMethod.POST,
+              new HttpEntity<>(request, headers),
+              Void.class);
+      if (response.getStatusCode() == HttpStatus.NO_CONTENT) {
+        throw new TenantSystemEmailRouteService.ConfigurationException(
+            "OWN tenant SMTP delivery is disabled");
+      }
     } catch (HttpClientErrorException.UnprocessableEntity ex) {
       throw new TenantSystemEmailRouteService.ConfigurationException(
           "OWN tenant SMTP configuration is invalid");

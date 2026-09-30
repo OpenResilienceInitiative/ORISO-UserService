@@ -76,7 +76,8 @@ class DpaSigningMailDesignSystemTest {
   void setUp() {
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("legal@example.org", Instant.now()));
-    when(tenantTemplateSupplier.getTenantBaseUrl(any(RestrictedTenantDTO.class))).thenReturn("");
+    when(tenantTemplateSupplier.getTenantBaseUrl(any(RestrictedTenantDTO.class)))
+        .thenReturn(APP_ORIGIN);
     wireWith(SenderOrganisationFixture.platformOwner());
   }
 
@@ -92,14 +93,8 @@ class DpaSigningMailDesignSystemTest {
             new OrisoEmailRenderer());
     InviteMailDispatchService mailDispatch =
         new InviteMailDispatchService(
-            new de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider(
-                "smtp.example.org",
-                "587",
-                "false",
-                "smtp-user",
-                "smtp-pass",
-                "noreply@example.org",
-                false),
+            de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture.configured(
+                "smtp-user", "smtp-pass"),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(
                 brandingResolver, senderOrganisations));
@@ -198,7 +193,7 @@ class DpaSigningMailDesignSystemTest {
   /** "zwischen … und" takes the dative; the subject's "für" keeps the accusative. */
   @Test
   void finePrint_putsTheFallbackInTheDative_When_theTenantIsOnlyReserved() {
-    when(tenantService.getRestrictedTenantData(TENANT_ID))
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
         .thenThrow(
             HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null));
 
@@ -220,7 +215,7 @@ class DpaSigningMailDesignSystemTest {
 
   @Test
   void subject_fallsBackToIhreOrganisation_When_theTenantIsOnlyReserved() {
-    when(tenantService.getRestrictedTenantData(TENANT_ID))
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID))
         .thenThrow(
             HttpClientErrorException.create(HttpStatus.NOT_FOUND, "Not Found", null, null, null));
 
@@ -361,15 +356,14 @@ class DpaSigningMailDesignSystemTest {
   }
 
   private void givenRegisteredTenant() {
-    when(tenantService.getRestrictedTenantData(TENANT_ID))
-        .thenReturn(
-            new RestrictedTenantDTO()
-                .id(TENANT_ID)
-                .name(TENANT_NAME)
-                .theming(
-                    new Theming()
-                        .logo("data:image/png;base64,iVBORw0KGgo=")
-                        .primaryColor("#0a5c36")));
+    RestrictedTenantDTO tenant =
+        new RestrictedTenantDTO()
+            .id(TENANT_ID)
+            .name(TENANT_NAME)
+            .theming(
+                new Theming().logo("data:image/png;base64,iVBORw0KGgo=").primaryColor("#0a5c36"));
+    when(tenantService.getRestrictedTenantData(TENANT_ID)).thenReturn(tenant);
+    when(tenantService.getRestrictedTenantDataFresh(TENANT_ID)).thenReturn(tenant);
   }
 
   private static String offeredByLine(String text) {

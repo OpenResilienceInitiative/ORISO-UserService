@@ -5,6 +5,7 @@ import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.Status;
 import de.caritas.cob.userservice.api.port.out.GroupAppointmentMailOutboxRepository;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.UUID;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -69,6 +70,10 @@ public class GroupAppointmentMailWorker {
       suppress(mail);
       return;
     }
+    UUID correlationId = UUID.fromString(mail.getCorrelationId());
+    if (!correlationId.toString().equals(mail.getCorrelationId())) {
+      throw new IllegalArgumentException("Mail correlation ID must be a canonical UUID");
+    }
     if (!claims.claim(mail.getId())) {
       return;
     }
@@ -103,7 +108,7 @@ public class GroupAppointmentMailWorker {
               content.purpose(),
               content.recipient(),
               content.email(),
-              mail.getCorrelationId());
+              correlationId);
     } catch (RuntimeException exception) {
       // The handoff outcome may be unknown. Replaying automatically would risk two mails.
       claims.finish(mail.getId(), Status.UNCERTAIN);

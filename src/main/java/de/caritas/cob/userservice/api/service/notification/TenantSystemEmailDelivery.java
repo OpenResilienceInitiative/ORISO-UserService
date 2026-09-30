@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.notification;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailDispatcher;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
+import java.util.UUID;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -19,6 +20,10 @@ public class TenantSystemEmailDelivery {
     DIRECT_ENQUIRY,
     ENQUIRY_ASSIGNED,
     DAILY_ENQUIRY_DIGEST,
+    FREE_TEXT_NOTICE,
+    HANDOVER_REQUESTED,
+    HANDOVER_CONFIRMED,
+    NEW_MESSAGE,
     CONTACT_SHEET,
     SELF_HELP_APPOINTMENT_CONFIRMED,
     SELF_HELP_APPOINTMENT_RESCHEDULED,
@@ -29,6 +34,13 @@ public class TenantSystemEmailDelivery {
   private final @NonNull TenantSystemEmailClient tenantClient;
   private final @NonNull PlatformSmtpSettingsProvider platformSettings;
   private final @NonNull OrisoEmailDispatcher platformDispatcher;
+
+  /** Fail before entering an SMTP attempt when the selected platform route is unconfigured. */
+  public void requireConfigured(TenantSystemEmailRouteService.Route route) {
+    if (route.mode() == TenantSystemEmailRouteService.Mode.PLATFORM) {
+      platformSettings.requireConfigured();
+    }
+  }
 
   public void send(
       long tenantId,
@@ -46,29 +58,41 @@ public class TenantSystemEmailDelivery {
       Purpose purpose,
       String recipient,
       OrisoEmailRenderer.RenderedEmail email) {
-    return sendConfirmed(tenantId, route, purpose, recipient, email, null);
+    if (route.mode() == TenantSystemEmailRouteService.Mode.OWN) {
+      tenantClient.deliver(tenantId, purpose.name(), recipient, email);
+      return true;
+    } else {
+      return platformDispatcher.send(platformSettings.requireConfigured(), recipient, email);
+    }
   }
 
-  /** The correlation ID is persisted by an outbox and reused for transport reconciliation. */
+  /** Correlates a durable appointment handoff with its existing stored claim. */
   public boolean sendConfirmed(
       long tenantId,
       TenantSystemEmailRouteService.Route route,
       Purpose purpose,
       String recipient,
       OrisoEmailRenderer.RenderedEmail email,
-      String correlationId) {
+      UUID correlationId) {
     if (route.mode() == TenantSystemEmailRouteService.Mode.OWN) {
-      if (correlationId == null) {
-        tenantClient.deliver(tenantId, purpose.name(), recipient, email);
-      } else {
-        tenantClient.deliver(tenantId, purpose.name(), recipient, email, correlationId);
-      }
+      tenantClient.deliver(tenantId, purpose.name(), recipient, email, correlationId);
       return true;
+    }
+    return platformDispatcher.send(platformSettings.requireConfigured(), recipient, email, correlationId);
+  }
+
+  /** For durable reply mail, any transport exception has an uncertain SMTP outcome. */
+  public void sendReply(
+      long tenantId,
+      TenantSystemEmailRouteService.Route route,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email,
+      UUID correlationId) {
+    if (route.mode() == TenantSystemEmailRouteService.Mode.OWN) {
+      tenantClient.deliver(tenantId, Purpose.NEW_MESSAGE.name(), recipient, email, correlationId);
     } else {
-      var settings = platformSettings.requireConfigured();
-      return correlationId == null
-          ? platformDispatcher.send(settings, recipient, email)
-          : platformDispatcher.send(settings, recipient, email, correlationId);
+      platformDispatcher.sendOrThrow(
+          platformSettings.requireConfigured(), recipient, email, correlationId);
     }
   }
 }

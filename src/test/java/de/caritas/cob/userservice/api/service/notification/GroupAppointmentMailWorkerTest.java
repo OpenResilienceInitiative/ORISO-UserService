@@ -94,7 +94,7 @@ class GroupAppointmentMailWorkerTest {
             composed.purpose(),
             composed.recipient(),
             composed.email(),
-            mail.getCorrelationId()))
+            java.util.UUID.fromString(mail.getCorrelationId())))
         .thenReturn(true);
 
     worker.dispatchDue();
@@ -113,7 +113,7 @@ class GroupAppointmentMailWorkerTest {
             composed.purpose(),
             composed.recipient(),
             composed.email(),
-            mail.getCorrelationId()))
+            java.util.UUID.fromString(mail.getCorrelationId())))
         .thenThrow(new IllegalStateException("relay timeout"));
 
     worker.dispatchDue();
@@ -153,4 +153,25 @@ class GroupAppointmentMailWorkerTest {
     verify(claims, never()).claim(11L);
     verify(delivery, never()).sendConfirmed(anyLong(), any(), any(), any(), any(), any());
   }
+
+  @Test
+  void missingSavedPlatformSettingsRemainPendingBeforeSmtpClaim() {
+    var platform = new GroupAppointmentMailComposer.Composed(
+        composed.tenantId(),
+        new TenantSystemEmailRouteService.Route(TenantSystemEmailRouteService.Mode.PLATFORM, null),
+        composed.purpose(), composed.recipient(), composed.email());
+    when(eligibility.resolve(mail)).thenReturn(Optional.of(eligible));
+    when(composer.compose(mail, eligible)).thenReturn(Optional.of(platform));
+    org.mockito.Mockito.lenient().doThrow(new IllegalStateException("SMTP_DISABLED_OR_INCOMPLETE"))
+        .when(delivery).requireConfigured(platform.route());
+    org.mockito.Mockito.lenient().when(claims.deferConfigurationFailure(eq(11L), any(LocalDateTime.class))).thenReturn(true);
+
+    worker.dispatchDue();
+
+    verify(claims).deferConfigurationFailure(eq(11L), any(LocalDateTime.class));
+    verify(claims, never()).claim(11L);
+    verify(claims, never()).finish(anyLong(), any());
+    verify(delivery, never()).sendConfirmed(anyLong(), any(), any(), any(), any(), any());
+  }
+
 }
