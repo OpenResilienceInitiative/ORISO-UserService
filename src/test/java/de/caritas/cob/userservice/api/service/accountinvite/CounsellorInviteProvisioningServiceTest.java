@@ -5,6 +5,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
@@ -15,7 +16,9 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
+import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
@@ -27,9 +30,14 @@ import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProv
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Optional;
+import java.util.stream.Stream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
 import org.mockito.ArgumentCaptor;
 
 class CounsellorInviteProvisioningServiceTest {
@@ -45,10 +53,18 @@ class CounsellorInviteProvisioningServiceTest {
   private final CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService =
       mock(CounsellorAgencyAdminGrantService.class);
 
+  private final ConsultantAgencyRelationCreatorService consultantAgencyRelationCreatorService =
+      mock(ConsultantAgencyRelationCreatorService.class);
+  private final AgencyFacts agencyFacts = mock(AgencyFacts.class);
+
   private CounsellorInviteProvisioningService service;
 
   @BeforeEach
   void setUp() {
+    // The row is still in the status the test put it in (no racing revoke here).
+    org.mockito.Mockito.lenient()
+        .when(accountInviteRepository.holdInStatus(any(), any(), any()))
+        .thenReturn(1);
     service =
         new CounsellorInviteProvisioningService(
             accountInviteService,
@@ -56,9 +72,11 @@ class CounsellorInviteProvisioningServiceTest {
             consultantAdminFacade,
             consultantRepository,
             createConsultantSaga,
-            identityAuthentication,
-            identityClientConfig,
-            counsellorAgencyAdminGrantService);
+            counsellorAgencyAdminGrantService,
+            consultantAgencyRelationCreatorService,
+            new AcceptTimeAgencyCheck(agencyFacts, identityAuthentication, identityClientConfig));
+    when(agencyFacts.find(275L))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(275L, 79L, false, List.of())));
     var technicalUser = new TechnicalUserConfig();
     technicalUser.setUsername("technical-user");
     technicalUser.setPassword("technical-password");
@@ -81,7 +99,7 @@ class CounsellorInviteProvisioningServiceTest {
     when(consultantRepository.findById("partially-created-consultant"))
         .thenReturn(Optional.of(partiallyCreatedConsultant));
     doThrow(new IllegalStateException("agency assignment failed"))
-        .when(consultantAdminFacade)
+        .when(consultantAgencyRelationCreatorService)
         .createNewConsultantAgency(
             org.mockito.ArgumentMatchers.eq("partially-created-consultant"),
             any(CreateConsultantAgencyDTO.class));
@@ -99,6 +117,35 @@ class CounsellorInviteProvisioningServiceTest {
     assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
     assertThat(invite.getProvisionedUserId()).isNull();
     verify(createConsultantSaga).rollbackCreateNewConsultant(partiallyCreatedConsultant);
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("agenciesThatMayNotAccept")
+  void acceptInvite_Should_RefuseBeforeCreatingTheConsultant_When_TheAgencyIsGoneOrForeign(
+      String why, Optional<AgencyFacts.Agency> agency) {
+    AccountInvite invite = activeCounsellorInvite();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(agencyFacts.find(275L)).thenReturn(agency);
+
+    assertThatThrownBy(
+            () ->
+                service.acceptInvite(
+                    "raw-token",
+                    new ProvisionCounsellorCommand(
+                        "invited-counsellor", "test-password", true, null)))
+        .isInstanceOf(NotFoundException.class);
+
+    verify(consultantAdminFacade, never()).createNewConsultant(any(CreateConsultantDTO.class));
+    assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
+  }
+
+  // A 403 from AgencyService also surfaces as an empty result.
+  static Stream<Arguments> agenciesThatMayNotAccept() {
+    return Stream.of(
+        Arguments.of("not found or forbidden", Optional.empty()),
+        Arguments.of("deleted", Optional.of(new AgencyFacts.Agency(275L, 79L, true, List.of()))),
+        Arguments.of(
+            "of another tenant", Optional.of(new AgencyFacts.Agency(275L, 80L, false, List.of()))));
   }
 
   @Test
@@ -190,6 +237,130 @@ class CounsellorInviteProvisioningServiceTest {
     } finally {
       TenantContext.clear();
     }
+  }
+
+  @Test
+  void theTechnicalTokenIsAmbientOnlyForTheRemoteProvisioningCalls() {
+    AccountInvite invite = activeCounsellorInvite();
+    var ambientDuringDatabaseWrites = new java.util.ArrayList<Optional<String>>();
+    var ambientDuringAgencyAssignment = new java.util.ArrayList<Optional<String>>();
+    var ambientDuringAdminGrant = new java.util.ArrayList<Optional<String>>();
+    var ambientDuringInviteAccept = new java.util.ArrayList<Optional<String>>();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(accountInviteRepository.save(any(AccountInvite.class)))
+        .thenAnswer(
+            invocation -> {
+              ambientDuringDatabaseWrites.add(TechnicalAccessTokenContext.get());
+              return invocation.getArgument(0);
+            });
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenAnswer(
+            invocation -> {
+              assertThat(TechnicalAccessTokenContext.get()).contains("technical-token");
+              return new ConsultantAdminResponseDTO()
+                  .embedded(new ConsultantDTO().id("created-consultant"));
+            });
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              ambientDuringAgencyAssignment.add(TechnicalAccessTokenContext.get());
+              return null;
+            })
+        .when(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(
+            org.mockito.ArgumentMatchers.eq("created-consultant"),
+            any(CreateConsultantAgencyDTO.class));
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              ambientDuringAdminGrant.add(TechnicalAccessTokenContext.get());
+              return null;
+            })
+        .when(counsellorAgencyAdminGrantService)
+        .grantAgencyAdmin(any(), any(), any());
+    when(accountInviteService.acceptInvite("raw-token", "created-consultant"))
+        .thenAnswer(
+            invocation -> {
+              ambientDuringInviteAccept.add(TechnicalAccessTokenContext.get());
+              return invite;
+            });
+
+    service.acceptInvite(
+        "raw-token",
+        new ProvisionCounsellorCommand(
+            "invited-counsellor",
+            "test-password",
+            true,
+            null,
+            null,
+            null,
+            null,
+            null,
+            null,
+            java.util.List.of(2L),
+            true));
+
+    assertThat(ambientDuringAgencyAssignment).containsExactly(Optional.of("technical-token"));
+    // Keycloak admin REST and local writes never need the service-to-service bearer.
+    assertThat(ambientDuringAdminGrant).containsExactly(Optional.empty());
+    assertThat(ambientDuringInviteAccept).containsExactly(Optional.empty());
+    assertThat(ambientDuringDatabaseWrites).isNotEmpty().allMatch(Optional::isEmpty);
+    assertThat(TechnicalAccessTokenContext.get()).isEmpty();
+  }
+
+  @Test
+  void aFailedTechnicalLoginMarksTheInviteFailedInsteadOfLeavingItInProgress() {
+    AccountInvite invite = activeCounsellorInvite();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(identityAuthentication.login("technical-user", "technical-password"))
+        .thenThrow(new IllegalStateException("identity provider unavailable"));
+
+    assertThatThrownBy(
+            () ->
+                service.acceptInvite(
+                    "raw-token",
+                    new ProvisionCounsellorCommand(
+                        "invited-counsellor", "test-password", true, null)))
+        .isInstanceOf(IllegalStateException.class);
+
+    assertThat(invite.getProvisioningStatus()).isEqualTo(AccountInviteProvisioningStatus.FAILED);
+    assertThat(invite.getProvisioningFailureReason())
+        .isEqualTo("Service authentication unavailable");
+    verifyNoInteractions(consultantAdminFacade);
+    assertThat(TechnicalAccessTokenContext.get()).isEmpty();
+  }
+
+  @Test
+  void theRollbackOfAPartiallyCreatedConsultantRunsWithTheTechnicalToken() {
+    AccountInvite invite = activeCounsellorInvite();
+    when(accountInviteService.findInviteByToken("raw-token")).thenReturn(invite);
+    when(consultantAdminFacade.createNewConsultant(any(CreateConsultantDTO.class)))
+        .thenReturn(
+            new ConsultantAdminResponseDTO()
+                .embedded(new ConsultantDTO().id("partially-created-consultant")));
+    Consultant partiallyCreatedConsultant = mock(Consultant.class);
+    when(consultantRepository.findById("partially-created-consultant"))
+        .thenReturn(Optional.of(partiallyCreatedConsultant));
+    doThrow(new IllegalStateException("agency assignment failed"))
+        .when(consultantAgencyRelationCreatorService)
+        .createNewConsultantAgency(
+            org.mockito.ArgumentMatchers.eq("partially-created-consultant"),
+            any(CreateConsultantAgencyDTO.class));
+    var ambientDuringRollback = new java.util.ArrayList<Optional<String>>();
+    org.mockito.Mockito.doAnswer(
+            invocation -> {
+              ambientDuringRollback.add(TechnicalAccessTokenContext.get());
+              return null;
+            })
+        .when(createConsultantSaga)
+        .rollbackCreateNewConsultant(partiallyCreatedConsultant);
+
+    assertThatThrownBy(
+        () ->
+            service.acceptInvite(
+                "raw-token",
+                new ProvisionCounsellorCommand("invited-counsellor", "test-password", true, null)));
+
+    assertThat(ambientDuringRollback).containsExactly(Optional.of("technical-token"));
+    assertThat(TechnicalAccessTokenContext.get()).isEmpty();
   }
 
   @Test
@@ -317,7 +488,7 @@ class CounsellorInviteProvisioningServiceTest {
             .username("invited-counsellor")
             .firstName("Lisa")
             .lastName("Simpson")
-            .email("lisa.simpson@oriso.org")
+            .email("lisa.simpson@example.org")
             .twoFactorRequired(true)
             .passwordChangeRequired(passwordChangeRequired)
             .build();
@@ -341,7 +512,7 @@ class CounsellorInviteProvisioningServiceTest {
     return AccountInvite.builder()
         .targetRole(AccountInviteTargetRole.COUNSELLOR)
         .tenantId(79L)
-        .recipientEmail("lisa.simpson@oriso.org")
+        .recipientEmail("lisa.simpson@example.org")
         .firstName("Lisa")
         .lastName("Simpson")
         .agencyId(275L)

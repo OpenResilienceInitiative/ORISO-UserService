@@ -6,7 +6,6 @@ import static org.mockito.ArgumentMatchers.anyList;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -278,8 +277,6 @@ class UserAdminControllerIT {
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isOk());
-
-    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(anyList());
     verify(consultantAdminFacade).setConsultantAgencies(eq(consultantId), anyList());
   }
 
@@ -306,15 +303,13 @@ class UserAdminControllerIT {
     var agencies = givenAgenciesToSet();
     doThrow(new ForbiddenException(""))
         .when(consultantAdminFacade)
-        .checkPermissionsToAssignedAgencies(anyList());
+        .setConsultantAgencies(eq(consultantId), anyList());
 
     mvc.perform(
             put("/useradmin/consultants/{consultantId}/agencies", consultantId)
                 .contentType(MediaType.APPLICATION_JSON)
                 .content(objectMapper.writeValueAsString(agencies)))
         .andExpect(status().isForbidden());
-
-    verify(consultantAdminFacade, never()).setConsultantAgencies(any(), anyList());
   }
 
   @Test

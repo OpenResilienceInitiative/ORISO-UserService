@@ -13,12 +13,14 @@ import de.caritas.cob.userservice.api.adapters.web.mapping.ConsultantDtoMapper;
 import de.caritas.cob.userservice.api.adapters.web.mapping.UserDtoMapper;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.container.SessionListQueryParameter;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignEnquiryFacade;
 import de.caritas.cob.userservice.api.facade.assignsession.AssignSessionFacade;
 import de.caritas.cob.userservice.api.facade.sessionlist.SessionListFacade;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
 import de.caritas.cob.userservice.api.port.in.AccountManaging;
 import de.caritas.cob.userservice.api.port.in.Messaging;
@@ -136,10 +138,22 @@ class UserSessionControllerDelegate {
       var consultant = userAccountProvider.retrieveValidatedConsultant();
       groupSessionList =
           sessionListFacade.retrieveChatsForConsultantByChatIds(consultant, singletonList(chatId));
+      // The chat exists but was filtered out: answer like /users/chat/{chatId} does (#1237).
+      if (!isNotEmpty(groupSessionList.getSessions()) && messenger.existsChat(chatId)) {
+        throw new ForbiddenException(
+            String.format(
+                "Consultant with id %s has no permission for chat with id %s",
+                consultant.getId(), chatId));
+      }
     } else {
       var user = userAccountProvider.retrieveValidatedUser();
       groupSessionList =
           sessionListFacade.retrieveChatsForUserByChatIds(user.getUserId(), singletonList(chatId));
+      if (!isNotEmpty(groupSessionList.getSessions()) && messenger.existsChat(chatId)) {
+        throw new ForbiddenException(
+            String.format(
+                "User with id %s has no permission for chat with id %s", user.getUserId(), chatId));
+      }
     }
 
     consultantDataFacade.addConsultantDisplayNameToSessionList(groupSessionList);
@@ -221,6 +235,12 @@ class UserSessionControllerDelegate {
       return new ResponseEntity<>(HttpStatus.FORBIDDEN);
     }
 
+    if (!callerMayChangeConsultantsOf(session.get())) {
+      throw new ForbiddenException(
+          String.format(
+              "Caller (%s) may not assign session (%s) to a consultant", userId, sessionId));
+    }
+
     var consultantToAssign = userAccountProvider.retrieveValidatedConsultantById(consultantId);
     if (isNewEnquiry) {
       assignEnquiryFacade.assignRegisteredEnquiry(session.get(), consultantToAssign);
@@ -240,6 +260,16 @@ class UserSessionControllerDelegate {
     if (messenger.findSession(sessionId).isEmpty()) {
       throw new NotFoundException("Session (%s) not found", sessionId);
     }
+    if (!consultantId.toString().equals(authenticatedUser.getUserId())
+        && !sessionService
+            .getSession(sessionId)
+            .map(this::callerMayChangeConsultantsOf)
+            .orElse(false)) {
+      throw new ForbiddenException(
+          String.format(
+              "Consultant (%s) may not remove consultant (%s) from session (%s)",
+              authenticatedUser.getUserId(), consultantId, sessionId));
+    }
     if (!messenger.removeConsultantFromSession(sessionId, consultantId.toString())) {
       var message =
           String.format(
@@ -248,6 +278,21 @@ class UserSessionControllerDelegate {
     }
 
     return ResponseEntity.noContent().build();
+  }
+
+  /**
+   * Only the session's advice seeker or a consultant with access to it changes its consultants.
+   * Only these two roles hold the route's authorities; AuthorityTest pins that.
+   */
+  private boolean callerMayChangeConsultantsOf(Session session) {
+    var callerId = authenticatedUser.getUserId();
+    if (authenticatedUser.isAdviceSeeker()) {
+      return session.getUser() != null && callerId.equals(session.getUser().getUserId());
+    }
+    return consultantService
+        .getConsultant(callerId)
+        .map(caller -> sessionService.isConsultantPermittedToSession(caller, session))
+        .orElse(false);
   }
 
   ResponseEntity<ConsultantSessionDTO> fetchSessionForConsultant(Long sessionId) {

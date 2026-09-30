@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
+import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -43,15 +44,18 @@ class SupervisorAddedEmailNotificationServiceTest {
   // design system. A mock here would assert that a method was called; this
   // asserts that a mail comes out.
   @Spy private OrisoEmailRenderer emailRenderer = new OrisoEmailRenderer();
-  @Spy private OrisoEmailBrand emailBrand = new OrisoEmailBrand();
+
+  @Spy
+  private OrisoEmailBrand emailBrand =
+      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
 
   @InjectMocks private SupervisorAddedEmailNotificationService service;
 
   @BeforeEach
   void injectValues() {
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org");
-    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.oriso.org");
+    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org");
+    ReflectionTestUtils.setField(service, "publicFrontendBaseUrl", "https://app.example.org");
   }
 
   // ── notifySupervisorAdded early-return paths ──────────────────────────────
@@ -600,7 +604,7 @@ class SupervisorAddedEmailNotificationServiceTest {
 
   @Test
   void notifyEmailAddressChanged_Should_StripTrailingSlash_When_AppBaseUrlEndsWithSlash() {
-    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.oriso.org/");
+    ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org/");
     when(emailSettingsService.resolveSupervisorAddedEmailSettings(any(), any()))
         .thenReturn(Optional.of(smtpSettings()));
 
@@ -638,8 +642,8 @@ class SupervisorAddedEmailNotificationServiceTest {
         service.renderTeamChange(
             LanguageCode.de,
             statement,
-            "https://app.oriso.org",
-            "https://app.oriso.org",
+            "https://app.example.org",
+            "https://app.example.org",
             null,
             "#1c4f8f");
 
@@ -658,8 +662,8 @@ class SupervisorAddedEmailNotificationServiceTest {
         service.renderTeamChange(
             LanguageCode.de,
             service.staffStatementSupervisorAdded(LanguageCode.de),
-            "https://app.oriso.org",
-            "https://app.oriso.org/sessions/consultant/sessionView/session/4711",
+            "https://app.example.org",
+            "https://app.example.org/sessions/consultant/sessionView/session/4711",
             4711L,
             "#1c4f8f");
 
@@ -667,7 +671,7 @@ class SupervisorAddedEmailNotificationServiceTest {
     assertThat(email.html())
         .contains("Supervisor-Berater:in")
         .contains("#4711")
-        .contains("https://app.oriso.org/sessions/consultant/sessionView/session/4711");
+        .contains("https://app.example.org/sessions/consultant/sessionView/session/4711");
     assertThat(email.text()).contains("Supervisor-Berater:in");
   }
 
@@ -677,8 +681,8 @@ class SupervisorAddedEmailNotificationServiceTest {
         service.renderTeamChange(
             LanguageCode.de,
             "Etwas hat sich geändert.",
-            "https://app.oriso.org",
-            "https://app.oriso.org",
+            "https://app.example.org",
+            "https://app.example.org",
             1L,
             "#1c4f8f");
 
@@ -698,8 +702,8 @@ class SupervisorAddedEmailNotificationServiceTest {
         service.renderTeamChange(
             LanguageCode.de,
             "Etwas hat sich geändert.",
-            "https://app.oriso.org",
-            "https://app.oriso.org",
+            "https://app.example.org",
+            "https://app.example.org",
             1L,
             "#ffd400");
 

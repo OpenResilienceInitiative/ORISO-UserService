@@ -18,6 +18,8 @@ import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import jakarta.annotation.PreDestroy;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
+import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
 import java.time.format.DateTimeParseException;
 import java.util.Comparator;
@@ -62,19 +64,23 @@ public class DpaSignedNoticeService {
   static final String STATUS_SIGNED = "SIGNED";
   static final String FALLBACK_LANGUAGE = "de";
 
-  static final String DEFAULT_SUBJECT_DE =
-      "Auftragsverarbeitungsvertrag unterzeichnet – {{tenantName}}";
-  static final String DEFAULT_SUBJECT_EN = "Data processing agreement signed – {{tenantName}}";
+  // TenantService timestamps are zoneless UTC; the notice must show German wall-clock time.
+  private static final ZoneId MAIL_ZONE = ZoneId.of("Europe/Berlin");
+
+  // Mail copy says "Vertragsunterlagen" / "contract documents", never "AVV" (Frank, 2026-09-23),
+  // and "bestätigt" / "confirmed", never "unterzeichnet" (Frank, 2026-09-25).
+  static final String DEFAULT_SUBJECT_DE = "Vertragsunterlagen bestätigt – {{tenantName}}";
+  static final String DEFAULT_SUBJECT_EN = "Contract documents confirmed – {{tenantName}}";
 
   static final String DEFAULT_BODY_DE =
       """
       Guten Tag,
 
-      der Auftragsverarbeitungsvertrag für {{tenantName}} wurde unterzeichnet.
+      die Vertragsunterlagen für {{tenantName}} wurden bestätigt.
 
       Vertragsversion: {{dpaVersion}}
-      Unterzeichnet am: {{signedAt}}
-      Unterzeichnet von: {{signerName}}{{signerPositionSuffix}}
+      Bestätigt am: {{signedAt}}
+      Bestätigt von: {{signerName}}{{signerPositionSuffix}}
 
       Damit ist die rechtliche Freigabe erteilt. Sie können die Einrichtung Ihrer
       Organisation im Admin-Bereich fortsetzen:
@@ -85,11 +91,11 @@ public class DpaSignedNoticeService {
       """
       Hello,
 
-      the data processing agreement for {{tenantName}} has been signed.
+      the contract documents for {{tenantName}} have been confirmed.
 
       Contract version: {{dpaVersion}}
-      Signed at: {{signedAt}}
-      Signed by: {{signerName}}{{signerPositionSuffix}}
+      Confirmed at: {{signedAt}}
+      Confirmed by: {{signerName}}{{signerPositionSuffix}}
 
       The legal approval is now in place. You can continue setting up your
       organisation in the admin panel:
@@ -196,12 +202,7 @@ public class DpaSignedNoticeService {
    * next collaborator added will not know that rule.
    */
   private void processHint(Long tenantId) {
-    // The dispatch runs on a pooled daemon thread, which starts with no TenantContext. Every
-    // repository call below passes through TenantAspect, and that aspect calls filter.validate()
-    // with TenantContext.getCurrentTenant() — a null tenant either fails the Hibernate filter or
-    // silently filters the forwarding admin away, so the notice would never be sent. Establish the
-    // hinted tenant for the duration of the task, and clear it again because the pool reuses the
-    // thread.
+    // Pooled worker thread: scope it to the hinted tenant and clear it for the next task.
     TenantContext.setCurrentTenant(tenantId);
     try {
       dispatchNotice(tenantId);
@@ -409,8 +410,11 @@ public class DpaSignedNoticeService {
   }
 
   private Optional<InviteEmailTemplate> findActiveTemplate(String language) {
+    // Platform templates only (tenant_id is null): this notice is sent by the platform
+    // operator, so a Träger's own template must never be able to take it over
+    // (ORISO-Admin#1026, template ownership).
     var templates =
-        templateRepository.findByKindAndActiveTrueOrderByCreateDateDesc(
+        templateRepository.findByKindAndActiveTrueAndTenantIdIsNullOrderByCreateDateDesc(
             InviteEmailTemplateKind.DPA_SIGNED_NOTICE);
     return templates.stream()
         .filter(template -> language.equalsIgnoreCase(template.getLanguage()))
@@ -427,9 +431,9 @@ public class DpaSignedNoticeService {
         "tenantName",
         resolveTenantName(tenantId, language),
         "dpaVersion",
-        formatDateTime(signature.getDpaVersion(), language),
+        formatInMailZone(signature.getDpaVersion(), language),
         "signedAt",
-        formatDateTime(signature.getSignedAt(), language),
+        formatInMailZone(signature.getSignedAt(), language),
         "signerName",
         isBlank(signature.getSignerName()) ? "—" : signature.getSignerName(),
         "signerPosition",
@@ -496,6 +500,19 @@ public class DpaSignedNoticeService {
     }
     var pattern = "de".equalsIgnoreCase(language) ? "dd.MM.yyyy HH:mm 'Uhr'" : "yyyy-MM-dd HH:mm";
     return parsed.format(DateTimeFormatter.ofPattern(pattern));
+  }
+
+  /**
+   * Version and signedAt are zoneless UTC; the reader gets German wall-clock time, the same the
+   * Admin shows since #1064.
+   */
+  private static String formatInMailZone(String value, String language) {
+    var parsed = parseDateTime(value);
+    if (parsed == null) {
+      return formatDateTime(value, language);
+    }
+    var local = parsed.atOffset(ZoneOffset.UTC).atZoneSameInstant(MAIL_ZONE).toLocalDateTime();
+    return formatDateTime(local.toString(), language);
   }
 
   private record Recipient(String email, String language) {}

@@ -47,13 +47,13 @@ class AgencyPreAssignmentRoomServiceTest {
 
   private static final Long AGENCY_ID = 4711L;
   private static final Long SESSION_ID = 99L;
-  private static final String USER_MATRIX_ID = "@asker:oriso.org";
-  private static final String AGENCY_MATRIX_ID = "@agency-svc:oriso.org";
+  private static final String USER_MATRIX_ID = "@asker:example.org";
+  private static final String AGENCY_MATRIX_ID = "@agency-svc:example.org";
   private static final String AGENCY_MATRIX_LOCALPART = "agency-svc";
   private static final String AGENCY_MATRIX_PASSWORD = "s3cret";
   private static final String AGENCY_TOKEN = "agency-access-token";
   private static final String USER_TOKEN = "user-access-token";
-  private static final String NEW_ROOM_ID = "!newRoom:oriso.org";
+  private static final String NEW_ROOM_ID = "!newRoom:example.org";
 
   @Mock private AgencyMatrixCredentialClient matrixCredentialClient;
   @Mock private SessionRoomGateway sessionRoomGateway;
@@ -129,12 +129,12 @@ class AgencyPreAssignmentRoomServiceTest {
   @Test
   @DisplayName("ensureHoldingRoom is a no-op when the session already has a Matrix room")
   void ensureHoldingRoom_noOp_whenRoomAlreadyPresent() {
-    session.setMatrixRoomId("!existing:oriso.org");
+    session.setMatrixRoomId("!existing:example.org");
 
     underTest.ensureHoldingRoom(session, user);
 
     verifyNoInteractions(matrixCredentialClient, sessionRoomGateway, sessionService);
-    assertEquals("!existing:oriso.org", session.getMatrixRoomId());
+    assertEquals("!existing:example.org", session.getMatrixRoomId());
   }
 
   @Test

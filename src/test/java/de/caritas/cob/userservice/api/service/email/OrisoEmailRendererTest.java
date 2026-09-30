@@ -203,6 +203,25 @@ class OrisoEmailRendererTest {
   }
 
   @Test
+  void showsTheNameBesideADecorativeLogoSoAFailedImageRepeatsNothing() {
+    // Frank, 2026-09-23: logo AND name. The name is text in the next cell, so the
+    // logo is decorative: alt="" and never the platform name a second time.
+    Map<String, String> values = brand();
+    values.put("loginUrl", "https://example.org/login");
+    values.put("expiryMinutes", "15");
+
+    String html = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values).html();
+    String img = html.substring(html.indexOf("<img"), html.indexOf('>', html.indexOf("<img")) + 1);
+
+    assertThat(img)
+        .contains(" alt=\"\"")
+        .contains("width=\"36\" height=\"36\"")
+        .contains("border:0")
+        .doesNotContain("Online-Beratung");
+    assertThat(html.substring(html.indexOf("<img"))).contains(">Online-Beratung</td>");
+  }
+
+  @Test
   void omitsTheLogoImageEntirelyWhenNoLogoUrlIsConfigured() {
     // email.brand.logo-url defaults to empty and is not set on any environment. An
     // <img src=""> renders as a broken-image icon next to the platform name, so a
@@ -258,5 +277,70 @@ class OrisoEmailRendererTest {
         }
       }
     }
+  }
+
+  /**
+   * Frank, 2026-09-23: a sender value nobody entered is left out — the footer never shows a sample
+   * address or an empty line where it would have been.
+   */
+  @Test
+  void omitsEachSenderLine_When_itsValueIsBlank() {
+    Map<String, String> values = brand();
+    values.put("orgAddress", "");
+    values.put("contactLine", "");
+    values.put("loginUrl", "https://example.org/login");
+    values.put("expiryMinutes", "15");
+
+    var email = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values);
+
+    assertThat(email.html())
+        .contains(">Caritasverband Mainz</div>")
+        .doesNotContain("<div style=\"padding-top:2px;\"></div>")
+        .doesNotContain("<div></div>");
+    assertThat(email.text())
+        .contains(
+            "\nCaritasverband Mainz\n\nOnline-Beratung ist ein Angebot von Caritasverband"
+                + " Mainz.\n")
+        .doesNotContain("\n\n\n");
+  }
+
+  @Test
+  void omitsTheOrganisationAndTheOfferedByLine_When_noSenderIsKnown() {
+    Map<String, String> values = brand();
+    values.put("orgName", "");
+    values.put("orgAddress", "");
+    values.put("contactLine", "");
+    values.put("loginUrl", "https://example.org/login");
+    values.put("expiryMinutes", "15");
+
+    var email = renderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values);
+
+    assertThat(email.html())
+        .doesNotContain("ist ein Angebot von")
+        .doesNotContain("line-height:20px;\"></div>")
+        .contains(">Datenschutz</a>");
+    assertThat(email.text())
+        .doesNotContain("ist ein Angebot von")
+        .contains("Datenschutz")
+        .doesNotContain("\n\n\n");
+  }
+
+  /** A contract mail whose operator is unknown drops the sentence rather than "zwischen und". */
+  @Test
+  void dropsTheContractSentence_When_theOperatorIsUnknown() {
+    Map<String, String> values = brand();
+    values.put("orgName", "");
+    values.put("tenantName", "Träger Nord");
+    values.put("tenantNameDative", "Träger Nord");
+    values.put("dpaUrl", "https://example.org/dpa-sign/t");
+    values.put("dpaProvidedAt", "23.09.2026, 10:15 Uhr");
+    values.put("dpaExpiresAt", "07.10.2026, 10:15 Uhr");
+    values.put("offeringName", "Online-Beratung");
+
+    var email = renderer.render("avv-unterschrift", OrisoEmailRenderer.Tone.DE_FORMAL, values);
+
+    assertThat(email.html() + email.text())
+        .doesNotContain("zwischen  und")
+        .doesNotContain("Vertragsverhältnis zwischen");
   }
 }

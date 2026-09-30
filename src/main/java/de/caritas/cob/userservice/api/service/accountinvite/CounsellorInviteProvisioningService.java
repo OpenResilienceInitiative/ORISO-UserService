@@ -4,14 +4,13 @@ import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantDTO;
 import de.caritas.cob.userservice.api.admin.facade.ConsultantAdminFacade;
 import de.caritas.cob.userservice.api.admin.service.consultant.create.CreateConsultantSaga;
+import de.caritas.cob.userservice.api.admin.service.consultant.create.agencyrelation.ConsultantAgencyRelationCreatorService;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
-import de.caritas.cob.userservice.api.port.out.IdentityAuthentication;
-import de.caritas.cob.userservice.api.port.out.IdentityClientConfig;
 import de.caritas.cob.userservice.api.service.httpheader.TechnicalAccessTokenContext;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
@@ -33,14 +32,29 @@ public class CounsellorInviteProvisioningService {
   private final @NonNull ConsultantAdminFacade consultantAdminFacade;
   private final @NonNull ConsultantRepository consultantRepository;
   private final @NonNull CreateConsultantSaga createConsultantSaga;
-  private final @NonNull IdentityAuthentication identityAuthentication;
-  private final @NonNull IdentityClientConfig identityClientConfig;
   private final @NonNull CounsellorAgencyAdminGrantService counsellorAgencyAdminGrantService;
+  private final @NonNull ConsultantAgencyRelationCreatorService
+      consultantAgencyRelationCreatorService;
+  private final @NonNull AcceptTimeAgencyCheck acceptTimeAgencyCheck;
 
   @Transactional(noRollbackFor = RuntimeException.class)
   public AccountInvite acceptInvite(String rawToken, ProvisionCounsellorCommand command) {
+    return acceptInvite(rawToken, command, WizardAccept.NONE);
+  }
+
+  /** The wizard's routing is re-checked and its Beratungsstelle created while the row is held. */
+  @Transactional(noRollbackFor = RuntimeException.class)
+  public AccountInvite acceptInvite(
+      String rawToken, ProvisionCounsellorCommand command, WizardAccept wizard) {
     AccountInvite invite = accountInviteService.findInviteByToken(rawToken);
-    if (invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR) {
+    wizard.requireUnchanged(invite);
+    // A counselling agency admin comes here only via the wizard, which asks for the admin grant.
+    boolean agencyAdminAlsoCounselling =
+        invite.getTargetRole() == AccountInviteTargetRole.AGENCY_ADMIN
+            && command != null
+            && Boolean.TRUE.equals(command.grantAgencyAdmin());
+    if (invite.getTargetRole() != AccountInviteTargetRole.COUNSELLOR
+        && !agencyAdminAlsoCounselling) {
       return accountInviteService.acceptInvite(
           rawToken, command == null ? null : command.acceptedByUserId());
     }
@@ -56,6 +70,8 @@ public class CounsellorInviteProvisioningService {
       throw new ConflictException("Account invite provisioning is already in progress");
     }
     validate(command, invite);
+    InviteRowHold.hold(accountInviteRepository, invite, LocalDateTime.now());
+    wizard.createUnit().run();
 
     invite.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
     invite.setProvisioningFailureReason(null);
@@ -63,16 +79,22 @@ public class CounsellorInviteProvisioningService {
     accountInviteRepository.save(invite);
 
     String consultantId = null;
-    var technicalUser = identityClientConfig.getTechnicalUser();
-    String technicalAccessToken =
-        identityAuthentication
-            .login(technicalUser.getUsername(), technicalUser.getPassword())
-            .accessToken();
-    TechnicalAccessTokenContext.set(technicalAccessToken);
+    String technicalAccessToken = null;
     TenantData requestTenant = snapshotTenantContext();
     TenantContext.setCurrentTenant(invite.getTenantId());
     try {
-      var consultant = consultantAdminFacade.createNewConsultant(toConsultant(command, invite));
+      // Inside the try: a failed service login must mark the invite FAILED (retryable) instead of
+      // leaving it IN_PROGRESS, which would answer every retry with 409.
+      technicalAccessToken = acceptTimeAgencyCheck.serviceToken();
+      acceptTimeAgencyCheck.requireLiveAgency(invite, technicalAccessToken);
+      // The service identity is ambient ONLY around the remote calls that need it: consultant
+      // creation and agency assignment reach TenantService/AgencyService/ConsultingTypeService
+      // through the shared admin services, which read the bearer from the header supplier.
+      // Local writes and the Keycloak admin REST client never see it (ORISO-Helm#367).
+      var consultant =
+          TechnicalAccessTokenContext.callWith(
+              technicalAccessToken,
+              () -> consultantAdminFacade.createNewConsultant(toConsultant(command, invite)));
       if (consultant.getEmbedded() == null || consultant.getEmbedded().getId() == null) {
         throw new IllegalStateException("Consultant provisioning returned no user id");
       }
@@ -82,11 +104,15 @@ public class CounsellorInviteProvisioningService {
       invite.setUpdateDate(LocalDateTime.now());
       accountInviteRepository.save(invite);
 
-      consultantAdminFacade.createNewConsultantAgency(
-          consultantId,
-          new CreateConsultantAgencyDTO()
-              .agencyId(invite.getAgencyId())
-              .roleSetKey(DEFAULT_ROLE_SET));
+      String createdConsultantId = consultantId;
+      TechnicalAccessTokenContext.runWith(
+          technicalAccessToken,
+          () ->
+              consultantAgencyRelationCreatorService.createNewConsultantAgency(
+                  createdConsultantId,
+                  new CreateConsultantAgencyDTO()
+                      .agencyId(invite.getAgencyId())
+                      .roleSetKey(DEFAULT_ROLE_SET)));
 
       if (Boolean.TRUE.equals(command.grantAgencyAdmin())) {
         // The invitee brought this Beratungsstelle into existence, so they administrate it —
@@ -96,13 +122,16 @@ public class CounsellorInviteProvisioningService {
       }
 
       AccountInvite accepted = accountInviteService.acceptInvite(rawToken, consultantId);
+      if (agencyAdminAlsoCounselling) {
+        accepted.setAlsoCounsellor(true);
+      }
       accepted.setProvisionedUserId(consultantId);
       accepted.setProvisioningStatus(AccountInviteProvisioningStatus.COMPLETED);
       accepted.setProvisioningFailureReason(null);
       accepted.setUpdateDate(LocalDateTime.now());
       return accountInviteRepository.save(accepted);
     } catch (RuntimeException failure) {
-      rollbackPartiallyCreatedConsultant(consultantId, failure);
+      rollbackPartiallyCreatedConsultant(consultantId, technicalAccessToken, failure);
       invite.setProvisionedUserId(null);
       invite.setProvisioningStatus(AccountInviteProvisioningStatus.FAILED);
       invite.setProvisioningFailureReason(truncate(failure.getMessage(), 1024));
@@ -111,7 +140,6 @@ public class CounsellorInviteProvisioningService {
       throw failure;
     } finally {
       restoreTenantContext(requestTenant);
-      TechnicalAccessTokenContext.clear();
     }
   }
 
@@ -133,32 +161,40 @@ public class CounsellorInviteProvisioningService {
   /**
    * Undoes the two create-path defaults that only hold when an administrator chose the credentials.
    * The invite already tracks the second-factor requirement, including {@code WAIVED}, and the
-   * counsellor typed their own password seconds ago.
+   * counsellor typed their own password seconds ago. Also copies the invite's topic permission.
    */
   private void alignRequirementsWithInvite(String consultantId, AccountInvite invite) {
     var stillOwed = !AccountInviteService.isTwoFactorGateSatisfied(invite.getTwoFactorStatus());
+    // The one-time hand-over: from here on the counsellor's value is the only one.
+    var topicPermission = TopicPermissionPolicy.effective(invite);
     consultantRepository
         .findByIdAndDeleteDateIsNull(consultantId)
         .filter(
             consultant ->
                 !Boolean.valueOf(stillOwed).equals(consultant.getTwoFactorRequired())
-                    || Boolean.TRUE.equals(consultant.getPasswordChangeRequired()))
+                    || Boolean.TRUE.equals(consultant.getPasswordChangeRequired())
+                    || consultant.getTopicPermission() != topicPermission)
         .ifPresent(
             consultant -> {
               consultant.setTwoFactorRequired(stillOwed);
               consultant.setPasswordChangeRequired(false);
+              consultant.setTopicPermission(topicPermission);
               consultantRepository.save(consultant);
             });
   }
 
-  private void rollbackPartiallyCreatedConsultant(String consultantId, RuntimeException failure) {
-    if (consultantId == null) {
+  private void rollbackPartiallyCreatedConsultant(
+      String consultantId, String technicalAccessToken, RuntimeException failure) {
+    if (consultantId == null || technicalAccessToken == null) {
       return;
     }
     try {
-      consultantRepository
-          .findById(consultantId)
-          .ifPresent(createConsultantSaga::rollbackCreateNewConsultant);
+      TechnicalAccessTokenContext.runWith(
+          technicalAccessToken,
+          () ->
+              consultantRepository
+                  .findById(consultantId)
+                  .ifPresent(createConsultantSaga::rollbackCreateNewConsultant));
     } catch (RuntimeException rollbackFailure) {
       failure.addSuppressed(rollbackFailure);
     }

@@ -8,6 +8,8 @@ import de.caritas.cob.userservice.api.service.notification.DpaSigningEmailDispat
 import de.caritas.cob.userservice.api.service.notification.DpaSigningEmailPreview;
 import java.net.URI;
 import java.time.LocalDateTime;
+import java.time.ZoneOffset;
+import java.util.Locale;
 import java.util.Objects;
 import lombok.NonNull;
 import org.springframework.beans.factory.annotation.Value;
@@ -20,9 +22,6 @@ public class DpaForwardEmailService {
   static final String SAMPLE_SIGN_TOKEN = "SAMPLE-PREVIEW-TOKEN";
   private static final int PREVIEW_EXPIRY_DAYS = 14;
 
-  /** See {@link #resolveTenantName(Long)} for why this fallback is German-only. */
-  private static final String GENERIC_ORGANISATION_NAME = "Ihrer Organisation";
-
   private final TenantService tenantService;
   private final DpaSigningEmailDispatchService dpaSigningEmailDispatchService;
   private final URI permittedAppOrigin;
@@ -30,10 +29,10 @@ public class DpaForwardEmailService {
   public DpaForwardEmailService(
       @NonNull TenantService tenantService,
       @NonNull DpaSigningEmailDispatchService dpaSigningEmailDispatchService,
-      @Value("${dpa.sign.frontend.base-url:${app.base.url}}") String appBaseUrl) {
+      @Value("${dpa.sign.frontend.base-url}") String appBaseUrl) {
     this.tenantService = tenantService;
     this.dpaSigningEmailDispatchService = dpaSigningEmailDispatchService;
-    this.permittedAppOrigin = parseUri(appBaseUrl, "appBaseUrl");
+    this.permittedAppOrigin = requireAbsoluteOrigin(appBaseUrl);
   }
 
   public void sendSigningLink(DpaForwardEmailCommand command) {
@@ -48,22 +47,27 @@ public class DpaForwardEmailService {
 
     var tenantName = resolveTenantName(command.tenantId());
     dpaSigningEmailDispatchService.send(
-        command.recipientEmail().trim(), tenantName, signLink, command.expiresAt());
+        command.tenantId(),
+        command.recipientEmail().trim(),
+        tenantName,
+        signLink,
+        command.expiresAt());
   }
 
   /**
-   * Renders the canonical CTS signing mail with non-deliverable sample data. No DPA sign link is
-   * minted and no mail is sent by this path.
+   * Renders the signing mail with non-deliverable sample data. No DPA sign link is minted and no
+   * mail is sent by this path.
    */
   public DpaSigningEmailPreview previewSigningMail(Long tenantId) {
     if (tenantId == null) {
       throw new BadRequestException("tenantId is required");
     }
     return dpaSigningEmailDispatchService.preview(
+        tenantId,
         PREVIEW_RECIPIENT,
         resolveTenantName(tenantId),
         toAbsoluteSignLink("/dpa-sign/" + SAMPLE_SIGN_TOKEN),
-        LocalDateTime.now().plusDays(PREVIEW_EXPIRY_DAYS));
+        LocalDateTime.now(ZoneOffset.UTC).plusDays(PREVIEW_EXPIRY_DAYS));
   }
 
   /**
@@ -108,23 +112,33 @@ public class DpaForwardEmailService {
 
   /**
    * The tenant of a pre-account onboarding forward does not exist yet (only its ID is reserved,
-   * ORISO-Admin#722) — the mail then falls back to the generic wording instead of failing.
-   *
-   * <p>The fallback is deliberately German-only, like the DPA_FORWARD mail it lands in: the {@link
-   * DpaSigningEmailDispatchService} contract carries no language at all and the downstream template
-   * is maintained in German only — the DPA is a German-language contract between the platform
-   * operator and a Träger. If that dispatch contract ever grows a language dimension, this fallback
-   * must follow it.
+   * ORISO-Admin#722): {@code null}, and the mail renderer words the generic fallback, because it
+   * needs the name in two grammatical cases ("für Ihre Organisation", "und Ihrer Organisation").
    */
   private String resolveTenantName(Long tenantId) {
     try {
       var tenant = tenantService.getRestrictedTenantData(tenantId);
-      return tenant == null || isBlank(tenant.getName())
-          ? GENERIC_ORGANISATION_NAME
-          : tenant.getName();
+      return tenant == null || isBlank(tenant.getName()) ? null : tenant.getName();
     } catch (org.springframework.web.client.HttpClientErrorException.NotFound exception) {
-      return GENERIC_ORGANISATION_NAME;
+      return null;
     }
+  }
+
+  private static URI requireAbsoluteOrigin(String configured) {
+    try {
+      URI origin = URI.create(configured == null ? "" : configured.trim());
+      String scheme = origin.getScheme() == null ? "" : origin.getScheme().toLowerCase(Locale.ROOT);
+      if (("http".equals(scheme) || "https".equals(scheme)) && !isBlank(origin.getHost())) {
+        // Schemes are case-insensitive; mail the canonical lower-case form.
+        return URI.create(scheme + origin.toString().substring(scheme.length()));
+      }
+    } catch (IllegalArgumentException ignored) {
+      // reported below with the variable name, which is what an operator needs
+    }
+    throw new IllegalStateException(
+        "dpa.sign.frontend.base-url must be this environment's absolute app origin, got: '"
+            + configured
+            + "' (DPA_SIGN_FRONTEND_BASE_URL)");
   }
 
   private static URI parseUri(String value, String field) {
