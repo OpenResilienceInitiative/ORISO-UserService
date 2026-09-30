@@ -1,10 +1,13 @@
 package de.caritas.cob.userservice.api.config;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.springframework.mock.env.MockEnvironment;
 
 /** ORISO-Helm#368: every public origin a mail links to is required, absolute and real. */
@@ -217,7 +220,8 @@ class PublicUrlStartupValidatorTest {
     environment.setProperty("app.base.url", "https://localhost.");
 
     assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
-        .hasMessageContaining("APP_BASE_URL");
+        .hasMessageContaining("APP_BASE_URL")
+        .hasMessageContaining("loopback or private host");
   }
 
   @Test
@@ -225,7 +229,63 @@ class PublicUrlStartupValidatorTest {
     environment.setProperty("magic.link.frontend.base-url", "https://0x7f000001");
 
     assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
-        .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL");
+        .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL")
+        .hasMessageContaining("numeric IP alias");
+  }
+
+  @ParameterizedTest
+  @ValueSource(
+      strings = {
+        "127.1",
+        "10.1",
+        "0177.0.0.1",
+        "012.0.0.1",
+        "0300.0250.0.1",
+        "0x7f.0.0.1",
+        "0xc0.0xa8.0.0x1",
+        "127.00.0.1",
+        "127.0.0.1.",
+        "2130706433",
+        "0x7f000001",
+        "8.8.8.8.",
+        "008.008.008.008"
+      })
+  void rejectsNoncanonicalNumericHostsWithAnExplicitReason(String host) {
+    environment.setProperty("magic.link.frontend.base-url", "https://" + host);
+
+    assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+        .hasMessageContaining("MAGIC_LINK_FRONTEND_BASE_URL")
+        .hasMessageContaining("numeric IP alias");
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"localhost.", "app.localhost.", "app.example.org.", "app.example.net."})
+  void trailingRootDotCannotHideANonPublicDnsHost(String host) {
+    environment.setProperty("app.base.url", "https://" + host);
+
+    assertThatThrownBy(() -> PublicUrlStartupValidator.validate(environment))
+        .hasMessageContaining("APP_BASE_URL")
+        .hasMessageContaining("reserved example or template host");
+  }
+
+  @Test
+  void acceptsAPublicFullyQualifiedDnsNameWithoutChangingTheConfiguredOrigin() {
+    String configured = "https://service.counselling.test.:8443/admin";
+    environment.setProperty("account.invite.admin.frontend.base-url", configured);
+
+    assertThatCode(() -> PublicUrlStartupValidator.validate(environment))
+        .doesNotThrowAnyException();
+    assertThat(environment.getProperty("account.invite.admin.frontend.base-url"))
+        .isEqualTo(configured);
+  }
+
+  @ParameterizedTest
+  @ValueSource(strings = {"8.8.8.8", "172.15.255.254", "172.32.0.1"})
+  void acceptsCanonicalPublicIpv4(String host) {
+    environment.setProperty("magic.link.frontend.base-url", "https://" + host);
+
+    assertThatCode(() -> PublicUrlStartupValidator.validate(environment))
+        .doesNotThrowAnyException();
   }
 
   @Test

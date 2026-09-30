@@ -176,7 +176,7 @@ class TenantTemplateSupplierTest {
         assertThrows(
             IllegalStateException.class, () -> tenantTemplateSupplier.getTenantBaseUrl(tenantData));
 
-    assertThat(error.getMessage(), is("Tenant subdomain is missing or invalid for mail URL"));
+    assertThat(error.getMessage(), is("Tenant subdomain is required for an email URL"));
   }
 
   @Test
