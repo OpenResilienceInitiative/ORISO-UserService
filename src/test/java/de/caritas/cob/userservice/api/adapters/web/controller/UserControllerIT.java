@@ -1600,6 +1600,7 @@ class UserControllerIT {
         .thenReturn(AUTHORITIES_ASSIGN_SESSION_AND_ENQUIRY);
     when(authenticatedUser.getUserId()).thenReturn(CONSULTANT.getId());
     when(consultantService.getConsultant(anyString())).thenReturn(Optional.of(CONSULTANT));
+    when(sessionService.isConsultantPermittedToSession(CONSULTANT, SESSION)).thenReturn(true);
     doThrow(new ConflictException(""))
         .when(assignSessionFacade)
         .assignSession(SESSION, TEAM_CONSULTANT, CONSULTANT);
@@ -1616,6 +1617,9 @@ class UserControllerIT {
       throws Exception {
 
     when(sessionService.getSession(Mockito.anyLong())).thenReturn(Optional.of(SESSION));
+    when(authenticatedUser.getUserId()).thenReturn(CONSULTANT.getId());
+    when(consultantService.getConsultant(anyString())).thenReturn(Optional.of(CONSULTANT));
+    when(sessionService.isConsultantPermittedToSession(CONSULTANT, SESSION)).thenReturn(true);
     when(userAccountService.retrieveValidatedConsultantById(anyString()))
         .thenThrow(new InternalServerErrorException(""));
 

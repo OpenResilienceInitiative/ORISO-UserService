@@ -21,7 +21,6 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteFrameMail
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailTransport;
-import de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsProvider;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisation;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
@@ -158,14 +157,8 @@ class DpaSignedNoticeFooterTest {
             tenantService, tenantTemplateSupplier, "Online-Beratung", "", APP_ORIGIN);
     InviteMailDispatchService mailDispatch =
         new InviteMailDispatchService(
-            new PlatformSmtpSettingsProvider(
-                "smtp.example.org",
-                "587",
-                "false",
-                "smtp-user",
-                "smtp-pass",
-                "noreply@example.org",
-                false),
+            de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture.configured(
+                "smtp-user", "smtp-pass"),
             inviteMailTransport,
             InviteFrameMailRendererFixture.inviteFrameMailRenderer(
                 brandingResolver, senderOrganisations));
