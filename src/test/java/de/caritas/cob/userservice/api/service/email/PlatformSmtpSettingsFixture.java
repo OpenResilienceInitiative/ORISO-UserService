@@ -13,7 +13,7 @@ public final class PlatformSmtpSettingsFixture {
 
   public static PlatformSmtpSettingsProvider configured(String username, String password) {
     ApplicationSettingsService service = mock(ApplicationSettingsService.class);
-    when(service.getGlobalSmtpCredentials())
+    when(service.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(credentials(username, password)));
     return new PlatformSmtpSettingsProvider(service);
   }

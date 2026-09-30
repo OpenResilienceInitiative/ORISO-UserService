@@ -111,7 +111,7 @@ class InquiryAcceptedMailDeliveryTest {
             Optional.of(
                 new TenantSystemEmailRouteService.Route(
                     TenantSystemEmailRouteService.Mode.PLATFORM, null)));
-    when(settings.getGlobalSmtpCredentials())
+    when(settings.getGlobalSmtpSettingsSnapshot())
         .thenReturn(
             Optional.of(PlatformSmtpSettingsFixture.credentials("smtp-user", "fixture-password")));
     recipient = new User("asker", null, "PrivateAskerName", "asker@example.org", false);
@@ -171,7 +171,7 @@ class InquiryAcceptedMailDeliveryTest {
               "https://platform.example.org",
               "{{");
     }
-    verify(settings).getGlobalSmtpCredentials();
+    verify(settings).getGlobalSmtpSettingsSnapshot();
     verifyNoInteractions(tenantClient, upstream);
   }
 
@@ -210,9 +210,9 @@ class InquiryAcceptedMailDeliveryTest {
 
   @Test
   void incompleteAdminSettingsNeverFallBackToLegacyMailService() {
-    when(settings.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
+    when(settings.getGlobalSmtpSettingsSnapshot()).thenReturn(Optional.empty());
     facade.sendInquiryAcceptedNotification(recipient, counsellor, new TenantData(7L, "seven"));
-    verify(settings).getGlobalSmtpCredentials();
+    verify(settings).getGlobalSmtpSettingsSnapshot();
     verifyNoInteractions(tenantClient, upstream);
   }
 }

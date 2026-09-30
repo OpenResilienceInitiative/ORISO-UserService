@@ -141,7 +141,7 @@ class PasswordResetServiceTest {
   void
       requestPasswordReset_Should_SendMailWithProperRecipientLocaleAndResetUrl_When_SmtpConfigured() {
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset("testuser", "en");
@@ -168,7 +168,7 @@ class PasswordResetServiceTest {
             .type(Admin.AdminType.SUPER)
             .build();
     when(adminRepository.findForSignIn("admin@example.com")).thenReturn(Optional.of(admin));
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset(
@@ -216,7 +216,7 @@ class PasswordResetServiceTest {
   @Test
   void requestPasswordReset_Should_FallBackToGerman_When_LocaleIsUnknown() {
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset("testuser", "xx-unknown");
@@ -347,7 +347,7 @@ class PasswordResetServiceTest {
   void
       requestPasswordReset_Should_SendMail_When_PublicSettingsOmitCredentialsButAuthenticatedSourceHasThem() {
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(Optional.of(smtpCredentials("smtp-user", "smtp-pass")));
 
     passwordResetService.requestPasswordReset("testuser", "en");
@@ -359,7 +359,7 @@ class PasswordResetServiceTest {
   @Test
   void requestPasswordReset_Should_NotSendMail_When_AuthenticatedCredentialsAreUnavailable() {
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
-    when(applicationSettingsService.getGlobalSmtpCredentials()).thenReturn(Optional.empty());
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot()).thenReturn(Optional.empty());
 
     passwordResetService.requestPasswordReset("testuser", "en");
 
@@ -369,7 +369,7 @@ class PasswordResetServiceTest {
   @Test
   void requestPasswordReset_Should_NotIssueTokenWhenAdminSmtpIsDisabled() {
     when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(validUser()));
-    when(applicationSettingsService.getGlobalSmtpCredentials())
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
         .thenReturn(
             Optional.of(smtpCredentials("smtp-user", "smtp-pass").globalSmtpEnabled(false)));
 
