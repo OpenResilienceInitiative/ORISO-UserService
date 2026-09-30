@@ -6,6 +6,7 @@ import static org.apache.commons.collections4.CollectionUtils.isEmpty;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyAdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
+import de.caritas.cob.userservice.api.admin.service.admin.AdminScope.Target;
 import de.caritas.cob.userservice.api.admin.service.admin.create.agencyrelation.CreateAdminAgencyRelationService;
 import de.caritas.cob.userservice.api.admin.service.admin.update.agencyrelation.SynchronizeAdminAgencyRelation;
 import de.caritas.cob.userservice.api.admin.service.agency.AgencyAdminService;
@@ -32,19 +33,19 @@ public class AdminAgencyRelationService {
   private final @NonNull AgencyAdminService agencyAdminService;
   private final @NonNull CreateAdminAgencyRelationService createAdminAgencyRelationService;
   private final @NonNull SynchronizeAdminAgencyRelation synchronizeAdminAgencyRelation;
-  private final @NonNull AdminCallerScope adminCallerScope;
+  private final @NonNull AdminScope adminScope;
 
   public void createAdminAgencyRelation(
       final String adminId, final CreateAdminAgencyRelationDTO createAdminAgencyRelationDTO) {
-    adminCallerScope.assertMayActOnAdmin(adminId);
-    adminCallerScope.assertMayUseAgencies(
-        Collections.singletonList(createAdminAgencyRelationDTO.getAgencyId()));
+    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(
+        Target.agencies(Collections.singletonList(createAdminAgencyRelationDTO.getAgencyId())));
     createAdminAgencyRelationService.create(adminId, createAdminAgencyRelationDTO);
   }
 
   public void deleteAdminAgencyRelation(final String adminId, final Long agencyId) {
-    adminCallerScope.assertMayActOnAdmin(adminId);
-    adminCallerScope.assertMayUseAgencies(Collections.singletonList(agencyId));
+    adminScope.assertMay(Target.admin(adminId));
+    adminScope.assertMay(Target.removedAgencies(Collections.singletonList(agencyId)));
     List<AdminAgency> adminAgencyRelations =
         adminAgencyRepository.findByAdminIdAndAgencyId(adminId, agencyId);
     if (isEmpty(adminAgencyRelations)) {
@@ -56,15 +57,7 @@ public class AdminAgencyRelationService {
 
   public void synchronizeAdminAgenciesRelation(
       final String adminId, final List<CreateAdminAgencyRelationDTO> newAdminAgencyRelationDTOs) {
-    adminCallerScope.assertMayActOnAdmin(adminId);
-    adminCallerScope.assertMayUseAgencies(changedAgencyIds(adminId, newAdminAgencyRelationDTOs));
-    this.synchronizeAdminAgencyRelation.synchronizeAdminAgenciesRelation(
-        adminId, newAdminAgencyRelationDTOs);
-  }
-
-  /** The agencies a synchronisation adds or removes; untouched agencies need no scope check. */
-  private Set<Long> changedAgencyIds(
-      final String adminId, final List<CreateAdminAgencyRelationDTO> newAdminAgencyRelationDTOs) {
+    adminScope.assertMay(Target.admin(adminId));
     Set<Long> requested =
         newAdminAgencyRelationDTOs == null
             ? Set.of()
@@ -75,12 +68,17 @@ public class AdminAgencyRelationService {
         adminAgencyRepository.findByAdminId(adminId).stream()
             .map(AdminAgency::getAgencyId)
             .collect(Collectors.toSet());
-    Set<Long> changed = new HashSet<>(requested);
-    changed.addAll(existing);
-    Set<Long> unchanged = new HashSet<>(requested);
-    unchanged.retainAll(existing);
-    changed.removeAll(unchanged);
-    return changed;
+    // Untouched agencies need no scope check.
+    adminScope.assertMay(Target.agencies(difference(requested, existing)));
+    adminScope.assertMay(Target.removedAgencies(difference(existing, requested)));
+    this.synchronizeAdminAgencyRelation.synchronizeAdminAgenciesRelation(
+        adminId, newAdminAgencyRelationDTOs);
+  }
+
+  private static Set<Long> difference(Set<Long> from, Set<Long> without) {
+    Set<Long> result = new HashSet<>(from);
+    result.removeAll(without);
+    return result;
   }
 
   public void appendAgenciesForAdmins(final Set<AdminDTO> admins) {
