@@ -192,10 +192,7 @@ public class MagicLinkLoginService {
       message.setContent(OrisoEmailMime.alternative(email));
       OrisoSmtpTransport.send(message);
     } catch (Exception ex) {
-      log.warn(
-          "Magic link email dispatch failed for account {}, reason: {}",
-          target.getUsername(),
-          ex.getMessage());
+      log.warn("Magic link email dispatch failed ({})", ex.getClass().getSimpleName());
     }
   }
 
@@ -248,7 +245,9 @@ public class MagicLinkLoginService {
               settings.from(),
               settings.emailThemeColor()));
     } catch (IllegalStateException exception) {
-      log.warn("Platform SMTP unavailable for magic link mail: {}", exception.getMessage());
+      log.warn(
+          "Platform SMTP unavailable for magic link mail ({})",
+          exception.getClass().getSimpleName());
       return Optional.empty();
     }
   }
