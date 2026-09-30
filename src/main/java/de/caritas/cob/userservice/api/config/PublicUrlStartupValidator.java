@@ -171,7 +171,7 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
     if (deployed && isPlaceholder(host)) {
       return "uses a reserved example or template host (example.com/.org/.net,"
           + " your-domain), loopback or private host (localhost, 127.0.0.1, [::1],"
-          + " private/documentation/multicast IPv6),"
+          + " private/reserved IPv4 or IPv6),"
           + " which cannot be this environment's public host";
     }
     return null;
@@ -202,24 +202,40 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
     return host.contains("your-domain")
         || host.equals("localhost")
         || host.endsWith(".localhost")
-        || host.equals("0.0.0.0")
-        || isPrivateIpv4(host)
+        || isNonPublicIpv4(host)
         || isNonPublicIpv6(host)
-        || host.matches("127\\.[0-9]{1,3}\\.[0-9]{1,3}\\.[0-9]{1,3}")
         || EXAMPLE_DOMAINS.stream().anyMatch(d -> host.equals(d) || host.endsWith("." + d));
   }
 
-  private static boolean isPrivateIpv4(String host) {
+  private static boolean isNonPublicIpv4(String host) {
     if (!host.matches("[0-9]{1,3}(\\.[0-9]{1,3}){3}")) {
       return false;
     }
     String[] octets = host.split("\\.");
-    int first = Integer.parseInt(octets[0]);
-    int second = Integer.parseInt(octets[1]);
-    return first == 10
+    return isNonPublicIpv4(
+        Integer.parseInt(octets[0]),
+        Integer.parseInt(octets[1]),
+        Integer.parseInt(octets[2]),
+        Integer.parseInt(octets[3]));
+  }
+
+  private static boolean isNonPublicIpv4(int first, int second, int third, int fourth) {
+    // These ranges are not public mail-link destinations. Check exact octet boundaries so adjacent
+    // public addresses remain valid; in 192.0.0/24 only .9 and .10 are globally reachable per
+    // IANA's special-purpose registry. Do not resolve an operator-provided hostname through DNS.
+    return first == 0
+        || first == 10
+        || first == 127
+        || (first == 100 && second >= 64 && second <= 127)
         || (first == 169 && second == 254)
         || (first == 172 && second >= 16 && second <= 31)
-        || (first == 192 && second == 168);
+        || (first == 192
+            && (second == 168
+                || (second == 0 && (third == 2 || (third == 0 && fourth != 9 && fourth != 10)))
+                || (second == 88 && third == 99 && fourth == 2)))
+        || (first == 198 && (second == 18 || second == 19 || (second == 51 && third == 100)))
+        || (first == 203 && second == 0 && third == 113)
+        || first >= 224;
   }
 
   private static boolean isNonPublicIpv6(String host) {
@@ -229,6 +245,21 @@ public class PublicUrlStartupValidator implements BeanFactoryPostProcessor, Envi
     try {
       var address = InetAddress.getByName(host);
       byte[] bytes = address.getAddress();
+      // Java normalizes IPv4-mapped IPv6 literals to four bytes on some platforms. Check either
+      // representation against the same IPv4 ranges before considering the native IPv6 flags.
+      if (bytes.length == 4) {
+        return isNonPublicIpv4(bytes[0] & 0xff, bytes[1] & 0xff, bytes[2] & 0xff, bytes[3] & 0xff);
+      }
+      boolean mappedIpv4 = bytes.length == 16;
+      for (int i = 0; i < 10 && mappedIpv4; i++) {
+        mappedIpv4 = bytes[i] == 0;
+      }
+      mappedIpv4 = mappedIpv4 && bytes[10] == (byte) 0xff && bytes[11] == (byte) 0xff;
+      if (mappedIpv4
+          && isNonPublicIpv4(
+              bytes[12] & 0xff, bytes[13] & 0xff, bytes[14] & 0xff, bytes[15] & 0xff)) {
+        return true;
+      }
       boolean uniqueLocal = bytes.length == 16 && (bytes[0] & 0xfe) == 0xfc;
       boolean documentation =
           bytes.length == 16
