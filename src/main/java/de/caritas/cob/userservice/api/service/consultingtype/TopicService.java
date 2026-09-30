@@ -11,6 +11,7 @@ import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import de.caritas.cob.userservice.topicservice.generated.web.model.TopicDTO;
 import java.util.Collection;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Optional;
 import java.util.function.Function;
@@ -80,8 +81,12 @@ public class TopicService {
     var headers = new HttpHeaders();
     headers.set(HttpHeaders.ACCEPT_LANGUAGE, acceptLanguage);
     try {
-      var locales = headers.getAcceptLanguageAsLocales();
-      return !locales.isEmpty() && "en".equals(locales.getFirst().getLanguage()) ? "en" : "de";
+      return headers.getAcceptLanguage().stream()
+          .filter(range -> range.getWeight() > 0)
+          .map(range -> Locale.forLanguageTag(range.getRange()).getLanguage())
+          .filter(language -> "en".equals(language) || "de".equals(language))
+          .findFirst()
+          .orElse("de");
     } catch (IllegalArgumentException ignored) {
       return "de";
     }

@@ -30,6 +30,7 @@ import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
 import org.springframework.http.HttpHeaders;
 import org.springframework.mock.web.MockHttpServletRequest;
+import org.springframework.web.context.request.RequestAttributes;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
 
@@ -62,7 +63,19 @@ class TopicServiceTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"en,en", "de,de", "en-US,en", "fr,de", "invalid!,de", "'de;q=0.5,en;q=0.9',en"})
+  @CsvSource({
+    "en,en",
+    "de,de",
+    "en-US,en",
+    "fr,de",
+    "invalid!,de",
+    "'de;q=0.5,en;q=0.9',en",
+    "'fr-CH,en;q=0.9,de;q=0.8',en",
+    "'fr-CH,de;q=0.9,en;q=0.8',de",
+    "'en;q=0,fr',de",
+    "'',de",
+    "'   ',de"
+  })
   void getAllActiveTopics_Should_ForwardOnlySupportedLanguageCookie(
       String acceptLanguage, String expectedLanguage) {
     var request = new MockHttpServletRequest();
@@ -76,6 +89,15 @@ class TopicServiceTest {
     verify(apiClient, never())
         .addDefaultHeader(HttpHeaders.COOKIE, request.getHeader(HttpHeaders.COOKIE));
     verify(securityHeaderSupplier, never()).getKeycloakAndCsrfHttpHeaders();
+  }
+
+  @Test
+  void getAllActiveTopics_Should_DefaultToGermanForNonServletRequestContext() {
+    RequestContextHolder.setRequestAttributes(mock(RequestAttributes.class));
+
+    service.getAllActiveTopics();
+
+    verify(apiClient).addDefaultHeader(HttpHeaders.COOKIE, "lang=de");
   }
 
   @Test
