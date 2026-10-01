@@ -84,6 +84,7 @@ required_e2e = {
     "ConversationControllerIT",
     "UserAdminControllerE2EIT",
     "UserControllerE2EIT",
+    "MatrixBrowserDeviceSynapseIT",
 }
 
 tests = failures = errors = skipped = 0

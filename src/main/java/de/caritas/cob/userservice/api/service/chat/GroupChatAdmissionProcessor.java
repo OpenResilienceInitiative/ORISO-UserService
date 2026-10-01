@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.service.chat;
 import de.caritas.cob.userservice.api.facade.ChatConverter;
 import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
@@ -10,6 +11,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.Duration;
 import java.util.List;
 import java.util.Objects;
@@ -34,6 +36,7 @@ public class GroupChatAdmissionProcessor {
   private final ChatRepository chats;
   private final ConsultantRepository consultants;
   private final GroupChatMembershipService membership;
+  private final GroupAppointmentSeriesEventProducer appointmentEvents;
   private final GroupChatAdmissionMatrixRepairService repair;
 
   @Value("${group.chat.admission.retry-backoff:PT1M}")
@@ -67,7 +70,9 @@ public class GroupChatAdmissionProcessor {
       return;
     }
 
-    var series = chats.findById(request.getSeriesId());
+    // Match schedule edits: serialize the Series before locking its participant rows.
+    // The appointment queue takes this same lock later in the admission transaction.
+    var series = chats.findSeriesForAppointmentMailUpdate(request.getSeriesId());
     var consultant = consultants.findByIdAndDeleteDateIsNull(request.getConsultantId());
     if (series.isEmpty()
         || ChatConverter.conversationTypeOf(series.get()) != ConversationType.SELF_HELP
@@ -125,6 +130,8 @@ public class GroupChatAdmissionProcessor {
               .consultantId(request.getConsultantId())
               .role(request.getAdmittedRole())
               .build());
+      appointmentEvents.recordMemberJoined(
+          series.get(), RecipientRole.COUNSELOR, request.getConsultantId());
     }
     request.setStatus(Status.ADMITTED);
     request.setDecidedAt(CustomLocalDateTime.nowInUtc());

@@ -2191,6 +2191,87 @@ paths:
         '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
         '403': { description: Caller is not an Owner }
 
+  /users/admin/service-notices/drafts/{campaignKey}:
+    put:
+      tags: [service-notice-draft-controller]
+      operationId: saveServiceNoticeDraft
+      summary: Save one planned-maintenance draft without selecting recipients or sending
+      description: Implemented by the handwritten platform-administrator controller; the /service-prefixed ingress alias serves the same operation.
+      x-internal: true
+      security:
+        - Bearer: []
+      parameters:
+        - name: campaignKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9-]{0,79}$' }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ServiceNoticeDraftInput' }
+      responses:
+        '200':
+          description: Draft saved, or the identical draft retried by its original operator; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceNoticeDraftView' }
+        '400': { description: Invalid key or window or public HTTPS status URL }
+        '401': { description: Missing or invalid bearer token }
+        '403': { description: Caller is not a platform administrator }
+        '409': { description: Campaign key already belongs to a different draft or operator }
+    get:
+      tags: [service-notice-draft-controller]
+      operationId: getServiceNoticeDraft
+      summary: Read one planned-maintenance draft without sending
+      description: Implemented by the handwritten platform-administrator controller; the /service-prefixed ingress alias serves the same operation.
+      x-internal: true
+      security:
+        - Bearer: []
+      parameters:
+        - name: campaignKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9-]{0,79}$' }
+      responses:
+        '200':
+          description: Existing draft; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceNoticeDraftView' }
+        '400': { description: Invalid campaign key }
+        '401': { description: Missing or invalid bearer token }
+        '403': { description: Caller is not a platform administrator }
+        '404': { description: Draft not found }
+  /users/admin/service-notices/drafts/{campaignKey}/preview:
+    get:
+      tags: [service-notice-draft-controller]
+      operationId: previewServiceNoticeDraft
+      summary: Preview actual subject, preheader, HTML and text without sending
+      description: Implemented by the handwritten platform-administrator controller; the /service-prefixed ingress alias serves the same operation.
+      x-internal: true
+      security:
+        - Bearer: []
+      parameters:
+        - name: campaignKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9-]{0,79}$' }
+        - name: variant
+          in: query
+          required: true
+          schema: { type: string, enum: [de-sie, de-du, en, fr, ru, ti, tr] }
+      responses:
+        '200':
+          description: Rendered preview with no recipients or delivery; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceNoticeDraftPreview' }
+        '400': { description: Invalid key or unsupported variant }
+        '401': { description: Missing or invalid bearer token }
+        '403': { description: Caller is not a platform administrator }
+        '404': { description: Draft not found }
+
   /users/chat-series/{seriesId}/join-requests:
     post:
       tags: [chat-series-controller]
@@ -2337,6 +2418,34 @@ paths:
 
 components:
   schemas:
+    ServiceNoticeDraftInput:
+      type: object
+      required: [maintenanceDate, maintenanceStart, maintenanceEnd, statusUrl]
+      properties:
+        maintenanceDate: { type: string, format: date }
+        maintenanceStart: { type: string, description: Same-day local time in whole minutes, example: '14:00:00' }
+        maintenanceEnd: { type: string, description: Same-day local time in whole minutes, example: '15:00:00' }
+        statusUrl: { type: string, format: uri, description: Explicit public HTTPS status page }
+    ServiceNoticeDraftView:
+      type: object
+      required: [campaignKey, status, maintenanceDate, maintenanceStart, maintenanceEnd, statusUrl]
+      properties:
+        campaignKey: { type: string }
+        status: { type: string, enum: [DRAFT] }
+        maintenanceDate: { type: string, format: date }
+        maintenanceStart: { type: string }
+        maintenanceEnd: { type: string }
+        statusUrl: { type: string, format: uri }
+    ServiceNoticeDraftPreview:
+      type: object
+      required: [campaignKey, variant, subject, preheader, html, text]
+      properties:
+        campaignKey: { type: string }
+        variant: { type: string, enum: [de-sie, de-du, en, fr, ru, ti, tr] }
+        subject: { type: string }
+        preheader: { type: string }
+        html: { type: string }
+        text: { type: string }
     GuestIdentitySuggestionRequest:
       type: object
       required: [locale, count, exclude]
@@ -3028,10 +3137,12 @@ components:
           type: string
           format: date
           example: 2019-10-23
+          description: Date of the current occurrence, as wall-clock time in `timezone`.
         startTime:
           type: string
           format: time
           example: 12:05
+          description: Start of the current occurrence, as wall-clock time in `timezone` (not UTC).
         duration:
           type: integer
           example: 120
@@ -3689,6 +3800,7 @@ components:
           type: string
           format: time
           example: 12:05
+          description: Wall-clock start time in `timezone`; stored as a UTC instant.
         duration:
           type: integer
           example: 120
