@@ -38,12 +38,12 @@ public class InviteEmailPreviewService {
   static final String SAMPLE_EMAIL = "maren.muster@example.org";
   static final String SAMPLE_FIRST_NAME = "Maren";
   static final String SAMPLE_LAST_NAME = "Muster";
-  static final String SAMPLE_SUBJECT = "Ihre Einladung zu ORISO";
+  static final String SAMPLE_SUBJECT = "Ihre Einladung";
   static final String SAMPLE_BODY =
       """
       Hallo {{firstName}} {{lastName}},
 
-      Sie wurden eingeladen, ein Konto auf der ORISO-Plattform einzurichten.
+      Sie wurden eingeladen, ein Konto auf der Plattform einzurichten.
       Bitte schliessen Sie die Einrichtung ueber den folgenden Link ab:
 
       {{inviteLink}}
@@ -135,7 +135,8 @@ public class InviteEmailPreviewService {
         mail.plainText(),
         // primaryAction is already null for DPA_SIGNED_NOTICE: the notice carries no accept
         // route, so the preview must not advertise one either.
-        primaryAction);
+        primaryAction,
+        mail.branding());
   }
 
   /** Sample values for the DPA_SIGNED_NOTICE dialect (see DpaSignedNoticeService placeholders). */
@@ -214,5 +215,6 @@ public class InviteEmailPreviewService {
       String subject,
       String html,
       String plainText,
-      String sampleAcceptUrl) {}
+      String sampleAcceptUrl,
+      BrandedEmail.BrandingSnapshot branding) {}
 }

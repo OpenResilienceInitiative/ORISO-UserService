@@ -8,6 +8,10 @@ import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
@@ -42,6 +46,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteUnitType;
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.UnitQueue;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
+import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
@@ -53,7 +58,9 @@ import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.security.access.prepost.PreAuthorize;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 @ExtendWith(MockitoExtension.class)
 class AccountInviteControllerTest {
@@ -85,6 +92,60 @@ class AccountInviteControllerTest {
             new InviteBoard(accountInviteService, deliveryRepository, unitQueue),
             new InviteAccountRoles(mock(ConsultantRepository.class), mock(AdminRepository.class)),
             mock(InviteRoleChange.class));
+  }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.CsvSource({
+    "false,true",
+    "false,false",
+    "true,true",
+    "true,false"
+  })
+  void previewHttpResponseShouldKeepActualPublicBranding(boolean contentPreview, boolean image)
+      throws Exception {
+    String logo = image ? "https://app.example.org/service/tenant/public/branding/7/logo" : null;
+    var branding =
+        new BrandedEmail.BrandingSnapshot(
+            "Fresh organisation",
+            logo,
+            "#f8e71c",
+            "#0f3b8f",
+            image ? BrandedEmail.LogoRendering.IMAGE : BrandedEmail.LogoRendering.TEXT_WORDMARK);
+    when(previewService.preview(any()))
+        .thenReturn(
+            new InviteEmailPreviewService.InviteEmailPreview(
+                null,
+                null,
+                InviteEmailTemplateKind.TENANT_INVITE,
+                "de",
+                "Invitation",
+                "<p>Preview</p>",
+                "Preview",
+                "https://admin.example.org/preview",
+                branding));
+    var request =
+        contentPreview
+            ? post("/useradmin/invite-email-templates/preview")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"tenantId\":7}")
+            : get("/useradmin/invite-email-templates/preview").param("tenant_id", "7");
+    var result =
+        MockMvcBuilders.standaloneSetup(controller)
+            .build()
+            .perform(request)
+            .andExpect(status().isOk())
+            .andExpect(jsonPath("$.branding.brandName").value("Fresh organisation"))
+            .andExpect(jsonPath("$.branding.accentColor").value("#f8e71c"))
+            .andExpect(jsonPath("$.branding.primaryColor").value("#0f3b8f"))
+            .andExpect(
+                jsonPath("$.branding.logoRendering").value(image ? "IMAGE" : "TEXT_WORDMARK"))
+            .andExpect(jsonPath("$.branding.smtpPassword").doesNotExist());
+    if (image) {
+      result.andExpect(jsonPath("$.branding.logoUrl").value(logo));
+    } else {
+      result.andExpect(jsonPath("$.branding.logoUrl").doesNotExist());
+    }
+    verify(previewService).preview(any());
   }
 
   @Test
