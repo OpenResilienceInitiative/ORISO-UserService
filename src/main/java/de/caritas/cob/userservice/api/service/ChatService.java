@@ -494,29 +494,38 @@ public class ChatService {
               chatId));
     }
 
+    // Materialize required values before reconciliation can write to Matrix.
+    int duration = chatDTO.getDuration();
+    // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
+    // one when the client sends it (validated like the create path), and preserve the existing
+    // zone when the DTO omits it rather than silently resetting to UTC.
+    ZoneId updatedZone = chat.zoneId();
+    if (chatDTO.getTimezone() != null && !chatDTO.getTimezone().isBlank()) {
+      try {
+        updatedZone = ZoneId.of(chatDTO.getTimezone());
+      } catch (DateTimeException invalidTimezone) {
+        throw new BadRequestException(
+            "Invalid timezone: " + chatDTO.getTimezone(), invalidTimezone);
+      }
+    }
+
+    // Same contract as create: materialize the requested wall-clock time in its zone.
+    LocalDateTime startDate =
+        Chat.toUtc(chatDTO.getStartDate(), chatDTO.getStartTime(), updatedZone);
+    // Acquire the series lock before participant rows, as in the admission worker.
     int oldRepeatCount = appointmentEvents.seedBeforeEdit(chat);
     Set<String> oldCounselorIds =
         groupChatParticipantRepository.findBySeriesId(chatId).stream()
             .map(member -> member.getConsultantId())
             .collect(Collectors.toSet());
 
-    // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
-    // one when the client sends it (validated like the create path), and preserve the existing
-    // zone when the DTO omits it rather than silently resetting to UTC.
+    participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
+
     if (chatDTO.getTimezone() != null && !chatDTO.getTimezone().isBlank()) {
-      try {
-        ZoneId.of(chatDTO.getTimezone());
-      } catch (DateTimeException invalidTimezone) {
-        throw new BadRequestException(
-            "Invalid timezone: " + chatDTO.getTimezone(), invalidTimezone);
-      }
       chat.setTimezone(chatDTO.getTimezone());
     }
-    // Same contract as create: the request carries wall-clock time in the chat's zone.
-    LocalDateTime startDate =
-        Chat.toUtc(chatDTO.getStartDate(), chatDTO.getStartTime(), chat.zoneId());
     chat.setTopic(chatDTO.getTopic());
-    chat.setDuration(chatDTO.getDuration());
+    chat.setDuration(duration);
     // Defaulting must match the create path (ChatConverter.convertToEntity) so editing a
     // repetitive series without re-sending repeatCount does not silently drop it to a single
     // occurrence: default 12 for repetitive, derive repetitive + interval from repeatCount > 1.
@@ -542,7 +551,6 @@ public class ChatService {
     chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
 
     this.saveChat(chat);
-    participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
     appointmentEvents.recordAfterEdit(chat, oldRepeatCount);
     groupChatParticipantRepository.findBySeriesId(chatId).stream()
         .map(member -> member.getConsultantId())

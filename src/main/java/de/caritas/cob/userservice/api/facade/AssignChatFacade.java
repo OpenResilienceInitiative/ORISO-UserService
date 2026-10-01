@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.facade;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -8,8 +9,10 @@ import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
+import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
+import de.caritas.cob.userservice.api.service.chat.GroupCounsellingDpaPolicy;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import lombok.RequiredArgsConstructor;
@@ -24,6 +27,8 @@ public class AssignChatFacade {
   private final ChatService chatService;
   private final UserService userService;
   private final GroupAppointmentSeriesEventProducer appointmentEvents;
+  private final UserChatRepository userChats;
+  private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
 
   /**
    * Assign a chat to the authenticated user.
@@ -61,7 +66,10 @@ public class AssignChatFacade {
 
   private void assignChat(Chat chat, AuthenticatedUser authenticatedUser) {
     User user = getUser(authenticatedUser);
-
+    if (userChats.findByChatAndUser(chat, user).isPresent()) {
+      throw new ConflictException("User is already assigned to chat");
+    }
+    groupCounsellingDpaPolicy.requireNewEnrolment(chat);
     chatService.saveUserChatRelation(UserChat.builder().user(user).chat(chat).build());
     appointmentEvents.recordMemberJoined(chat, RecipientRole.PARTICIPANT, user.getUserId());
   }
