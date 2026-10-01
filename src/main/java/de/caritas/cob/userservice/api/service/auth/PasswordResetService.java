@@ -246,19 +246,23 @@ public class PasswordResetService {
     }
     if (userOptional.isPresent()) {
       User user = userOptional.get();
-      return Optional.of(new AccountResetTarget(user.getUserId(), user.getEmail()));
+      return Optional.of(
+          new AccountResetTarget(user.getUserId(), user.getEmail(), user.getTenantId()));
     }
 
     Optional<Consultant> consultantOptional = consultantService.findConsultantForSignIn(username);
     return consultantOptional.map(
-        consultant -> new AccountResetTarget(consultant.getId(), consultant.getEmail()));
+        consultant ->
+            new AccountResetTarget(
+                consultant.getId(), consultant.getEmail(), consultant.getTenantId()));
   }
 
   private Optional<AccountResetTarget> resolveAccount(
       String username, PasswordResetApplication application) {
     if (application == PasswordResetApplication.ADMIN) {
       Optional<Admin> adminOptional = adminRepository.findForSignIn(username);
-      return adminOptional.map(admin -> new AccountResetTarget(admin.getId(), admin.getEmail()));
+      return adminOptional.map(
+          admin -> new AccountResetTarget(admin.getId(), admin.getEmail(), admin.getTenantId()));
     }
     return resolveAccount(username);
   }
@@ -299,7 +303,8 @@ public class PasswordResetService {
     String resetUrl = buildResetFrontendUrl(oneTimeToken, frontendBaseUrl);
 
     try {
-      mailSender.send(target.getEmail(), locale, resetUrl, smtpSettings);
+      mailSender.send(
+          target.getEmail(), locale, resetUrl, target.getTenantId(), frontendBaseUrl, smtpSettings);
     } catch (Exception ex) {
       // Do not leave a token behind for a mail that never went out, and never log PII (account id,
       // recipient, or the raw exception message) — record the exception class only.
@@ -316,7 +321,12 @@ public class PasswordResetService {
   }
 
   private void sendViaSmtp(
-      String recipient, String locale, String resetUrl, GlobalSmtpSettings smtpSettings)
+      String recipient,
+      String locale,
+      String resetUrl,
+      Long tenantId,
+      String frontendBaseUrl,
+      GlobalSmtpSettings smtpSettings)
       throws Exception {
     jakarta.mail.Session session =
         OrisoSmtpTransport.session(
@@ -326,7 +336,7 @@ public class PasswordResetService {
             smtpSettings.getUsername(),
             smtpSettings.getPassword());
 
-    var email = renderPasswordReset(locale, resetUrl, smtpSettings.getEmailThemeColor());
+    var email = renderPasswordReset(locale, resetUrl, tenantId, frontendBaseUrl);
     MimeMessage message = new MimeMessage(session);
     message.setFrom(new InternetAddress(smtpSettings.getFrom()));
     message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipient));
@@ -340,7 +350,13 @@ public class PasswordResetService {
    */
   @FunctionalInterface
   interface PasswordResetMailSender {
-    void send(String recipient, String locale, String resetUrl, GlobalSmtpSettings smtpSettings)
+    void send(
+        String recipient,
+        String locale,
+        String resetUrl,
+        Long tenantId,
+        String frontendBaseUrl,
+        GlobalSmtpSettings smtpSettings)
         throws Exception;
   }
 
@@ -353,9 +369,9 @@ public class PasswordResetService {
    * halfway down this file.
    */
   private OrisoEmailRenderer.RenderedEmail renderPasswordReset(
-      String locale, String resetUrl, String emailThemeColor) {
+      String locale, String resetUrl, Long tenantId, String frontendBaseUrl) {
     Map<String, String> values =
-        new LinkedHashMap<>(emailBrand.values(passwordResetFrontendBaseUrl, emailThemeColor));
+        new LinkedHashMap<>(emailBrand.valuesForTenant(frontendBaseUrl, tenantId));
     values.put("resetUrl", resetUrl);
     values.put("expiryHours", String.valueOf(Math.max(1, RESET_TOKEN_TTL.toHours())));
     OrisoEmailRenderer.Tone tone =
@@ -410,6 +426,7 @@ public class PasswordResetService {
   private static class AccountResetTarget {
     String keycloakUserId;
     String email;
+    Long tenantId;
   }
 
   @lombok.Value

@@ -72,8 +72,14 @@ class InviteEmailPreviewServiceTest {
             new de.caritas.cob.userservice.api.service.notification.AdminPanelUrl(
                 "https://admin.configured.example"));
 
-    when(emailBrandingResolver.resolve(any()))
-        .thenReturn(new EmailBranding("Nord", null, "#f8e71c", null, null));
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            new EmailBranding(
+                "Nord",
+                null,
+                "#f8e71c",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"));
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("to@example.org", Instant.now()));
   }
@@ -197,7 +203,7 @@ class InviteEmailPreviewServiceTest {
   void preview_Should_resolveBrandingForTheRequestedTenant() {
     previewService.preview(new PreviewCommand(null, null, null, null, 21L));
 
-    verify(emailBrandingResolver).resolve(21L);
+    verify(emailBrandingResolver).resolvePendingTenant(21L);
   }
 
   @Test

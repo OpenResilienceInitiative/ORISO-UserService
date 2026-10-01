@@ -76,7 +76,6 @@ import org.hamcrest.Matchers;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.Spy;
@@ -90,6 +89,32 @@ public class CreateUserFacadeTest {
 
   @org.junit.jupiter.api.BeforeEach
   void recoveryPolicyFixture() {
+    createUserFacade =
+        new CreateUserFacade(
+            chatRecoveryEnrollmentPolicyService,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            userVerifier,
+            identityClient,
+            identityAccountRemover,
+            identityPasswordUpdater,
+            identityDummyEmailUpdater,
+            userService,
+            consultingTypeManager,
+            agencyVerifier,
+            createNewSessionFacade,
+            statisticsService,
+            topicService,
+            welcomeEmailService,
+            matrixSynapseService,
+            sessionService,
+            provisioningCompensator,
+            tenantService,
+            agencyService,
+            applicationSettingsService,
+            groupInviteRegistration);
+    org.mockito.Mockito.lenient()
+        .when(consultingTypeManager.getConsultingTypeSettings(org.mockito.ArgumentMatchers.any()))
+        .thenReturn(new ExtendedConsultingTypeResponseDTO());
     org.mockito.Mockito.lenient()
         .when(chatRecoveryEnrollmentPolicyService.forNewAsker(org.mockito.ArgumentMatchers.any()))
         .thenReturn(new RecoveryPolicySnapshot("LOGIN_PASSWORD", 3));
@@ -105,7 +130,7 @@ public class CreateUserFacadeTest {
         .thenReturn(new RecoveryPolicySnapshot("RECOVERY_KEY", 0));
   }
 
-  @InjectMocks private CreateUserFacade createUserFacade;
+  private CreateUserFacade createUserFacade;
   @Mock private IdentityClient identityClient;
   @Mock private IdentityAccountRemover identityAccountRemover;
   @Mock private IdentityPasswordUpdater identityPasswordUpdater;

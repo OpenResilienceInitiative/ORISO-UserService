@@ -222,7 +222,9 @@ class UserSessionControllerDelegate {
     }
 
     var userId = authenticatedUser.getUserId();
-    var isNewEnquiry = session.get().getStatus().equals(SessionStatus.NEW);
+    var isNewEnquiry =
+        session.get().getStatus() == SessionStatus.INITIAL
+            || session.get().getStatus() == SessionStatus.NEW;
     if (isNewEnquiry
         && !authenticatedUser
             .getGrantedAuthorities()

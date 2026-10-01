@@ -3,8 +3,7 @@ package de.caritas.cob.userservice.api.workflow.enquirynotification.service;
 import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static de.caritas.cob.userservice.api.service.emailsupplier.EmailSupplier.TEMPLATE_DAILY_ENQUIRY_NOTIFICATION;
 import static java.util.Arrays.asList;
-import static org.hamcrest.MatcherAssert.assertThat;
-import static org.hamcrest.Matchers.containsInAnyOrder;
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -13,6 +12,7 @@ import static org.springframework.test.util.ReflectionTestUtils.setField;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
+import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Session;
@@ -21,16 +21,19 @@ import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.ConsultantAgencyService;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.consultingtype.ReleaseToggleService;
+import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.helper.MailService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.MailsDTO;
 import de.caritas.cob.userservice.mailservice.generated.web.model.TemplateDataDTO;
+import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -53,6 +56,10 @@ class EnquiryNotificationServiceTest {
 
   @Mock private AgencyService agencyService;
 
+  @Mock private TenantService tenantService;
+
+  @Mock private TenantTemplateSupplier tenantTemplateSupplier;
+
   @Mock private ReleaseToggleService releaseToggleService;
 
   @Mock private ScheduledTaskClaimService taskClaimService;
@@ -60,7 +67,7 @@ class EnquiryNotificationServiceTest {
   @BeforeEach
   public void setup() {
     setField(enquiryNotificationService, "openEnquiryCheckHours", 12L);
-    setField(enquiryNotificationService, "applicationBaseUrl", "base/url");
+    setField(enquiryNotificationService, "applicationBaseUrl", "https://app.example.test");
     setField(enquiryNotificationService, "claimDuration", Duration.ofMinutes(30));
     when(taskClaimService.tryClaim("enquiry-notification", Duration.ofMinutes(30)))
         .thenReturn(true);
@@ -100,12 +107,6 @@ class EnquiryNotificationServiceTest {
 
     enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
 
-    var expectedMailsDTO =
-        List.of(
-            buildExpectedMail("consultant1", "firstname1 lastname1", "Blue Agency", 3L),
-            buildExpectedMail("consultant2", "firstname2 lastname2", "Blue Agency", 3L),
-            buildExpectedMail("consultant3", "firstname3 lastname3", "Red Agency", 2L),
-            buildExpectedMail("consultant4", "firstname4 lastname4", "Yellow Agency", 1L));
     var argumentCaptor = ArgumentCaptor.forClass(MailsDTO.class);
     verify(mailService, times(3)).sendEmailNotification(argumentCaptor.capture());
     var resultMailsDTO =
@@ -113,7 +114,112 @@ class EnquiryNotificationServiceTest {
             .map(MailsDTO::getMails)
             .flatMap(Collection::stream)
             .collect(Collectors.toList());
-    assertThat(resultMailsDTO, containsInAnyOrder(expectedMailsDTO.toArray()));
+    assertThat(resultMailsDTO.stream().map(MailDTO::getEmail).toList())
+        .containsExactlyInAnyOrder("consultant1", "consultant2", "consultant3", "consultant4");
+    resultMailsDTO.forEach(
+        mail -> {
+          var facts = factsOf(mail);
+          assertThat(mail.getTemplate()).isEqualTo(TEMPLATE_DAILY_ENQUIRY_NOTIFICATION);
+          assertThat(facts.get("enquiries"))
+              .isEqualTo(
+                  switch (mail.getEmail()) {
+                    case "consultant1", "consultant2" -> "3";
+                    case "consultant3" -> "2";
+                    default -> "1";
+                  });
+          assertThat(facts.get("oldestRequestAge")).isEqualTo("13 h");
+          assertThat(facts.get("digestGeneratedAt"))
+              .matches("\\d{2}\\.\\d{2}\\.\\d{4} \\d{2}:\\d{2} UTC");
+        });
+  }
+
+  @Test
+  void digestUsesOldestSameTenantEnquiryAndCarriesAgencyTenantIdentity() {
+    setField(enquiryNotificationService, "multitenancyEnabled", true);
+    var recent = openEnquiriesForAgency(1L, nowInUtc().minusHours(13), 1).getFirst();
+    recent.setTenantId(7L);
+    var oldest = openEnquiriesForAgency(1L, nowInUtc().minusHours(49), 1).getFirst();
+    oldest.setTenantId(7L);
+    var foreign = openEnquiriesForAgency(1L, nowInUtc().minusHours(99), 1).getFirst();
+    foreign.setTenantId(8L);
+    when(sessionRepository.findByStatus(SessionStatus.NEW))
+        .thenReturn(List.of(recent, oldest, foreign));
+    when(agencyService.getAgencies(List.of(1L)))
+        .thenReturn(List.of(createAgency(1L, "Agency").tenantId(7L)));
+    var tenant = new RestrictedTenantDTO().subdomain("seven");
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant);
+    when(tenantTemplateSupplier.getTenantBaseUrl(tenant)).thenReturn("https://seven.example.test");
+    var recipient = createConsultantAgencyWithConsultantsMailAddress("correct", "First Last");
+    recipient.getConsultant().setTenantId(7L);
+    var wrongRecipient = createConsultantAgencyWithConsultantsMailAddress("wrong", "Other Person");
+    wrongRecipient.getConsultant().setTenantId(8L);
+    when(consultantAgencyService.findConsultantsByAgencyId(1L))
+        .thenReturn(List.of(recipient, wrongRecipient));
+
+    enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
+
+    var sent = ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(sent.capture());
+    assertThat(sent.getValue().getMails()).hasSize(1);
+    assertThat(sent.getValue().getMails().getFirst().getEmail()).isEqualTo("correct");
+    var facts = factsOf(sent.getValue().getMails().getFirst());
+    assertThat(facts.get("tenantId")).isEqualTo("7");
+    assertThat(facts.get("enquiries")).isEqualTo("2");
+    assertThat(facts.get("oldestRequestAge")).isEqualTo("49 h");
+  }
+
+  @Test
+  void multitenantDigestUsesExplicitTenantUrl() {
+    setField(enquiryNotificationService, "multitenancyEnabled", true);
+    var session = openEnquiriesForAgency(1L, nowInUtc().minusHours(13), 1).getFirst();
+    session.setTenantId(7L);
+    when(sessionRepository.findByStatus(SessionStatus.NEW)).thenReturn(List.of(session));
+    when(agencyService.getAgencies(List.of(1L)))
+        .thenReturn(List.of(createAgency(1L, "Agency").tenantId(7L)));
+    var tenant = new RestrictedTenantDTO().subdomain("seven");
+    when(tenantService.getRestrictedTenantData(7L)).thenReturn(tenant);
+    when(tenantTemplateSupplier.getTenantBaseUrl(tenant)).thenReturn("https://seven.example.test");
+    var recipient = createConsultantAgencyWithConsultantsMailAddress("correct", "First Last");
+    recipient.getConsultant().setTenantId(7L);
+    when(consultantAgencyService.findConsultantsByAgencyId(1L)).thenReturn(List.of(recipient));
+
+    enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
+
+    var sent = ArgumentCaptor.forClass(MailsDTO.class);
+    verify(mailService).sendEmailNotification(sent.capture());
+    assertThat(factsOf(sent.getValue().getMails().getFirst()).get("url"))
+        .isEqualTo("https://seven.example.test");
+  }
+
+  @Test
+  void multitenantDigestSkipsMissingTenantUrl() {
+    setField(enquiryNotificationService, "multitenancyEnabled", true);
+    var session = openEnquiriesForAgency(1L, nowInUtc().minusHours(13), 1).getFirst();
+    session.setTenantId(7L);
+    when(sessionRepository.findByStatus(SessionStatus.NEW)).thenReturn(List.of(session));
+    when(agencyService.getAgencies(List.of(1L)))
+        .thenReturn(List.of(createAgency(1L, "Agency").tenantId(7L)));
+    when(tenantService.getRestrictedTenantData(7L))
+        .thenReturn(new RestrictedTenantDTO().subdomain("seven"));
+
+    enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
+
+    verifyNoInteractions(mailService, consultantAgencyService);
+  }
+
+  @Test
+  void digestDoesNotCombineDifferentTenantsWhenAgencyTenantIsUnavailable() {
+    setField(enquiryNotificationService, "multitenancyEnabled", true);
+    var first = openEnquiriesForAgency(1L, nowInUtc().minusHours(13), 1).getFirst();
+    first.setTenantId(7L);
+    var second = openEnquiriesForAgency(1L, nowInUtc().minusHours(15), 1).getFirst();
+    second.setTenantId(8L);
+    when(sessionRepository.findByStatus(SessionStatus.NEW)).thenReturn(List.of(first, second));
+    when(agencyService.getAgencies(List.of(1L))).thenReturn(List.of(createAgency(1L, "Agency")));
+
+    enquiryNotificationService.sendEmailNotificationsForOpenEnquiries();
+
+    verifyNoInteractions(mailService, consultantAgencyService);
   }
 
   @Test
@@ -152,6 +258,7 @@ class EnquiryNotificationServiceTest {
   void
       sendEmailNotificationsForOpenEnquiries_Should_sendNoMails_When_agenciesWithOpenEnquiriesAreNotToBeNotified() {
     var openEnquiries = openEnquiriesForAgency(2L, nowInUtc().minusHours(13L), 1);
+    when(agencyService.getAgencies(List.of(2L))).thenReturn(List.of(createAgency(2L, "Agency")));
     when(consultantAgencyService.findConsultantsByAgencyId(2L))
         .thenReturn(
             List.of(
@@ -228,22 +335,8 @@ class EnquiryNotificationServiceTest {
     return agency;
   }
 
-  private MailDTO buildExpectedMail(
-      String email, String consultantName, String agencyName, Long amountOfOpenEnquiries) {
-    return new MailDTO()
-        .template(TEMPLATE_DAILY_ENQUIRY_NOTIFICATION)
-        .email(email)
-        .language(de.caritas.cob.userservice.mailservice.generated.web.model.LanguageCode.DE)
-        .templateData(
-            asList(
-                new TemplateDataDTO()
-                    .key("subject")
-                    .value("Online-Beratung | Unbeantwortete Erstanfragen"),
-                new TemplateDataDTO().key("consultant_name").value(consultantName),
-                new TemplateDataDTO().key("url").value("base/url"),
-                new TemplateDataDTO().key("agency_name").value(agencyName),
-                new TemplateDataDTO()
-                    .key("enquiries")
-                    .value(String.valueOf(amountOfOpenEnquiries))));
+  private Map<String, String> factsOf(MailDTO mail) {
+    return mail.getTemplateData().stream()
+        .collect(Collectors.toMap(TemplateDataDTO::getKey, TemplateDataDTO::getValue));
   }
 }
