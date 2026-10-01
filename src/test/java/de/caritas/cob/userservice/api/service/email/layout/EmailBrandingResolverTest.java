@@ -13,6 +13,12 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.Theming;
+import java.util.Map;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -366,6 +372,66 @@ class EmailBrandingResolverTest {
     cached.resolve(7L);
 
     verify(tenantService, times(1)).getRestrictedTenantDataFresh(7L);
+  }
+
+  @Test
+  void slowEarlierLookupCannotReplaceTheNewerTenantInTheBatchCache() throws Exception {
+    CountDownLatch firstLookupStarted = new CountDownLatch(1);
+    CountDownLatch releaseFirstLookup = new CountDownLatch(1);
+    AtomicInteger calls = new AtomicInteger();
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenAnswer(
+            invocation -> {
+              if (calls.incrementAndGet() == 1) {
+                firstLookupStarted.countDown();
+                if (!releaseFirstLookup.await(5, TimeUnit.SECONDS)) {
+                  throw new IllegalStateException("First lookup was not released");
+                }
+                return tenant("Old saved name", null);
+              }
+              return tenant("New saved name", null);
+            });
+    EmailBrandingResolver cached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.example.org", 10L);
+
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var first = executor.submit(() -> cached.resolve(7L));
+      try {
+        assertThat(firstLookupStarted.await(5, TimeUnit.SECONDS)).isTrue();
+        var second = executor.submit(() -> cached.resolve(7L));
+        assertThat(second.get(5, TimeUnit.SECONDS).brandName()).isEqualTo("New saved name");
+      } finally {
+        releaseFirstLookup.countDown();
+      }
+      // The older caller receives its own completed lookup; it cannot reseed the shared cache.
+      assertThat(first.get(5, TimeUnit.SECONDS).brandName()).isEqualTo("Old saved name");
+      assertThat(cached.resolve(7L).brandName()).isEqualTo("New saved name");
+      verify(tenantService, times(2)).getRestrictedTenantDataFresh(7L);
+    }
+  }
+
+  @Test
+  void batchCacheRetentionStartsAfterTheRemoteLookupCompletes() {
+    AtomicLong remoteCompletion = new AtomicLong();
+    when(tenantService.getRestrictedTenantDataFresh(7L))
+        .thenAnswer(
+            invocation -> {
+              remoteCompletion.set(System.nanoTime());
+              return tenant("Nord", null);
+            });
+    EmailBrandingResolver cached =
+        new EmailBrandingResolver(
+            tenantService, tenantTemplateSupplier, "ORISO", "", "https://app.example.org", 10L);
+
+    cached.resolve(7L);
+    Map<?, ?> entries = (Map<?, ?>) ReflectionTestUtils.getField(cached, "tenantCache");
+    assertThat(entries).hasSize(1);
+    Object entry = entries.values().iterator().next();
+    Long retainedSince = ReflectionTestUtils.invokeMethod(entry, "storedAtNanos");
+    assertThat(retainedSince).isNotNull();
+    // Monotonic differences also work when nanoTime's arbitrary origin is negative.
+    assertThat(retainedSince - remoteCompletion.get()).isGreaterThanOrEqualTo(0L);
   }
 
   @ParameterizedTest
