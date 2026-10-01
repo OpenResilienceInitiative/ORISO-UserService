@@ -33,7 +33,14 @@ class InviteMailDispatchServiceTest {
   }
 
   private void givenNeutralBranding() {
-    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            new EmailBranding(
+                "ORISO",
+                null,
+                "#a5000a",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"));
   }
 
   @Test
@@ -97,7 +104,7 @@ class InviteMailDispatchServiceTest {
 
     service("smtp-user", "smtp-pass").send("to@example.org", "subject", "body", null, 42L, null);
 
-    verify(emailBrandingResolver).resolve(42L);
+    verify(emailBrandingResolver).resolvePendingTenant(42L);
   }
 
   @Test
@@ -127,7 +134,7 @@ class InviteMailDispatchServiceTest {
 
   @Test
   void renderingFailureIsConfirmedNotSent() {
-    when(emailBrandingResolver.resolve(any()))
+    when(emailBrandingResolver.resolvePendingTenant(any()))
         .thenThrow(new IllegalStateException("branding unavailable"));
 
     assertThatThrownBy(() -> service("u", "p").send("to@example.org", "s", "b"))

@@ -356,6 +356,30 @@ public class KeycloakServiceTest {
   }
 
   @Test
+  public void getOtpCredential_Should_Throw_When_SuccessfulResponseHasNoBody() {
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    for (var status : new HttpStatus[] {HttpStatus.OK, HttpStatus.NO_CONTENT}) {
+      when(keycloakClient.get(anyString(), any(), eq(OtpInfoDTO.class)))
+          .thenReturn(new ResponseEntity<OtpInfoDTO>(status));
+
+      assertThrows(KeycloakException.class, () -> keycloakService.getOtpCredential(USERNAME));
+    }
+    verifyNoInteractions(keycloakMapper);
+  }
+
+  @Test
+  public void getOtpCredential_Should_Preserve_ValidInactiveCredential() {
+    var info = new OtpInfoDTO().otpSetup(false).otpSecret("setup-secret");
+    var credential = new IdentityOtpCredential(false, "setup-secret", null, null);
+    when(keycloakClient.getBearerToken()).thenReturn(BEARER_TOKEN);
+    when(keycloakClient.get(anyString(), any(), eq(OtpInfoDTO.class)))
+        .thenReturn(ResponseEntity.ok(info));
+    when(keycloakMapper.identityOtpCredentialOf(info)).thenReturn(credential);
+
+    assertEquals(credential, keycloakService.getOtpCredential(USERNAME));
+  }
+
+  @Test
   public void getOtpCredential_Should_Throw_When_RequestHasAnError() {
     assertThrows(
         RestClientException.class,

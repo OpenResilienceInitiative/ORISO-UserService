@@ -2,7 +2,6 @@ package de.caritas.cob.userservice.api.adapters.web.controller;
 
 import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
-import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.Mockito.when;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.put;
@@ -10,7 +9,6 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
-import de.caritas.cob.userservice.api.adapters.web.dto.AgencyDTO;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -78,8 +76,26 @@ class GroupChatInviteLinkE2EIT {
   @Autowired private GroupChatParticipantRepository participantRepository;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
-  @MockitoBean private AgencyService agencyService;
+  @Autowired private AgencyService agencyService;
   @MockitoBean private MatrixSynapseService matrixSynapseService;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
+      ownerFactory;
+
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory
+      agencyFactory;
+
+  @Autowired
+  @org.springframework.beans.factory.annotation.Qualifier("restTemplate")
+  private org.springframework.web.client.RestTemplate externalTransport;
+
+  private de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures permittedOwner;
+  private org.springframework.web.client.RestTemplate previousAgencyTransport;
+  private org.springframework.http.client.ClientHttpRequestFactory previousIdentityRequestFactory;
+  private org.springframework.test.web.client.MockRestServiceServer agencyHttp;
+  private org.springframework.test.web.client.MockRestServiceServer identityHttp;
 
   private Consultant owner;
   private User client;
@@ -87,6 +103,7 @@ class GroupChatInviteLinkE2EIT {
 
   @BeforeEach
   void givenASelfHelpGroupOfOneTragerAndAClientOfAnother() {
+    permittedExternalOwnerAndAgencies();
     owner = consultantRepository.findAll().iterator().next();
     owner.setTenantId(GROUP_TENANT);
     owner = consultantRepository.save(owner);
@@ -104,14 +121,76 @@ class GroupChatInviteLinkE2EIT {
 
     selfHelpGroup = aGroup(ConversationType.SELF_HELP, "!selfhelp:matrix.test");
 
-    when(agencyService.getAgency(anyLong()))
-        .thenAnswer(
-            invocation ->
-                new AgencyDTO()
-                    .id(invocation.getArgument(0))
-                    .tenantId(GROUP_TENANT)
-                    .name("Agency"));
     flushAndClear();
+  }
+
+  /** Existing permission journeys keep real AVV policy and explicitly permitted owner HTTP. */
+  private void permittedExternalOwnerAndAgencies() {
+    permittedOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(
+            ownerFactory, GROUP_TENANT);
+    previousAgencyTransport =
+        (org.springframework.web.client.RestTemplate)
+            org.springframework.test.util.ReflectionTestUtils.getField(
+                agencyFactory, "restTemplate");
+    var transport = new org.springframework.web.client.RestTemplate();
+    agencyHttp =
+        org.springframework.test.web.client.MockRestServiceServer.bindTo(transport).build();
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        agencyFactory, "restTemplate", transport);
+    agencyHttp
+        .expect(
+            org.springframework.test.web.client.ExpectedCount.between(0, Integer.MAX_VALUE),
+            request ->
+                org.junit.jupiter.api.Assertions.assertEquals(
+                    org.springframework.http.HttpMethod.GET, request.getMethod()))
+        .andRespond(
+            request -> {
+              String path = request.getURI().getPath();
+              String id = path.substring(path.lastIndexOf('/') + 1);
+              return org.springframework.test.web.client.response.MockRestResponseCreators
+                  .withSuccess(
+                      "[{\"id\":"
+                          + id
+                          + ",\"tenantId\":"
+                          + GROUP_TENANT
+                          + ",\"name\":\"Agency\",\"consultingType\":1}]",
+                      org.springframework.http.MediaType.APPLICATION_JSON)
+                  .createResponse(request);
+            });
+    previousIdentityRequestFactory = externalTransport.getRequestFactory();
+    identityHttp =
+        org.springframework.test.web.client.MockRestServiceServer.bindTo(externalTransport).build();
+    identityHttp
+        .expect(
+            org.springframework.test.web.client.ExpectedCount.between(0, Integer.MAX_VALUE),
+            org.springframework.test.web.client.match.MockRestRequestMatchers.anything())
+        .andRespond(
+            request -> {
+              String path = request.getURI().getPath();
+              if (path.endsWith("/token"))
+                return org.springframework.test.web.client.response.MockRestResponseCreators
+                    .withSuccess(
+                        "{\"access_token\":\"synthetic-service-token\",\"expires_in\":60,\"refresh_expires_in\":60,\"refresh_token\":\"synthetic-refresh\"}",
+                        org.springframework.http.MediaType.APPLICATION_JSON)
+                    .createResponse(request);
+              if (path.endsWith("/logout"))
+                return org.springframework.test.web.client.response.MockRestResponseCreators
+                    .withNoContent()
+                    .createResponse(request);
+              throw new AssertionError("Unexpected identity HTTP path: " + path);
+            });
+  }
+
+  @org.junit.jupiter.api.AfterEach
+  void restoreExternalHttpFixtures() {
+    if (permittedOwner != null) permittedOwner.close();
+    org.springframework.test.util.ReflectionTestUtils.setField(
+        agencyFactory, "restTemplate", previousAgencyTransport);
+    if (previousIdentityRequestFactory != null)
+      externalTransport.setRequestFactory(previousIdentityRequestFactory);
+    if (agencyHttp != null) agencyHttp.reset();
+    if (identityHttp != null) identityHttp.reset();
   }
 
   @Test

@@ -34,6 +34,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.InviteRoleChange.Cha
 import de.caritas.cob.userservice.api.service.accountinvite.TwoFactorGateStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.UnitQueue;
 import de.caritas.cob.userservice.api.service.accountinvite.allocation.IdAllocationMode;
+import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail.BrandingSnapshot;
 import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -556,6 +557,7 @@ public class AccountInviteController {
     public String html;
     public String plainText;
     public String sampleAcceptUrl;
+    public BrandingSnapshot branding;
 
     static InviteEmailPreviewResponseDTO from(InviteEmailPreview preview) {
       InviteEmailPreviewResponseDTO dto = new InviteEmailPreviewResponseDTO();
@@ -567,6 +569,7 @@ public class AccountInviteController {
       dto.html = preview.html();
       dto.plainText = preview.plainText();
       dto.sampleAcceptUrl = preview.sampleAcceptUrl();
+      dto.branding = preview.branding();
       return dto;
     }
   }

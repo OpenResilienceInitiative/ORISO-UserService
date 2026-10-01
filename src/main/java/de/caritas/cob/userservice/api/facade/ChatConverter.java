@@ -98,4 +98,18 @@ public class ChatConverter {
         ? ConversationType.SELF_HELP
         : ConversationType.INTERNAL_GROUP;
   }
+
+  /**
+   * The persisted format of a group chat. Legacy rows without {@code conversation_type} are
+   * classified by the same rule as {@link #conversationTypeOf(ChatDTO)}: anything that repeats is a
+   * conversation circle.
+   */
+  public static ConversationType conversationTypeOf(Chat chat) {
+    if (nonNull(chat.getConversationType())) {
+      return chat.getConversationType();
+    }
+    return chat.isRepetitive() || chat.getRepeatCount() > 1 || nonNull(chat.getChatInterval())
+        ? ConversationType.SELF_HELP
+        : ConversationType.INTERNAL_GROUP;
+  }
 }

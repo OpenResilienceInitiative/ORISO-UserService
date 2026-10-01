@@ -3,11 +3,11 @@ package de.caritas.cob.userservice.api.service.accountinvite.mail;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.email.TenantEmailBrandValues;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.layout.EmailContentSanitizer;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationResolver;
-import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * Builds a real {@link InviteFrameMailRenderer} around a mocked branding resolver.
@@ -30,11 +30,18 @@ public final class InviteFrameMailRendererFixture {
 
   public static InviteFrameMailRenderer inviteFrameMailRenderer(
       EmailBrandingResolver resolver, SenderOrganisationResolver senderOrganisations) {
+    return inviteFrameMailRenderer(resolver, senderOrganisations, true);
+  }
+
+  public static InviteFrameMailRenderer inviteFrameMailRenderer(
+      EmailBrandingResolver resolver,
+      SenderOrganisationResolver senderOrganisations,
+      boolean allowUnreviewedLocales) {
     return new InviteFrameMailRenderer(
         resolver,
         new EmailContentSanitizer(),
         tenantEmailBrandValues(senderOrganisations, APP_BASE_URL),
-        new OrisoEmailRenderer());
+        new OrisoEmailRenderer(allowUnreviewedLocales));
   }
 
   public static TenantEmailBrandValues tenantEmailBrandValues(
@@ -43,11 +50,8 @@ public final class InviteFrameMailRendererFixture {
         platformBrand(senderOrganisations), senderOrganisations, appBaseUrl);
   }
 
-  /** {@link OrisoEmailBrand} takes its platform name from a property Spring is not filling here. */
+  /** A platform brand backed by the same fixture resolver as catalogue mail tests. */
   public static OrisoEmailBrand platformBrand(SenderOrganisationResolver senderOrganisations) {
-    OrisoEmailBrand brand = new OrisoEmailBrand(senderOrganisations);
-    ReflectionTestUtils.setField(brand, "platformName", PLATFORM_NAME);
-    ReflectionTestUtils.setField(brand, "logoUrl", "");
-    return brand;
+    return new OrisoEmailBrand(senderOrganisations, EmailBrandingFixture.platform(APP_BASE_URL));
   }
 }

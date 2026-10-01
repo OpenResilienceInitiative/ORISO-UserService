@@ -163,6 +163,57 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/enquiry/permission:
+    get:
+      tags:
+        - user-controller
+      summary: 'Check whether the authenticated asker may send their first enquiry before submitting an encrypted Matrix event [Authorization: Role: user]'
+      operationId: checkEnquiryPermission
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        204:
+          description: NO CONTENT - first enquiry may be sent; finalization checks permission again
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+        400:
+          description: BAD REQUEST - session is missing, belongs to another asker, or is anonymous
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - invalid role or AVV does not permit new counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
+        409:
+          description: CONFLICT - enquiry already written or session is no longer open for an enquiry
+        502:
+          description: BAD GATEWAY - AVV owner unavailable or response invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
+      security:
+        - Bearer: [ ]
   /users/sessions/{sessionId}/enquiry/new:
     post:
       tags:
@@ -1170,6 +1221,7 @@ paths:
         - user-controller
       summary: 'Create a new group chat with chat_agency relation so that all advice seekers from that agency can see this chat. [Authorization: Role: consultant with authority
         CREATE_NEW_CHAT]'
+      description: External SELF_HELP creation requires a current serving-owner signature or permitted renewal grace. Internal colleague chats are exempt. Creating or assigning a group does not commence participation.
       operationId: createChatV1
       requestBody:
         content:
@@ -1187,9 +1239,29 @@ paths:
         400:
           description: BAD REQUEST - invalid/incomplete request or body object
         403:
-          description: FORBIDDEN - no/invalid CSRF token
+          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         409:
           description: CONFLICT - group chat with same name already existing
+        502:
+          description: BAD GATEWAY - serving-owner facts conflict or are unavailable, or AVV owner response is unavailable/invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1200,6 +1272,7 @@ paths:
         - user-controller
       summary: 'Create a new group chat that will be visible to the user only by invitation [Authorization: Role: consultant with authority
         CREATE_NEW_CHAT]'
+      description: External SELF_HELP creation requires a current serving-owner signature or permitted renewal grace. Internal colleague chats are exempt. Creating or assigning a group does not commence participation.
       operationId: createChatV2
       requestBody:
         content:
@@ -1217,9 +1290,29 @@ paths:
         400:
           description: BAD REQUEST - invalid/incomplete request or body object
         403:
-          description: FORBIDDEN - no/invalid CSRF token
+          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         409:
           description: CONFLICT - group chat with same name already existing
+        502:
+          description: BAD GATEWAY - serving-owner facts conflict or are unavailable, or AVV owner response is unavailable/invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1230,6 +1323,7 @@ paths:
         - user-controller
       summary: 'Update a group chat [Authorization: Role: consultant with authority
         UPDATE_CHAT]'
+      description: Adding previously absent co-moderators to SELF_HELP groups requires current owner permission before settings or Matrix membership changes. Existing participants, removals and settings-only updates are exempt.
       operationId: updateChat
       parameters:
         - name: chatId
@@ -1255,10 +1349,29 @@ paths:
         400:
           description: BAD REQUEST - invalid/incomplete request or body object
         403:
-          description: FORBIDDEN - No permission for chat update / Consultant is not
-            owner
+          description: FORBIDDEN - no chat permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         409:
           description: CONFLICT - Chat is already startet
+        502:
+          description: BAD GATEWAY - membership or serving-owner facts are unavailable or invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1304,6 +1417,7 @@ paths:
       tags:
         - user-controller
       summary: 'Start a chat [Authorization: Role: consultant with authority START_CHAT]'
+      description: Opening the first external SELF_HELP occurrence (index 0) requires a current serving-owner signature or permitted renewal grace. Internal colleague chats are exempt.
       operationId: startChat
       parameters:
         - name: chatId
@@ -1321,10 +1435,29 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - No permission for chat / Consultant is not assigned
-            to chat-agency
+          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         409:
           description: CONFLICT - Chat is already startet
+        502:
+          description: BAD GATEWAY - serving-owner facts conflict or are unavailable, or AVV owner response is unavailable/invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1396,6 +1529,7 @@ paths:
       tags:
         - user-controller
       summary: 'Assign the user to the given chat [Authorization: Role: consultant or user]'
+      description: Genuinely new SELF_HELP enrolment requires the serving group owner to permit new counselling, including for invite recipients from another tenant. Enrolment does not establish begun participation. Existing enrolment remains a conflict.
       operationId: assignChat
       parameters:
         - name: matrixRoomId
@@ -1419,9 +1553,31 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - No permission for chat
+          description: FORBIDDEN - invalid CSRF/authority or group permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         404:
           description: NOT FOUND - Chat not found
+        409:
+          description: CONFLICT - user is already enrolled in the group
+        502:
+          description: BAD GATEWAY - serving-owner facts conflict or are unavailable, or AVV owner response is unavailable/invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1431,6 +1587,7 @@ paths:
       tags:
         - user-controller
       summary: 'Join a chat [Authorization: Role: consultant or user]'
+      description: First SELF_HELP occurrence admission checks current JOIN membership. An already joined caller continues without a new owner decision; a newcomer requires owner permission. Internal chats are exempt. Later occurrences retain legacy behavior pending the recurrence decision.
       operationId: joinChat
       parameters:
         - name: chatId
@@ -1448,11 +1605,31 @@ paths:
         401:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
-          description: FORBIDDEN - No permission for chat
+          description: FORBIDDEN - no chat permission, or AVV does not permit new external counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         404:
           description: NOT FOUND - Chat not found
         409:
           description: CONFLICT - Chat has not startet yet
+        502:
+          description: BAD GATEWAY - membership or serving-owner facts are unavailable or invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1644,6 +1821,40 @@ paths:
           description: NOT FOUND - a session with such an ID does not exist
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/contact-sheet-email:
+    post:
+      tags:
+        - user-controller
+      summary: 'Request the maintained counselling-centre contact details by email [Authorization: Role: user]'
+      description: 'Only the authenticated session owner can request this mail. The server selects the recipient and centre from the session. No request body or recipient address is accepted by the operation contract.'
+      operationId: sendContactSheetEmail
+      parameters:
+        - name: sessionId
+          in: path
+          description: Session id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        204:
+          description: NO CONTENT - SMTP transport confirmed this explicit contact-mail request
+        400:
+          description: BAD REQUEST - invalid session id
+        401:
+          description: UNAUTHORIZED - no/invalid authentication
+        403:
+          description: FORBIDDEN - wrong role, session owner, tenant access or CSRF token
+        404:
+          description: NOT FOUND - session does not exist
+        409:
+          description: CONFLICT - inactive session, invalid recipient or missing maintained contact
+        500:
+          description: INTERNAL SERVER ERROR - required configuration, contact dependency or confirmed SMTP dispatch unavailable
+        502:
+          description: BAD GATEWAY - contact service lookup failed; no upstream details returned
       security:
         - Bearer: [ ]
   /users/sessions/{sessionId}/supervisors:
@@ -1980,6 +2191,150 @@ paths:
         '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
         '403': { description: Caller is not an Owner }
 
+  /users/chat-series/{seriesId}/join-requests:
+    post:
+      tags: [chat-series-controller]
+      operationId: createChatSeriesJoinRequest
+      summary: Knock to join a self-help group via its invite link
+      description: >-
+        Any consultant holding the invite link may knock. The response carries only the request
+        status, never any group data. A second knock while a request is pending returns the
+        pending request. Check order: unknown Series or missing/wrong inviteToken → 403 (the two
+        are indistinguishable); then not a self-help group → 400; then caller already has
+        access → 409.
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: inviteToken
+          in: query
+          description: Secret part of the invite link (same value as for /users/chat/{id}/assign).
+          required: false
+          schema: { type: string }
+      responses:
+        '200':
+          description: A pending request of the caller already exists
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupChatJoinRequestStatusDTO' }
+        '201':
+          description: Join request created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupChatJoinRequestStatusDTO' }
+        '400': { description: The Series is not a self-help group (only after the token matched) }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: "Unknown Series, missing or wrong inviteToken, or caller is not a consultant" }
+        '409': { description: Caller already has access to this Series }
+  /users/chat-series/{seriesId}/join-requests/mine:
+    get:
+      tags: [chat-series-controller]
+      operationId: getOwnChatSeriesJoinRequest
+      summary: Returns the caller's newest join request for this Series
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '200':
+          description: The caller's newest join request
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GroupChatJoinRequestStatusDTO' }
+        '204': { description: The caller never knocked on this Series }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not a consultant }
+    delete:
+      tags: [chat-series-controller]
+      operationId: cancelOwnChatSeriesJoinRequest
+      summary: Cancels the caller's pending join request (idempotent)
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '204': { description: No pending request remains }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not a consultant }
+        '409': { description: Admission is already being completed }
+  /users/chat-series/join-requests:
+    get:
+      tags: [chat-series-controller]
+      operationId: getPendingChatSeriesJoinRequests
+      summary: Pending join requests of every Series the caller owns or co-moderates
+      security:
+        - Bearer: [ ]
+      responses:
+        '200':
+          description: Pending requests awaiting a moderator decision, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/GroupChatJoinRequestDTO' }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller is not a consultant }
+  /users/chat-series/{seriesId}/join-requests/{requestId}/admit:
+    post:
+      tags: [chat-series-controller]
+      operationId: admitChatSeriesJoinRequest
+      summary: Accepts an admission decision as Participant or Co-Moderator
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GroupChatJoinRequestAdmitDTO' }
+      responses:
+        '204': { description: Admission accepted; Matrix join may still be pending and will be retried }
+        '400': { description: "Not a self-help group, or Co-Moderator requested for a consultant of another tenant" }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller may not admit (or may not grant Co-Moderator) }
+        '404': { description: Unknown join request for this Series }
+        '409': { description: Join request is not pending or admission is already being completed }
+  /users/chat-series/{seriesId}/join-requests/{requestId}/decline:
+    post:
+      tags: [chat-series-controller]
+      operationId: declineChatSeriesJoinRequest
+      summary: Declines a pending join request
+      security:
+        - Bearer: [ ]
+      parameters:
+        - name: seriesId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - name: requestId
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        '204': { description: Join request declined }
+        '400': { description: The Series is not a self-help group }
+        '401': { description: UNAUTHORIZED - no/invalid Keycloak token }
+        '403': { description: Caller may not decline }
+        '404': { description: Unknown join request for this Series }
+        '409': { description: Join request is not pending or admission is already being completed }
+
 components:
   schemas:
     GuestIdentitySuggestionRequest:
@@ -2029,6 +2384,55 @@ components:
       required: [consultantId]
       properties:
         consultantId: { type: string }
+    GroupChatJoinRequestStatusDTO:
+      type: object
+      description: Requester view of a join request. Deliberately carries no group data.
+      required: [id, status, requestedAt]
+      properties:
+        id: { type: integer, format: int64 }
+        status: { $ref: '#/components/schemas/GroupChatJoinRequestStatus' }
+        requestedAt: { type: string, format: date-time }
+        decidedAt: { type: string, format: date-time, nullable: true }
+    GroupChatJoinRequestStatus:
+      type: string
+      enum: [PENDING, ADMITTING, ADMITTED, DECLINED, CANCELLED]
+    GroupChatJoinRequestDTO:
+      type: object
+      description: Moderator view of a pending join request.
+      required: [id, seriesId, status, requestedAt, via, viewerRole, requester]
+      properties:
+        id: { type: integer, format: int64 }
+        seriesId: { type: integer, format: int64 }
+        groupTitle: { type: string }
+        status: { $ref: '#/components/schemas/GroupChatJoinRequestStatus' }
+        requestedAt: { type: string, format: date-time }
+        decidedAt: { type: string, format: date-time, nullable: true }
+        via: { type: string, enum: [INVITE_LINK] }
+        viewerRole:
+          type: string
+          enum: [OWNER, CO_MODERATOR]
+          description: >-
+            The caller's own role in this Series. Only an OWNER may admit as CO_MODERATOR.
+        requester: { $ref: '#/components/schemas/GroupChatJoinRequesterDTO' }
+    GroupChatJoinRequesterDTO:
+      type: object
+      required: [consultantId, sameAgency, sameTenant]
+      properties:
+        consultantId: { type: string }
+        displayName: { type: string, nullable: true }
+        firstName: { type: string, nullable: true }
+        lastName: { type: string, nullable: true }
+        agencyName: { type: string, nullable: true }
+        tenantName: { type: string, nullable: true }
+        sameAgency: { type: boolean }
+        sameTenant: { type: boolean }
+    GroupChatJoinRequestAdmitDTO:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [PARTICIPANT, CO_MODERATOR]
+          default: PARTICIPANT
     UserDTO:
       allOf:
         - $ref: '#/components/schemas/SessionDataDTO'
@@ -2817,6 +3221,15 @@ components:
           maxLength: 64
           example: "motif-24"
           description: Id of the chosen counsellor motif; only set together with avatarKind = ICON.
+
+    DpaPolicyErrorDTO:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          enum: [DPA_NEW_COUNSELLING_NOT_ALLOWED, DPA_POLICY_UNAVAILABLE]
 
     EnquiryMessageDTO:
       type: object

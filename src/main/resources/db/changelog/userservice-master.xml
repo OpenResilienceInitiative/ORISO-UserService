@@ -189,6 +189,9 @@
     file="db/changelog/changeset/0100_team_discussion_room_cleanup/0100_changeSet.xml" />
 
   <include file="db/changelog/changeset/0101_team_discussion_access_repair/0101_changeSet.xml" />
+  <include file="db/changelog/changeset/0102_reply_email_delivery/0102_changeSet.xml" />
+  <include file="db/changelog/changeset/0103_message_email_recipient/0103_changeSet.xml" />
+  <include file="db/changelog/changeset/0104_feedback_email_intent/0104_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
@@ -212,5 +215,8 @@
   <include file="db/changelog/changeset/20260925_account_invite_timeline/changeSet.xml"/>
   <include file="db/changelog/changeset/20260925_id_reservation_lock/changeSet.xml"/>
   <include file="db/changelog/changeset/20260923_chat_invite_token_1237/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260923_group_chat_join_request_1499/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260926_group_chat_admission_1499/changeSet.xml"/>
+  <include file="db/changelog/changeset/20260928_group_chat_admission_matrix_repair/changeSet.xml"/>
   <include file="db/changelog/changeset/20260923_user_temporary_account/changeSet.xml"/>
 </databaseChangeLog>

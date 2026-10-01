@@ -23,12 +23,16 @@ public class PlatformSmtpSettingsProvider {
   public static Settings requireConfigured(ApplicationSettingsService applicationSettingsService) {
     ApplicationSettingsSmtpCredentialsDTO source =
         applicationSettingsService
-            .getGlobalSmtpCredentials()
+            .getGlobalSmtpSettingsSnapshot()
             .orElseThrow(
                 () ->
-                    new IllegalStateException(
-                        "Platform SMTP is unavailable in Admin Settings or the technical identity"
-                            + " cannot read it"));
+                    new ConfigurationException(
+                        "Platform SMTP is not configured in Admin Settings: SMTP settings are missing"));
+
+    return requireConfigured(source);
+  }
+
+  private static Settings requireConfigured(ApplicationSettingsSmtpCredentialsDTO source) {
 
     List<String> missing = new ArrayList<>();
     if (!Boolean.TRUE.equals(source.getGlobalFeatureSystemNotificationEmailsEnabled()))
@@ -56,7 +60,7 @@ public class PlatformSmtpSettingsProvider {
     if (source.getGlobalSmtpSecure() == null) missing.add("SMTP security mode");
 
     if (!missing.isEmpty()) {
-      throw new IllegalStateException(
+      throw new ConfigurationException(
           "Platform SMTP is incomplete in Admin Settings: " + String.join(", ", missing));
     }
     return new Settings(
@@ -69,8 +73,45 @@ public class PlatformSmtpSettingsProvider {
         source.getGlobalSmtpEmailThemeColor());
   }
 
+  /** Safe fields from one saved Admin Settings snapshot for a platform administrator. */
+  public Summary summary() {
+    ApplicationSettingsSmtpCredentialsDTO source =
+        applicationSettingsService.getGlobalSmtpSettingsSnapshot().orElse(null);
+    if (source == null) {
+      return new Summary(null, null, null, null, false, false);
+    }
+    boolean configured;
+    try {
+      requireConfigured(source);
+      configured = true;
+    } catch (ConfigurationException exception) {
+      configured = false;
+    }
+    Integer displayPort = null;
+    try {
+      int value = Integer.parseInt(source.getGlobalSmtpPort().trim());
+      if (value >= 1 && value <= 65535) displayPort = value;
+    } catch (NullPointerException | NumberFormatException ignored) {
+      // Saved settings may be incomplete; the other safe fields are still useful.
+    }
+    return new Summary(
+        blank(source.getGlobalSmtpHost()) ? null : source.getGlobalSmtpHost().trim(),
+        displayPort,
+        source.getGlobalSmtpSecure(),
+        blank(source.getGlobalSmtpFrom()) ? null : source.getGlobalSmtpFrom().trim(),
+        configured,
+        !blank(source.getGlobalSmtpUsername()) && !blank(source.getGlobalSmtpPassword()));
+  }
+
   private static boolean blank(String value) {
     return value == null || value.isBlank();
+  }
+
+  /** Only provider-owned, value-free validation errors may be shown to an administrator. */
+  public static class ConfigurationException extends IllegalStateException {
+    public ConfigurationException(String message) {
+      super(message);
+    }
   }
 
   public record Settings(
@@ -86,4 +127,12 @@ public class PlatformSmtpSettingsProvider {
       return "PlatformSmtpSettings[host=" + host + ", port=" + port + ", secure=" + secure + "]";
     }
   }
+
+  public record Summary(
+      String host,
+      Integer port,
+      Boolean secure,
+      String from,
+      boolean configured,
+      boolean credentialsPresent) {}
 }
