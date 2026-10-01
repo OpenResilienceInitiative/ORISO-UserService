@@ -1,6 +1,7 @@
 package de.caritas.cob.userservice.api.service.accountinvite;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 import org.junit.jupiter.api.Test;
 
@@ -12,8 +13,7 @@ import org.junit.jupiter.api.Test;
 class InviteAcceptUrlBuilderTest {
 
   private final InviteAcceptUrlBuilder builder =
-      new InviteAcceptUrlBuilder(
-          "https://app.example.org", "https://admin.example.org", "https://self.example.org");
+      new InviteAcceptUrlBuilder("https://app.example.org", "https://admin.example.org");
 
   @Test
   void buildAcceptUrl_Should_targetPublicAdminOnboardingRoute_ForTenantAdmin() {
@@ -42,8 +42,7 @@ class InviteAcceptUrlBuilderTest {
   @Test
   void buildAcceptUrl_Should_stripTrailingSlashesFromConfiguredBaseUrls() {
     var slashy =
-        new InviteAcceptUrlBuilder(
-            "https://app.example.org///", "https://admin.example.org/", "https://self.example.org");
+        new InviteAcceptUrlBuilder("https://app.example.org///", "https://admin.example.org/");
 
     assertThat(slashy.buildAcceptUrl(AccountInviteTargetRole.ADVICE_SEEKER, "tok"))
         .isEqualTo("https://app.example.org/account-invite/tok");
@@ -54,27 +53,21 @@ class InviteAcceptUrlBuilderTest {
   }
 
   /**
-   * Regression for the dev invite mails that linked to production (2026-09-16): a blank invite
-   * configuration must fall back to THIS environment's own origin, never to a hardcoded host.
+   * Regression for the dev invite mails that linked to production (2026-09-16), and for the
+   * localhost fallback that replaced it: a blank invite origin must stop startup and name the
+   * variable, never guess a host (ORISO-Helm#368).
    */
   @Test
-  void buildAcceptUrl_Should_fallBackToOwnAppBaseUrl_When_ConfigurationBlank() {
-    var blank = new InviteAcceptUrlBuilder("  ", null, "https://self.example.org/");
-
-    assertThat(blank.buildAcceptUrl(AccountInviteTargetRole.ADVICE_SEEKER, "tok"))
-        .isEqualTo("https://self.example.org/account-invite/tok");
-    assertThat(blank.buildAcceptUrl(AccountInviteTargetRole.TENANT_ADMIN, "tok"))
-        .isEqualTo("https://self.example.org/admin/tenant-onboarding/tok");
-    assertThat(blank.buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, "tok"))
-        .isEqualTo("https://self.example.org/admin/counsellor-onboarding/tok");
+  void constructor_Should_failNamingTheVariable_When_AppOriginBlank() {
+    assertThatThrownBy(() -> new InviteAcceptUrlBuilder("  ", "https://admin.example.org"))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ACCOUNT_INVITE_APP_FRONTEND_BASE_URL");
   }
 
   @Test
-  void buildAcceptUrl_Should_neverProduceProductionHost_When_NothingConfigured() {
-    var nothing = new InviteAcceptUrlBuilder(null, null, null);
-
-    assertThat(nothing.buildAcceptUrl(AccountInviteTargetRole.TENANT_ADMIN, "tok"))
-        .doesNotContain("app.oriso.org")
-        .isEqualTo("http://localhost:8082/admin/tenant-onboarding/tok");
+  void constructor_Should_failNamingTheVariable_When_AdminOriginMissing() {
+    assertThatThrownBy(() -> new InviteAcceptUrlBuilder("https://app.example.org", null))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessageContaining("ACCOUNT_INVITE_ADMIN_FRONTEND_BASE_URL");
   }
 }

@@ -9,6 +9,7 @@ import de.caritas.cob.userservice.api.service.notification.DpaSigningEmailPrevie
 import java.net.URI;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Locale;
 import java.util.Objects;
 import lombok.NonNull;
 import org.springframework.beans.factory.annotation.Value;
@@ -28,10 +29,10 @@ public class DpaForwardEmailService {
   public DpaForwardEmailService(
       @NonNull TenantService tenantService,
       @NonNull DpaSigningEmailDispatchService dpaSigningEmailDispatchService,
-      @Value("${dpa.sign.frontend.base-url:${app.base.url}}") String appBaseUrl) {
+      @Value("${dpa.sign.frontend.base-url}") String appBaseUrl) {
     this.tenantService = tenantService;
     this.dpaSigningEmailDispatchService = dpaSigningEmailDispatchService;
-    this.permittedAppOrigin = parseUri(appBaseUrl, "appBaseUrl");
+    this.permittedAppOrigin = requireAbsoluteOrigin(appBaseUrl);
   }
 
   public void sendSigningLink(DpaForwardEmailCommand command) {
@@ -121,6 +122,23 @@ public class DpaForwardEmailService {
     } catch (org.springframework.web.client.HttpClientErrorException.NotFound exception) {
       return null;
     }
+  }
+
+  private static URI requireAbsoluteOrigin(String configured) {
+    try {
+      URI origin = URI.create(configured == null ? "" : configured.trim());
+      String scheme = origin.getScheme() == null ? "" : origin.getScheme().toLowerCase(Locale.ROOT);
+      if (("http".equals(scheme) || "https".equals(scheme)) && !isBlank(origin.getHost())) {
+        // Schemes are case-insensitive; mail the canonical lower-case form.
+        return URI.create(scheme + origin.toString().substring(scheme.length()));
+      }
+    } catch (IllegalArgumentException ignored) {
+      // reported below with the variable name, which is what an operator needs
+    }
+    throw new IllegalStateException(
+        "dpa.sign.frontend.base-url must be this environment's absolute app origin, got: '"
+            + configured
+            + "' (DPA_SIGN_FRONTEND_BASE_URL)");
   }
 
   private static URI parseUri(String value, String field) {

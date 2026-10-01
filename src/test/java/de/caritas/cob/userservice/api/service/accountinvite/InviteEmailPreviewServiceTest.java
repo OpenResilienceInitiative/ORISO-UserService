@@ -55,8 +55,7 @@ class InviteEmailPreviewServiceTest {
   @BeforeEach
   void setUp() {
     acceptUrlBuilder =
-        new InviteAcceptUrlBuilder(
-            "https://app.oriso.org", "https://admin.oriso.org", "https://app.oriso.org");
+        new InviteAcceptUrlBuilder("https://app.example.org", "https://admin.example.org");
     dispatchService =
         new InviteMailDispatchService(
             restTemplate,
@@ -121,12 +120,12 @@ class InviteEmailPreviewServiceTest {
 
     assertThat(tenantPreview.sampleAcceptUrl())
         .isEqualTo(
-            "https://admin.oriso.org/admin/tenant-onboarding/"
+            "https://admin.example.org/admin/tenant-onboarding/"
                 + InviteEmailPreviewService.SAMPLE_TOKEN);
     // #997: counsellor invites land on the PUBLIC ADMIN wizard, not the app acceptance page.
     assertThat(counsellorPreview.sampleAcceptUrl())
         .isEqualTo(
-            "https://admin.oriso.org/admin/counsellor-onboarding/"
+            "https://admin.example.org/admin/counsellor-onboarding/"
                 + InviteEmailPreviewService.SAMPLE_TOKEN);
   }
 
