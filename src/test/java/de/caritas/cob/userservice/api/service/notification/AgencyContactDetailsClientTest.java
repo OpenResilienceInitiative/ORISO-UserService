@@ -7,6 +7,7 @@ import static org.springframework.test.web.client.ExpectedCount.once;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.header;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.method;
 import static org.springframework.test.web.client.match.MockRestRequestMatchers.requestTo;
+import static org.springframework.test.web.client.response.MockRestResponseCreators.withStatus;
 import static org.springframework.test.web.client.response.MockRestResponseCreators.withSuccess;
 
 import de.caritas.cob.userservice.api.config.auth.TechnicalUserConfig;
@@ -17,14 +18,19 @@ import de.caritas.cob.userservice.api.service.httpheader.SecurityHeaderSupplier;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.test.util.ReflectionTestUtils;
 import org.springframework.test.web.client.MockRestServiceServer;
+import org.springframework.web.client.ResourceAccessException;
 import org.springframework.web.client.RestTemplate;
+import org.springframework.web.server.ResponseStatusException;
 
 @ExtendWith(MockitoExtension.class)
 class AgencyContactDetailsClientTest {
@@ -81,6 +87,70 @@ class AgencyContactDetailsClientTest {
     assertThatThrownBy(() -> client.read(9L, 7L))
         .isInstanceOf(IllegalStateException.class)
         .hasMessageContaining("do not match");
+  }
+
+  @ParameterizedTest
+  @ValueSource(ints = {403, 500, 503})
+  void nonNotFoundUpstreamStatusHasNamedSafeBadGatewayContract(int status) {
+    technicalIdentity();
+    server
+        .expect(
+            requestTo(
+                "https://agency.internal/service/internal/agencies/9/contact-details?tenantId=7"))
+        .andRespond(withStatus(HttpStatus.valueOf(status)).body("private upstream detail"));
+
+    assertThatThrownBy(() -> client.read(9L, 7L))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(
+            failure -> {
+              var response = (ResponseStatusException) failure;
+              assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
+              assertThat(response.getReason()).isEqualTo("Agency contact details are unavailable");
+              assertThat(response.getCause()).isNull();
+            })
+        .hasMessageNotContaining("private upstream detail");
+    server.verify();
+  }
+
+  @Test
+  void networkFailureHasNamedSafeBadGatewayContract() {
+    technicalIdentity();
+    server
+        .expect(
+            requestTo(
+                "https://agency.internal/service/internal/agencies/9/contact-details?tenantId=7"))
+        .andRespond(
+            request -> {
+              throw new ResourceAccessException("private connection detail");
+            });
+
+    assertThatThrownBy(() -> client.read(9L, 7L))
+        .isInstanceOf(ResponseStatusException.class)
+        .satisfies(
+            failure -> {
+              var response = (ResponseStatusException) failure;
+              assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_GATEWAY);
+              assertThat(response.getReason()).isEqualTo("Agency contact details are unavailable");
+              assertThat(response.getCause()).isNull();
+            })
+        .hasMessageNotContaining("private connection detail");
+    server.verify();
+  }
+
+  @Test
+  void notFoundPreservesTheExistingNamedFailureWithoutRawCause() {
+    technicalIdentity();
+    server
+        .expect(
+            requestTo(
+                "https://agency.internal/service/internal/agencies/9/contact-details?tenantId=7"))
+        .andRespond(withStatus(HttpStatus.NOT_FOUND).body("private upstream detail"));
+
+    assertThatThrownBy(() -> client.read(9L, 7L))
+        .isInstanceOf(IllegalStateException.class)
+        .hasMessage("Agency contact details are unavailable")
+        .hasNoCause();
+    server.verify();
   }
 
   @Test

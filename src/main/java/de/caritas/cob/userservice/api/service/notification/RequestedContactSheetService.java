@@ -126,7 +126,12 @@ public class RequestedContactSheetService {
     if (isBlank(value)) {
       throw new IllegalStateException("Contact-sheet app URL is missing");
     }
-    URI url = URI.create(value);
+    URI url;
+    try {
+      url = URI.create(value);
+    } catch (IllegalArgumentException malformed) {
+      throw new IllegalStateException("Contact-sheet app URL is invalid");
+    }
     if (!("https".equalsIgnoreCase(url.getScheme()) || "http".equalsIgnoreCase(url.getScheme()))
         || url.getHost() == null
         || url.getUserInfo() != null
