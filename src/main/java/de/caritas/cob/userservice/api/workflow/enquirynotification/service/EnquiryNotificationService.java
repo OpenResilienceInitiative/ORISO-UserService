@@ -251,10 +251,17 @@ public class EnquiryNotificationService {
               .key("tenantId")
               .value(enquiryNotificationContent.getTenantId().toString()));
     }
+    if (consultant.getTenantId() != null) {
+      attributes.add(
+          new TemplateDataDTO()
+              .key("recipientTenantId")
+              .value(consultant.getTenantId().toString()));
+    }
     return new MailDTO()
         .template(TEMPLATE_DAILY_ENQUIRY_NOTIFICATION)
         .email(consultant.getEmail())
         .language(languageOf(consultant.getLanguageCode()))
+        .dialect(consultant.getDialect())
         .templateData(attributes);
   }
 

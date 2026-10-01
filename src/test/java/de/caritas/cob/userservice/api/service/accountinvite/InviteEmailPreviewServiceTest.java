@@ -3,10 +3,10 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
@@ -16,11 +16,9 @@ import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteFrameMail
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailSendReceipt;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailTransport;
-import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import java.time.Instant;
-import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -30,7 +28,6 @@ import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
 import org.mockito.quality.Strictness;
-import org.springframework.web.client.RestTemplate;
 
 /**
  * The Admin preview must show what is actually sent (ORISO-UserService#914). The decisive test here
@@ -43,8 +40,6 @@ import org.springframework.web.client.RestTemplate;
 class InviteEmailPreviewServiceTest {
 
   @Mock private InviteEmailTemplateRepository templateRepository;
-  @Mock private RestTemplate restTemplate;
-  @Mock private ApplicationSettingsService applicationSettingsService;
   @Mock private InviteMailTransport inviteMailTransport;
   @Mock private EmailBrandingResolver emailBrandingResolver;
 
@@ -52,39 +47,39 @@ class InviteEmailPreviewServiceTest {
   private InviteMailDispatchService dispatchService;
   private InviteEmailPreviewService previewService;
 
+  /**
+   * A preview reads a stored template's subject and body, so it is scoped like a send
+   * (ORISO-Admin#1026). The mock passes everything except where a test makes it refuse.
+   */
+  @Mock private AccountInviteAccessPolicy accessPolicy;
+
   @BeforeEach
   void setUp() {
     acceptUrlBuilder =
         new InviteAcceptUrlBuilder("https://app.example.org", "https://admin.example.org");
     dispatchService =
         new InviteMailDispatchService(
-            restTemplate,
-            applicationSettingsService,
+            de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture.configured(
+                "smtp-user", "smtp-pass"),
             inviteMailTransport,
-            InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver),
-            "http://consultingtypeservice:8080/service",
-            "smtp-user",
-            "smtp-pass");
+            InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver));
     previewService =
         new InviteEmailPreviewService(
             templateRepository,
+            accessPolicy,
             acceptUrlBuilder,
             dispatchService,
             new de.caritas.cob.userservice.api.service.notification.AdminPanelUrl(
                 "https://admin.configured.example"));
 
-    when(restTemplate.getForObject(anyString(), any()))
+    when(emailBrandingResolver.resolvePendingTenant(any()))
         .thenReturn(
-            Map.of(
-                "globalFeatureSystemNotificationEmailsEnabled", Map.of("value", true),
-                "globalSmtpEnabled", Map.of("value", true),
-                "globalSmtpHost", Map.of("value", "smtp.example.org"),
-                "globalSmtpPort", Map.of("value", "587"),
-                "globalSmtpSecure", Map.of("value", false),
-                "globalSmtpFrom", Map.of("value", "noreply@example.org"),
-                "globalSmtpEmailThemeColor", Map.of("value", "#f8e71c")));
-    when(emailBrandingResolver.resolve(any()))
-        .thenReturn(new EmailBranding("Nord", null, "#f8e71c", null, null));
+            new EmailBranding(
+                "Nord",
+                null,
+                "#f8e71c",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"));
     when(inviteMailTransport.send(any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("to@example.org", Instant.now()));
   }
@@ -175,6 +170,27 @@ class InviteEmailPreviewServiceTest {
   }
 
   @Test
+  void preview_Should_refuseAnotherTraegersTemplate_BeforeRenderingIt() {
+    InviteEmailTemplate foreign =
+        InviteEmailTemplate.builder()
+            .id(6L)
+            .tenantId(2L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("B's subject")
+            .body("B's body")
+            .active(true)
+            .build();
+    when(templateRepository.findById(6L)).thenReturn(Optional.of(foreign));
+    org.mockito.Mockito.doThrow(new ForbiddenException("foreign template"))
+        .when(accessPolicy)
+        .authorizeTemplateUse(2L);
+
+    assertThatThrownBy(() -> previewService.preview(new PreviewCommand(6L, null, null, null, null)))
+        .isInstanceOf(ForbiddenException.class);
+    org.mockito.Mockito.verifyNoInteractions(emailBrandingResolver, inviteMailTransport);
+  }
+
+  @Test
   void preview_Should_throwNotFound_When_TemplateDoesNotExist() {
     when(templateRepository.findById(99L)).thenReturn(Optional.empty());
 
@@ -187,7 +203,7 @@ class InviteEmailPreviewServiceTest {
   void preview_Should_resolveBrandingForTheRequestedTenant() {
     previewService.preview(new PreviewCommand(null, null, null, null, 21L));
 
-    verify(emailBrandingResolver).resolve(21L);
+    verify(emailBrandingResolver).resolvePendingTenant(21L);
   }
 
   @Test

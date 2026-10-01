@@ -19,8 +19,7 @@ import org.springframework.stereotype.Component;
 /**
  * Renders an operator-authored invite mail inside the ORISO e-mail frame.
  *
- * <p>This replaces the hand-written layout under {@code classpath:email/layout/} for the invite
- * path: the frame is now the same design-system template every other ORISO mail uses ({@code
+ * <p>The frame uses the canonical design-system template ({@code
  * emails/{tone}/einladung-freitext.html}, ADR-020), and the operator's subject and body are the
  * only content in it. The order inside the card is header → subject → authored body → call to
  * action → copy-paste fallback line → footer.
@@ -78,7 +77,9 @@ public class InviteFrameMailRenderer {
   /** As above, with the frame wording already chosen; lets a test reach every catalogue tone. */
   BrandedEmail render(
       String subject, String bodyContent, String primaryActionUrl, Long tenantId, Labels labels) {
-    EmailBranding branding = emailBrandingResolver.resolve(tenantId);
+    // Keep the invitation's labels in the same approved language as the template frame.
+    labels = Labels.of(orisoEmailRenderer.deliveryTone(labels.tone()));
+    EmailBranding branding = emailBrandingResolver.resolvePendingTenant(tenantId);
 
     String safeSubject = isBlank(subject) ? "" : subject.trim();
     String bodyHtml = sanitizer.toContentHtml(bodyContent, branding.linkColor());

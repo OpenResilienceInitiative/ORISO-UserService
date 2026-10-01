@@ -3,7 +3,6 @@ package de.caritas.cob.userservice.api.service.email;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.service.notification.SystemNotificationEmailSettingsService;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import lombok.NonNull;
@@ -27,7 +26,7 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class WelcomeEmailService {
 
-  private final @NonNull SystemNotificationEmailSettingsService emailSettingsService;
+  private final @NonNull PlatformSmtpSettingsProvider platformSmtpSettings;
   private final @NonNull OrisoEmailRenderer emailRenderer;
   private final @NonNull OrisoEmailBrand emailBrand;
   private final @NonNull OrisoEmailDispatcher dispatcher;
@@ -57,18 +56,17 @@ public class WelcomeEmailService {
       return;
     }
 
-    var smtp =
-        user.getTenantId() == null
-            ? null
-            : emailSettingsService
-                .resolveSupervisorAddedEmailSettings(user.getTenantId(), null)
-                .orElse(null);
-    if (smtp == null) {
-      log.debug("Skipping welcome mail: no SMTP settings for tenant {}", user.getTenantId());
+    Map<String, String> values;
+    try {
+      values =
+          new LinkedHashMap<>(emailBrand.valuesForTenant(applicationBaseUrl, user.getTenantId()));
+    } catch (RuntimeException brandingFailure) {
+      log.warn(
+          "Skipping welcome mail for tenant {}: branding failed ({})",
+          user.getTenantId(),
+          brandingFailure.getClass().getSimpleName());
       return;
     }
-
-    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(applicationBaseUrl, null));
     values.put("username", plainUsername);
     values.put("loginUrl", values.get("appUrl"));
 
@@ -80,7 +78,7 @@ public class WelcomeEmailService {
       tone = OrisoEmailRenderer.Tone.DE_FORMAL;
     }
     var email = emailRenderer.render("willkommen", tone, values);
-    dispatcher.send(smtp, user.getEmail(), email);
+    dispatcher.send(platformSmtpSettings.requireConfigured(), user.getEmail(), email);
   }
 
   /**

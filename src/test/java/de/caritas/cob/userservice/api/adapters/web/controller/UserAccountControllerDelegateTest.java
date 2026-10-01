@@ -32,6 +32,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ServiceUnavailableException;
 import de.caritas.cob.userservice.api.facade.userdata.AgencyAdminDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.AskerDataProvider;
 import de.caritas.cob.userservice.api.facade.userdata.ConsultantDataFacade;
@@ -126,29 +127,44 @@ class UserAccountControllerDelegateTest {
   }
 
   @Test
-  void getUserDataShouldPreserveOtpAvailabilityWhenOtpLookupFails() {
+  void getUserDataShouldNotTreatForbiddenOtpLookupAsUnconfigured() {
     var roles = Set.of(UserRole.TENANT_ADMIN.getValue());
     var partialUserData = new UserDataResponseDTO();
-    var fullUserData = new UserDataResponseDTO();
     when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
     when(authenticatedUser.getRoles()).thenReturn(roles);
-    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
     when(authenticatedUser.getUsername()).thenReturn(USERNAME);
     when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
     when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(true);
     when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
-    when(identityManager.getOtpCredential(USERNAME)).thenThrow(new RuntimeException("OTP down"));
-    when(userDtoMapper.userDataOf(
-            eq(partialUserData), any(IdentityOtpCredential.class), anyBoolean(), anyBoolean()))
+    when(identityManager.getOtpCredential(USERNAME))
+        .thenThrow(new jakarta.ws.rs.ForbiddenException("OTP SPI access denied"));
+
+    assertThatThrownBy(() -> delegate.getUserData())
+        .isInstanceOf(ServiceUnavailableException.class)
+        .hasMessageContaining("OTP credential");
+    verify(userDtoMapper, never()).userDataOf(any(), any(), anyBoolean(), anyBoolean());
+  }
+
+  @Test
+  void getUserDataShouldPreserveTrulyUnconfiguredOtpState() {
+    var roles = Set.of(UserRole.TENANT_ADMIN.getValue());
+    var partialUserData = new UserDataResponseDTO();
+    var emptyOtp = IdentityOtpCredential.empty();
+    var fullUserData = new UserDataResponseDTO();
+    when(authenticatedUser.isTenantSuperAdmin()).thenReturn(true);
+    when(authenticatedUser.getRoles()).thenReturn(roles);
+    when(authenticatedUser.getUsername()).thenReturn(USERNAME);
+    when(keycloakUserDataProvider.retrieveAuthenticatedUserData()).thenReturn(partialUserData);
+    when(identityPolicy.isTwoFactorAuthenticationAllowed(roles)).thenReturn(true);
+    when(usernameTranscoder.encodeUsername(USERNAME)).thenReturn(USERNAME);
+    when(identityManager.getOtpCredential(USERNAME)).thenReturn(emptyOtp);
+    when(userDtoMapper.userDataOf(eq(partialUserData), eq(emptyOtp), anyBoolean(), anyBoolean()))
         .thenReturn(fullUserData);
 
     var response = delegate.getUserData();
 
     assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     assertThat(response.getBody()).isSameAs(fullUserData);
-    verify(userDtoMapper)
-        .userDataOf(
-            eq(partialUserData), any(IdentityOtpCredential.class), anyBoolean(), anyBoolean());
   }
 
   @Test
@@ -328,7 +344,7 @@ class UserAccountControllerDelegateTest {
         .username(USERNAME)
         .firstName("Lisa")
         .lastName("Simpson")
-        .email("lisa.simpson@oriso.org")
+        .email("lisa.simpson@example.org")
         .passwordChangeRequired(passwordChangeRequired)
         .build();
   }

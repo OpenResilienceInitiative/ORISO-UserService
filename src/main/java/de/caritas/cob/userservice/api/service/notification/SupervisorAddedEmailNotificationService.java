@@ -6,25 +6,17 @@ import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
-import de.caritas.cob.userservice.api.service.email.OrisoEmailMime;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer;
 import de.caritas.cob.userservice.api.service.emailsupplier.TenantTemplateSupplier;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantData;
-import jakarta.mail.Authenticator;
-import jakarta.mail.Message;
-import jakarta.mail.PasswordAuthentication;
-import jakarta.mail.Transport;
-import jakarta.mail.internet.InternetAddress;
-import jakarta.mail.internet.MimeMessage;
 import java.net.URI;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Properties;
 import java.util.function.Supplier;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -37,19 +29,15 @@ import org.springframework.stereotype.Service;
 @Service
 @RequiredArgsConstructor
 public class SupervisorAddedEmailNotificationService {
-  private static final String DEFAULT_EMAIL_THEME_COLOR = "#0f3b8f";
-
   private static final DateTimeFormatter TIMESTAMP =
       DateTimeFormatter.ofPattern("dd.MM.yyyy, HH:mm");
 
-  private final @NonNull SystemNotificationEmailSettingsService emailSettingsService;
+  private final @NonNull TenantSystemEmailRouteService emailRoutes;
+  private final @NonNull TenantSystemEmailDelivery emailDelivery;
   private final @NonNull UserService userService;
   private final @NonNull TenantTemplateSupplier tenantTemplateSupplier;
   private final @NonNull OrisoEmailRenderer emailRenderer;
   private final @NonNull OrisoEmailBrand emailBrand;
-
-  @Value("${app.base.url}")
-  private String applicationBaseUrl;
 
   @Value("${system.notification.frontend.base-url}")
   private String publicFrontendBaseUrl;
@@ -66,12 +54,11 @@ public class SupervisorAddedEmailNotificationService {
       String accessToken) {
     Long tenantId =
         tenantData != null ? tenantData.getTenantId() : resolveTenantId(sessionUser, supervisor);
-    var smtpSettings = resolveSmtpSettings(tenantId, accessToken);
-    if (smtpSettings == null) {
+    var route = resolveRoute(tenantId);
+    if (route == null) {
       return;
     }
-    String appUrl = resolveAppFrontendUrl(tenantData);
-    String themeColor = resolveThemeColor(smtpSettings);
+    String appUrl = resolveAppFrontendUrlSafely(tenantData, tenantId);
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
@@ -79,24 +66,23 @@ public class SupervisorAddedEmailNotificationService {
       // Neither the case reference nor a session-specific route reaches the advice seeker's
       // copy: both name what happened as precisely as the anonymised statement text refuses to.
       renderAndSendTeamChange(
-          smtpSettings,
+          tenantId,
+          route,
+          TenantSystemEmailDelivery.Purpose.SUPERVISOR_ADDED,
           recipientUser.getEmail(),
           "advice seeker",
           () -> {
             LanguageCode language = languageCodeOf(recipientUser);
             return renderTeamChange(
-                language,
-                askerStatementSupervisorJoined(language),
-                appUrl,
-                appUrl,
-                null,
-                themeColor);
+                language, askerStatementSupervisorJoined(language), appUrl, appUrl, null, tenantId);
           });
     }
 
     if (hasValidConsultantEmail(supervisor)) {
       renderAndSendTeamChange(
-          smtpSettings,
+          tenantId,
+          route,
+          TenantSystemEmailDelivery.Purpose.SUPERVISOR_ADDED,
           supervisor.getEmail(),
           "counsellor",
           () -> {
@@ -107,7 +93,7 @@ public class SupervisorAddedEmailNotificationService {
                 appUrl,
                 consultantChatUrl,
                 sessionId,
-                themeColor);
+                tenantId);
           });
     }
   }
@@ -121,30 +107,33 @@ public class SupervisorAddedEmailNotificationService {
       String accessToken) {
     Long tenantId =
         tenantData != null ? tenantData.getTenantId() : resolveTenantId(sessionUser, supervisor);
-    var smtpSettings = resolveSmtpSettings(tenantId, accessToken);
-    if (smtpSettings == null) {
+    var route = resolveRoute(tenantId);
+    if (route == null) {
       return;
     }
-    String appUrl = resolveAppFrontendUrl(tenantData);
-    String themeColor = resolveThemeColor(smtpSettings);
+    String appUrl = resolveAppFrontendUrlSafely(tenantData, tenantId);
     String consultantChatUrl = buildSessionUrl(appUrl, sessionId, true);
 
     User recipientUser = resolveUserWithEmail(sessionUser);
     if (hasValidUserEmail(recipientUser)) {
       renderAndSendTeamChange(
-          smtpSettings,
+          tenantId,
+          route,
+          TenantSystemEmailDelivery.Purpose.SUPERVISOR_REMOVED,
           recipientUser.getEmail(),
           "advice seeker",
           () -> {
             LanguageCode language = languageCodeOf(recipientUser);
             return renderTeamChange(
-                language, askerStatementSupervisorLeft(language), appUrl, appUrl, null, themeColor);
+                language, askerStatementSupervisorLeft(language), appUrl, appUrl, null, tenantId);
           });
     }
 
     if (hasValidConsultantEmail(supervisor)) {
       renderAndSendTeamChange(
-          smtpSettings,
+          tenantId,
+          route,
+          TenantSystemEmailDelivery.Purpose.SUPERVISOR_REMOVED,
           supervisor.getEmail(),
           "counsellor",
           () -> {
@@ -155,7 +144,7 @@ public class SupervisorAddedEmailNotificationService {
                 appUrl,
                 consultantChatUrl,
                 sessionId,
-                themeColor);
+                tenantId);
           });
     }
   }
@@ -172,13 +161,17 @@ public class SupervisorAddedEmailNotificationService {
       return;
     }
     OrisoEmailRenderer.Tone tone = OrisoEmailRenderer.Tone.of(languageCode);
-    var smtpSettings = resolveSmtpSettings(tenantId, accessToken);
-    if (smtpSettings == null) {
+    var route = resolveRoute(tenantId);
+    if (route == null) {
       return;
     }
-    String appUrl = resolveAppFrontendUrl(tenantData);
-    String themeColor = resolveThemeColor(smtpSettings);
-    sendEmailSafely(smtpSettings, newEmail, renderEmailChanged(username, appUrl, themeColor, tone));
+    String appUrl = resolveAppFrontendUrlSafely(tenantData, tenantId);
+    sendEmailSafely(
+        tenantId,
+        route,
+        TenantSystemEmailDelivery.Purpose.EMAIL_ADDRESS_CHANGED,
+        newEmail,
+        renderEmailChanged(username, appUrl, tenantId, tone));
   }
 
   private Long resolveTenantId(User sessionUser, Consultant supervisor) {
@@ -208,80 +201,77 @@ public class SupervisorAddedEmailNotificationService {
   }
 
   private void sendEmailSafely(
-      SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings smtpSettings,
+      Long tenantId,
+      TenantSystemEmailRouteService.Route route,
+      TenantSystemEmailDelivery.Purpose purpose,
       String recipientEmail,
       OrisoEmailRenderer.RenderedEmail email) {
     try {
-      sendDirectSmtpHtmlEmail(smtpSettings, recipientEmail, email);
+      emailDelivery.send(tenantId, route, purpose, recipientEmail, email);
+    } catch (TenantSystemEmailRouteService.ConfigurationException ex) {
+      log.error("System notification configuration for tenant {}: {}", tenantId, ex.getMessage());
     } catch (Exception ex) {
       log.error(
-          "Failed to send system notification email to {} with subject '{}'",
-          recipientEmail,
-          email.subject(),
-          ex);
+          "System notification delivery failed for tenant {}: {}",
+          tenantId,
+          ex.getClass().getSimpleName());
     }
   }
 
   private void renderAndSendTeamChange(
-      SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings smtpSettings,
+      Long tenantId,
+      TenantSystemEmailRouteService.Route route,
+      TenantSystemEmailDelivery.Purpose purpose,
       String recipientEmail,
       String recipientRole,
       Supplier<OrisoEmailRenderer.RenderedEmail> render) {
     try {
-      sendEmailSafely(smtpSettings, recipientEmail, render.get());
+      sendEmailSafely(tenantId, route, purpose, recipientEmail, render.get());
     } catch (Exception ex) {
-      log.error("Failed to render team-change notification for {}", recipientRole, ex);
+      log.error(
+          "Failed to render team-change notification for {}: {}",
+          recipientRole,
+          ex.getClass().getSimpleName());
     }
   }
 
-  private void sendDirectSmtpHtmlEmail(
-      SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings smtpSettings,
-      String recipientEmail,
-      OrisoEmailRenderer.RenderedEmail email)
-      throws Exception {
-    Properties props = new Properties();
-    props.put("mail.smtp.auth", "true");
-    props.put("mail.smtp.host", smtpSettings.getHost());
-    props.put("mail.smtp.port", String.valueOf(smtpSettings.getPort()));
-    if (smtpSettings.isSecure()) {
-      props.put("mail.smtp.ssl.enable", "true");
-    } else {
-      props.put("mail.smtp.starttls.enable", "true");
-    }
-
-    jakarta.mail.Session session =
-        jakarta.mail.Session.getInstance(
-            props,
-            new Authenticator() {
-              @Override
-              protected PasswordAuthentication getPasswordAuthentication() {
-                return new PasswordAuthentication(
-                    smtpSettings.getUsername(), smtpSettings.getPassword());
-              }
-            });
-
-    MimeMessage message = new MimeMessage(session);
-    message.setFrom(new InternetAddress(smtpSettings.getFrom()));
-    message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(recipientEmail));
-    message.setSubject(email.subject(), "UTF-8");
-    message.setContent(OrisoEmailMime.alternative(email));
-    log.info("Sending direct SMTP system notification email to {}", recipientEmail);
-    Transport.send(message);
-  }
-
-  private SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings resolveSmtpSettings(
-      Long tenantId, String accessToken) {
+  private TenantSystemEmailRouteService.Route resolveRoute(Long tenantId) {
     if (tenantId == null) {
       return null;
     }
-    return emailSettingsService
-        .resolveSupervisorAddedEmailSettings(tenantId, accessToken)
-        .orElse(null);
+    try {
+      return emailRoutes.resolve(tenantId).orElse(null);
+    } catch (TenantSystemEmailRouteService.ConfigurationException ex) {
+      log.error("System notification configuration for tenant {}: {}", tenantId, ex.getMessage());
+      return null;
+    } catch (RuntimeException ex) {
+      log.error(
+          "System notification route failed for tenant {}: {}",
+          tenantId,
+          ex.getClass().getSimpleName());
+      return null;
+    }
+  }
+
+  private String resolveAppFrontendUrlSafely(TenantData tenantData, Long tenantId) {
+    try {
+      return resolveAppFrontendUrl(tenantData);
+    } catch (RuntimeException failure) {
+      log.warn(
+          "Skipping system notification mail for tenant {}: frontend URL resolution failed ({})",
+          tenantId,
+          failure.getClass().getSimpleName());
+      if (failure instanceof TenantSystemEmailRouteService.ConfigurationException configuration) {
+        throw configuration;
+      }
+      throw new TenantSystemEmailRouteService.ConfigurationException(
+          "Tenant email URL resolution failed");
+    }
   }
 
   private String resolveAppFrontendUrl(TenantData tenantData) {
     if (tenantData == null) {
-      return sanitizeFrontendUrl(applicationBaseUrl);
+      return requireFrontendUrl(publicFrontendBaseUrl, "system.notification.frontend.base-url");
     }
     try {
       TenantContext.setCurrentTenantData(tenantData);
@@ -295,20 +285,40 @@ public class SupervisorAddedEmailNotificationService {
                       ::getValue)
               .filter(value -> isNotBlank(value))
               .findFirst()
-              .orElse(applicationBaseUrl);
-      return sanitizeFrontendUrl(resolved);
-    } catch (Exception ex) {
-      return sanitizeFrontendUrl(applicationBaseUrl);
+              .orElseThrow(
+                  () ->
+                      new TenantSystemEmailRouteService.ConfigurationException(
+                          "Tenant email URL is missing"));
+      String url = requireFrontendUrl(resolved, "tenant email URL");
+      if (isLocalUrl(url)) {
+        throw new TenantSystemEmailRouteService.ConfigurationException(
+            "tenant email URL must be public");
+      }
+      return url;
     } finally {
       TenantContext.clear();
     }
   }
 
-  private String sanitizeFrontendUrl(String url) {
-    if (!isNotBlank(url) || isLocalUrl(url)) {
-      return publicFrontendBaseUrl;
+  private String requireFrontendUrl(String url, String setting) {
+    if (!isNotBlank(url) || !isAbsoluteHttpUrl(url)) {
+      throw new TenantSystemEmailRouteService.ConfigurationException(
+          setting + " must be an absolute http(s) URL");
     }
     return url;
+  }
+
+  private boolean isAbsoluteHttpUrl(String url) {
+    try {
+      URI uri = URI.create(url.trim());
+      return ("http".equalsIgnoreCase(uri.getScheme()) || "https".equalsIgnoreCase(uri.getScheme()))
+          && uri.getHost() != null
+          && uri.getRawUserInfo() == null
+          && uri.getRawQuery() == null
+          && uri.getRawFragment() == null;
+    } catch (IllegalArgumentException ex) {
+      return false;
+    }
   }
 
   private boolean isLocalUrl(String url) {
@@ -318,7 +328,8 @@ public class SupervisorAddedEmailNotificationService {
       return host == null
           || "localhost".equalsIgnoreCase(host)
           || "127.0.0.1".equals(host)
-          || "::1".equals(host);
+          || "::1".equals(host)
+          || "[::1]".equals(host);
     } catch (Exception ex) {
       return true;
     }
@@ -345,8 +356,9 @@ public class SupervisorAddedEmailNotificationService {
       String appBaseUrl,
       String ctaUrl,
       Long sessionId,
-      String themeColor) {
-    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(appBaseUrl, themeColor));
+      Long tenantId) {
+    Map<String, String> values =
+        new LinkedHashMap<>(emailBrand.valuesForTenant(appBaseUrl, tenantId));
     values.put("teamChangeStatement", statement);
     values.put("caseReference", sessionId == null ? "—" : "#" + sessionId);
     values.put("teamChangedAt", LocalDateTime.now().format(TIMESTAMP));
@@ -355,14 +367,14 @@ public class SupervisorAddedEmailNotificationService {
   }
 
   private OrisoEmailRenderer.RenderedEmail renderEmailChanged(
-      String username, String appUrl, String themeColor, OrisoEmailRenderer.Tone tone) {
-    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(appUrl, themeColor));
+      String username, String appUrl, Long tenantId, OrisoEmailRenderer.Tone tone) {
+    Map<String, String> values = new LinkedHashMap<>(emailBrand.valuesForTenant(appUrl, tenantId));
     values.put("username", username);
     return emailRenderer.render("email-geaendert", tone, values);
   }
 
   private String buildSessionUrl(String baseUrl, Long sessionId, boolean consultantView) {
-    String safeBase = baseUrl == null ? "" : baseUrl.trim();
+    String safeBase = requireFrontendUrl(baseUrl, "notification frontend URL").trim();
     if (safeBase.endsWith("/")) {
       safeBase = safeBase.substring(0, safeBase.length() - 1);
     }
@@ -372,19 +384,6 @@ public class SupervisorAddedEmailNotificationService {
             ? "/sessions/consultant/sessionView/session/" + sessionPath
             : "/sessions/user/view/session/" + sessionPath;
     return safeBase + path;
-  }
-
-  private String resolveThemeColor(
-      SystemNotificationEmailSettingsService.SupervisorAddedEmailSettings smtpSettings) {
-    return resolveHexColor(
-        smtpSettings != null ? smtpSettings.getEmailThemeColor() : DEFAULT_EMAIL_THEME_COLOR);
-  }
-
-  private String resolveHexColor(String color) {
-    if (isNotBlank(color) && color.trim().matches("^#([A-Fa-f0-9]{6})$")) {
-      return color.trim();
-    }
-    return DEFAULT_EMAIL_THEME_COLOR;
   }
 
   private LanguageCode languageCodeOf(User user) {

@@ -30,10 +30,13 @@ import de.caritas.cob.userservice.api.admin.service.tenant.TenantService;
 import de.caritas.cob.userservice.api.config.apiclient.AgencyServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.ConsultingTypeServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
+import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.auth.Authority.AuthorityValue;
 import de.caritas.cob.userservice.api.config.auth.IdentityConfig;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.model.Admin;
 import de.caritas.cob.userservice.api.model.Admin.AdminType;
+import de.caritas.cob.userservice.api.model.ConsultantTopic;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.port.out.AdminRepository;
@@ -62,6 +65,7 @@ import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTe
 import de.caritas.cob.userservice.topicservice.generated.web.TopicControllerApi;
 import jakarta.persistence.EntityManager;
 import jakarta.servlet.http.Cookie;
+import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Set;
@@ -79,6 +83,7 @@ import org.springframework.boot.jdbc.test.autoconfigure.AutoConfigureTestDatabas
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
 import org.springframework.http.MediaType;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.test.context.support.WithMockUser;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.TestPropertySource;
@@ -118,6 +123,8 @@ class UserAdminControllerE2EIT {
 
   @Autowired private AdminRepository adminRepository;
 
+  @Autowired private JdbcTemplate jdbcTemplate;
+
   @Autowired private ConsultantRepository consultantRepository;
 
   @Autowired private EntityManager entityManager;
@@ -140,6 +147,8 @@ class UserAdminControllerE2EIT {
   @MockitoBean
   @Qualifier("topicControllerApiPrimary")
   private TopicControllerApi topicControllerApi;
+
+  @MockitoBean private TopicServiceApiControllerFactory topicServiceApiControllerFactory;
 
   @MockitoBean
   @Qualifier("mailsControllerApi")
@@ -188,6 +197,9 @@ class UserAdminControllerE2EIT {
     when(consultingTypeServiceApiControllerFactory.createControllerApi())
         .thenReturn(consultingTypeControllerApi);
     when(mailServiceApiControllerFactory.createControllerApi()).thenReturn(mailsControllerApi);
+    when(topicServiceApiControllerFactory.createControllerApi()).thenReturn(topicControllerApi);
+    when(topicControllerApi.getApiClient())
+        .thenReturn(new de.caritas.cob.userservice.topicservice.generated.ApiClient());
 
     CreatedIdentity keycloakResponse = new CreatedIdentity();
     keycloakResponse.setUserId(new EasyRandom().nextObject(String.class));
@@ -285,6 +297,70 @@ class UserAdminControllerE2EIT {
     entityManager.flush();
     entityManager.clear();
     assertThat(languageCodesOf(CONSULTANT_WITH_LANGUAGES_ID)).containsExactlyInAnyOrder("de", "en");
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_UPDATE})
+  void updateConsultant_Should_keepTopics_When_adminBodyOmitsTopicIds() throws Exception {
+    givenConsultantWithTopics(CONSULTANT_WITH_LANGUAGES_ID, 1L, 2L);
+    var body = adminEditBodyFor(CONSULTANT_WITH_LANGUAGES_ID);
+
+    putConsultant(CONSULTANT_WITH_LANGUAGES_ID, body).andExpect(status().isOk());
+
+    entityManager.flush();
+    entityManager.clear();
+    assertThat(topicIdsOf(CONSULTANT_WITH_LANGUAGES_ID)).containsExactlyInAnyOrder(1L, 2L);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_UPDATE})
+  void updateConsultant_Should_rejectRemovingEveryTopic_When_adminBodySendsEmptyTopicIds()
+      throws Exception {
+    givenConsultantWithTopics(CONSULTANT_WITH_LANGUAGES_ID, 1L, 2L);
+    var body = adminEditBodyFor(CONSULTANT_WITH_LANGUAGES_ID);
+    body.put("topicIds", List.of());
+
+    putConsultant(CONSULTANT_WITH_LANGUAGES_ID, body).andExpect(status().isBadRequest());
+
+    // Without the flush, a removal the service made before refusing would never reach the table.
+    entityManager.flush();
+    entityManager.clear();
+    assertThat(topicIdsOf(CONSULTANT_WITH_LANGUAGES_ID)).containsExactlyInAnyOrder(1L, 2L);
+  }
+
+  private void givenConsultantWithTopics(String consultantId, Long... topicIds) {
+    var consultant = consultantRepository.findById(consultantId).orElseThrow();
+    consultant.replaceTopics(List.of(topicIds));
+    consultantRepository.save(consultant);
+    entityManager.flush();
+  }
+
+  private LinkedHashMap<String, Object> adminEditBodyFor(String consultantId) {
+    var consultant = consultantRepository.findById(consultantId).orElseThrow();
+    var body = new LinkedHashMap<String, Object>();
+    body.put("firstname", consultant.getFirstName());
+    body.put("lastname", consultant.getLastName());
+    body.put("formalLanguage", consultant.isLanguageFormal());
+    body.put("email", consultant.getEmail());
+    body.put("absent", consultant.isAbsent());
+    body.put("rejectPendingPublicSlug", false);
+    return body;
+  }
+
+  private org.springframework.test.web.servlet.ResultActions putConsultant(
+      String consultantId, Object body) throws Exception {
+    return this.mockMvc.perform(
+        put(CONSULTANT_PATH + "/" + consultantId)
+            .cookie(CSRF_COOKIE)
+            .header(CSRF_HEADER, CSRF_VALUE)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(body)));
+  }
+
+  private Set<Long> topicIdsOf(String consultantId) {
+    return consultantRepository.findById(consultantId).orElseThrow().getConsultantTopics().stream()
+        .map(ConsultantTopic::getTopicId)
+        .collect(Collectors.toSet());
   }
 
   private Set<String> languageCodesOf(String consultantId) {
@@ -925,6 +1001,86 @@ class UserAdminControllerE2EIT {
     JSONArray embedded = JsonPath.read(contentAsString, "_embedded");
 
     assertAllElementsAreOfAdminType(embedded, AdminType.AGENCY);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.TENANT_ADMIN})
+  void searchTenantAdmins_Should_sortByUpdateDateFallingBackToCreateDate_When_fieldIsUpdateDate()
+      throws Exception {
+    when(authenticatedUser.getTenantId()).thenReturn(LAST_UPDATED_TENANT_ID);
+    givenAdminsWithLastUpdatedDates(AdminType.TENANT);
+
+    assertSearchOrder("/useradmin/tenantadmins/search", "DESC", LAST_UPDATED_DESC_ORDER);
+    assertSearchOrder("/useradmin/tenantadmins/search", "ASC", LAST_UPDATED_ASC_ORDER);
+  }
+
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.USER_ADMIN})
+  void searchAgencyAdmins_Should_sortByUpdateDateFallingBackToCreateDate_When_fieldIsUpdateDate()
+      throws Exception {
+    when(authenticatedUser.isPlatformAdmin()).thenReturn(true);
+    givenAdminsWithLastUpdatedDates(AdminType.AGENCY);
+
+    assertSearchOrder("/useradmin/agencyadmins/search", "DESC", LAST_UPDATED_DESC_ORDER);
+    assertSearchOrder("/useradmin/agencyadmins/search", "ASC", LAST_UPDATED_ASC_ORDER);
+  }
+
+  private static final Long LAST_UPDATED_TENANT_ID = 4242L;
+  private static final String LAST_UPDATED_PROBE = "lastupdatedprobe";
+  // "Zuletzt aktualisiert" = update_date, else create_date; ties broken by id.
+  private static final List<String> LAST_UPDATED_DESC_ORDER =
+      List.of("b1-sort-admin-4", "b1-sort-admin-2", "b1-sort-admin-3", "b1-sort-admin-1");
+  private static final List<String> LAST_UPDATED_ASC_ORDER =
+      List.of("b1-sort-admin-1", "b1-sort-admin-3", "b1-sort-admin-2", "b1-sort-admin-4");
+
+  private void givenAdminsWithLastUpdatedDates(AdminType type) {
+    givenAdminWithDates("b1-sort-admin-1", type, at(2020, 1), at(2020, 6));
+    givenAdminWithDates("b1-sort-admin-2", type, at(2025, 1), null);
+    givenAdminWithDates("b1-sort-admin-3", type, at(2019, 1), at(2022, 1));
+    givenAdminWithDates("b1-sort-admin-4", type, at(2025, 1), null);
+  }
+
+  private static LocalDateTime at(int year, int month) {
+    return LocalDateTime.of(year, month, 1, 12, 0);
+  }
+
+  private void givenAdminWithDates(
+      String id, AdminType type, LocalDateTime createDate, LocalDateTime updateDate) {
+    adminRepository.saveAndFlush(
+        Admin.builder()
+            .id(id)
+            .type(type)
+            .tenantId(LAST_UPDATED_TENANT_ID)
+            .username(id)
+            .firstName("First")
+            .lastName("Last")
+            .email(LAST_UPDATED_PROBE + "-" + id + "@example.com")
+            .build());
+    // Auditing stamps both dates on save; overwrite them, including a missing update date.
+    jdbcTemplate.update(
+        "UPDATE admin SET create_date = ?, update_date = ? WHERE admin_id = ?",
+        createDate,
+        updateDate,
+        id);
+  }
+
+  private void assertSearchOrder(String path, String order, List<String> expectedIds)
+      throws Exception {
+    MvcResult mvcResult =
+        this.mockMvc
+            .perform(
+                get(
+                    path
+                        + "?query="
+                        + LAST_UPDATED_PROBE
+                        + "&page=1&perPage=10&field=UPDATE_DATE&order="
+                        + order))
+            .andExpect(status().isOk())
+            .andReturn();
+
+    List<String> ids =
+        JsonPath.read(mvcResult.getResponse().getContentAsString(), "$._embedded[*]._embedded.id");
+    assertThat(ids).as("order %s", order).containsExactlyElementsOf(expectedIds);
   }
 
   private void assertAllElementsAreOfAdminType(JSONArray embedded, AdminType adminType) {

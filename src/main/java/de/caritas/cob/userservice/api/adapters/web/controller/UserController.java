@@ -248,6 +248,15 @@ public class UserController implements UsersApi {
   }
 
   /**
+   * Checks permission before the browser sends its encrypted first enquiry. Finalization rechecks
+   * permission independently.
+   */
+  @Override
+  public ResponseEntity<Void> checkEnquiryPermission(@PathVariable Long sessionId) {
+    return userRegistrationControllerDelegate.checkEnquiryPermission(sessionId);
+  }
+
+  /**
    * @param sessionId Session Id (required)
    * @param enquiryMessage Enquiry message (required)
    * @return {@link ResponseEntity} containing {@link CreateEnquiryMessageResponseDTO}
@@ -608,11 +617,12 @@ public class UserController implements UsersApi {
    * Assign a chat, resolved using its Matrix room ID or stable numeric series ID.
    *
    * @param matrixRoomId Matrix room ID or stable numeric series ID (required)
+   * @param inviteToken secret part of the invite link, required with a numeric series ID
    * @return {@link ResponseEntity} containing {@link HttpStatus}
    */
   @Override
-  public ResponseEntity<Void> assignChat(String matrixRoomId) {
-    return userChatControllerDelegate.assignChat(matrixRoomId);
+  public ResponseEntity<Void> assignChat(String matrixRoomId, String inviteToken) {
+    return userChatControllerDelegate.assignChat(matrixRoomId, inviteToken);
   }
 
   /**
