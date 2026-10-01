@@ -8,6 +8,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailRenderer.Tone;
 import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBranding;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
 import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisation;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
@@ -41,7 +42,9 @@ class InviteFrameMailRendererTest {
     "tr,Daveti kabul et"
   })
   void usesTheRequestedLanguageForTheInvitationFrame(String language, String actionLabel) {
-    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            EmailBrandingFixture.neutralWithLinks(InviteFrameMailRendererFixture.APP_BASE_URL));
     BrandedEmail mail =
         InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver)
             .render("Invitation", "Body", ACCEPT_URL, 42L, language);
@@ -52,7 +55,9 @@ class InviteFrameMailRendererTest {
 
   @Test
   void unreviewedLanguageUsesReviewedGermanFrameAndLabelsByDefault() {
-    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            EmailBrandingFixture.neutralWithLinks(InviteFrameMailRendererFixture.APP_BASE_URL));
     BrandedEmail mail =
         InviteFrameMailRendererFixture.inviteFrameMailRenderer(
                 emailBrandingResolver, SenderOrganisationFixture.platformOwner(), false)
@@ -73,7 +78,7 @@ class InviteFrameMailRendererTest {
   }
 
   private BrandedEmail render(EmailBranding branding, String subject, String body, String action) {
-    when(emailBrandingResolver.resolve(any())).thenReturn(branding);
+    when(emailBrandingResolver.resolvePendingTenant(any())).thenReturn(branding);
     return InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver)
         .render(subject, body, action, 42L, "de");
   }
@@ -86,7 +91,7 @@ class InviteFrameMailRendererTest {
   void putsTheOperatorsSubjectAndBodyInsideTheOrisoFrame() {
     BrandedEmail mail =
         render(
-            EmailBranding.neutral(),
+            EmailBrandingFixture.neutralWithLinks(InviteFrameMailRendererFixture.APP_BASE_URL),
             "Ihre Einladung zu ORISO",
             "Hallo Maren Muster,\n\nSie wurden eingeladen, ein Konto einzurichten.",
             ACCEPT_URL);
@@ -126,7 +131,7 @@ class InviteFrameMailRendererTest {
   void escapesMarkupTheOperatorTypedIntoTheBody() {
     BrandedEmail mail =
         render(
-            EmailBranding.neutral(),
+            EmailBrandingFixture.neutralWithLinks(InviteFrameMailRendererFixture.APP_BASE_URL),
             "Einladung",
             "Hallo <script>alert(1)</script> Muster",
             ACCEPT_URL);
@@ -170,7 +175,12 @@ class InviteFrameMailRendererTest {
   void footerNamesThePlatformAndItsOperator_evenWhenATraegerBrandsTheHeader() {
     BrandedEmail mail =
         render(
-            new EmailBranding("Caritasverband Musterstadt e.V.", null, "#1c4f8f", null, null),
+            new EmailBranding(
+                "Caritasverband Musterstadt e.V.",
+                null,
+                "#1c4f8f",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"),
             "Einladung",
             "Hallo",
             ACCEPT_URL);
@@ -188,7 +198,12 @@ class InviteFrameMailRendererTest {
   void rendersNoImageAtAllWhenTheTenantHasNoLogo() {
     BrandedEmail mail =
         render(
-            new EmailBranding("Träger Ohne Logo", null, "#1c4f8f", null, null),
+            new EmailBranding(
+                "Träger Ohne Logo",
+                null,
+                "#1c4f8f",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"),
             "Einladung",
             "Hallo",
             ACCEPT_URL);
@@ -204,7 +219,12 @@ class InviteFrameMailRendererTest {
   void refusesATenantColourThatWouldMakeTheButtonLabelUnreadable() {
     BrandedEmail mail =
         render(
-            new EmailBranding("Träger Gelb", null, "#f8e71c", null, null),
+            new EmailBranding(
+                "Träger Gelb",
+                null,
+                "#f8e71c",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"),
             "Einladung",
             "Hallo",
             ACCEPT_URL);
@@ -220,7 +240,11 @@ class InviteFrameMailRendererTest {
   @Test
   void dropsTheCallToActionEntirelyWhenThereIsNoActionUrl() {
     BrandedEmail mail =
-        render(EmailBranding.neutral(), "Hinweis", "Der Vertrag ist unterschrieben.", null);
+        render(
+            EmailBrandingFixture.neutralWithLinks(InviteFrameMailRendererFixture.APP_BASE_URL),
+            "Hinweis",
+            "Der Vertrag ist unterschrieben.",
+            null);
 
     assertThat(mail.html())
         .doesNotContain("Einladung annehmen")
@@ -246,7 +270,9 @@ class InviteFrameMailRendererTest {
       })
   void withoutAnActionSaysNothingAboutALinkOrAnInvitation(
       String language, String linkSentence, String invitation, String neutralNote) {
-    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            EmailBrandingFixture.neutralWithLinks(InviteFrameMailRendererFixture.APP_BASE_URL));
 
     BrandedEmail mail =
         InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver)
@@ -261,7 +287,9 @@ class InviteFrameMailRendererTest {
    */
   @Test
   void withoutAnActionTheInformalToneIsNeutralToo() {
-    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            EmailBrandingFixture.neutralWithLinks(InviteFrameMailRendererFixture.APP_BASE_URL));
 
     BrandedEmail mail =
         InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver)
@@ -293,7 +321,9 @@ class InviteFrameMailRendererTest {
       })
   void withAnActionKeepsTheLinkSecurityLineAndTheInvitationFooter(
       String language, String securityLine, String invitationNote) {
-    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            EmailBrandingFixture.neutralWithLinks(InviteFrameMailRendererFixture.APP_BASE_URL));
 
     BrandedEmail mail =
         InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver)
@@ -333,7 +363,11 @@ class InviteFrameMailRendererTest {
   @Test
   void dropsAnActionUrlThatIsNotAbsoluteHttp() {
     BrandedEmail mail =
-        render(EmailBranding.neutral(), "Einladung", "Hallo", "javascript:alert(1)");
+        render(
+            EmailBrandingFixture.neutralWithLinks(InviteFrameMailRendererFixture.APP_BASE_URL),
+            "Einladung",
+            "Hallo",
+            "javascript:alert(1)");
 
     assertThat(mail.html()).doesNotContain("javascript:").doesNotContain("Einladung annehmen");
   }
@@ -341,7 +375,9 @@ class InviteFrameMailRendererTest {
   /** English selects the English tone folder and the English frame wording. */
   @Test
   void rendersTheEnglishToneForAnEnglishInvite() {
-    when(emailBrandingResolver.resolve(any())).thenReturn(EmailBranding.neutral());
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            EmailBrandingFixture.neutralWithLinks(InviteFrameMailRendererFixture.APP_BASE_URL));
 
     BrandedEmail mail =
         InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver)
@@ -370,8 +406,14 @@ class InviteFrameMailRendererTest {
   private static final long TRAEGER_ID = 42L;
 
   private BrandedEmail renderWithSenders(SenderOrganisationResolver senderOrganisations) {
-    when(emailBrandingResolver.resolve(any()))
-        .thenReturn(new EmailBranding("Träger Nord e.V.", null, "#1c4f8f", null, null));
+    when(emailBrandingResolver.resolvePendingTenant(any()))
+        .thenReturn(
+            new EmailBranding(
+                "Träger Nord e.V.",
+                null,
+                "#1c4f8f",
+                "https://app.example.org/impressum",
+                "https://app.example.org/datenschutz"));
     return InviteFrameMailRendererFixture.inviteFrameMailRenderer(
             emailBrandingResolver, senderOrganisations)
         .render("Einladung", "Hallo", ACCEPT_URL, TRAEGER_ID, "de");

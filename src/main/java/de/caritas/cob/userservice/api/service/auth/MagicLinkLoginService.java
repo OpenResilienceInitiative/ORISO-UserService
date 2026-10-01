@@ -146,7 +146,8 @@ public class MagicLinkLoginService {
               user.getUserId(),
               user.getUsername(),
               user.getEmail(),
-              user.getMagicLinkLoginEnabled()));
+              user.getMagicLinkLoginEnabled(),
+              user.getTenantId()));
     }
 
     Optional<Consultant> consultantOptional = consultantService.findConsultantForSignIn(username);
@@ -157,7 +158,8 @@ public class MagicLinkLoginService {
               consultant.getId(),
               consultant.getUsername(),
               consultant.getEmail(),
-              consultant.getMagicLinkLoginEnabled()));
+              consultant.getMagicLinkLoginEnabled(),
+              consultant.getTenantId()));
     }
 
     return Optional.empty();
@@ -173,7 +175,7 @@ public class MagicLinkLoginService {
       AccountLoginTarget target, GlobalSmtpSettings smtpSettings) {
     try {
       String decodedUsername = new UsernameTranscoder().decodeUsername(target.getUsername());
-      String oneTimeToken = generateAndStoreToken(target.getKeycloakUserId());
+      String oneTimeToken = generateToken();
       String magicUrl = buildMagicFrontendUrl(oneTimeToken);
 
       jakarta.mail.Session session =
@@ -184,7 +186,13 @@ public class MagicLinkLoginService {
               smtpSettings.getUsername(),
               smtpSettings.getPassword());
 
-      var email = renderMagicLink(magicUrl, smtpSettings.getEmailThemeColor());
+      var email = renderMagicLink(magicUrl, target.getTenantId());
+      oneTimeTokenStore.store(
+          TOKEN_SCOPE,
+          oneTimeToken,
+          target.getKeycloakUserId(),
+          Instant.now().plus(MAGIC_LINK_TOKEN_TTL),
+          false);
       MimeMessage message = new MimeMessage(session);
       message.setFrom(new InternetAddress(smtpSettings.getFrom()));
       message.setRecipients(Message.RecipientType.TO, InternetAddress.parse(target.getEmail()));
@@ -208,22 +216,17 @@ public class MagicLinkLoginService {
    * the platform addresses German-speaking users, which was an accident of the inline copy rather
    * than a decision.
    */
-  private OrisoEmailRenderer.RenderedEmail renderMagicLink(
-      String magicUrl, String emailThemeColor) {
+  private OrisoEmailRenderer.RenderedEmail renderMagicLink(String magicUrl, Long tenantId) {
     Map<String, String> values =
-        new LinkedHashMap<>(emailBrand.values(magicLinkFrontendBaseUrl, emailThemeColor));
+        new LinkedHashMap<>(emailBrand.valuesForTenant(magicLinkFrontendBaseUrl, tenantId));
     values.put("loginUrl", magicUrl);
     values.put("expiryMinutes", String.valueOf(MAGIC_LINK_TOKEN_TTL.toMinutes()));
     return emailRenderer.render("anmeldelink", OrisoEmailRenderer.Tone.DE_FORMAL, values);
   }
 
-  private String generateAndStoreToken(String keycloakUserId) {
-    String token =
-        UUID.randomUUID().toString().replace("-", "")
-            + UUID.randomUUID().toString().replace("-", "");
-    oneTimeTokenStore.store(
-        TOKEN_SCOPE, token, keycloakUserId, Instant.now().plus(MAGIC_LINK_TOKEN_TTL), false);
-    return token;
+  private String generateToken() {
+    return UUID.randomUUID().toString().replace("-", "")
+        + UUID.randomUUID().toString().replace("-", "");
   }
 
   private String buildMagicFrontendUrl(String oneTimeToken) {
@@ -265,6 +268,7 @@ public class MagicLinkLoginService {
     String username;
     String email;
     Boolean magicLinkLoginEnabled;
+    Long tenantId;
   }
 
   public enum MagicLinkRequestResult {

@@ -46,6 +46,10 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
 
   Optional<Chat> findByMatrixRoomId(String matrixRoomId);
 
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select c from Chat c where c.id = :chatId")
+  Optional<Chat> findByIdForUpdate(@Param("chatId") Long chatId);
+
   @Query(
       "select distinct c from Chat c left join fetch c.chatAgencies where c.matrixRoomId in :room_ids")
   List<Chat> findByMatrixRoomIdIn(@Param(value = "room_ids") Set<String> matrixRoomIds);
@@ -64,6 +68,10 @@ public interface ChatRepository extends CrudRepository<Chat, Long> {
 
   @Lock(LockModeType.PESSIMISTIC_WRITE)
   List<Chat> findAllByActiveIsTrue();
+
+  @Lock(LockModeType.PESSIMISTIC_WRITE)
+  @Query("select chat from Chat chat where chat.id = :seriesId")
+  Optional<Chat> findSeriesForAppointmentMailUpdate(@Param("seriesId") Long seriesId);
 
   List<Chat> findAllByActiveIsFalseAndStartDateBetween(
       LocalDateTime startInclusive, LocalDateTime endInclusive);

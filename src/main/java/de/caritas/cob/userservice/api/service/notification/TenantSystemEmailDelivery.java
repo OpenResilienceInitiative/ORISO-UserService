@@ -23,7 +23,12 @@ public class TenantSystemEmailDelivery {
     FREE_TEXT_NOTICE,
     HANDOVER_REQUESTED,
     HANDOVER_CONFIRMED,
-    NEW_MESSAGE
+    NEW_MESSAGE,
+    CONTACT_SHEET,
+    SELF_HELP_APPOINTMENT_CONFIRMED,
+    SELF_HELP_APPOINTMENT_RESCHEDULED,
+    SELF_HELP_APPOINTMENT_CANCELLED,
+    SELF_HELP_APPOINTMENT_REMINDER
   }
 
   private final @NonNull TenantSystemEmailClient tenantClient;
@@ -59,6 +64,22 @@ public class TenantSystemEmailDelivery {
     } else {
       return platformDispatcher.send(platformSettings.requireConfigured(), recipient, email);
     }
+  }
+
+  /** Correlates a durable appointment handoff with its existing stored claim. */
+  public boolean sendConfirmed(
+      long tenantId,
+      TenantSystemEmailRouteService.Route route,
+      Purpose purpose,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email,
+      UUID correlationId) {
+    if (route.mode() == TenantSystemEmailRouteService.Mode.OWN) {
+      tenantClient.deliver(tenantId, purpose.name(), recipient, email, correlationId);
+      return true;
+    }
+    return platformDispatcher.send(
+        platformSettings.requireConfigured(), recipient, email, correlationId);
   }
 
   /** For durable reply mail, any transport exception has an uncertain SMTP outcome. */

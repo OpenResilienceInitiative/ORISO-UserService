@@ -382,7 +382,8 @@ class MagicLinkLoginServiceTest {
         .thenReturn(Optional.of(credentials));
     Map<String, String> brandValues = new HashMap<>();
     brandValues.put("appUrl", "https://app.example.org");
-    when(emailBrand.values(eq("https://app.example.org"), any())).thenReturn(brandValues);
+    when(emailBrand.valuesForTenant(eq("https://app.example.org"), eq(42L)))
+        .thenReturn(brandValues);
     when(emailRenderer.render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("subject", "<html></html>", "text"));
 
@@ -417,7 +418,26 @@ class MagicLinkLoginServiceTest {
     }
 
     verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
+    verify(emailBrand).valuesForTenant("https://app.example.org", 42L);
     verify(applicationSettingsService).getGlobalSmtpSettingsSnapshot();
+  }
+
+  @Test
+  void requestMagicLink_Should_NotStoreToken_When_TenantBrandingFails() {
+    when(userService.findUserByUsername("testuser"))
+        .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
+        .thenReturn(Optional.of(smtpCredentials("user", "pass")));
+    when(emailBrand.valuesForTenant("https://app.example.org", 42L))
+        .thenThrow(new IllegalStateException("tenant branding unavailable"));
+
+    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+
+    verify(emailBrand).valuesForTenant("https://app.example.org", 42L);
+    verify(oneTimeTokenStore, never())
+        .store(anyString(), anyString(), anyString(), any(), anyBoolean());
+    verify(emailRenderer, never()).render(anyString(), any(), any());
   }
 
   // ── consumeMagicLink — happy path returns provider-neutral session ────────
@@ -558,6 +578,7 @@ class MagicLinkLoginServiceTest {
     user.setUserId("u-1");
     user.setUsername("testuser");
     user.setEmail("real@example.com");
+    user.setTenantId(42L);
     user.setMagicLinkLoginEnabled(Boolean.TRUE);
     return user;
   }

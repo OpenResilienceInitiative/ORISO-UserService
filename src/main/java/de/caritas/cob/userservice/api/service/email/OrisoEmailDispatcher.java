@@ -28,6 +28,20 @@ public class OrisoEmailDispatcher {
     }
   }
 
+  /** A durable appointment retains the same delivery ID when handed to SMTP. */
+  public boolean send(
+      PlatformSmtpSettingsProvider.Settings smtp,
+      String recipient,
+      OrisoEmailRenderer.RenderedEmail email,
+      UUID correlationId) {
+    try {
+      sendOrThrow(smtp, recipient, email, correlationId);
+      return true;
+    } catch (RuntimeException exception) {
+      return false;
+    }
+  }
+
   /** Preserves an ambiguous SMTP outcome for callers that must never replay blindly. */
   public void sendOrThrow(
       PlatformSmtpSettingsProvider.Settings smtp,

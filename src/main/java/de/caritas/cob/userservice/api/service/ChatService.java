@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.service;
 
+import static de.caritas.cob.userservice.api.helper.CustomLocalDateTime.nowInUtc;
 import static org.apache.commons.lang3.BooleanUtils.isTrue;
 
 import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
@@ -20,6 +21,7 @@ import de.caritas.cob.userservice.api.model.ChatAgency;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserChat;
@@ -29,17 +31,17 @@ import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatConsultantAccess;
-import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
+import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokenService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatParticipantReconciliationService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.DateTimeException;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
-import java.time.LocalTime;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -63,9 +65,11 @@ public class ChatService {
   private final @NonNull ConsultantService consultantService;
   private final @NonNull GroupChatParticipantRepository groupChatParticipantRepository;
   private final @NonNull GroupChatParticipantReconciliationService participantReconciliationService;
+  private final @NonNull GroupAppointmentSeriesEventProducer appointmentEvents;
 
   private final @NonNull AgencyService agencyService;
   private final @NonNull GroupChatConsultantAccess groupChatConsultantAccess;
+  private final @NonNull GroupChatInviteTokenService groupChatInviteTokenService;
 
   /**
    * Returns a list of current chats for the provided {@link Consultant}
@@ -99,12 +103,7 @@ public class ChatService {
 
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
 
-    return chats.stream()
-        .map(
-            chat ->
-                convertChatToConsultantSessionResponseDTO(
-                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
-        .collect(Collectors.toList());
+    return toConsultantResponses(chats, chatAgenciesByChatId);
   }
 
   private boolean isVisibleToConsultant(Chat chat, Consultant consultant) {
@@ -115,9 +114,9 @@ public class ChatService {
   }
 
   private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(
-      Chat chat, Set<ChatAgency> chatAgencies) {
+      Chat chat, Set<ChatAgency> chatAgencies, String inviteToken) {
     var userChat = createUserChat(chat, chatAgencies);
-    userChat.setInviteToken(inviteTokenOf(chat));
+    userChat.setInviteToken(inviteToken);
     return new ConsultantSessionResponseDTO()
         .chat(userChat)
         .consultant(
@@ -128,17 +127,26 @@ public class ChatService {
                 .username(chat.getChatOwner().getUsername()));
   }
 
-  /** Groups created before #1237 have no token yet; the first counsellor view mints it. */
-  private String inviteTokenOf(Chat chat) {
-    if (chat.getInviteToken() == null && chat.getId() != null) {
-      chat.setInviteToken(GroupChatInviteTokens.newToken());
-      chatRepository.save(chat);
-    }
-    return chat.getInviteToken();
-  }
-
-  private ConsultantSessionResponseDTO convertChatToConsultantSessionResponseDTO(Chat chat) {
-    return convertChatToConsultantSessionResponseDTO(chat, loadChatAgencies(chat.getId()));
+  /** Legacy Series tokens are minted in one locked batch before mapping any consultant response. */
+  private List<ConsultantSessionResponseDTO> toConsultantResponses(
+      List<Chat> chats, Map<Long, Set<ChatAgency>> chatAgenciesByChatId) {
+    var missingTokenIds =
+        chats.stream()
+            .filter(chat -> chat.getInviteToken() == null)
+            .map(Chat::getId)
+            .filter(Objects::nonNull)
+            .toList();
+    var mintedTokens = groupChatInviteTokenService.tokensFor(missingTokenIds);
+    return chats.stream()
+        .map(
+            chat ->
+                convertChatToConsultantSessionResponseDTO(
+                    chat,
+                    chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of()),
+                    chat.getInviteToken() != null
+                        ? chat.getInviteToken()
+                        : mintedTokens.get(chat.getId())))
+        .collect(Collectors.toList());
   }
 
   private String[] getChatModerators(Chat chat, Set<ChatAgency> chatAgencies) {
@@ -167,6 +175,8 @@ public class ChatService {
     if (chat.getConversationType() == null) {
       chat.setConversationType(ConversationType.INTERNAL_GROUP);
     }
+    // Every chat mutation goes through here, so this is the one place to stamp it.
+    chat.setUpdateDate(nowInUtc());
     return chatRepository.save(chat);
   }
 
@@ -272,18 +282,14 @@ public class ChatService {
             .map(chatAgency -> agencyService.getAgency(chatAgency.getAgencyId()))
             .collect(Collectors.toList());
 
+    // startDate/startTime go out as wall-clock time in chat.timezone, like they come in.
+    var localStart = chat.localStartDate();
     var result =
         new UserChatDTO(
             chat.getId(),
             chat.getTopic(),
-            LocalDate.of(
-                chat.getStartDate().getYear(),
-                chat.getStartDate().getMonth(),
-                chat.getStartDate().getDayOfMonth()),
-            LocalTime.of(
-                chat.getStartDate().getHour(),
-                chat.getStartDate().getMinute(),
-                chat.getStartDate().getSecond()),
+            localStart.toLocalDate(),
+            localStart.toLocalTime().withNano(0),
             chat.getDuration(),
             isTrue(chat.isRepetitive()),
             isTrue(chat.isActive()),
@@ -412,13 +418,7 @@ public class ChatService {
 
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
 
-    var result =
-        chats.stream()
-            .map(
-                chat ->
-                    convertChatToConsultantSessionResponseDTO(
-                        chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
-            .collect(Collectors.toList());
+    var result = toConsultantResponses(chats, chatAgenciesByChatId);
 
     log.info("🔍 ChatService: Converted to {} ConsultantSessionResponseDTO", result.size());
 
@@ -451,12 +451,7 @@ public class ChatService {
         groupChatConsultantAccess.filterAccessible(
             chatRepository.findByMatrixRoomIdIn(matrixRoomIds), consultant);
     var chatAgenciesByChatId = loadChatAgenciesByChatId(chats);
-    return chats.stream()
-        .map(
-            chat ->
-                convertChatToConsultantSessionResponseDTO(
-                    chat, chatAgenciesByChatId.getOrDefault(chat.getId(), Set.of())))
-        .collect(Collectors.toList());
+    return toConsultantResponses(chats, chatAgenciesByChatId);
   }
 
   /**
@@ -499,7 +494,12 @@ public class ChatService {
               chatId));
     }
 
-    LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
+    int oldRepeatCount = appointmentEvents.seedBeforeEdit(chat);
+    Set<String> oldCounselorIds =
+        groupChatParticipantRepository.findBySeriesId(chatId).stream()
+            .map(member -> member.getConsultantId())
+            .collect(Collectors.toSet());
+
     // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
     // one when the client sends it (validated like the create path), and preserve the existing
     // zone when the DTO omits it rather than silently resetting to UTC.
@@ -512,6 +512,9 @@ public class ChatService {
       }
       chat.setTimezone(chatDTO.getTimezone());
     }
+    // Same contract as create: the request carries wall-clock time in the chat's zone.
+    LocalDateTime startDate =
+        Chat.toUtc(chatDTO.getStartDate(), chatDTO.getStartTime(), chat.zoneId());
     chat.setTopic(chatDTO.getTopic());
     chat.setDuration(chatDTO.getDuration());
     // Defaulting must match the create path (ChatConverter.convertToEntity) so editing a
@@ -540,6 +543,11 @@ public class ChatService {
 
     this.saveChat(chat);
     participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
+    appointmentEvents.recordAfterEdit(chat, oldRepeatCount);
+    groupChatParticipantRepository.findBySeriesId(chatId).stream()
+        .map(member -> member.getConsultantId())
+        .filter(id -> !oldCounselorIds.contains(id))
+        .forEach(id -> appointmentEvents.recordMemberJoined(chat, RecipientRole.COUNSELOR, id));
 
     return new UpdateChatResponseDTO().matrixRoomId(chat.getMatrixRoomId());
   }
