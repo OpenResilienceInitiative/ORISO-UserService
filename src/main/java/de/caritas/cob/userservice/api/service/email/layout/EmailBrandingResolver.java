@@ -12,6 +12,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicLong;
 import lombok.NonNull;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -69,10 +70,12 @@ public class EmailBrandingResolver {
 
   private final long cacheTtlNanos;
   private final Map<CacheKey, CachedTenant> tenantCache = new ConcurrentHashMap<>();
+  private final AtomicLong lookupSequence = new AtomicLong();
 
   private record CacheKey(Long tenantId, boolean pendingTenantAllowed) {}
 
-  private record CachedTenant(RestrictedTenantDTO tenant, long storedAtNanos) {}
+  private record CachedTenant(
+      RestrictedTenantDTO tenant, long storedAtNanos, long lookupSequence) {}
 
   /**
    * @param cacheTtlSeconds collapses the per-recipient lookups of one batch into a single remote
@@ -358,16 +361,24 @@ public class EmailBrandingResolver {
     if (cached != null && now - cached.storedAtNanos() < cacheTtlNanos) {
       return cached.tenant();
     }
+    long sequence = lookupSequence.incrementAndGet();
     RestrictedTenantDTO fresh = loadTenantUncached(tenantId, pendingTenantAllowed);
     // A null result is cached too: tenant-admin invites resolve to "no tenant yet", and that 404
     // is the normal case, not an error worth repeating once per recipient.
     synchronized (tenantCache) {
+      CachedTenant newer = tenantCache.get(key);
+      if (newer != null && newer.lookupSequence() > sequence) {
+        // An earlier lookup cannot overwrite a retained result from a later lookup. Return its
+        // own uncached result without extending the newer entry's retention or assuming a DB
+        // version.
+        return fresh;
+      }
       if (!tenantCache.containsKey(key) && tenantCache.size() >= MAX_CACHE_ENTRIES) {
         tenantCache.clear();
       }
       // Capacity check and insertion must share the lock; concurrent misses can otherwise all
       // observe space and leave more than MAX_CACHE_ENTRIES distinct tenants in the cache.
-      tenantCache.put(key, new CachedTenant(fresh, now));
+      tenantCache.put(key, new CachedTenant(fresh, System.nanoTime(), sequence));
     }
     return fresh;
   }
