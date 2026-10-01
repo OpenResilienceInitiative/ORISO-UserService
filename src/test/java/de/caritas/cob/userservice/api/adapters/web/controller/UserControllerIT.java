@@ -85,6 +85,7 @@ import de.caritas.cob.userservice.api.service.chat.GroupChatFeatureGate;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.consultingtype.TopicService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
 import de.caritas.cob.userservice.api.service.session.SessionConsentService;
 import de.caritas.cob.userservice.api.service.session.SessionService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
@@ -434,6 +435,8 @@ class UserControllerIT {
   @MockitoBean
   @SuppressWarnings("unused")
   private EventNotificationService eventNotificationService;
+
+  @MockitoBean private RequestedContactSheetService requestedContactSheetService;
 
   @BeforeEach
   void setUp() {
