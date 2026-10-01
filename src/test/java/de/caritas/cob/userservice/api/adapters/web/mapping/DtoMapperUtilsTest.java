@@ -8,6 +8,6 @@ class DtoMapperUtilsTest implements DtoMapperUtils {
 
   @Test
   void mappedFieldOf_Should_MapUpdateDate() {
-    assertThat(mappedFieldOf("UPDATE_DATE")).isEqualTo("updateDate");
+    assertThat(mappedFieldOf("UPDATE_DATE")).isEqualTo("lastUpdated");
   }
 }

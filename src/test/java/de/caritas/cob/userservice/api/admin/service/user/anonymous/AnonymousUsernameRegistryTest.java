@@ -3,6 +3,7 @@ package de.caritas.cob.userservice.api.admin.service.user.anonymous;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.CONSULTANT;
 import static de.caritas.cob.userservice.api.testHelper.TestConstants.USER;
 import static org.hamcrest.CoreMatchers.is;
+import static org.hamcrest.CoreMatchers.sameInstance;
 import static org.hamcrest.MatcherAssert.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
@@ -19,6 +20,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityUsernameAvailability;
 import de.caritas.cob.userservice.api.service.ConsultantService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
+import de.caritas.cob.userservice.api.tenant.TenantData;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Optional;
@@ -65,6 +67,25 @@ class AnonymousUsernameRegistryTest {
     ArgumentCaptor<String> argumentCaptor = ArgumentCaptor.forClass(String.class);
     verify(usernameTranscoder, times(1)).encodeUsername(argumentCaptor.capture());
     assertThat(argumentCaptor.getValue(), is("Ratsuchende_r 3"));
+  }
+
+  @Test
+  void generateUniqueUsername_Should_CheckUsernamesAcrossTenants_AndRestoreTheCallersTenantData() {
+    setIdRegistryField(new LinkedList<>());
+    var callers = new TenantData(null, "synthetic");
+    TenantContext.setCurrentTenantData(callers);
+    var lookedUpIn = new java.util.concurrent.atomic.AtomicReference<Long>();
+    when(userService.findUserByUsername(any()))
+        .thenAnswer(
+            call -> {
+              lookedUpIn.set(TenantContext.getCurrentTenant());
+              return Optional.empty();
+            });
+
+    anonymousUsernameRegistry.generateUniqueUsername();
+
+    assertThat(lookedUpIn.get(), is(TenantContext.TECHNICAL_TENANT_ID));
+    assertThat(TenantContext.getCurrentTenantData(), is(sameInstance(callers)));
   }
 
   @SuppressWarnings("unchecked")

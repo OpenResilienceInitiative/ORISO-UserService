@@ -19,8 +19,7 @@ import org.springframework.stereotype.Component;
 /**
  * Renders an operator-authored invite mail inside the ORISO e-mail frame.
  *
- * <p>This replaces the hand-written layout under {@code classpath:email/layout/} for the invite
- * path: the frame is now the same design-system template every other ORISO mail uses ({@code
+ * <p>The frame uses the canonical design-system template ({@code
  * emails/{tone}/einladung-freitext.html}, ADR-020), and the operator's subject and body are the
  * only content in it. The order inside the card is header → subject → authored body → call to
  * action → copy-paste fallback line → footer.
@@ -78,7 +77,9 @@ public class InviteFrameMailRenderer {
   /** As above, with the frame wording already chosen; lets a test reach every catalogue tone. */
   BrandedEmail render(
       String subject, String bodyContent, String primaryActionUrl, Long tenantId, Labels labels) {
-    EmailBranding branding = emailBrandingResolver.resolve(tenantId);
+    // Keep the invitation's labels in the same approved language as the template frame.
+    labels = Labels.of(orisoEmailRenderer.deliveryTone(labels.tone()));
+    EmailBranding branding = emailBrandingResolver.resolvePendingTenant(tenantId);
 
     String safeSubject = isBlank(subject) ? "" : subject.trim();
     String bodyHtml = sanitizer.toContentHtml(bodyContent, branding.linkColor());
@@ -179,19 +180,70 @@ public class InviteFrameMailRenderer {
                 + " reply to it.",
             "This email was sent automatically. Please do not reply to it.");
 
+    private static final Labels FRENCH =
+        new Labels(
+            Tone.FR,
+            "Accepter l’invitation",
+            "Si le bouton ne fonctionne pas, copiez ce lien dans votre navigateur :",
+            "Nous ne vous demanderons jamais votre mot de passe par e-mail. Ne transmettez ce lien à personne.",
+            "Cet e-mail fait partie de votre invitation et ne peut pas être désactivé. Merci de ne pas y répondre.",
+            "Cet e-mail a été envoyé automatiquement. Merci de ne pas y répondre.");
+
+    private static final Labels RUSSIAN =
+        new Labels(
+            Tone.RU,
+            "Принять приглашение",
+            "Если кнопка не работает, скопируйте эту ссылку в браузер:",
+            "Мы никогда не запрашиваем ваш пароль по электронной почте. Никому не передавайте эту ссылку.",
+            "Это письмо связано с вашим приглашением, и от него нельзя отписаться. Пожалуйста, не отвечайте на него.",
+            "Это письмо отправлено автоматически. Пожалуйста, не отвечайте на него.");
+
+    private static final Labels TIGRINYA =
+        new Labels(
+            Tone.TI,
+            "ዕድመ ተቐበሉ",
+            "እታ መጠወቒ እንተዘይሰሪሓ፣ ነዚ መላግቦ ናብ መርበብ መርኣዪኹም ቅድሑዎ፦",
+            "ብኢመይል ምስጢራዊ ቃልኩም ፈጺምና ኣይንሓትትን። ነዚ መላግቦ ንኻልእ ሰብ ኣይትሃቡዎ።",
+            "እዛ ኢመይል ናይ ዕድመኹም ኣካል እያ፣ ምስራዛ ኣይከኣልን። በጃኹም ኣይትምልሱላ።",
+            "እዛ ኢመይል ብራስ ሰዲድናያ። በጃኹም ኣይትምልሱላ።");
+
+    private static final Labels TURKISH =
+        new Labels(
+            Tone.TR,
+            "Daveti kabul et",
+            "Düğme çalışmazsa bu bağlantıyı tarayıcınıza kopyalayın:",
+            "Şifrenizi hiçbir zaman e-postayla istemeyiz. Bu bağlantıyı kimseyle paylaşmayın.",
+            "Bu e-posta davetinizin bir parçasıdır ve abonelikten çıkılamaz. Lütfen yanıtlamayın.",
+            "Bu e-posta otomatik olarak gönderildi. Lütfen yanıtlamayın.");
+
     static Labels of(Tone tone) {
       return switch (tone) {
         case EN -> ENGLISH;
+        case FR -> FRENCH;
+        case RU -> RUSSIAN;
+        case TI -> TIGRINYA;
+        case TR -> TURKISH;
         case DE_INFORMAL -> GERMAN_INFORMAL;
         case DE_FORMAL -> GERMAN;
       };
     }
 
     static Labels forLanguage(String language) {
-      if (language != null && language.trim().toLowerCase(Locale.ROOT).startsWith("en")) {
-        return ENGLISH;
-      }
-      return GERMAN;
+      if (language == null) return GERMAN; // Explicit platform invite default.
+      String normalized = language.trim().toLowerCase(Locale.ROOT);
+      if ("de@informal".equals(normalized)) return GERMAN_INFORMAL;
+      String code = normalized.split("[-@]", 2)[0];
+      return switch (code) {
+        case "de" -> GERMAN;
+        case "en" -> ENGLISH;
+        case "fr" -> FRENCH;
+        case "ru" -> RUSSIAN;
+        case "ti" -> TIGRINYA;
+        case "tr" -> TURKISH;
+        default ->
+            throw new IllegalArgumentException(
+                "Invitation language has no installed template: " + language);
+      };
     }
   }
 }

@@ -21,10 +21,16 @@ public interface ConsultantRepository
   @Query("select c from Consultant c where c.id = :id")
   Optional<Consultant> findPictureOwnerForUpdate(@Param("id") String id);
 
+  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+  @Query("select c from Consultant c where c.id = :id and c.deleteDate is null")
+  Optional<Consultant> findActiveByIdForUpdate(@Param("id") String id);
+
   @EntityGraph(attributePaths = {"consultantAgencies", "languages"})
   Optional<Consultant> findByIdAndDeleteDateIsNull(String id);
 
   Optional<Consultant> findByEmailAndDeleteDateIsNull(String email);
+
+  List<Consultant> findAllByEmailAndDeleteDateIsNull(String email);
 
   Optional<Consultant> findByUsernameAndDeleteDateIsNull(String username);
 
@@ -77,7 +83,7 @@ public interface ConsultantRepository
   @Query(
       value =
           "SELECT c.id as id, c.firstName as firstName, c.lastName as lastName, c.email as email, "
-              + "c.updateDate as updateDate "
+              + "c.updateDate as updateDate, COALESCE(c.updateDate, c.createDate) as lastUpdated "
               + "FROM Consultant c "
               + "WHERE "
               + "  c.deleteDate IS NULL "
@@ -99,7 +105,7 @@ public interface ConsultantRepository
   @Query(
       value =
           "SELECT distinct c.id as id, c.firstName as firstName, c.lastName as lastName, "
-              + "c.email as email, c.updateDate as updateDate "
+              + "c.email as email, c.updateDate as updateDate, COALESCE(c.updateDate, c.createDate) as lastUpdated "
               + "FROM Consultant c "
               + "INNER JOIN ConsultantAgency ca ON c.id = ca.consultant.id "
               + "WHERE "

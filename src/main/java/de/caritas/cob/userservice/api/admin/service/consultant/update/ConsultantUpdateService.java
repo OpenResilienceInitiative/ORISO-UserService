@@ -17,6 +17,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.model.ConsultantAvatars;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.Session.SessionStatus;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdate;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileUpdater;
@@ -29,7 +30,6 @@ import de.caritas.cob.userservice.api.service.notification.EventNotificationServ
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Objects;
-import java.util.Set;
 import java.util.stream.Collectors;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
@@ -87,6 +87,7 @@ public class ConsultantUpdateService {
 
     consultantTopicAgencyCompatibilityValidator.validateTopicUpdateAgainstAssignedAgencies(
         consultant.getId(), updateConsultantDTO.getTopicIds(), consultant.getTenantId());
+    rejectRemovingTheLastTopic(consultant, updateConsultantDTO.getTopicIds());
 
     boolean identityDataChanged = identityDataChanged(consultant, updateConsultantDTO);
     boolean appointmentDataChanged =
@@ -219,11 +220,12 @@ public class ConsultantUpdateService {
     consultant.setLastName(updateConsultantDTO.getLastname());
     consultant.setEmail(updateConsultantDTO.getEmail());
     consultant.setLanguageFormal(updateConsultantDTO.getFormalLanguage());
-    consultant.setLanguages(languagesOf(updateConsultantDTO, consultant));
+    applyLanguages(updateConsultantDTO, consultant);
     consultant.setAbsent(updateConsultantDTO.getAbsent());
     consultant.setAbsenceMessage(updateConsultantDTO.getAbsenceMessage());
     applyPersonalInfo(updateConsultantDTO, consultant);
     consultant.replaceTopics(updateConsultantDTO.getTopicIds());
+    applyTopicPermission(updateConsultantDTO, consultant);
     // Always update supervisor field if provided (even if false)
     if (updateConsultantDTO.getIsSupervisor() != null) {
       consultant.setSupervisor(updateConsultantDTO.getIsSupervisor());
@@ -249,6 +251,23 @@ public class ConsultantUpdateService {
     }
 
     return this.consultantService.saveConsultant(consultant);
+  }
+
+  /** Older accounts without any topic stay editable: an empty list is then no change. */
+  private static void rejectRemovingTheLastTopic(Consultant consultant, List<Long> topicIds) {
+    if (topicIds == null || topicIds.stream().anyMatch(Objects::nonNull)) {
+      return;
+    }
+    if (consultant.getConsultantTopics() != null && !consultant.getConsultantTopics().isEmpty()) {
+      throw new BadRequestException("At least one topic is required");
+    }
+  }
+
+  /** Null leaves it untouched. The invite table reads this value; it is stored only here. */
+  private void applyTopicPermission(UpdateAdminConsultantDTO dto, Consultant consultant) {
+    if (dto.getTopicPermission() != null) {
+      consultant.setTopicPermission(TopicPermission.valueOf(dto.getTopicPermission().getValue()));
+    }
   }
 
   /**
@@ -350,16 +369,21 @@ public class ConsultantUpdateService {
     consultant.setAssignedSupervisorId(assignedSupervisorId);
   }
 
-  private Set<Language> languagesOf(
-      UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant) {
+  /**
+   * Omitted, null and empty all leave the stored languages untouched. The generated DTO defaults
+   * {@code languages} to {@code []}, so an omitted field arrives as an empty list — and the Admin
+   * edit form never sends it. Treating that as "clear" wiped every counsellor's languages.
+   */
+  private void applyLanguages(UpdateAdminConsultantDTO updateConsultantDTO, Consultant consultant) {
     var languages = updateConsultantDTO.getLanguages();
-
-    return isNull(languages)
-        ? Set.of()
-        : languages.stream()
+    if (isNull(languages) || languages.isEmpty()) {
+      return;
+    }
+    consultant.setLanguages(
+        languages.stream()
             .map(LanguageCode::getByCode)
             .map(languageCode -> new Language(consultant, languageCode))
-            .collect(Collectors.toSet());
+            .collect(Collectors.toSet()));
   }
 
   /**
