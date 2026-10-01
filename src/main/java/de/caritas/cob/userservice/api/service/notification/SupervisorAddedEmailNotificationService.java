@@ -1,8 +1,10 @@
 package de.caritas.cob.userservice.api.service.notification;
 
+import static org.apache.commons.lang3.StringUtils.isBlank;
 import static org.apache.commons.lang3.StringUtils.isNotBlank;
 
 import com.neovisionaries.i18n.LanguageCode;
+import de.caritas.cob.userservice.api.helper.UsernameTranscoder;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.service.email.OrisoEmailBrand;
@@ -369,7 +371,9 @@ public class SupervisorAddedEmailNotificationService {
   private OrisoEmailRenderer.RenderedEmail renderEmailChanged(
       String username, String appUrl, Long tenantId, OrisoEmailRenderer.Tone tone) {
     Map<String, String> values = new LinkedHashMap<>(emailBrand.valuesForTenant(appUrl, tenantId));
-    values.put("username", username);
+    values.put(
+        "username",
+        isBlank(username) ? username : new UsernameTranscoder().decodeUsername(username));
     return emailRenderer.render("email-geaendert", tone, values);
   }
 
