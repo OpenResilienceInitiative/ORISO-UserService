@@ -45,6 +45,8 @@ import org.springframework.web.client.HttpClientErrorException;
 public class CreateSessionFacade {
 
   private final @NonNull SessionService sessionService;
+  private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
+      dpaPolicy;
   private final @NonNull AgencyVerifier agencyVerifier;
   private final @NonNull SessionDataService sessionDataService;
   private final @NonNull RollbackFacade rollbackFacade;
@@ -75,6 +77,10 @@ public class CreateSessionFacade {
 
     var agencyDTO = obtainVerifiedAgency(userDTO, extendedConsultingTypeResponseDTO);
     verifyAgencyServesMainTopic(userDTO, agencyDTO);
+    var groupChat = extendedConsultingTypeResponseDTO.getGroupChat();
+    if (groupChat == null || !isTrue(groupChat.getIsGroupChat())) {
+      dpaPolicy.requireForAgency(agencyDTO);
+    }
 
     if (validationConstraints.contains(
         NewSessionValidationConstraint.ONE_SESSION_PER_TOPIC_ID_AND_AGENCY_ID)) {
@@ -129,6 +135,8 @@ public class CreateSessionFacade {
       ExtendedConsultingTypeResponseDTO extendedConsultingTypeResponseDTO,
       Consultant consultant) {
     var agencyDTO = obtainVerifiedAgency(userDTO, extendedConsultingTypeResponseDTO);
+    // Direct creation commences counselling immediately; check before persisting it.
+    dpaPolicy.requireForAgency(agencyDTO);
     var session =
         sessionService.initializeDirectSession(
             consultant, user, userDTO, agencyDTO.getTeamAgency());
