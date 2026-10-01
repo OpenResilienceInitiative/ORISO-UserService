@@ -14,6 +14,7 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import jakarta.annotation.PreDestroy;
@@ -343,7 +344,14 @@ public class DpaSignedNoticeService {
       // the layout would render a second CTA button on top of it. InviteEmailPreviewService passes
       // null for this kind, so passing the Admin URL here made the delivered mail carry a button
       // the operator never saw in the preview.
-      inviteMailDispatchService.send(recipient.email(), subject, body, null, tenantId, language);
+      inviteMailDispatchService.send(
+          recipient.email(),
+          subject,
+          body,
+          null,
+          tenantId,
+          language,
+          InviteMailOrigin.of(tenantId, TenantSystemEmailDelivery.Purpose.DPA_SIGNED_NOTICE));
     } catch (RuntimeException beforeDispatch) {
       // Every failure up to the handoff, not only SmtpSendException: a template load, the
       // tenant-name lookup or the rendering can fail too, and a stranded claim silently disables

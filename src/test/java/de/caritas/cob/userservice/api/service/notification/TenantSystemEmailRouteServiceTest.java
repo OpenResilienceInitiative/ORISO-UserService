@@ -113,4 +113,47 @@ class TenantSystemEmailRouteServiceTest {
         .thenReturn(Map.of("settings", Map.of("featureSystemNotificationEmailsEnabled", false)));
     assertThat(new TenantSystemEmailRouteService(client).resolve(40L)).isEmpty();
   }
+
+  @Test
+  void transportForAlwaysSentMailsIgnoresTheNotificationSwitch() {
+    when(client.readTenant(40L))
+        .thenReturn(
+            Map.of(
+                "settings",
+                Map.of(
+                    "featureSystemNotificationEmailsEnabled",
+                    false,
+                    "smtpMode",
+                    "OWN",
+                    "smtp",
+                    Map.of(
+                        "enabled",
+                        true,
+                        "host",
+                        "smtp.tenant.example",
+                        "port",
+                        587,
+                        "secure",
+                        false,
+                        "username",
+                        "sender",
+                        "from",
+                        "sender@tenant.example",
+                        "passwordSet",
+                        true))));
+    var routes = new TenantSystemEmailRouteService(client);
+
+    assertThat(routes.resolveTransport(40L).mode())
+        .isEqualTo(TenantSystemEmailRouteService.Mode.OWN);
+    assertThat(routes.resolve(40L)).isEmpty();
+  }
+
+  @Test
+  void transportWithoutTenantIsThePlatformWithoutAnyRead() {
+    var routes = new TenantSystemEmailRouteService(client);
+
+    assertThat(routes.resolveTransport(null).mode())
+        .isEqualTo(TenantSystemEmailRouteService.Mode.PLATFORM);
+    org.mockito.Mockito.verifyNoInteractions(client);
+  }
 }

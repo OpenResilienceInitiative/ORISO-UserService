@@ -27,6 +27,7 @@ import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailTemplateKind;
 import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailDispatchService;
+import de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.tenantadminservice.generated.web.model.DpaSignatureDTO;
 import de.caritas.cob.userservice.tenantservice.generated.web.model.RestrictedTenantDTO;
@@ -173,7 +174,8 @@ class DpaSignedNoticeServiceTest {
             // button the operator never saw in the preview is the drift this asserts against
             isNull(),
             eq(TENANT_ID),
-            eq("en"));
+            eq("en"),
+            any());
     // the account language wins
     assertTrue(subject.getValue().contains("Contract documents confirmed"));
     // tenant, version, timestamp and signer as recorded
@@ -206,7 +208,8 @@ class DpaSignedNoticeServiceTest {
             body.capture(),
             isNull(),
             eq(TENANT_ID),
-            eq("de"));
+            eq("de"),
+            any());
     assertThat(subject.getValue()).isEqualTo("Vertragsunterlagen bestätigt – Träger Nord e.V.");
     assertThat(body.getValue())
         .contains("die Vertragsunterlagen für Träger Nord e.V. wurden bestätigt.")
@@ -252,7 +255,16 @@ class DpaSignedNoticeServiceTest {
 
     var body = ArgumentCaptor.forClass(String.class);
     verify(inviteMailDispatchService)
-        .send(eq("toni@example.org"), any(), body.capture(), isNull(), eq(TENANT_ID), eq("de"));
+        .send(
+            eq("toni@example.org"),
+            any(),
+            body.capture(),
+            isNull(),
+            eq(TENANT_ID),
+            eq("de"),
+            eq(
+                InviteMailOrigin.of(
+                    TENANT_ID, TenantSystemEmailDelivery.Purpose.DPA_SIGNED_NOTICE)));
     return body.getValue();
   }
 
@@ -272,7 +284,7 @@ class DpaSignedNoticeServiceTest {
 
     // then: the onboarding contact address, default language
     verify(inviteMailDispatchService)
-        .send(eq("wizard.admin@example.org"), any(), any(), any(), eq(TENANT_ID), eq("de"));
+        .send(eq("wizard.admin@example.org"), any(), any(), any(), eq(TENANT_ID), eq("de"), any());
     verify(adminRepository, never()).findById(anyString());
   }
 
@@ -290,7 +302,8 @@ class DpaSignedNoticeServiceTest {
     service.onSignatureHint(TENANT_ID);
 
     verify(noticeRepository).delete(any(DpaSignedNotice.class));
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -332,7 +345,7 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService).send(any(), any(), any(), any(), any(), any(), any());
     verify(noticeRepository, never()).delete(any(DpaSignedNotice.class));
   }
 
@@ -343,7 +356,8 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
     verify(noticeRepository, never()).save(any());
     // the notice chain must only ever stamp verified FORWARDED_EXTERNAL signatures - the
     // self-sign path stamps its own invite at registration
@@ -357,7 +371,8 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
     // a pending forward is NOT a signature: a reordering that stamps before the SIGNED filter
     // would mark unsigned DPAs as signed on the Admin board
     verify(accountInviteRepository, never()).markDpaSigned(any(), any(), any());
@@ -370,7 +385,8 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
     verify(accountInviteRepository, never()).markDpaSigned(any(), any(), any());
   }
 
@@ -384,7 +400,8 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
   }
 
   @Test
@@ -392,7 +409,7 @@ class DpaSignedNoticeServiceTest {
     // given the SMTP handover fails after the claim was taken
     givenSignatures(forwardedSignature("kc-admin-1"));
     when(adminRepository.findById("kc-admin-1")).thenReturn(Optional.of(forwardingAdmin()));
-    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any(), any()))
         .thenThrow(new SmtpSendException("smtp down"));
 
     service.onSignatureHint(TENANT_ID);
@@ -411,7 +428,8 @@ class DpaSignedNoticeServiceTest {
 
     service.onSignatureHint(TENANT_ID);
 
-    verify(inviteMailDispatchService, never()).send(any(), any(), any(), any(), any(), any());
+    verify(inviteMailDispatchService, never())
+        .send(any(), any(), any(), any(), any(), any(), any());
     verify(noticeRepository, never()).save(any());
   }
 
@@ -510,7 +528,7 @@ class DpaSignedNoticeServiceTest {
             eq(AccountInviteTargetRole.TENANT_ADMIN),
             any(java.time.LocalDateTime.class));
     verify(inviteMailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), any(), anyLong(), anyString());
+        .send(anyString(), anyString(), anyString(), any(), anyLong(), anyString(), any());
   }
 
   @Test
@@ -532,6 +550,6 @@ class DpaSignedNoticeServiceTest {
             eq(AccountInviteTargetRole.TENANT_ADMIN),
             any(java.time.LocalDateTime.class));
     verify(inviteMailDispatchService, never())
-        .send(anyString(), anyString(), anyString(), any(), anyLong(), anyString());
+        .send(anyString(), anyString(), anyString(), any(), anyLong(), anyString(), any());
   }
 }

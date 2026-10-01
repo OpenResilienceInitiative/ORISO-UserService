@@ -63,7 +63,11 @@ class InviteEmailPreviewServiceTest {
             de.caritas.cob.userservice.api.service.email.PlatformSmtpSettingsFixture.configured(
                 "smtp-user", "smtp-pass"),
             inviteMailTransport,
-            InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver));
+            InviteFrameMailRendererFixture.inviteFrameMailRenderer(emailBrandingResolver),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .platformRoutes(),
+            de.caritas.cob.userservice.api.service.accountinvite.mail.TenantMailRoutingFixture
+                .unusedRelay());
     previewService =
         new InviteEmailPreviewService(
             templateRepository,
@@ -153,7 +157,16 @@ class InviteEmailPreviewServiceTest {
             new PreviewCommand(
                 null, InviteEmailTemplateKind.TENANT_INVITE, subject, body, null, "de"));
 
-    dispatchService.send("to@example.org", subject, body, preview.sampleAcceptUrl(), null, "de");
+    dispatchService.send(
+        "to@example.org",
+        subject,
+        body,
+        preview.sampleAcceptUrl(),
+        null,
+        "de",
+        de.caritas.cob.userservice.api.service.accountinvite.mail.InviteMailOrigin.platform(
+            de.caritas.cob.userservice.api.service.notification.TenantSystemEmailDelivery.Purpose
+                .ACCOUNT_INVITE));
 
     ArgumentCaptor<String> html = ArgumentCaptor.forClass(String.class);
     ArgumentCaptor<String> text = ArgumentCaptor.forClass(String.class);
