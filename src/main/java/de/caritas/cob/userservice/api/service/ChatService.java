@@ -495,6 +495,8 @@ public class ChatService {
     }
 
     LocalDateTime startDate = LocalDateTime.of(chatDTO.getStartDate(), chatDTO.getStartTime());
+    // Materialize required values before reconciliation can write to Matrix.
+    int duration = chatDTO.getDuration();
     // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
     // one when the client sends it (validated like the create path), and preserve the existing
     // zone when the DTO omits it rather than silently resetting to UTC.
@@ -505,10 +507,15 @@ public class ChatService {
         throw new BadRequestException(
             "Invalid timezone: " + chatDTO.getTimezone(), invalidTimezone);
       }
+    }
+
+    participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
+
+    if (chatDTO.getTimezone() != null && !chatDTO.getTimezone().isBlank()) {
       chat.setTimezone(chatDTO.getTimezone());
     }
     chat.setTopic(chatDTO.getTopic());
-    chat.setDuration(chatDTO.getDuration());
+    chat.setDuration(duration);
     // Defaulting must match the create path (ChatConverter.convertToEntity) so editing a
     // repetitive series without re-sending repeatCount does not silently drop it to a single
     // occurrence: default 12 for repetitive, derive repetitive + interval from repeatCount > 1.
@@ -534,7 +541,6 @@ public class ChatService {
     chat.setGroupChatRulesTranslations(chatDTO.getGroupChatRulesTranslations());
 
     this.saveChat(chat);
-    participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
 
     return new UpdateChatResponseDTO().matrixRoomId(chat.getMatrixRoomId());
   }

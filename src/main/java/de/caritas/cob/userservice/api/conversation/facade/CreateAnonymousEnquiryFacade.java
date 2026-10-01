@@ -25,6 +25,8 @@ import org.springframework.stereotype.Service;
 public class CreateAnonymousEnquiryFacade {
 
   private final @NonNull AnonymousUserCreatorService anonymousUserCreatorService;
+  private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
+      dpaPolicy;
   private final @NonNull AnonymousConversationCreatorService anonymousConversationCreatorService;
   private final @NonNull AnonymousUsernameRegistry usernameRegistry;
   private final @NonNull UserHelper userHelper;
@@ -62,6 +64,7 @@ public class CreateAnonymousEnquiryFacade {
       checkIfConsultingTypeHasAnonymousConsulting(createAnonymousEnquiryDTO.getConsultingType());
     }
 
+    dpaPolicy.requireForTenant(TenantContext.getCurrentTenant());
     var userDto = buildUserDto(createAnonymousEnquiryDTO);
     AnonymousUserCredentials credentials = anonymousUserCreatorService.createAnonymousUser(userDto);
     var session =

@@ -245,9 +245,9 @@ class ApplicationSettingsServiceTest {
   private GlobalSmtpTestEmailController diagnosticController() {
     var renderer = org.mockito.Mockito.mock(OrisoEmailRenderer.class);
     var brand = org.mockito.Mockito.mock(OrisoEmailBrand.class);
+    var provider = new PlatformSmtpSettingsProvider(applicationSettingsService);
     return new GlobalSmtpTestEmailController(
-        new GlobalSmtpTestEmailService(
-            renderer, brand, new PlatformSmtpSettingsProvider(applicationSettingsService)));
+        new GlobalSmtpTestEmailService(renderer, brand, provider), provider);
   }
 
   private static GlobalSmtpTestEmailDTO diagnosticRequest() {
