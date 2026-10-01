@@ -29,11 +29,18 @@ class ReplicaSafetyInventoryContractTest {
           "agency-cache",
           "consulting-type-cache",
           "application-settings-cache",
+          "email-branding-cache",
           "tenant-cache",
           "tenant-admin-cache",
           "topics-cache",
           "operator-dpa-content-cache",
+          "platform-operator-organisation-cache",
+          "traeger-organisation-cache",
           "account-invite-reservation-release-scheduler",
+          "account-invite-expiry-number-release-scheduler",
+          "case-handover-policy-cache-refresh",
+          "case-handover-co-access-expiry",
+          "case-handover-matrix-repair",
           "appointment-cleanup-scheduler",
           "enquiry-notification-scheduler",
           "group-chat-deactivation-scheduler",
@@ -45,9 +52,11 @@ class ReplicaSafetyInventoryContractTest {
           "registered-only-deletion-scheduler",
           "handshake-expiry-scheduler",
           "support-room-expiry-scheduler",
+          "reply-email-delivery-scheduler",
           "event-notification-retention-scheduler",
           "team-discussion-retention-scheduler",
-          "team-discussion-orphan-cleanup-scheduler");
+          "team-discussion-orphan-cleanup-scheduler",
+          "team-discussion-access-repair");
 
   @Test
   void shouldInventoryEveryKnownReplicaLocalComponentWithAnActionableSignal() throws Exception {

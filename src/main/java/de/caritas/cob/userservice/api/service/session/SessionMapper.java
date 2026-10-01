@@ -272,7 +272,9 @@ public class SessionMapper {
             .username(sessionConsultant.getUsername())
             .displayName(sessionConsultant.getDisplayName())
             .isAbsent(sessionConsultant.isAbsent())
-            .absenceMessage(sessionConsultant.getAbsenceMessage());
+            .absenceMessage(sessionConsultant.getAbsenceMessage())
+            .avatarKind(sessionConsultant.getAvatarKind())
+            .avatarId(sessionConsultant.getAvatarId());
     return response.consultant(consultant.build());
   }
 

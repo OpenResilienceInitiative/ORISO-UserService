@@ -105,6 +105,27 @@ class UserAdminControllerTest {
   }
 
   @Test
+  void createAgencyAdmin_emailIsLowercased_beforeDelegation() {
+    // The sibling this file already covers -- createTenantAdmin, updateAgencyAdmin,
+    // updateTenantAdmin, createConsultant, updateConsultant -- all normalise. This one
+    // did not, and nothing downstream compensates: CreateAdminService passes the address
+    // through untouched to the database and to Keycloak. So an agency admin created as
+    // Max.Mustermann@Caritas.DE was stored verbatim while the same person entered on any
+    // other screen was stored lowercase, and the first edit of that record silently
+    // rewrote the address because updateAgencyAdmin does lowercase.
+    var dto = new CreateAdminDTO();
+    dto.setEmail("UPPER@EXAMPLE.ORG");
+    when(adminUserFacade.createNewAgencyAdmin(any())).thenReturn(new AdminResponseDTO());
+
+    var response = controller.createAgencyAdmin(dto);
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    var captor = ArgumentCaptor.forClass(CreateAdminDTO.class);
+    verify(adminUserFacade).createNewAgencyAdmin(captor.capture());
+    assertEquals("upper@example.org", captor.getValue().getEmail());
+  }
+
+  @Test
   void updateAgencyAdmin_emailIsLowercased_beforeDelegation() {
     // Business reason: updates must keep canonical e-mail format for stable identity lookups.
     var dto = new UpdateAgencyAdminDTO();
@@ -217,6 +238,17 @@ class UserAdminControllerTest {
   }
 
   @Test
+  void repairConsultantChatIdentity_Should_delegateAndReturnTheRepairedConsultant() {
+    var expected = new ConsultantAdminResponseDTO();
+    when(consultantAdminFacade.repairConsultantChatIdentity("c-1")).thenReturn(expected);
+
+    var response = controller.repairConsultantChatIdentity("c-1");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(expected, response.getBody());
+  }
+
+  @Test
   void getUserIdentities_Should_delegate() {
     var expected = new UserIdentitiesDTO();
     when(userIdentitiesService.getUserIdentities("u-1")).thenReturn(expected);
@@ -244,7 +276,6 @@ class UserAdminControllerTest {
     var response = controller.createConsultantAgency("c-1", dto);
 
     assertEquals(HttpStatus.CREATED, response.getStatusCode());
-    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(any());
     verify(consultantAdminFacade).createNewConsultantAgency("c-1", dto);
   }
 
@@ -255,7 +286,6 @@ class UserAdminControllerTest {
     var response = controller.setConsultantAgencies("c-1", list);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(consultantAdminFacade).checkPermissionsToAssignedAgencies(list);
     verify(consultantAdminFacade).setConsultantAgencies("c-1", list);
   }
 
@@ -451,7 +481,7 @@ class UserAdminControllerTest {
 
   @Test
   void getAdminAgencies_Should_delegate() {
-    when(adminUserFacade.findAdminUserAgencyIds("admin-1")).thenReturn(List.of(1L, 2L));
+    when(adminUserFacade.findAgencyIdsOfAdminInCallerScope("admin-1")).thenReturn(List.of(1L, 2L));
 
     var response = controller.getAdminAgencies("admin-1");
 

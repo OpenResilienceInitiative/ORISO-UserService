@@ -16,10 +16,15 @@ import org.springframework.data.repository.query.Param;
 public interface AdminRepository
     extends JpaRepository<Admin, String>, JpaSpecificationExecutor<Admin> {
 
+  /** Serializes one admin's own changes, e.g. a first self-assignment, which has no row to lock. */
+  @org.springframework.data.jpa.repository.Lock(jakarta.persistence.LockModeType.PESSIMISTIC_WRITE)
+  @Query("select a from Admin a where a.id = :id")
+  Optional<Admin> findByIdForUpdate(@Param("id") String id);
+
   @Query(
       value =
           "SELECT a.id as id, a.firstName as firstName, a.lastName as lastName, a.email as email, a.tenantId as tenantId "
-              + ", a.type as type, a.updateDate as updateDate "
+              + ", a.type as type, a.updateDate as updateDate, COALESCE(a.updateDate, a.createDate) as lastUpdated "
               + "FROM Admin a "
               + "WHERE"
               + "  type = ?2 "
@@ -43,7 +48,7 @@ public interface AdminRepository
   @Query(
       value =
           "SELECT a.id as id, a.firstName as firstName, a.lastName as lastName, a.email as email, a.tenantId as tenantId "
-              + ", a.type as type, a.updateDate as updateDate "
+              + ", a.type as type, a.updateDate as updateDate, COALESCE(a.updateDate, a.createDate) as lastUpdated "
               + "FROM Admin a "
               + "WHERE"
               + "  type = ?2 "
@@ -69,7 +74,7 @@ public interface AdminRepository
   @Query(
       value =
           "SELECT a.id as id, a.firstName as firstName, a.lastName as lastName, a.email as email, a.tenantId as tenantId "
-              + ", a.type as type, a.updateDate as updateDate "
+              + ", a.type as type, a.updateDate as updateDate, COALESCE(a.updateDate, a.createDate) as lastUpdated "
               + "FROM Admin a "
               + "WHERE"
               + "  type = ?2 "
@@ -98,6 +103,21 @@ public interface AdminRepository
   List<Admin> findAllByIdIn(Set<String> adminIds);
 
   Optional<Admin> findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(String username, String email);
+
+  List<Admin> findAllByUsernameIgnoreCase(String username);
+
+  List<Admin> findAllByEmailIgnoreCase(String email);
+
+  /**
+   * Public password-reset lookup across every Träger: the username first, an e-mail only if exactly
+   * one admin carries it, so a shared address never picks another Träger's admin.
+   */
+  default Optional<Admin> findForSignIn(String usernameOrEmail) {
+    List<Admin> byUsername = findAllByUsernameIgnoreCase(usernameOrEmail);
+    List<Admin> matches =
+        byUsername.isEmpty() ? findAllByEmailIgnoreCase(usernameOrEmail) : byUsername;
+    return matches.size() == 1 ? Optional.of(matches.get(0)) : Optional.empty();
+  }
 
   @Query("SELECT a.id, a.type FROM Admin a WHERE a.id IN :ids")
   List<Object[]> findIdAndTypeByIdIn(@Param("ids") Collection<String> ids);

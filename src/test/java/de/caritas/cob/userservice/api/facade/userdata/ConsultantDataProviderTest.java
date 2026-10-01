@@ -18,6 +18,7 @@ import de.caritas.cob.userservice.api.config.auth.UserRole;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.manager.consultingtype.ConsultingTypeManager;
 import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.ConsultantAvatarKind;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.service.agency.AgencyService;
@@ -53,6 +54,34 @@ public class ConsultantDataProviderTest {
   @Mock private SessionRepository sessionRepository;
 
   @Mock private EmailNotificationMapper emailNotificationMapper;
+
+  @Test
+  public void retrieveData_Should_FlattenTheAvatarChoice() {
+    Consultant consultant = easyRandom.nextObject(Consultant.class);
+    consultant.setConsultantAgencies(new HashSet<>());
+    consultant.setAvatarKind(ConsultantAvatarKind.ICON);
+    consultant.setAvatarId("motif-24");
+    when(agencyService.getAgencies(any())).thenReturn(List.of());
+
+    var result = underTest.retrieveData(consultant);
+
+    assertEquals("ICON", result.getAvatarKind());
+    assertEquals("motif-24", result.getAvatarId());
+  }
+
+  @Test
+  public void retrieveData_Should_ReturnNullAvatarKind_When_NoChoiceWasMade() {
+    Consultant consultant = easyRandom.nextObject(Consultant.class);
+    consultant.setConsultantAgencies(new HashSet<>());
+    consultant.setAvatarKind(null);
+    consultant.setAvatarId(null);
+    when(agencyService.getAgencies(any())).thenReturn(List.of());
+
+    var result = underTest.retrieveData(consultant);
+
+    assertNull(result.getAvatarKind());
+    assertNull(result.getAvatarId());
+  }
 
   @Test
   public void retrieveData_Should_ReturnMinimalProfile_When_NoAgenciesFound() {

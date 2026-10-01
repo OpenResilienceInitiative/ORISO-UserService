@@ -1,17 +1,32 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.Mockito.atLeastOnce;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.helper.ConsultantDisplayNameResolver;
+import de.caritas.cob.userservice.api.model.Consultant;
+import de.caritas.cob.userservice.api.model.EventNotification;
+import de.caritas.cob.userservice.api.model.Session;
+import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.EventNotificationRepository;
+import de.caritas.cob.userservice.api.port.out.SessionRepository;
+import de.caritas.cob.userservice.api.port.out.UserRepository;
 import de.caritas.cob.userservice.api.service.matrix.RedisMessageMirrorService;
+import de.caritas.cob.userservice.api.service.notification.EventNotificationDeduplicationWriter;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
 import de.caritas.cob.userservice.api.service.notification.PrivacyEnvelope;
 import de.caritas.cob.userservice.api.service.notification.TeamDiscussionNotificationService;
+import de.caritas.cob.userservice.api.workflow.delete.service.IdentityTombstoneService;
 import jakarta.validation.constraints.Min;
 import java.lang.reflect.Method;
 import java.util.List;
@@ -20,6 +35,7 @@ import java.util.Set;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.http.HttpStatus;
@@ -29,6 +45,11 @@ class EventNotificationControllerTest {
 
   @Mock private EventNotificationService eventNotificationService;
   @Mock private TeamDiscussionNotificationService teamDiscussionNotificationService;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.FeedbackMessageEmailService
+      feedbackMessageEmailService;
+
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private RedisMessageMirrorService redisMessageMirrorService;
 
@@ -41,14 +62,124 @@ class EventNotificationControllerTest {
         new EventNotificationController(
             eventNotificationService,
             teamDiscussionNotificationService,
+            feedbackMessageEmailService,
             authenticatedUser,
             Optional.of(redisMessageMirrorService));
     controllerWithoutMirror =
         new EventNotificationController(
             eventNotificationService,
             teamDiscussionNotificationService,
+            feedbackMessageEmailService,
             authenticatedUser,
             Optional.empty());
+  }
+
+  @Test
+  void explicitFeedbackIntentPersistsBeforeResponseButOrdinaryAsideDoesNot() {
+    when(authenticatedUser.isConsultant()).thenReturn(true);
+    var protectedAside = new EventNotificationController.MessageEventRequestDTO();
+    protectedAside.setRoomId("!protected:matrix.example");
+    protectedAside.setMatrixEventId("$aside");
+    protectedAside.setSupervisorMessage(true);
+
+    assertThat(
+            controllerWithoutMirror.createMessageEventNotification(protectedAside).getStatusCode())
+        .isEqualTo(HttpStatus.NO_CONTENT);
+    verifyNoInteractions(feedbackMessageEmailService);
+
+    var feedback = new EventNotificationController.MessageEventRequestDTO();
+    feedback.setRoomId("!protected:matrix.example");
+    feedback.setMatrixEventId("$feedback");
+    feedback.setFeedbackMailIntent(true);
+
+    assertThat(controllerWithoutMirror.createMessageEventNotification(feedback).getStatusCode())
+        .isEqualTo(HttpStatus.NO_CONTENT);
+    verify(feedbackMessageEmailService)
+        .onFeedbackIntent("!protected:matrix.example", "$feedback", authenticatedUser);
+  }
+
+  @Test
+  void feedbackIntentWithoutMatrixEventIsRejectedBeforeAnyNotification() {
+    var feedback = new EventNotificationController.MessageEventRequestDTO();
+    feedback.setRoomId("!protected:matrix.example");
+    feedback.setFeedbackMailIntent(true);
+
+    assertThat(controllerWithoutMirror.createMessageEventNotification(feedback).getStatusCode())
+        .isEqualTo(HttpStatus.BAD_REQUEST);
+    verifyNoInteractions(feedbackMessageEmailService, eventNotificationService);
+  }
+
+  // ---------------------------------------------------------------------------
+  // ADR-002 §2 / #1201: the client posts the sender's name in the request body. The server must
+  // not repeat it to a third party -- it knows who the sender is (senderUserId comes from the
+  // authenticated principal, not from the body) and resolves the name itself.
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createMessageEventNotification_Should_NotLetTheClientNameTheSenderToTheAdviceSeeker() {
+    var eventNotificationRepository = mock(EventNotificationRepository.class);
+    var sessionRepository = mock(SessionRepository.class);
+    var userRepository = mock(UserRepository.class);
+    var consultantRepository = mock(ConsultantRepository.class);
+    var identityTombstoneService = mock(IdentityTombstoneService.class);
+    var deduplicationWriter = mock(EventNotificationDeduplicationWriter.class);
+    var realService =
+        new EventNotificationService(
+            eventNotificationRepository,
+            sessionRepository,
+            userRepository,
+            consultantRepository,
+            identityTombstoneService,
+            deduplicationWriter,
+            new ConsultantDisplayNameResolver());
+    var controller =
+        new EventNotificationController(
+            realService,
+            teamDiscussionNotificationService,
+            feedbackMessageEmailService,
+            authenticatedUser,
+            Optional.empty());
+
+    when(authenticatedUser.getUserId()).thenReturn("counsellor-1");
+    when(consultantRepository.findByIdAndDeleteDateIsNull("counsellor-1"))
+        .thenReturn(
+            Optional.of(
+                Consultant.builder()
+                    .id("counsellor-1")
+                    .username("beraterin1")
+                    .firstName("Angela")
+                    .lastName("Musterfrau")
+                    .displayName(null)
+                    .email("angela@example.org")
+                    .build()));
+    var adviceSeeker = mock(User.class);
+    when(adviceSeeker.getUserId()).thenReturn("asker-1");
+    var session = mock(Session.class);
+    when(session.getUser()).thenReturn(adviceSeeker);
+    when(session.getId()).thenReturn(100L);
+    when(sessionRepository.findByMatrixRoomId("!room-1:matrix.example"))
+        .thenReturn(Optional.of(session));
+
+    var request = new EventNotificationController.MessageEventRequestDTO();
+    request.setRoomId("!room-1:matrix.example");
+    request.setMessagePreview("hello");
+    // The lie: a client is free to put anything here, and the frontend in fact falls back to the
+    // real name when the counsellor has no pseudonym.
+    request.setSenderDisplayName("Angela Musterfrau");
+
+    controller.createMessageEventNotification(request);
+
+    var saved = ArgumentCaptor.forClass(EventNotification.class);
+    verify(eventNotificationRepository, atLeastOnce()).save(saved.capture());
+    assertThat(saved.getAllValues())
+        .isNotEmpty()
+        .allSatisfy(
+            row -> {
+              assertThat(row.getText()).doesNotContain("Angela", "Musterfrau");
+              assertThat(row.getParams()).doesNotContain("Angela", "Musterfrau");
+            });
+    assertThat(saved.getAllValues())
+        .anySatisfy(row -> assertThat(row.getText()).contains("beraterin1"));
   }
 
   @Test
@@ -62,20 +193,20 @@ class EventNotificationControllerTest {
             .perPage(50)
             .unreadCount(0)
             .build();
-    when(eventNotificationService.getFeed("u-1", 0, 50)).thenReturn(feed);
+    when(eventNotificationService.getFeed("u-1", 0, 50, Set.of())).thenReturn(feed);
 
-    var response = controllerWithMirror.getFeed(0, 50);
+    var response = controllerWithMirror.getFeed(0, 50, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
     assertEquals(0, response.getBody().getPage());
-    verify(eventNotificationService).getFeed("u-1", 0, 50);
+    verify(eventNotificationService).getFeed("u-1", 0, 50, Set.of());
   }
 
   @Test
   void getFeed_customPagePerPage_delegatesWithGivenValues() {
     // Business reason: consumers need deterministic pagination for infinite-scroll behavior.
     when(authenticatedUser.getUserId()).thenReturn("u-1");
-    when(eventNotificationService.getFeed("u-1", 3, 15))
+    when(eventNotificationService.getFeed("u-1", 3, 15, Set.of()))
         .thenReturn(
             EventNotificationService.NotificationFeedResponse.builder()
                 .items(List.of())
@@ -84,16 +215,17 @@ class EventNotificationControllerTest {
                 .unreadCount(0)
                 .build());
 
-    var response = controllerWithMirror.getFeed(3, 15);
+    var response = controllerWithMirror.getFeed(3, 15, null);
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    verify(eventNotificationService).getFeed("u-1", 3, 15);
+    verify(eventNotificationService).getFeed("u-1", 3, 15, Set.of());
   }
 
   @Test
   void getFeed_parameterAnnotations_includeExpectedMinConstraints() throws Exception {
     // Business reason: min constraints guard against invalid paging values reaching service layer.
-    Method method = EventNotificationController.class.getMethod("getFeed", int.class, int.class);
+    Method method =
+        EventNotificationController.class.getMethod("getFeed", int.class, int.class, String.class);
     Min pageMin = (Min) method.getParameters()[0].getAnnotations()[1];
     Min perPageMin = (Min) method.getParameters()[1].getAnnotations()[1];
     assertEquals(0, pageMin.value());
@@ -156,7 +288,7 @@ class EventNotificationControllerTest {
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-2", "u-1", "hello", false, "Sender", null);
+        .createMessageNotificationFromRoom("room-2", "u-1", "hello", false, (PrivacyEnvelope) null);
   }
 
   @Test
@@ -179,7 +311,7 @@ class EventNotificationControllerTest {
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
         .createThreadReplyNotificationFromRoom(
-            "room-3", "u-2", "reply", "thread-3", true, "Sender-3", "parent", null);
+            "room-3", "u-2", "reply", "thread-3", true, "parent", null);
   }
 
   @Test
@@ -211,7 +343,8 @@ class EventNotificationControllerTest {
 
     assertEquals(HttpStatus.NO_CONTENT, response.getStatusCode());
     verify(eventNotificationService)
-        .createMessageNotificationFromRoom("room-5", "u-4", "preview", false, null, null);
+        .createMessageNotificationFromRoom(
+            "room-5", "u-4", "preview", false, (PrivacyEnvelope) null);
   }
 
   @Test
@@ -233,7 +366,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("u-5"),
             org.mockito.ArgumentMatchers.eq("preview"),
             org.mockito.ArgumentMatchers.eq(false),
-            org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("$evt-42", envelopeCaptor.getValue().getMessageId());
   }
@@ -260,7 +392,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("u-6"),
             org.mockito.ArgumentMatchers.eq("preview"),
             org.mockito.ArgumentMatchers.eq(false),
-            org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("IMAGE", envelopeCaptor.getValue().getContentClass());
     assertEquals(true, envelopeCaptor.getValue().isHasAttachment());
@@ -285,7 +416,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("u-6"),
             org.mockito.ArgumentMatchers.isNull(),
             org.mockito.ArgumentMatchers.eq(false),
-            org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("OTHER", envelopeCaptor.getValue().getContentClass());
   }
@@ -313,7 +443,6 @@ class EventNotificationControllerTest {
             org.mockito.ArgumentMatchers.eq("$root-1"),
             org.mockito.ArgumentMatchers.eq(false),
             org.mockito.ArgumentMatchers.isNull(),
-            org.mockito.ArgumentMatchers.isNull(),
             envelopeCaptor.capture());
     assertEquals("$evt-44", envelopeCaptor.getValue().getMessageId());
   }
@@ -334,5 +463,94 @@ class EventNotificationControllerTest {
             EventNotificationController.MessageEventRequestDTO.class);
     assertEquals(
         true, endpoint.getParameters()[0].isAnnotationPresent(jakarta.validation.Valid.class));
+  }
+
+  // ---------------------------------------------------------------------------
+  // #1377 slice 7 — exclusions and bulk read by event type
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void getFeed_withExcludeEventTypes_passesParsedSetToService() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    when(eventNotificationService.getFeed("u-1", 0, 50, Set.of("supervisor.added", "call.missed")))
+        .thenReturn(
+            EventNotificationService.NotificationFeedResponse.builder()
+                .items(List.of())
+                .page(0)
+                .perPage(50)
+                .unreadCount(3)
+                .excludedEventTypes(List.of("call.missed", "supervisor.added"))
+                .build());
+
+    var response = controllerWithMirror.getFeed(0, 50, " supervisor.added, call.missed ,,");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(3, response.getBody().getUnreadCount());
+    assertEquals(
+        List.of("call.missed", "supervisor.added"), response.getBody().getExcludedEventTypes());
+  }
+
+  @Test
+  void getFeed_withTooManyExcludeEventTypes_returnsBadRequest() {
+    String tooMany =
+        java.util.stream.IntStream.rangeClosed(1, EventNotificationController.MAX_EVENT_TYPES + 1)
+            .mapToObj(i -> "type." + i)
+            .reduce((a, b) -> a + "," + b)
+            .orElseThrow();
+
+    var response = controllerWithMirror.getFeed(0, 50, tooMany);
+
+    assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    verify(eventNotificationService, never())
+        .getFeed(any(), any(Integer.class), any(Integer.class), any());
+  }
+
+  @Test
+  void getUnreadCount_delegatesWithExclusionsAndEchoesThem() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    when(eventNotificationService.countUnread("u-1", Set.of("call.missed"))).thenReturn(7L);
+
+    var response = controllerWithMirror.getUnreadCount("call.missed");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(7L, response.getBody().getUnreadCount());
+    assertEquals(List.of("call.missed"), response.getBody().getExcludedEventTypes());
+  }
+
+  @Test
+  void getUnreadCount_overlongEventType_returnsBadRequest() {
+    var response =
+        controllerWithMirror.getUnreadCount(
+            "x".repeat(EventNotificationController.MAX_EVENT_TYPE_LENGTH + 1));
+
+    assertEquals(HttpStatus.BAD_REQUEST, response.getStatusCode());
+    verify(eventNotificationService, never()).countUnread(any(), any());
+  }
+
+  @Test
+  void markAsReadByEventTypes_delegatesAndReportsCount() {
+    when(authenticatedUser.getUserId()).thenReturn("u-1");
+    when(eventNotificationService.markAsReadByEventTypes(
+            "u-1", Set.of("supervisor.added", "supervisor.removed")))
+        .thenReturn(12);
+
+    var response =
+        controllerWithMirror.markAsReadByEventTypes("supervisor.added,supervisor.removed");
+
+    assertEquals(HttpStatus.OK, response.getStatusCode());
+    assertEquals(12, response.getBody().getUpdated());
+    assertEquals(
+        List.of("supervisor.added", "supervisor.removed"), response.getBody().getEventTypes());
+  }
+
+  @Test
+  void markAsReadByEventTypes_emptyList_isBadRequestNotReadAll() {
+    // Business reason: a missing list must never degrade into "mark everything read".
+    assertEquals(
+        HttpStatus.BAD_REQUEST, controllerWithMirror.markAsReadByEventTypes(null).getStatusCode());
+    assertEquals(
+        HttpStatus.BAD_REQUEST, controllerWithMirror.markAsReadByEventTypes(" , ").getStatusCode());
+    verify(eventNotificationService, never()).markAsReadByEventTypes(any(), any());
+    verify(eventNotificationService, never()).markAllAsRead(any());
   }
 }

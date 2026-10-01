@@ -2,6 +2,7 @@ package de.caritas.cob.userservice.api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import java.io.InputStream;
 import java.util.Properties;
 import java.util.concurrent.CountDownLatch;
@@ -9,6 +10,7 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.support.StaticListableBeanFactory;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskExecutor;
 import org.springframework.test.util.ReflectionTestUtils;
@@ -36,7 +38,9 @@ class UserServiceApplicationTest {
     ReflectionTestUtils.setField(application, "THREAD_QUEUE_CAPACITY", 1);
     ReflectionTestUtils.setField(application, "THREAD_NAME_PREFIX", "test-");
 
-    Executor executor = application.taskExecutor();
+    Executor executor =
+        application.taskExecutor(
+            new StaticListableBeanFactory().getBeanProvider(TenantContextProvider.class));
 
     assertThat(executor).isInstanceOf(ThreadPoolTaskExecutor.class);
     ThreadPoolTaskExecutor taskExecutor = (ThreadPoolTaskExecutor) executor;

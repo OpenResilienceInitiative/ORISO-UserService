@@ -4,6 +4,56 @@ info:
   description: This information will be replaced by the SpringFox config information
   version: 0.0.1
 paths:
+  /users/identity-suggestions:
+    post:
+      tags: [guest-identity-controller]
+      operationId: suggestGuestIdentities
+      summary: Read available guest names without creating or reserving an account
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GuestIdentitySuggestionRequest'
+      responses:
+        '200':
+          description: Distinct checked suggestions; availability is a snapshot, not a reservation
+          content:
+            application/json:
+              schema:
+                type: array
+                maxItems: 4
+                items:
+                  $ref: '#/components/schemas/GuestIdentitySuggestion'
+        '400':
+          description: Invalid or unbounded request
+        '429':
+          description: Public request limit exceeded
+        '503':
+          description: Availability unknown or bounded generation attempts exhausted
+  /users/invitelinks/{token}/context:
+    get:
+      tags: [guest-identity-controller]
+      operationId: getGuestInvitationContext
+      summary: Read public invitation context without account creation or link mutation
+      security: []
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema: {type: string}
+      responses:
+        '200':
+          description: Public entry context; no credentials or administrative metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GuestInvitationContext'
+        '400':
+          description: Inactive or expired invitation
+        '404':
+          description: Invitation not found
   /users/{username}:
     get:
       tags:
@@ -111,6 +161,57 @@ paths:
                 $ref: '#/components/schemas/NewRegistrationResponseDto'
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
+      security:
+        - Bearer: [ ]
+  /users/sessions/{sessionId}/enquiry/permission:
+    get:
+      tags:
+        - user-controller
+      summary: 'Check whether the authenticated asker may send their first enquiry before submitting an encrypted Matrix event [Authorization: Role: user]'
+      operationId: checkEnquiryPermission
+      parameters:
+        - name: sessionId
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        204:
+          description: NO CONTENT - first enquiry may be sent; finalization checks permission again
+          headers:
+            Cache-Control:
+              schema:
+                type: string
+                example: no-store
+        400:
+          description: BAD REQUEST - session is missing, belongs to another asker, or is anonymous
+        401:
+          description: UNAUTHORIZED - no/invalid Keycloak token
+        403:
+          description: FORBIDDEN - invalid role or AVV does not permit new counselling
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_NEW_COUNSELLING_NOT_ALLOWED
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
+        409:
+          description: CONFLICT - enquiry already written or session is no longer open for an enquiry
+        502:
+          description: BAD GATEWAY - AVV owner unavailable or response invalid
+          headers:
+            X-Reason:
+              schema:
+                type: string
+                example: DPA_POLICY_UNAVAILABLE
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DpaPolicyErrorDTO'
       security:
         - Bearer: [ ]
   /users/sessions/{sessionId}/enquiry/new:
@@ -1048,6 +1149,8 @@ paths:
           description: UNAUTHORIZED - no/invalid Keycloak token
         403:
           description: FORBIDDEN - no/invalid role/authorization or CSRF token
+        409:
+          description: CONFLICT - the new password equals the current one
         500:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
@@ -1350,6 +1453,13 @@ paths:
           in: path
           description: Matrix room ID or stable numeric series ID used by V2 invite links
           required: true
+          schema:
+            type: string
+        - name: inviteToken
+          in: query
+          description: 'Secret part of the invite link. Required when the chat is addressed by
+            its numeric series ID; only self-help groups can be joined that way.'
+          required: false
           schema:
             type: string
       responses:
@@ -1923,6 +2033,34 @@ paths:
 
 components:
   schemas:
+    GuestIdentitySuggestionRequest:
+      type: object
+      required: [locale, count, exclude]
+      properties:
+        locale: {type: string, minLength: 2, maxLength: 20}
+        count: {type: integer, enum: [1, 4]}
+        exclude:
+          type: array
+          maxItems: 20
+          items: {type: string, pattern: '^[a-z0-9_]{3,30}$'}
+    GuestIdentitySuggestion:
+      type: object
+      required: [username, displayName, avatarKey]
+      properties:
+        username: {type: string, pattern: '^[a-z0-9_]{3,30}$'}
+        displayName: {type: string}
+        avatarKey:
+          type: string
+          description: Existing bundled animal SVG filename, never an external URL
+    GuestInvitationContext:
+      type: object
+      required: [tenantId, consultingTypeId, chatType]
+      properties:
+        tenantId: {type: integer, format: int64}
+        agencyId: {type: integer, format: int64, nullable: true}
+        consultingTypeId: {type: integer, format: int32}
+        topicId: {type: integer, format: int64, nullable: true}
+        chatType: {type: string}
     OccurrenceOverrideRequest:
       type: object
       required: [originalStartUtc]
@@ -2102,6 +2240,18 @@ components:
         lastName:
           type: string
           example: Mustermann
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            The counsellor's chosen avatar (#1046/#1047), so the advice seeker sees the same
+            avatar in the chat that the counsellor picked. Absent when no choice was made and the
+            initials fallback is rendered.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: Id of the chosen counsellor motif; only set together with avatarKind = ICON.
 
     Date:
       type: object
@@ -2571,6 +2721,10 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/GroupChatParticipantDTO'
+        inviteToken:
+          type: string
+          description: 'Secret part of the invite link (send it as inviteToken to
+            /users/chat/{id}/assign). Only present for counsellors who may see the group.'
         startDateWithTime:
           type: string
           format: date-time
@@ -2695,6 +2849,27 @@ components:
         absenceMessage:
           type: string
           example: Bin nicht da
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            The counsellor's chosen avatar (#1046/#1047), so the advice seeker sees the same
+            avatar in the chat that the counsellor picked. Absent when no choice was made and the
+            initials fallback is rendered.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: Id of the chosen counsellor motif; only set together with avatarKind = ICON.
+
+    DpaPolicyErrorDTO:
+      type: object
+      required:
+        - reason
+      properties:
+        reason:
+          type: string
+          enum: [DPA_NEW_COUNSELLING_NOT_ALLOWED, DPA_POLICY_UNAVAILABLE]
 
     EnquiryMessageDTO:
       type: object
@@ -2767,6 +2942,17 @@ components:
         publicSlugStatus:
           type: string
           enum: [PENDING, APPROVED, REJECTED]
+        avatarKind:
+          type: string
+          enum: [ICON, INITIALS, PICTURE]
+          description: >-
+            Counsellor avatar choice (#1046); absent when the counsellor made no choice and the
+            initials fallback is rendered.
+        avatarId:
+          type: string
+          maxLength: 64
+          example: "motif-24"
+          description: Id of the chosen counsellor motif; only set together with avatarKind = ICON.
         firstName:
           type: string
           example: Max
@@ -2820,6 +3006,14 @@ components:
             type: string
         twoFactorAuth:
           $ref: "#/components/schemas/TwoFactorAuthDTO"
+        passwordChangeRequired:
+          type: boolean
+          example: true
+          default: false
+          description: >-
+            indicates that the account still carries the password its
+            administrator chose and may not be used until the user has
+            replaced it.
         consultingTypes:
           $ref: "#/components/schemas/ConsultingTypeMap"
         hasAnonymousConversations:
@@ -2839,6 +3033,11 @@ components:
           type: boolean
           example: true
           description: "Is true if the walk through is enabled for the user"
+        liveChatViaSidebar:
+          type: boolean
+          example: false
+          description: "Consultants only: live-chat availability is controlled from the
+            navigation rail instead of My Profile. Defaults to false; not set for other users."
         emailToggles:
           type: array
           uniqueItems: true
@@ -2899,6 +3098,12 @@ components:
         available:
           description: mark consultant as (not) available for one-on-one chats, no effect on others
           type: boolean
+        liveChatViaSidebar:
+          description: >-
+            consultants only: control live-chat availability from the navigation rail instead
+            of My Profile; stored on the profile, no effect on others
+          type: boolean
+          example: true
         emailNotifications:
           $ref: "#/components/schemas/EmailNotificationsDTO"
 
@@ -2929,6 +3134,9 @@ components:
           description: Optional public slug request. Letters and hyphens only.
         languages:
           type: array
+          description: >-
+            Replaces the spoken languages when non-empty. Omitted, null or an empty list leave the
+            stored languages untouched.
           example: de, en
           items:
             $ref: '#/components/schemas/LanguageCode'
@@ -3375,6 +3583,15 @@ components:
           default: true
           nullable: false
           description: indicates if 2FA is supposed to be encouraged
+        isRequired:
+          type: boolean
+          example: true
+          default: false
+          nullable: false
+          description: >-
+            indicates that the account may not be used until a second factor is
+            active. Set for counsellors whose login was provisioned by an
+            administrator, who chooses the initial password and hands it over.
 
     EmailNotificationsDTO:
       type: object

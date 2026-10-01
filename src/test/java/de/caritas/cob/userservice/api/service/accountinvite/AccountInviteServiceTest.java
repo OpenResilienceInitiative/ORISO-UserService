@@ -6,6 +6,9 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyLong;
 import static org.mockito.ArgumentMatchers.argThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -16,12 +19,14 @@ import de.caritas.cob.userservice.api.exception.SmtpSendException;
 import de.caritas.cob.userservice.api.exception.httpresponses.BadRequestException;
 import de.caritas.cob.userservice.api.exception.httpresponses.ConflictException;
 import de.caritas.cob.userservice.api.exception.httpresponses.CustomValidationHttpStatusException;
+import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.exception.httpresponses.InternalServerErrorException;
 import de.caritas.cob.userservice.api.exception.httpresponses.NotFoundException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.model.AccountInvite;
 import de.caritas.cob.userservice.api.model.InviteEmailDelivery;
 import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
+import de.caritas.cob.userservice.api.model.TopicPermission;
 import de.caritas.cob.userservice.api.port.out.AccountInviteRepository;
 import de.caritas.cob.userservice.api.port.out.IdReservationReleaseTaskRepository;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
@@ -44,10 +49,10 @@ import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.springframework.data.domain.Page;
@@ -66,21 +71,84 @@ class AccountInviteServiceTest {
   @Mock private TenantService tenantService;
   @Mock private TenantIdAllocationClient tenantIdAllocationClient;
   @Mock private AgencyIdAllocationClient agencyIdAllocationClient;
+  @Mock private AgencyFacts agencyFacts;
   @Mock private InviteAcceptUrlBuilder inviteAcceptUrlBuilder;
   @Mock private InviteMailDispatchService inviteMailDispatchService;
   @Mock private InviteEmailDeliveryFailureRecorder deliveryFailureRecorder;
   @Mock private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @Mock private IdReservationReleaseTaskRepository reservationReleaseTaskRepository;
   @Mock private IdReservationReleaseProcessor reservationReleaseProcessor;
+
+  @Mock
+  private de.caritas.cob.userservice.api.port.out.IdReservationLockRepository
+      reservationLockRepository;
+
   @Mock private PlatformTransactionManager transactionManager;
 
-  @InjectMocks private AccountInviteService service;
+  /**
+   * The cross-Träger scoping has its own real-database test ({@code AccountInviteTenantScopeIT});
+   * here it lets every request through unchanged.
+   */
+  @Mock private AccountInviteAccessPolicy accessPolicy;
+
+  private AccountInviteService service;
+
+  @BeforeEach
+  void letTheAccessPolicyPassEverythingThrough() {
+    var ledger =
+        new ReservationLedger(
+            tenantService,
+            tenantIdAllocationClient,
+            agencyIdAllocationClient,
+            accountInviteRepository,
+            reservationReleaseTaskRepository,
+            reservationReleaseProcessor,
+            reservationLockRepository,
+            transactionManager);
+    var delivery =
+        new InviteDelivery(
+            inviteAcceptUrlBuilder,
+            inviteMailDispatchService,
+            deliveryFailureRecorder,
+            deliveryRepository,
+            transactionManager);
+    service =
+        new AccountInviteService(
+            accountInviteRepository,
+            templateRepository,
+            authenticatedUser,
+            identityEmailOwnerLookup,
+            transactionManager,
+            accessPolicy,
+            agencyFacts,
+            new InviteTargetResolver(ledger),
+            ledger,
+            new UnitQueue(
+                accountInviteRepository, templateRepository, ledger, delivery, transactionManager),
+            delivery);
+    lenient().when(accessPolicy.authorizeCreate(any())).thenAnswer(call -> call.getArgument(0));
+    // No racing revoke in these tests: the locked read sees what the plain one sees.
+    lenient().when(accountInviteRepository.holdInStatus(any(), any(), any())).thenReturn(1);
+    // The SENT audit row is stored by InviteDelivery#deliver; the tests capture it via save.
+    lenient()
+        .when(deliveryRepository.saveAndFlush(any()))
+        .thenAnswer(call -> deliveryRepository.save(call.getArgument(0)));
+    lenient()
+        .when(accountInviteRepository.findByIdForUpdate(any()))
+        .thenAnswer(call -> accountInviteRepository.findById(call.getArgument(0)));
+    lenient()
+        .when(accessPolicy.scopeForListing(any(), any()))
+        .thenAnswer(
+            call ->
+                new AccountInviteAccessPolicy.InviteListScope(
+                    call.getArgument(0), call.getArgument(1), null, false));
+  }
 
   /** Stubs the strict-send collaborators for tests exercising a successful delivery. */
   private void givenSuccessfulDispatch() {
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
         .thenAnswer(
-            invocation -> "https://app.oriso.org/account-invite/" + invocation.getArgument(1));
+            invocation -> "https://app.example.org/account-invite/" + invocation.getArgument(1));
     when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenAnswer(
             invocation ->
@@ -109,7 +177,9 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
 
@@ -162,6 +232,93 @@ class AccountInviteServiceTest {
     assertThat(result.invite().getRecipientEmail()).isEqualTo(oldInvite.getRecipientEmail());
   }
 
+  // --- another Träger's template is refused before any mail or write (ORISO-Admin#1026) ---
+
+  private InviteEmailTemplate givenForeignTemplate() {
+    InviteEmailTemplate foreign =
+        InviteEmailTemplate.builder()
+            .id(21L)
+            .tenantId(8L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("B's subject")
+            .body("B's body {{inviteLink}}")
+            .active(true)
+            .build();
+    lenient().when(templateRepository.findById(21L)).thenReturn(Optional.of(foreign));
+    doThrow(new ForbiddenException("foreign template")).when(accessPolicy).authorizeTemplateUse(8L);
+    return foreign;
+  }
+
+  @Test
+  void sendInvite_Should_RefuseAnotherTraegersTemplate_BeforeMailOrWrite() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(7L)
+            .recipientEmail("owner@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    lenient().when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
+    givenForeignTemplate();
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(10L, 21L)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    verifyNoInteractions(inviteMailDispatchService, deliveryRepository);
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void resendInvite_Should_RefuseAnotherTraegersTemplate_BeforeMailOrWrite() {
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(7L)
+            .recipientEmail("counsellor@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    lenient().when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
+    givenForeignTemplate();
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(10L, 21L)))
+        .isInstanceOf(ForbiddenException.class);
+
+    assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
+    verifyNoInteractions(inviteMailDispatchService, deliveryRepository);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+  }
+
+  @Test
+  void createAndSendInvite_Should_RefuseAnotherTraegersTemplate_BeforeCreatingTheInvite() {
+    givenForeignTemplate();
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "new@example.org",
+            "New",
+            "Counsellor",
+            null,
+            null,
+            30L);
+
+    assertThatThrownBy(() -> service.createAndSendInvite(command, 21L))
+        .isInstanceOf(ForbiddenException.class);
+
+    verify(accessPolicy, never()).authorizeCreate(any());
+    verifyNoInteractions(
+        inviteMailDispatchService,
+        deliveryRepository,
+        tenantIdAllocationClient,
+        agencyIdAllocationClient,
+        identityEmailOwnerLookup);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+    verify(accountInviteRepository, never()).save(any());
+  }
+
   // --- TEN-INV-U6 (#890): SENT only after the transport confirmed the handover ---
 
   @Test
@@ -183,7 +340,7 @@ class AccountInviteServiceTest {
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
-        .thenReturn("https://app.oriso.org/admin/tenant-onboarding/x");
+        .thenReturn("https://app.example.org/admin/tenant-onboarding/x");
     when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenThrow(new SmtpSendException("SMTP refused the message"));
 
@@ -225,7 +382,7 @@ class AccountInviteServiceTest {
   }
 
   @Test
-  void sendInvite_Should_DispatchBeforePersistingAnything() {
+  void sendInvite_Should_CommitTheLinkBeforeDispatch_SoNoRowLockIsHeldAcrossSmtp() {
     AccountInvite invite =
         AccountInvite.builder()
             .id(10L)
@@ -237,7 +394,6 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
 
@@ -245,11 +401,11 @@ class AccountInviteServiceTest {
 
     var inOrder =
         org.mockito.Mockito.inOrder(
-            inviteMailDispatchService, accountInviteRepository, deliveryRepository);
+            accountInviteRepository, inviteMailDispatchService, deliveryRepository);
+    inOrder.verify(accountInviteRepository).saveAndFlush(invite);
     inOrder
         .verify(inviteMailDispatchService)
         .send(eq("owner@example.org"), any(), any(), any(), any(), any());
-    inOrder.verify(accountInviteRepository).save(invite);
     inOrder.verify(deliveryRepository).save(any());
   }
 
@@ -266,7 +422,9 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject("s").body("b").build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
 
@@ -296,8 +454,19 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    AccountInvite[] replacement = new AccountInvite[1];
     when(accountInviteRepository.saveAndFlush(any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
+        .thenAnswer(
+            invocation -> {
+              AccountInvite saved = invocation.getArgument(0);
+              if (saved.getId() == null) {
+                saved.setId(11L);
+                replacement[0] = saved;
+              }
+              return saved;
+            });
+    when(accountInviteRepository.findById(11L))
+        .thenAnswer(invocation -> Optional.ofNullable(replacement[0]));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any())).thenReturn("https://x/y");
     when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenThrow(
@@ -320,6 +489,63 @@ class AccountInviteServiceTest {
   }
 
   @Test
+  void resendInvite_Should_KeepARevokedReplacement_When_TransportFailsAfterTheRevoke() {
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(10L)
+            .recipientEmail("owner@example.org")
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(20L)
+            .kind(InviteEmailTemplateKind.TENANT_INVITE)
+            .subject("s")
+            .body("{{inviteLink}}")
+            .build();
+    when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
+    when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
+    AccountInvite[] replacement = new AccountInvite[1];
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(
+            invocation -> {
+              AccountInvite saved = invocation.getArgument(0);
+              if (saved.getId() == null) {
+                saved.setId(11L);
+                replacement[0] = saved;
+              }
+              return saved;
+            });
+    when(accountInviteRepository.findById(11L))
+        .thenAnswer(invocation -> Optional.ofNullable(replacement[0]));
+    when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any())).thenReturn("https://x/y");
+    when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+        .thenAnswer(
+            invocation -> {
+              // An admin revokes the replacement while the mail server refuses the message.
+              replacement[0].setStatus(AccountInviteStatus.REVOKED);
+              throw new SmtpSendException(
+                  SmtpSendException.Category.SMTP_TRANSPORT_FAILED,
+                  SmtpSendException.DeliveryDisposition.CONFIRMED_NOT_SENT,
+                  "SMTP refused the message");
+            });
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(10L, 20L)))
+        .isInstanceOf(SmtpSendException.class);
+
+    // The revoke wins: the old link is not brought back and the revoked row is kept.
+    assertThat(oldInvite.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
+    verify(accountInviteRepository, never()).deleteById(any());
+    verify(accountInviteRepository, never()).delete(any());
+    verify(accountInviteRepository, never()).deleteAll(any());
+    verify(accountInviteRepository, never()).deleteAll();
+    // Only the three writes of the handover itself; nothing after the failed send.
+    verify(accountInviteRepository, org.mockito.Mockito.times(3)).saveAndFlush(any());
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
   void deliverySnapshot_Should_RemainUnchanged_When_TemplateIsChangedLater() {
     AccountInvite invite =
         AccountInvite.builder()
@@ -338,7 +564,9 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
     service.sendInvite(new SendInviteCommand(10L, 20L));
@@ -357,6 +585,7 @@ class AccountInviteServiceTest {
   void calculateAccessGate_Should_BlockRequiredTwoFactorUntilWaived() {
     AccountInvite invite =
         AccountInvite.builder()
+            .id(1L)
             .status(AccountInviteStatus.ACCEPTED)
             .emailVerificationStatus(EmailVerificationStatus.VERIFIED)
             .twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP)
@@ -365,6 +594,7 @@ class AccountInviteServiceTest {
     assertThat(service.calculateAccessGate(invite))
         .isEqualTo(AccountAccessGateStatus.BLOCKED_TWO_FACTOR);
 
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
     when(authenticatedUser.getUserId()).thenReturn("admin-1");
     service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("Temporary migration waiver"));
 
@@ -389,7 +619,7 @@ class AccountInviteServiceTest {
                 "New",
                 "Counsellor",
                 null,
-                null,
+                11L,
                 30L));
 
     assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
@@ -422,6 +652,65 @@ class AccountInviteServiceTest {
         new CreateAccountInviteCommand(
             AccountInviteTargetRole.COUNSELLOR, 7L, "   ", "A", "B", null, null, null);
     assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+  }
+
+  // --- agency-admin invites need a tenant: provisioning refuses a tenantless one at accept time
+
+  private static CreateAccountInviteCommand tenantlessAgencyAdminInvite(
+      Long agencyId, IdAllocationMode agencyMode) {
+    return new CreateAccountInviteCommand(
+        AccountInviteTargetRole.AGENCY_ADMIN,
+        null,
+        "agency-admin@example.org",
+        "A",
+        "B",
+        agencyId,
+        null,
+        null,
+        null,
+        agencyMode);
+  }
+
+  @Test
+  void createInvite_Should_throwBadRequest_When_platformCreatesAgencyAdminInviteWithoutTenant() {
+    // Lenient: without the guard the invite would be reserved and saved like any other.
+    lenient().when(agencyIdAllocationClient.reserve(null, null)).thenReturn(70L);
+    lenient()
+        .when(agencyIdAllocationClient.getAvailability(70L))
+        .thenReturn(IdAllocationStatus.RESERVED);
+    lenient().when(accountInviteRepository.save(any())).thenAnswer(call -> call.getArgument(0));
+    var command = tenantlessAgencyAdminInvite(null, IdAllocationMode.AUTO);
+
+    assertThatThrownBy(() -> service.createInvite(command)).isInstanceOf(BadRequestException.class);
+    verifyNoInteractions(agencyIdAllocationClient);
+    verifyNoInteractions(accountInviteRepository);
+  }
+
+  @Test
+  void createInvite_Should_keepTheStampedTenant_When_tragerAdminCreatesAgencyAdminInvite() {
+    when(accessPolicy.authorizeCreate(any()))
+        .thenAnswer(call -> call.<CreateAccountInviteCommand>getArgument(0).withTenantId(7L));
+    when(agencyIdAllocationClient.reserve(null, 7L)).thenReturn(70L);
+    when(agencyIdAllocationClient.getAvailability(70L)).thenReturn(IdAllocationStatus.RESERVED);
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite invite =
+        service.createInvite(tenantlessAgencyAdminInvite(null, IdAllocationMode.AUTO));
+
+    assertThat(invite.getTenantId()).isEqualTo(7L);
+    assertThat(invite.getAgencyId()).isEqualTo(70L);
+  }
+
+  @Test
+  void createInvite_Should_takeTheTenantOfTheExistingAgency_When_agencyAdminInviteNamesNoTenant() {
+    when(agencyFacts.find(42L))
+        .thenReturn(Optional.of(new AgencyFacts.Agency(42L, 7L, false, null)));
+    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+
+    AccountInvite invite =
+        service.createInvite(tenantlessAgencyAdminInvite(42L, IdAllocationMode.EXISTING));
+
+    assertThat(invite.getTenantId()).isEqualTo(7L);
   }
 
   // --- P3 (#Problem 3): duplicate recipient e-mail is refused at invite CREATION time, not only
@@ -515,7 +804,7 @@ class AccountInviteServiceTest {
                 "A",
                 "B",
                 null,
-                null,
+                11L,
                 null));
 
     assertThat(invite.getRecipientEmail()).isEqualTo("free@example.org");
@@ -627,7 +916,7 @@ class AccountInviteServiceTest {
                 "A",
                 "B",
                 null,
-                null,
+                11L,
                 null));
 
     assertThat(invite.getRecipientEmail()).isEqualTo("reusable@example.org");
@@ -635,10 +924,15 @@ class AccountInviteServiceTest {
     // already covered by the identity probe, and a revoked, expired or superseded one must leave
     // the address free — otherwise a mistyped or withdrawn invite would strand the admin with no
     // way to invite that person again.
+    // WAITING_FOR_UNIT holds the address too: the invite is promised.
     verify(accountInviteRepository)
         .countNonTerminalInvitesForRecipientEmail(
             eq("reusable@example.org"),
-            eq(List.of(AccountInviteStatus.DRAFT, AccountInviteStatus.EMAIL_SENT)),
+            eq(
+                List.of(
+                    AccountInviteStatus.WAITING_FOR_UNIT,
+                    AccountInviteStatus.DRAFT,
+                    AccountInviteStatus.EMAIL_SENT)),
             any());
   }
 
@@ -701,11 +995,12 @@ class AccountInviteServiceTest {
   @Test
   void listInvites_Should_delegateToRepositoryWithClampedPageAndSize() {
     Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
-    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any())).thenReturn(page);
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
 
     Page<AccountInvite> result =
         service.listInvites(
-            AccountInviteTargetRole.COUNSELLOR, AccountInviteStatus.DRAFT, 7L, -1, -1);
+            AccountInviteTargetRole.COUNSELLOR, AccountInviteStatus.DRAFT, 7L, null, -1, -1);
 
     assertThat(result).isSameAs(page);
     verify(accountInviteRepository)
@@ -713,53 +1008,134 @@ class AccountInviteServiceTest {
             eq(7L),
             eq(AccountInviteTargetRole.COUNSELLOR),
             eq(AccountInviteStatus.DRAFT),
+            eq(null),
+            eq(null),
             argThat(pr -> pr.getPageNumber() == 0 && pr.getPageSize() == 20));
   }
 
   @Test
   void listInvites_Should_clampSize_When_tooLarge() {
     Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
-    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any())).thenReturn(page);
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
 
-    service.listInvites(null, null, null, 2, 500);
+    service.listInvites(null, null, null, null, 2, 500);
 
     verify(accountInviteRepository)
         .findAllByFilters(
             eq(null),
             eq(null),
             eq(null),
+            eq(null),
+            eq(null),
             argThat(pr -> pr.getPageNumber() == 2 && pr.getPageSize() == 100));
+  }
+
+  @Test
+  void listInvites_Should_normalizeQuery_When_searchTermHasWhitespaceAndMixedCase() {
+    Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
+
+    service.listInvites(null, null, null, "  Jane.Doe@Example.org  ", 0, 20);
+
+    verify(accountInviteRepository)
+        .findAllByFilters(
+            eq(null), eq(null), eq(null), eq("jane.doe@example.org"), eq(null), any());
+  }
+
+  @Test
+  void listInvites_Should_alsoDeriveExactTenantIdMatch_When_queryIsNumeric() {
+    Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
+
+    service.listInvites(null, null, null, " 42 ", 0, 20);
+
+    verify(accountInviteRepository)
+        .findAllByFilters(eq(null), eq(null), eq(null), eq("42"), eq(42L), any());
+  }
+
+  @Test
+  void listInvites_Should_treatBlankQueryAsNoSearch() {
+    Page<AccountInvite> page = new PageImpl<>(java.util.List.of());
+    when(accountInviteRepository.findAllByFilters(any(), any(), any(), any(), any(), any()))
+        .thenReturn(page);
+
+    service.listInvites(null, null, null, "   ", 0, 20);
+
+    verify(accountInviteRepository)
+        .findAllByFilters(eq(null), eq(null), eq(null), eq(null), eq(null), any());
   }
 
   // --- revokeInvite ---
 
   @Test
-  void revokeInvite_Should_setRevokedFields_When_notAccepted() {
-    AccountInvite invite =
-        AccountInvite.builder().id(1L).status(AccountInviteStatus.EMAIL_SENT).build();
-    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+  void revokeInvite_Should_revokeUnderTheRowLock_When_notAccepted() {
+    AccountInvite invite = heldNumberInvite(AccountInviteStatus.EMAIL_SENT);
+    AccountInvite revoked = heldNumberInvite(AccountInviteStatus.REVOKED);
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
     when(authenticatedUser.getUserId()).thenReturn("admin-1");
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(accountInviteRepository.revokeWhileStatusIn(eq(1L), any(), eq("admin-1"), any()))
+        .thenReturn(1);
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(revoked));
 
     AccountInvite result = service.revokeInvite(1L);
 
     assertThat(result.getStatus()).isEqualTo(AccountInviteStatus.REVOKED);
-    assertThat(result.getRevokedByUserId()).isEqualTo("admin-1");
-    assertThat(result.getRevokedAt()).isNotNull();
+    // Only the call that revoked asks the ledger whether the held number can go back.
+    verify(accountInviteRepository).existsReservationHolderForAgency(eq(700L), any());
   }
 
   @Test
-  void revokeInvite_Should_throwBadRequest_When_alreadyAccepted() {
-    AccountInvite invite =
-        AccountInvite.builder().id(1L).status(AccountInviteStatus.ACCEPTED).build();
-    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+  void revokeInvite_Should_answer409AlreadyAccepted_When_alreadyAccepted() {
+    AccountInvite invite = heldNumberInvite(AccountInviteStatus.ACCEPTED);
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
 
-    assertThatThrownBy(() -> service.revokeInvite(1L)).isInstanceOf(BadRequestException.class);
+    assertThatThrownBy(() -> service.revokeInvite(1L))
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            conflict -> {
+              assertThat(conflict.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(conflict.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("INVITE_ALREADY_ACCEPTED");
+            });
+    verify(accountInviteRepository, never()).revokeWhileStatusIn(any(), any(), any(), any());
+    verify(accountInviteRepository, never()).existsReservationHolderForAgency(any(), any());
+  }
+
+  @Test
+  void revokeInvite_Should_answer409AlreadyAccepted_When_anAcceptWinsTheConditionalUpdate() {
+    AccountInvite invite = heldNumberInvite(AccountInviteStatus.EMAIL_SENT);
+    AccountInvite accepted = heldNumberInvite(AccountInviteStatus.ACCEPTED);
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
+    when(accountInviteRepository.revokeWhileStatusIn(eq(1L), any(), any(), any())).thenReturn(0);
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(accepted));
+
+    assertThatThrownBy(() -> service.revokeInvite(1L))
+        .isInstanceOfSatisfying(
+            CustomValidationHttpStatusException.class,
+            conflict -> {
+              assertThat(conflict.getHttpStatus()).isEqualTo(HttpStatus.CONFLICT);
+              assertThat(conflict.getCustomHttpHeaders().getFirst("X-Reason"))
+                  .isEqualTo("INVITE_ALREADY_ACCEPTED");
+            });
+    verify(accountInviteRepository, never()).existsReservationHolderForAgency(any(), any());
+  }
+
+  @Test
+  void revokeInvite_Should_giveNothingBackAgain_When_alreadyRevoked() {
+    AccountInvite invite = heldNumberInvite(AccountInviteStatus.REVOKED);
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
+
+    assertThat(service.revokeInvite(1L)).isSameAs(invite);
+    verify(accountInviteRepository, never()).revokeWhileStatusIn(any(), any(), any(), any());
+    verify(accountInviteRepository, never()).existsReservationHolderForAgency(any(), any());
   }
 
   @Test
   void revokeInvite_Should_throwNotFound_When_inviteMissing() {
-    when(accountInviteRepository.findById(99L)).thenReturn(Optional.empty());
+    doReturn(Optional.empty()).when(accountInviteRepository).findByIdForUpdate(99L);
 
     assertThatThrownBy(() -> service.revokeInvite(99L)).isInstanceOf(NotFoundException.class);
   }
@@ -767,6 +1143,16 @@ class AccountInviteServiceTest {
   @Test
   void revokeInvite_Should_throwBadRequest_When_inviteIdNull() {
     assertThatThrownBy(() -> service.revokeInvite(null)).isInstanceOf(BadRequestException.class);
+  }
+
+  /** An invite that holds a reserved Beratungsstelle number the ledger may give back. */
+  private static AccountInvite heldNumberInvite(AccountInviteStatus status) {
+    return AccountInvite.builder()
+        .id(1L)
+        .agencyId(700L)
+        .agencyIdAllocationMode(IdAllocationMode.MANUAL)
+        .status(status)
+        .build();
   }
 
   // --- acceptInvite ---
@@ -794,7 +1180,7 @@ class AccountInviteServiceTest {
             .expiresAt(LocalDateTime.now().minusDays(1))
             .build();
     when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(invite));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    when(accountInviteRepository.expireWhileStatusIn(eq(1L), any(), any())).thenReturn(1);
 
     assertThatThrownBy(() -> service.acceptInvite("raw-token", "user-1"))
         .isInstanceOf(AccountInviteLinkException.class)
@@ -1055,6 +1441,112 @@ class AccountInviteServiceTest {
         .isInstanceOf(BadRequestException.class);
   }
 
+  @Test
+  void resendInvite_Should_throwBadRequest_When_oldInviteExpired() {
+    // Expiry already released the address claim and the reserved numbers; a replacement would
+    // carry a dead reservation token.
+    AccountInvite invite = expiredInvite();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    givenAResendWouldOtherwiseGoThrough();
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(1L, 20L)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be resent");
+
+    verifyNoInteractions(inviteMailDispatchService);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+  }
+
+  @Test
+  void resendInvite_Should_throwBadRequest_When_oldInviteSuperseded() {
+    // A superseded invite already has a live replacement; resending it would mint a second one.
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("counsellor@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.SUPERSEDED)
+            .expiresAt(LocalDateTime.now().plusDays(1))
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    givenAResendWouldOtherwiseGoThrough();
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(1L, 20L)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be resent");
+
+    verifyNoInteractions(inviteMailDispatchService);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.SUPERSEDED);
+  }
+
+  @Test
+  void resendInvite_Should_throwBadRequest_When_recipientCleanupExpiresTheOldInvite() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(1L)
+            .recipientEmail("counsellor@example.org")
+            .activeRecipientKey("counsellor@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .expiresAt(LocalDateTime.now().minusMinutes(1))
+            .build();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    // The elapsed claim is the invite itself: the cleanup expires it mid-preparation.
+    when(accountInviteRepository.findElapsedRecipientClaims(
+            eq("counsellor@example.org"), any(), any()))
+        .thenReturn(List.of(invite));
+    // #1271 expires with a conditional UPDATE; it wins because the invite is still pending.
+    lenient().when(accountInviteRepository.expireWhileStatusIn(eq(1L), any(), any())).thenReturn(1);
+    givenAResendWouldOtherwiseGoThrough();
+
+    assertThatThrownBy(() -> service.resendInvite(new SendInviteCommand(1L, 20L)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be resent");
+
+    verifyNoInteractions(inviteMailDispatchService);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+  }
+
+  /** Lenient: without the guard these stubs let the resend run through to the mail dispatch. */
+  private void givenAResendWouldOtherwiseGoThrough() {
+    lenient()
+        .when(templateRepository.findById(20L))
+        .thenReturn(
+            Optional.of(
+                InviteEmailTemplate.builder()
+                    .id(20L)
+                    .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+                    .subject("Again")
+                    .body("Use {{inviteLink}}")
+                    .active(true)
+                    .build()));
+    lenient()
+        .when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(inviteAcceptUrlBuilder.buildAcceptUrl(any(), any()))
+        .thenReturn("https://app.oriso.org/account-invite/token");
+    lenient()
+        .when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
+        .thenAnswer(
+            invocation ->
+                new InviteMailSendReceipt(
+                    invocation.getArgument(0), Instant.parse("2026-07-28T10:15:30Z")));
+  }
+
+  private static AccountInvite expiredInvite() {
+    return AccountInvite.builder()
+        .id(1L)
+        .recipientEmail("counsellor@example.org")
+        .targetRole(AccountInviteTargetRole.COUNSELLOR)
+        .status(AccountInviteStatus.EXPIRED)
+        .expiresAt(LocalDateTime.now().minusDays(1))
+        .build();
+  }
+
   // --- sendInvite (private, via public entry point) guards ---
 
   @Test
@@ -1095,6 +1587,22 @@ class AccountInviteServiceTest {
   }
 
   @Test
+  void sendInvite_Should_throwBadRequest_When_inviteExpired() {
+    // Expiry cleared the address claim; sending would hand out a link for an unprotected address.
+    AccountInvite invite = expiredInvite();
+    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    givenAResendWouldOtherwiseGoThrough();
+    lenient().when(accountInviteRepository.save(any())).thenAnswer(call -> call.getArgument(0));
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(1L, 20L)))
+        .isInstanceOf(BadRequestException.class)
+        .hasMessage("Inactive invites cannot be sent");
+
+    verifyNoInteractions(inviteMailDispatchService);
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.EXPIRED);
+  }
+
+  @Test
   void sendInvite_Should_keepExistingFutureExpiry_When_alreadySet() {
     LocalDateTime future = LocalDateTime.now().plusDays(10);
     AccountInvite invite =
@@ -1108,7 +1616,9 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject("s").body("b").build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
     service.sendInvite(new SendInviteCommand(1L, 20L));
@@ -1266,7 +1776,8 @@ class AccountInviteServiceTest {
   @Test
   void waiveTwoFactor_Should_persistWaivedInvite() {
     AccountInvite invite =
-        AccountInvite.builder().twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP).build();
+        AccountInvite.builder().id(1L).twoFactorStatus(TwoFactorGateStatus.PENDING_SETUP).build();
+    doReturn(Optional.of(invite)).when(accountInviteRepository).findByIdForUpdate(1L);
     when(authenticatedUser.getUserId()).thenReturn("admin-1");
 
     service.waiveTwoFactor(invite, new WaiveTwoFactorCommand("four-eyes onboarding"));
@@ -1321,7 +1832,9 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
     givenSuccessfulDispatch();
@@ -1332,7 +1845,7 @@ class AccountInviteServiceTest {
     verify(inviteAcceptUrlBuilder)
         .buildAcceptUrl(AccountInviteTargetRole.COUNSELLOR, result.rawToken());
     assertThat(result.acceptUrl())
-        .isEqualTo("https://app.oriso.org/account-invite/" + result.rawToken());
+        .isEqualTo("https://app.example.org/account-invite/" + result.rawToken());
     // The body no longer carries the link: the branded layout renders it as a button
     // plus a visible copy-paste line, so a body that also inlined it produced the same
     // URL twice in the received mail.
@@ -1357,7 +1870,9 @@ class AccountInviteServiceTest {
             .build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
 
@@ -1383,7 +1898,9 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     givenSuccessfulDispatch();
 
@@ -1408,19 +1925,21 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
     when(inviteAcceptUrlBuilder.buildAcceptUrl(eq(AccountInviteTargetRole.TENANT_ADMIN), any()))
         .thenAnswer(
             invocation ->
-                "https://app.oriso.org/admin/tenant-onboarding/" + invocation.getArgument(1));
+                "https://app.example.org/admin/tenant-onboarding/" + invocation.getArgument(1));
     when(inviteMailDispatchService.send(any(), any(), any(), any(), any(), any()))
         .thenReturn(new InviteMailSendReceipt("a@example.org", Instant.now()));
 
     var result = service.sendInvite(new SendInviteCommand(1L, 20L));
 
     assertThat(result.acceptUrl())
-        .isEqualTo("https://app.oriso.org/admin/tenant-onboarding/" + result.rawToken());
+        .isEqualTo("https://app.example.org/admin/tenant-onboarding/" + result.rawToken());
     // Body-only assertion inverted with the duplicate-link fix: the URL reaches the
     // recipient through the layout's CTA, not through the authored body.
     assertThat(result.delivery().getBodySnapshot()).doesNotContain("/admin/tenant-onboarding/");
@@ -1469,7 +1988,9 @@ class AccountInviteServiceTest {
         InviteEmailTemplate.builder().id(20L).subject(null).body(null).build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    when(accountInviteRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
+    lenient()
+        .when(accountInviteRepository.save(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
     givenSuccessfulDispatch();
@@ -1582,7 +2103,7 @@ class AccountInviteServiceTest {
             "New",
             "Counsellor",
             null,
-            null,
+            11L,
             30L);
 
     AccountInvite invite = service.createInvite(command);
@@ -1935,7 +2456,7 @@ class AccountInviteServiceTest {
             null,
             null,
             3L,
-            null,
+            11L,
             null,
             null,
             null));
@@ -1973,5 +2494,39 @@ class AccountInviteServiceTest {
 
     assertThat(result.invite().getTenantIdReservationToken()).isEqualTo("res-token-21");
     assertThat(result.invite().getTenantId()).isEqualTo(21L);
+  }
+
+  @Test
+  void resendInvite_Should_KeepTheTopicPermissionOnTheReplacementInvite() {
+    // The replacement invite is the one the counsellor accepts.
+    AccountInvite oldInvite =
+        AccountInvite.builder()
+            .id(11L)
+            .tenantId(21L)
+            .agencyId(7L)
+            .departmentId(3L)
+            .recipientEmail("counsellor@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .topicPermission(TopicPermission.SELECT_EXISTING)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    InviteEmailTemplate template =
+        InviteEmailTemplate.builder()
+            .id(21L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .subject("Again")
+            .body("Use {{inviteLink}}")
+            .active(true)
+            .build();
+    when(accountInviteRepository.findById(11L)).thenReturn(Optional.of(oldInvite));
+    when(templateRepository.findById(21L)).thenReturn(Optional.of(template));
+    when(accountInviteRepository.saveAndFlush(any()))
+        .thenAnswer(invocation -> invocation.getArgument(0));
+
+    givenSuccessfulDispatch();
+    var result = service.resendInvite(new SendInviteCommand(11L, 21L));
+
+    assertThat(result.invite()).isNotSameAs(oldInvite);
+    assertThat(result.invite().getTopicPermission()).isEqualTo(TopicPermission.SELECT_EXISTING);
   }
 }

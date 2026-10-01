@@ -61,6 +61,7 @@ import de.caritas.cob.userservice.api.model.ConsultantAgency;
 import de.caritas.cob.userservice.api.model.Language;
 import de.caritas.cob.userservice.api.model.OtpInfoDTO;
 import de.caritas.cob.userservice.api.model.OtpType;
+import de.caritas.cob.userservice.api.model.PublicSlugStatus;
 import de.caritas.cob.userservice.api.model.Session;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.UserAgency;
@@ -195,6 +196,12 @@ class UserControllerE2EIT {
 
   @Autowired private SessionRepository sessionRepository;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
+      ownerFactory;
+
+  private de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures dpaOwner;
+
   @Autowired private UserVerifier userVerifier;
 
   @Autowired private Messaging messenger;
@@ -248,6 +255,7 @@ class UserControllerE2EIT {
 
   @AfterEach
   void reset() {
+    dpaOwner.close();
     de.caritas.cob.userservice.api.tenant.TenantContext.clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
@@ -292,8 +300,10 @@ class UserControllerE2EIT {
 
   @BeforeEach
   public void setUp() throws MatrixCreateUserException {
+    dpaOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, 1L);
     MatrixCreateUserResponseDTO matrixCreateUserResponse = new MatrixCreateUserResponseDTO();
-    matrixCreateUserResponse.setUserId("@test-user:matrix.oriso.org");
+    matrixCreateUserResponse.setUserId("@test-user:matrix.example.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))
         .thenReturn(ResponseEntity.ok(matrixCreateUserResponse));
     when(matrixSynapseService.deactivateUser(anyString())).thenReturn(true);
@@ -401,6 +411,7 @@ class UserControllerE2EIT {
     givenAValidConsultant();
     givenConsultantHasDisplayName();
     givenConsultantAvailability(false);
+    givenConsultantOwesASecondFactorAndAPasswordChange();
     givenKeycloakRespondsOtpByAppHasBeenSetup(consultant.getUsername());
     var consultantAgency = consultant.getConsultantAgencies().iterator().next();
     var displayName = usernameTranscoder.decodeUsername(consultant.getDisplayName());
@@ -445,6 +456,11 @@ class UserControllerE2EIT {
         .andExpect(jsonPath("twoFactorAuth.qrCode", is(nullValue())))
         .andExpect(jsonPath("twoFactorAuth.type", is("APP")))
         .andExpect(jsonPath("twoFactorAuth.isToEncourage", is(consultant.getEncourage2fa())))
+        // Pinned at the wire, not on the Java object: the browser gates on these two and both
+        // have been wrong in a shipped payload before. isRequired is only ever true while the OTP
+        // role policy permits enrolment (this class sets otp-allowed-for-consultants=true).
+        .andExpect(jsonPath("twoFactorAuth.isRequired", is(true)))
+        .andExpect(jsonPath("passwordChangeRequired", is(true)))
         .andExpect(jsonPath("absent", is(consultant.isAbsent())))
         .andExpect(jsonPath("available", is(false)))
         .andExpect(jsonPath("formalLanguage", is(consultant.isLanguageFormal())))
@@ -947,6 +963,82 @@ class UserControllerE2EIT {
             jsonPath(
                 "emailToggles[?(@.name =~ /NEW_.*_MESSAGE_FROM_ADVICE_SEEKER/)].state",
                 is(List.of(false))));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void getUserDataShouldReturnLiveChatViaSidebarFalseByDefaultForConsultant() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("liveChatViaSidebar", is(false)));
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.CONSULTANT_DEFAULT)
+  void patchUserDataShouldStoreLiveChatViaSidebarOnConsultantProfile() throws Exception {
+    givenABearerToken();
+    givenAValidConsultant();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(consultant.getUsername());
+
+    patchLiveChatViaSidebar(true);
+    expectLiveChatViaSidebar(true);
+
+    patchLiveChatViaSidebar(false);
+    expectLiveChatViaSidebar(false);
+  }
+
+  @Test
+  @WithMockUser(authorities = AuthorityValue.USER_DEFAULT)
+  void patchUserDataShouldIgnoreLiveChatViaSidebarForAdviceSeeker() throws Exception {
+    givenABearerToken();
+    givenAValidUser();
+    givenConsultingTypeServiceResponse();
+    givenKeycloakRespondsOtpHasNotBeenSetup(user.getUsername());
+
+    patchLiveChatViaSidebar(true);
+
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("liveChatViaSidebar", is(nullValue())));
+  }
+
+  private void expectLiveChatViaSidebar(boolean expected) throws Exception {
+    mockMvc
+        .perform(
+            get("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("liveChatViaSidebar", is(expected)));
+  }
+
+  private void patchLiveChatViaSidebar(boolean value) throws Exception {
+    mockMvc
+        .perform(
+            patch("/users/data")
+                .cookie(CSRF_COOKIE)
+                .header(CSRF_HEADER, CSRF_VALUE)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"liveChatViaSidebar\": " + value + "}")
+                .accept(MediaType.APPLICATION_JSON))
+        .andExpect(status().isNoContent());
   }
 
   @Test
@@ -1512,6 +1604,40 @@ class UserControllerE2EIT {
     assertEquals(savedConsultant.get().getDataPrivacyConfirmation().toLocalDate(), LocalDate.now());
   }
 
+  @Test
+  @WithMockUser(authorities = {AuthorityValue.CONSULTANT_DEFAULT})
+  void updateUserDataShouldQueueRequestedPublicSlugForApprovalInsteadOfPublishingIt()
+      throws Exception {
+    givenAValidConsultant();
+    var liveSlug = consultant.getPublicSlug();
+    givenAMinimalUpdateConsultantDto(consultant.getEmail());
+    updateConsultantDTO.setPublicSlug("self-requested-link");
+
+    try {
+      mockMvc
+          .perform(
+              put("/users/data")
+                  .cookie(CSRF_COOKIE)
+                  .header(CSRF_HEADER, CSRF_VALUE)
+                  .contentType(MediaType.APPLICATION_JSON)
+                  .content(objectMapper.writeValueAsString(updateConsultantDTO))
+                  .accept(MediaType.APPLICATION_JSON))
+          .andExpect(status().isOk());
+
+      var savedConsultant = consultantRepository.findById(consultant.getId()).orElseThrow();
+      assertEquals(liveSlug, savedConsultant.getPublicSlug());
+      assertEquals("self-requested-link", savedConsultant.getPendingPublicSlug());
+      assertEquals(PublicSlugStatus.PENDING, savedConsultant.getPublicSlugStatus());
+    } finally {
+      var toClean = consultantRepository.findById(consultant.getId()).orElseThrow();
+      toClean.setPublicSlug(liveSlug);
+      toClean.setPendingPublicSlug(null);
+      toClean.setPublicSlugStatus(null);
+      toClean.setPublicSlugReviewedAt(null);
+      consultantRepository.save(toClean);
+    }
+  }
+
   // FIXME: does not test the "saved monitoring", see next fixme
   @Test
   void registerUserWithoutConsultingIdShouldSaveMonitoringAndPreferredLanguage() throws Exception {
@@ -1974,6 +2100,12 @@ class UserControllerE2EIT {
     when(authenticatedUser.getGrantedAuthorities()).thenReturn(Set.of("anAuthority"));
   }
 
+  private void givenConsultantOwesASecondFactorAndAPasswordChange() {
+    consultant.setTwoFactorRequired(true);
+    consultant.setPasswordChangeRequired(true);
+    consultant = consultantRepository.save(consultant);
+  }
+
   private void givenConsultantHasDisplayName() {
     consultant.setDisplayName(consultant.getUsername());
     consultant = consultantRepository.save(consultant);
@@ -2143,6 +2275,9 @@ class UserControllerE2EIT {
 
   private void givenAFullPatchDto() {
     patchUserDTO = easyRandom.nextObject(PatchUserDTO.class);
+    // Pinned: a random true is rejected with 400 for fixtures without a profile email, and which
+    // value the shared EasyRandom draws shifts whenever PatchUserDTO gains a field.
+    patchUserDTO.setMagicLinkLoginEnabled(false);
 
     var dailyEnquiries = new EmailToggle();
     dailyEnquiries.setName(EmailType.DAILY_ENQUIRY);

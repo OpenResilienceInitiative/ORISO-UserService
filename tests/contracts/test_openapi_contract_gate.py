@@ -134,7 +134,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-AgencyService.*"
-                r"11d1e2426593ffa0a550a64042ce97ca6e0a80cf",
+                r"bbdc934477212020b8c43d8bf3cb28a30081156c",
                 re.DOTALL,
             ),
         )
@@ -142,7 +142,7 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-ConsultingTypeService.*"
-                r"48004847491b0ad0d38296a5d57d1ba3c1ea4730",
+                r"fd06f72beab16a92e2d1f1c2b88acbb054254baf",
                 re.DOTALL,
             ),
         )
@@ -150,7 +150,8 @@ class OpenApiContractGateTest(unittest.TestCase):
             workflow,
             re.compile(
                 r"repository: OpenResilienceInitiative/ORISO-TenantService.*"
-                r"a6f0ca4ac813d5af705e7a5d3776788f738d9069",
+                # TenantPR296 supplies the additive deadline/gate contract consumed here.
+                r"97067a1371078cce87f44d55c3cdf7901e6426ba",
                 re.DOTALL,
             ),
         )
@@ -164,6 +165,18 @@ class OpenApiContractGateTest(unittest.TestCase):
 
         self.assertIn("contract-gate-tests:", workflow)
         self.assertIn("python -m pytest -q tests/contracts", workflow)
+
+    def test_case_handover_contract_does_not_publish_a_standalone_team_access_feature(self):
+        provider = yaml.safe_load((ROOT / "api/userservice.yaml").read_text())
+
+        self.assertNotIn(
+            "/users/sessions/{sessionId}/team-access", provider["paths"]
+        )
+        self.assertNotIn("TeamAccessDTO", provider["components"]["schemas"])
+        self.assertNotIn(
+            "teamAccessAllowed",
+            provider["components"]["schemas"]["SessionDTO"]["properties"],
+        )
 
 
 if __name__ == "__main__":

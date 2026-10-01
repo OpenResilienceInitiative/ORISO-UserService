@@ -130,6 +130,11 @@ public class KeycloakAuthClient {
    * @return true if logout was successful
    */
   public boolean logoutUser(final String refreshToken) {
+    return logoutUser(refreshToken, authenticatedUser.getAccessToken());
+  }
+
+  /** Explicit caller-owned token for technical sessions outside request scope. */
+  public boolean logoutUser(final String refreshToken, final String accessToken) {
     MultiValueMap<String, String> map = new SensitiveKeycloakFormData();
     map.add(BODY_KEY_CLIENT_ID, keycloakClientId);
     map.add(BODY_KEY_GRANT_TYPE, KEYCLOAK_GRANT_TYPE_REFRESH_TOKEN);
@@ -137,7 +142,7 @@ public class KeycloakAuthClient {
 
     var httpHeaders = new HttpHeaders();
     httpHeaders.setContentType(MediaType.APPLICATION_FORM_URLENCODED);
-    httpHeaders.add("Authorization", "Bearer " + authenticatedUser.getAccessToken());
+    httpHeaders.add("Authorization", "Bearer " + accessToken);
     HttpEntity<MultiValueMap<String, String>> request = new HttpEntity<>(map, httpHeaders);
 
     var url = identityClientConfig.getOpenIdConnectUrl(ENDPOINT_OPENID_CONNECT_LOGOUT);
@@ -145,7 +150,7 @@ public class KeycloakAuthClient {
       var response = restTemplate.postForEntity(url, request, Void.class);
       return wasLogoutSuccessful(response);
     } catch (Exception ex) {
-      log.error("Keycloak error: Could not log out user", ex);
+      log.error("Keycloak error: Could not log out user ({})", ex.getClass().getSimpleName());
 
       return false;
     }

@@ -153,6 +153,12 @@ public class ConversationController implements ConversationsApi {
           "Access to session (%s) is limited to its advice seeker.", sessionId);
     }
 
+    /* The guest is on this page, right now — that is the only sign of life a live-chat queue
+    entry ever gets. The client cannot say goodbye reliably (a pagehide hook would also fire on
+    every reload and destroy a waiting enquiry), so presence is proven by asking, not by leaving:
+    this poll keeps the entry in the queue, and silence takes it out. #1404 */
+    messenger.touchLiveChatQueueHeartbeat(sessionId);
+
     var consultingTypeId = mapper.consultingTypeIdOf(sessionMap);
     var mainTopicId = mapper.mainTopicIdOf(sessionMap);
     int numAvailableConsultants = resolveNumAvailableConsultants(mainTopicId);
