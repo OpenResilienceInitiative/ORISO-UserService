@@ -34,6 +34,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import lombok.val;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.CacheControl;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Component;
@@ -172,6 +173,12 @@ class UserRegistrationControllerDelegate {
     this.assignEnquiryFacade.assignRegisteredEnquiry(session.get(), consultant);
 
     return new ResponseEntity<>(HttpStatus.OK);
+  }
+
+  ResponseEntity<Void> checkEnquiryPermission(Long sessionId) {
+    var user = userAccountProvider.retrieveValidatedUser();
+    createEnquiryMessageFacade.checkEnquiryPermission(sessionId, user);
+    return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
   }
 
   ResponseEntity<CreateEnquiryMessageResponseDTO> createEnquiryMessage(
