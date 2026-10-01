@@ -142,9 +142,18 @@ class DeleteTemporaryAccountsSchedulerIT {
   @Qualifier("restTemplate")
   private RestTemplate restTemplate;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
+      ownerFactory;
+
+  private de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures dpaOwner;
+
   @BeforeEach
   void setUp() throws Exception {
     deleteSchedulerClaim();
+    // Registration requires the agency's signed AVV (#1327).
+    dpaOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, 1L);
     when(tenantService.getRestrictedTenantDataFresh(anyLong()))
         .thenReturn(ChatRecoveryPolicyFixtures.tenant());
     when(tenantService.getSingleTenancyTenantDataFresh())
@@ -182,6 +191,7 @@ class DeleteTemporaryAccountsSchedulerIT {
   @AfterEach
   void tearDown() {
     TenantContext.clear();
+    dpaOwner.close();
     // Accounts a test kept on purpose must not leak into other ITs sharing this database.
     registeredUserIds.forEach(accountRemover::deleteUser);
     registeredUserIds.clear();
