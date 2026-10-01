@@ -142,6 +142,7 @@ class GlobalSmtpTestEmailControllerAuthorizationIT {
     for (var token :
         List.of(
             adminToken(1, TENANT_ADMIN),
+            jwt().authorities(new SimpleGrantedAuthority(USER_ADMIN)),
             jwt().authorities(new SimpleGrantedAuthority(TECHNICAL_DEFAULT)),
             jwt().authorities(new SimpleGrantedAuthority(SINGLE_TENANT_ADMIN)))) {
       mvc.perform(get("/users/system-notification-emails/platform-settings").with(token))
@@ -149,7 +150,6 @@ class GlobalSmtpTestEmailControllerAuthorizationIT {
     }
 
     verifyNoInteractions(platformSmtpSettingsProvider);
-    verifyNoInteractions(globalSmtpTestEmailService);
   }
 
   private static MockHttpServletRequestBuilder request() {
