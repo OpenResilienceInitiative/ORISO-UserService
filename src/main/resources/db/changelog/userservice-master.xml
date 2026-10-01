@@ -192,6 +192,7 @@
   <include file="db/changelog/changeset/0102_reply_email_delivery/0102_changeSet.xml" />
   <include file="db/changelog/changeset/0103_message_email_recipient/0103_changeSet.xml" />
   <include file="db/changelog/changeset/0104_feedback_email_intent/0104_changeSet.xml" />
+  <include file="db/changelog/changeset/0105_service_notice_draft/0105_changeSet.xml" />
 
   <!-- Seed/demo data (context="seed"): append future seed changesets below this
        line and tag every changeset with context="seed". -->
