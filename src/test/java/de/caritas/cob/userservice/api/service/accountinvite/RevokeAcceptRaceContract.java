@@ -168,6 +168,7 @@ abstract class RevokeAcceptRaceContract {
   @Autowired private ObservedCaller caller;
 
   @MockitoBean private CreateAdminService createAdminService;
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
   @MockitoBean private IdentityAccountRemover identityAccountRemover;
   @MockitoBean private AcceptTimeAgencyCheck acceptTimeAgencyCheck;
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
