@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.facade.assignsession;
 
+import static de.caritas.cob.userservice.api.model.Session.SessionStatus.INITIAL;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.IN_PROGRESS;
 import static de.caritas.cob.userservice.api.model.Session.SessionStatus.NEW;
 import static java.util.Objects.nonNull;
@@ -44,6 +45,8 @@ import org.springframework.stereotype.Service;
 public class AssignEnquiryFacade {
 
   private final @NonNull SessionService sessionService;
+  private final @NonNull de.caritas.cob.userservice.api.service.dpa.NewCounsellingDpaPolicy
+      dpaPolicy;
   private final @NonNull SessionRoomGateway sessionRoomGateway;
   private final @NonNull SessionToConsultantVerifier sessionToConsultantVerifier;
   private final @NonNull StatisticsService statisticsService;
@@ -149,7 +152,26 @@ public class AssignEnquiryFacade {
     // ADR-022 decision 1 / ADR-003: a topic-based anonymous enquiry carries no agency until it is
     // accepted. Bind the accepting counsellor's department here, before the assignment save, so
     // agency, consultant and status are persisted together.
-    var departmentBound = bindDepartment && bindDepartmentIfUnbound(session, consultant);
+    var servingAgencyId = session.getAgencyId();
+    if (bindDepartment && servingAgencyId == null) {
+      servingAgencyId =
+          anonymousEnquiryDepartmentResolver.resolveAgencyId(session, consultant).orElse(null);
+    }
+    if (session.getStatus() == INITIAL || session.getStatus() == NEW) {
+      if (servingAgencyId != null) {
+        dpaPolicy.requireForAgency(servingAgencyId);
+      } else if (bindDepartment) {
+        // A topic queue may have no matching department. The accepting organisation serves it.
+        dpaPolicy.requireForConcreteTenant(consultant.getTenantId());
+      } else {
+        dpaPolicy.requireForAgency((Long) null);
+      }
+    }
+    var departmentBound =
+        bindDepartment && session.getAgencyId() == null && servingAgencyId != null;
+    if (departmentBound) {
+      session.setAgencyId(servingAgencyId);
+    }
     sessionService.updateConsultantAndStatusForSession(session, consultant, IN_PROGRESS);
 
     // Create Matrix room and invite user
@@ -344,15 +366,6 @@ public class AssignEnquiryFacade {
 
     emailNotificationFacade.sendInquiryAcceptedNotification(
         session.getUser(), consultant, TenantContext.getCurrentTenantData());
-  }
-
-  private boolean bindDepartmentIfUnbound(Session session, Consultant consultant) {
-    if (nonNull(session.getAgencyId())) {
-      return false;
-    }
-    var agencyId = anonymousEnquiryDepartmentResolver.resolveAgencyId(session, consultant);
-    agencyId.ifPresent(session::setAgencyId);
-    return agencyId.isPresent();
   }
 
   private void rollbackSessionUpdate(Session session, boolean departmentBound) {

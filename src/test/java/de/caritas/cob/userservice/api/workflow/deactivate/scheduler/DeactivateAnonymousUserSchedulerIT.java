@@ -54,6 +54,12 @@ class DeactivateAnonymousUserSchedulerIT {
 
   @Autowired private UserService userService;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
+      ownerFactory;
+
+  private de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures dpaOwner;
+
   @Autowired private ActionsRegistry actionsRegistry;
 
   @MockitoBean AgencyServiceApiControllerFactory agencyServiceApiControllerFactory;
@@ -69,6 +75,8 @@ class DeactivateAnonymousUserSchedulerIT {
 
   @BeforeEach
   public void setup() throws MatrixCreateUserException {
+    dpaOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, 1L);
     deleteSchedulerClaim();
     when(tenantService.getSingleTenancyTenantDataFresh())
         .thenReturn(ChatRecoveryPolicyFixtures.tenant());
@@ -91,6 +99,7 @@ class DeactivateAnonymousUserSchedulerIT {
 
   @AfterEach
   public void cleanDatabase() {
+    dpaOwner.close();
     this.sessionRepository.deleteAll();
     deleteSchedulerClaim();
   }
