@@ -26,6 +26,7 @@ public class GroupChatParticipantReconciliationService {
   private final GroupChatParticipantRepository participantRepository;
   private final ConsultantRepository consultantRepository;
   private final GroupChatMembershipService membershipService;
+  private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
 
   /**
    * Reconciles co-moderators only when the client explicitly supplies {@code consultantIds}. A null
@@ -50,6 +51,12 @@ public class GroupChatParticipantReconciliationService {
                     GroupChatParticipant::getConsultantId,
                     Function.identity(),
                     (left, right) -> left));
+
+    if (desiredIds.stream().anyMatch(id -> !participantsByConsultantId.containsKey(id))) {
+      // Check additions before removals: a refused update must not leave some
+      // existing moderators removed from Matrix while the database rolls back.
+      groupCounsellingDpaPolicy.requireNewEnrolment(series);
+    }
 
     for (var existing : participants) {
       if (existing.getRole() == ParticipantRole.CO_MODERATOR
