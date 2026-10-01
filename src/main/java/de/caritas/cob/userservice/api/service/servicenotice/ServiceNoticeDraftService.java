@@ -177,6 +177,10 @@ public class ServiceNoticeDraftService {
         || input.maintenanceDate() == null
         || input.maintenanceStart() == null
         || input.maintenanceEnd() == null
+        || input.maintenanceStart().getSecond() != 0
+        || input.maintenanceStart().getNano() != 0
+        || input.maintenanceEnd().getSecond() != 0
+        || input.maintenanceEnd().getNano() != 0
         || !input.maintenanceStart().isBefore(input.maintenanceEnd())) {
       throw new IllegalArgumentException("A same-day maintenance window and operator are required");
     }
@@ -217,6 +221,7 @@ public class ServiceNoticeDraftService {
         || Arrays.stream(
                 new String[] {
                   ".local",
+                  ".localhost",
                   ".internal",
                   ".test",
                   ".invalid",

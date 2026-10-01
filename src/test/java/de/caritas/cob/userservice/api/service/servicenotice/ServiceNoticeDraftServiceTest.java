@@ -114,6 +114,32 @@ class ServiceNoticeDraftServiceTest {
   }
 
   @Test
+  void rejectsSecondPrecisionThatCannotSurviveTheStoredWholeMinuteWindow() {
+    assertThatThrownBy(
+            () ->
+                service.save(
+                    "maintenance-1",
+                    new DraftInput(
+                        LocalDate.of(2026, 10, 2),
+                        LocalTime.of(14, 0, 1),
+                        LocalTime.of(15, 0),
+                        "https://status.operator.dev"),
+                    "operator-1"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(stored.get()).isNull();
+  }
+
+  @Test
+  void rejectsPublicLookingLocalhostSubdomain() {
+    assertThatThrownBy(
+            () ->
+                service.save(
+                    "maintenance-1", input("https://status.localhost/maintenance"), "operator-1"))
+        .isInstanceOf(IllegalArgumentException.class);
+    assertThat(stored.get()).isNull();
+  }
+
+  @Test
   void previewsActualGeneratedSubjectHtmlAndTextInEveryInstalledVariantWithoutDispatch() {
     service.save("maintenance-1", input("https://status.operator.dev/maintenance"), "operator-1");
     for (var tone : OrisoEmailRenderer.Tone.values()) {

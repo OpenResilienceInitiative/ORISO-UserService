@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 import de.caritas.cob.userservice.api.config.JpaAuditingConfiguration;
 import de.caritas.cob.userservice.api.model.ServiceNoticeCampaign;
+import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeDraftService;
+import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeDraftService.DraftInput;
+import jakarta.persistence.EntityManager;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
@@ -21,6 +24,7 @@ import org.springframework.test.context.ActiveProfiles;
 class ServiceNoticeCampaignRepositoryIT {
 
   @Autowired private ServiceNoticeCampaignRepository campaigns;
+  @Autowired private EntityManager entityManager;
 
   @Test
   void persistsAndReadsTheOnlyDraftStateWithoutRecipientsOrDeliveryFields() {
@@ -42,5 +46,24 @@ class ServiceNoticeCampaignRepositoryIT {
     assertThat(stored.getMaintenanceEnd()).isEqualTo(draft.getMaintenanceEnd());
     assertThat(stored.getStatusUrl()).isEqualTo(draft.getStatusUrl());
     assertThat(stored.getCreatedByUserId()).isEqualTo("platform-operator-1");
+  }
+
+  @Test
+  void wholeMinuteWindowRemainsIdempotentAfterARealDatabaseRoundTrip() {
+    var drafts = new ServiceNoticeDraftService(campaigns, null, null, null);
+    var input =
+        new DraftInput(
+            LocalDate.of(2026, 10, 2),
+            LocalTime.of(14, 0),
+            LocalTime.of(15, 0),
+            "https://status.operator.dev/maintenance");
+
+    var created = drafts.save("planned-outage-2", input, "platform-operator-1");
+    entityManager.flush();
+    entityManager.clear();
+
+    var repeated = drafts.save("planned-outage-2", input, "platform-operator-1");
+    assertThat(repeated).isEqualTo(created);
+    assertThat(campaigns.count()).isEqualTo(1);
   }
 }
