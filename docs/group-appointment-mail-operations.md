@@ -31,7 +31,7 @@ LIMIT 100;
 ```
 
 Each row has a stable opaque `correlation_id`. In PLATFORM mode it is the
-`X-ORISO-Correlation-ID` MIME header. In OWN mode TenantService receives the same ID and adds the
+`X-ORISO-Delivery-ID` MIME header. In OWN mode TenantService receives the same ID and adds the
 header. Check SMTP provider acceptance and the receiving mailbox against that ID. A timeout can
 occur after SMTP accepted the message, so absence of a success log does not prove non-delivery.
 Record the result and reviewer before any manual replay or closure. Do not log or paste recipient

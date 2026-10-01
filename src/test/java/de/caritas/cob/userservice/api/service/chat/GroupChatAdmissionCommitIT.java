@@ -3,12 +3,15 @@ package de.caritas.cob.userservice.api.service.chat;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.reset;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import de.caritas.cob.userservice.api.adapters.web.dto.ChatDTO;
+import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
 import de.caritas.cob.userservice.api.helper.CustomLocalDateTime;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
@@ -19,12 +22,17 @@ import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant.ParticipantRole;
+import de.caritas.cob.userservice.api.port.out.ChatOccurrenceExceptionRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
+import de.caritas.cob.userservice.api.port.out.GroupAppointmentMailOutboxRepository;
+import de.caritas.cob.userservice.api.port.out.GroupAppointmentOccurrenceStateRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatAdmissionMatrixRepairTaskRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
+import de.caritas.cob.userservice.api.service.ChatService;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentMailQueue;
 import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.LocalDateTime;
 import java.util.Optional;
@@ -60,6 +68,11 @@ class GroupChatAdmissionCommitIT {
   @Autowired private ChatRepository chats;
   @Autowired private ConsultantRepository consultants;
   @Autowired private PlatformTransactionManager transactionManager;
+  @Autowired private ChatService chatService;
+  @Autowired private GroupAppointmentMailQueue appointmentQueue;
+  @Autowired private ChatOccurrenceExceptionRepository occurrenceExceptions;
+  @Autowired private GroupAppointmentOccurrenceStateRepository occurrenceStates;
+  @Autowired private GroupAppointmentMailOutboxRepository appointmentOutbox;
 
   @MockitoBean private GroupChatPermissionService permissions;
   @MockitoBean private GroupChatMembershipService membership;
@@ -114,6 +127,10 @@ class GroupChatAdmissionCommitIT {
   void cleanUp() {
     repairTasks.deleteAll();
     if (series != null) {
+      StreamSupport.stream(appointmentOutbox.findAll().spliterator(), false)
+          .filter(row -> series.getId().equals(row.getSeriesId()))
+          .forEach(appointmentOutbox::delete);
+      occurrenceStates.findBySeriesId(series.getId()).forEach(occurrenceStates::delete);
       requests
           .findBySeriesIdInAndStatusOrderByRequestedAtAscIdAsc(
               java.util.Set.of(series.getId()), Status.PENDING)
@@ -176,6 +193,108 @@ class GroupChatAdmissionCommitIT {
                   java.util.Set.of(series.getId()), Status.PENDING))
           .hasSize(1);
     }
+  }
+
+  @Test
+  void admissionAndScheduleEditBothCommitWithoutOpposingRowLocks() throws Exception {
+    var futureStart = LocalDateTime.now().plusDays(2).withNano(0);
+    series.setStartDate(futureStart);
+    series.setInitialStartDate(futureStart);
+    series.setRepeatCount(1);
+    series.setTimezone("UTC");
+    series = chats.save(series);
+    var request =
+        requests.save(
+            GroupChatJoinRequest.builder()
+                .seriesId(series.getId())
+                .consultantId(requester.getId())
+                .status(Status.ADMITTING)
+                .admittedRole(ParticipantRole.PARTICIPANT)
+                .requestedAt(LocalDateTime.now())
+                .admissionRequestedAt(LocalDateTime.now())
+                .build());
+    when(membership.addMemberToRoom(any(Chat.class), eq("@admission-test:matrix.test")))
+        .thenReturn(true);
+    var realEvents =
+        new GroupAppointmentSeriesEventProducer(appointmentQueue, occurrenceExceptions);
+    var editHoldsSeries = new CountDownLatch(1);
+    var admissionStarted = new CountDownLatch(1);
+    var admissionHoldsParticipants = new CountDownLatch(1);
+
+    // Run the actual edit's baseline queue, then let admission enter its own transaction.
+    // Before the fix admission takes participant rows and then waits on this edit's series row.
+    doAnswer(
+            invocation -> {
+              int count = realEvents.seedBeforeEdit(invocation.getArgument(0));
+              editHoldsSeries.countDown();
+              await(admissionStarted);
+              admissionHoldsParticipants.await(1, TimeUnit.SECONDS);
+              return count;
+            })
+        .when(appointmentEvents)
+        .seedBeforeEdit(any(Chat.class));
+    when(membership.isMemberInRoom(any(Chat.class), eq("@admission-test:matrix.test")))
+        .thenAnswer(
+            invocation -> {
+              admissionHoldsParticipants.countDown();
+              return Optional.of(false);
+            });
+    doAnswer(
+            invocation -> {
+              realEvents.recordMemberJoined(
+                  invocation.getArgument(0), invocation.getArgument(1), invocation.getArgument(2));
+              return null;
+            })
+        .when(appointmentEvents)
+        .recordMemberJoined(any(), any(), any());
+
+    var owner =
+        new AuthenticatedUser(
+            series.getChatOwner().getId(),
+            "owner",
+            java.util.Set.of(),
+            "unused-local-test",
+            java.util.Set.of());
+    var editedSchedule =
+        ChatDTO.builder()
+            .topic("Updated group schedule")
+            .startDate(futureStart.toLocalDate())
+            .startTime(futureStart.toLocalTime())
+            .duration(60)
+            .repeatCount(1)
+            .consultantIds(java.util.List.of(owner.getUserId()))
+            .build();
+    try (var executor = Executors.newFixedThreadPool(2)) {
+      var edit =
+          executor.submit(() -> chatService.updateChat(series.getId(), editedSchedule, owner));
+      assertThat(editHoldsSeries.await(5, TimeUnit.SECONDS)).isTrue();
+      var admission =
+          executor.submit(
+              () -> {
+                admissionStarted.countDown();
+                processor.process(request.getId());
+              });
+      edit.get(10, TimeUnit.SECONDS);
+      admission.get(10, TimeUnit.SECONDS);
+    }
+    assertThat(chats.findById(series.getId()).orElseThrow().getTopic())
+        .isEqualTo("Updated group schedule");
+    assertThat(requests.findById(request.getId()).orElseThrow().getStatus())
+        .isEqualTo(Status.ADMITTED);
+    assertThat(
+            participants.findBySeriesId(series.getId()).stream()
+                .filter(member -> requester.getId().equals(member.getConsultantId())))
+        .hasSize(1);
+    assertThat(
+            StreamSupport.stream(appointmentOutbox.findAll().spliterator(), false)
+                .filter(
+                    row ->
+                        series.getId().equals(row.getSeriesId())
+                            && requester.getId().equals(row.getRecipientId())
+                            && row.getEventType()
+                                == de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox
+                                    .EventType.CONFIRMED))
+        .hasSize(1);
   }
 
   private GroupChatJoinRequestService.KnockResult knockAfterSignal(

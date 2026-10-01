@@ -66,7 +66,9 @@ public class GroupChatAdmissionProcessor {
       return;
     }
 
-    var series = chats.findById(request.getSeriesId());
+    // Match schedule edits: serialize the Series before locking its participant rows.
+    // The appointment queue takes this same lock later in the admission transaction.
+    var series = chats.findSeriesForAppointmentMailUpdate(request.getSeriesId());
     var consultant = consultants.findByIdAndDeleteDateIsNull(request.getConsultantId());
     if (series.isEmpty()
         || ChatConverter.conversationTypeOf(series.get()) != ConversationType.SELF_HELP

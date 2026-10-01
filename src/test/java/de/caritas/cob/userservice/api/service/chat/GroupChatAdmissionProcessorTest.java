@@ -69,7 +69,7 @@ class GroupChatAdmissionProcessorTest {
     var requester = mock(Consultant.class);
     when(requester.getMatrixUserId()).thenReturn("@r:test");
     when(requests.findByIdForUpdate(7L)).thenReturn(Optional.of(request));
-    when(chats.findById(11L)).thenReturn(Optional.of(series));
+    when(chats.findSeriesForAppointmentMailUpdate(11L)).thenReturn(Optional.of(series));
     when(consultants.findByIdAndDeleteDateIsNull("requester")).thenReturn(Optional.of(requester));
     when(participants.findBySeriesIdForUpdate(11L))
         .thenReturn(
