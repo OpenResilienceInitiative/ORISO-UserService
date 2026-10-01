@@ -3,6 +3,8 @@ package de.caritas.cob.userservice.api.service.accountinvite;
 public enum InviteEmailTemplateKind {
   TENANT_INVITE,
   COUNSELLOR_INVITE,
+  /** Canonical security mail for an account that was created directly by an administrator. */
+  EXISTING_ACCOUNT_SETUP,
   DPA_FORWARD,
 
   /**

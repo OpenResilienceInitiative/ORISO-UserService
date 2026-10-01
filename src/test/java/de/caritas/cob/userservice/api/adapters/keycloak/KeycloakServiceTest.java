@@ -1557,6 +1557,23 @@ public class KeycloakServiceTest {
     assertThat(this.keycloakService.findById("userId"), equalTo(Optional.empty()));
   }
 
+  @Test
+  public void requiresPasswordChange_Should_ReadOnlyTheCurrentUpdatePasswordAction() {
+    UserRepresentation user = new UserRepresentation();
+    UserResource resource = mock(UserResource.class);
+    UsersResource users = mock(UsersResource.class);
+    when(keycloakClient.getUsersResource()).thenReturn(users);
+    when(users.get("userId")).thenReturn(resource);
+    when(resource.toRepresentation()).thenReturn(user);
+
+    user.setRequiredActions(List.of("CONFIGURE_TOTP", "UPDATE_PASSWORD"));
+    assertTrue(keycloakService.requiresPasswordChange("userId"));
+    user.setRequiredActions(List.of("CONFIGURE_TOTP"));
+    assertFalse(keycloakService.requiresPasswordChange("userId"));
+    user.setRequiredActions(null);
+    assertFalse(keycloakService.requiresPasswordChange("userId"));
+  }
+
   /**
    * Stubs the post-create lookup performed by {@code
    * KeycloakService#updateIdentityAttributesAfterCreate}: it fetches the freshly created user via

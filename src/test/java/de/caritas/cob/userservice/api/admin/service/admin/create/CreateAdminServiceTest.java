@@ -32,6 +32,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityAccountRemover;
 import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.identity.CreatedIdentity;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
+import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer;
 import jakarta.ws.rs.NotFoundException;
 import java.util.List;
 import org.jeasy.random.EasyRandom;
@@ -59,6 +61,7 @@ class CreateAdminServiceTest {
 
   @Mock private AuthenticatedUser authenticatedUser;
   @Mock private AdminScope adminScope;
+  @Mock private ExistingAccountSetupIssuer accountSetupIssuer;
 
   private final EasyRandom easyRandom = new EasyRandom();
 
@@ -72,6 +75,8 @@ class CreateAdminServiceTest {
 
     createAdminService.createNewTenantAdmin(admin);
     verify(identityPasswordUpdater).updateTemporaryPassword("kc-user-id", "initial-secret");
+    verify(accountSetupIssuer)
+        .issueAfterCreation(AccountInviteTargetRole.TENANT_ADMIN, "kc-user-id", "initial-secret");
 
     createAdminService.createNewTenantAdminFromInvite(admin);
     verify(identityPasswordUpdater).updatePassword("kc-user-id", "initial-secret");
@@ -79,6 +84,30 @@ class CreateAdminServiceTest {
     admin.setPassword("agency-secret");
     createAdminService.createNewAgencyAdmin(admin);
     verify(identityPasswordUpdater).updateTemporaryPassword("kc-user-id", "agency-secret");
+    verify(accountSetupIssuer)
+        .issueAfterCreation(AccountInviteTargetRole.AGENCY_ADMIN, "kc-user-id", "agency-secret");
+
+    admin.setTenantId(42);
+    createAdminService.createNewAgencyAdminInTenant(admin);
+    verify(identityPasswordUpdater).updatePassword("kc-user-id", "agency-secret");
+  }
+
+  @Test
+  void setupMailFailureAfterPersistedAdminDoesNotRollBackOnlyKeycloak() {
+    givenKeycloakCreatesUser();
+    var admin = givenValidCreateAdminDTO(42);
+    admin.setPassword("initial-secret");
+    doThrow(new IllegalStateException("setup delivery failed"))
+        .when(accountSetupIssuer)
+        .issueAfterCreation(AccountInviteTargetRole.TENANT_ADMIN, "kc-user-id", "initial-secret");
+
+    assertThat(
+            org.junit.jupiter.api.Assertions.assertThrows(
+                IllegalStateException.class, () -> createAdminService.createNewTenantAdmin(admin)))
+        .hasMessage("setup delivery failed");
+
+    verify(adminRepository).save(any(Admin.class));
+    verify(identityAccountRemover, never()).rollbackUser(anyString());
   }
 
   @Test

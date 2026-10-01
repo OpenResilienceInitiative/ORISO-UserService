@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
@@ -99,6 +100,7 @@ public class KeycloakService
         IdentityEmailOwnerLookup,
         IdentityLocaleLookup,
         IdentityPasswordUpdater,
+        IdentityPasswordChangeRequirement,
         IdentityProfileLookup,
         IdentityProfileUpdater,
         IdentityRoleLookup,
@@ -1072,6 +1074,22 @@ public class KeycloakService
               user.getEmail()));
     } catch (NotFoundException ex) {
       return Optional.empty();
+    }
+  }
+
+  @Override
+  public boolean requiresPasswordChange(String userId) {
+    try {
+      UserResource userResource = keycloakClient.getUsersResource().get(userId);
+      if (userResource == null) {
+        return false;
+      }
+      var user = userResource.toRepresentation();
+      return user != null
+          && user.getRequiredActions() != null
+          && user.getRequiredActions().contains("UPDATE_PASSWORD");
+    } catch (NotFoundException missing) {
+      return false;
     }
   }
 

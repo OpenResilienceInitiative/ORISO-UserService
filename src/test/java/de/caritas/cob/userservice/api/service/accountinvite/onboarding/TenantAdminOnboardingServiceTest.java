@@ -36,6 +36,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
@@ -198,6 +200,35 @@ class TenantAdminOnboardingServiceTest {
   }
 
   @Test
+  void resolveExistingAccountSetupWithUncertainClaimRequiresOperatorInsteadOfShowingWizard() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+    invite.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
+    invite.setProvisioningFailureReason("SETUP_OUTCOME_INDETERMINATE");
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    var failure =
+        assertThrows(
+            AccountInviteLinkException.class, () -> service.resolveOnboardingInvite(RAW_TOKEN));
+    assertEquals(
+        AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED, failure.getReason());
+    verify(operatorDpaContentClient, never()).lookupPublishedDpa();
+  }
+
+  @Test
+  void acceptedExistingAccountSetupCannotReusePublicInviteTwoFactorResume() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.ACCEPTED);
+    invite.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+    invite.setTwoFactorStatus(TwoFactorGateStatus.PENDING_SETUP);
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    var failure =
+        assertThrows(
+            AccountInviteLinkException.class, () -> service.resolveOnboardingInvite(RAW_TOKEN));
+    assertEquals(AccountInviteLinkException.Reason.CONSUMED, failure.getReason());
+  }
+
+  @Test
   void resolveOnboardingInvite_deliverableInvite_carriesTheOperatorDpaText() {
     AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
@@ -255,6 +286,24 @@ class TenantAdminOnboardingServiceTest {
 
     assertEquals(AccountInviteLinkException.Reason.EXPIRED, exception.getReason());
     assertEquals(AccountInviteStatus.EXPIRED, invite.getStatus());
+    verify(accountInviteRepository).save(invite);
+  }
+
+  @Test
+  void expiredExistingAccountSetupKeepsOnlyPrivateVerifierForScopedRecovery() {
+    AccountInvite invite = tenantAdminInvite(AccountInviteStatus.EMAIL_SENT);
+    invite.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+    invite.setActiveSetupIdentityKey("admin-11");
+    invite.setInitialPasswordVerifier("salted-verifier");
+    invite.setExpiresAt(LocalDateTime.now().minusMinutes(5));
+    when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
+
+    var failure =
+        assertThrows(
+            AccountInviteLinkException.class, () -> service.resolveOnboardingInvite(RAW_TOKEN));
+    assertEquals(AccountInviteLinkException.Reason.EXPIRED, failure.getReason());
+    assertEquals("admin-11", invite.getActiveSetupIdentityKey());
+    assertEquals("salted-verifier", invite.getInitialPasswordVerifier());
     verify(accountInviteRepository).save(invite);
   }
 
@@ -599,7 +648,7 @@ class TenantAdminOnboardingServiceTest {
     when(accountInviteRepository.findByTokenHash(TOKEN_HASH)).thenReturn(Optional.of(invite));
     when(accountInviteRepository.claimForAcceptance(eq(7L), isNull(), any())).thenReturn(1);
     when(accountInviteRepository.findById(7L)).thenReturn(Optional.of(invite));
-    when(createAdminService.createNewTenantAdmin(any(CreateAdminDTO.class)))
+    when(createAdminService.createNewTenantAdminFromInvite(any(CreateAdminDTO.class)))
         .thenReturn(onboardedAdmin());
     when(identitySecondFactor.getOtpCredential(anyString()))
         .thenReturn(new IdentityOtpCredential(null, "TOTPSECRET", "QRBASE64", null));

@@ -84,6 +84,7 @@ class AccountInviteServiceTest {
       reservationLockRepository;
 
   @Mock private PlatformTransactionManager transactionManager;
+  @Mock private ExistingAccountSetupIssuer existingAccountSetupIssuer;
 
   /**
    * The cross-Träger scoping has its own real-database test ({@code AccountInviteTenantScopeIT});
@@ -92,6 +93,42 @@ class AccountInviteServiceTest {
   @Mock private AccountInviteAccessPolicy accessPolicy;
 
   private AccountInviteService service;
+
+  @Test
+  void existingAccountSetupResolveReportsAnIndeterminateClaimInsteadOfShowingThePasswordForm() {
+    AccountInvite setup =
+        AccountInvite.builder()
+            .purpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .provisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS)
+            .provisioningFailureReason("SETUP_OUTCOME_INDETERMINATE")
+            .expiresAt(LocalDateTime.now().plusDays(1))
+            .build();
+    when(accountInviteRepository.findByTokenHash(AccountInviteService.hash("setup-token")))
+        .thenReturn(Optional.of(setup));
+
+    assertThatThrownBy(() -> service.requireActiveInvite("setup-token"))
+        .isInstanceOf(AccountInviteLinkException.class)
+        .extracting("reason")
+        .isEqualTo(AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED);
+  }
+
+  @Test
+  void existingAccountSetupResolveKeepsSupersededLinksTerminal() {
+    AccountInvite setup =
+        AccountInvite.builder()
+            .purpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP)
+            .status(AccountInviteStatus.SUPERSEDED)
+            .expiresAt(LocalDateTime.now().plusDays(1))
+            .build();
+    when(accountInviteRepository.findByTokenHash(AccountInviteService.hash("old-token")))
+        .thenReturn(Optional.of(setup));
+
+    assertThatThrownBy(() -> service.requireActiveInvite("old-token"))
+        .isInstanceOf(AccountInviteLinkException.class)
+        .extracting("reason")
+        .isEqualTo(AccountInviteLinkException.Reason.SUPERSEDED);
+  }
 
   @BeforeEach
   void letTheAccessPolicyPassEverythingThrough() {
@@ -125,7 +162,8 @@ class AccountInviteServiceTest {
             ledger,
             new UnitQueue(
                 accountInviteRepository, templateRepository, ledger, delivery, transactionManager),
-            delivery);
+            delivery,
+            existingAccountSetupIssuer);
     lenient().when(accessPolicy.authorizeCreate(any())).thenAnswer(call -> call.getArgument(0));
     // No racing revoke in these tests: the locked read sees what the plain one sees.
     lenient().when(accountInviteRepository.holdInStatus(any(), any(), any())).thenReturn(1);
@@ -230,6 +268,38 @@ class AccountInviteServiceTest {
     assertThat(result.invite().getStatus()).isEqualTo(AccountInviteStatus.EMAIL_SENT);
     assertThat(result.invite().getSupersededByInviteId()).isNull();
     assertThat(result.invite().getRecipientEmail()).isEqualTo(oldInvite.getRecipientEmail());
+  }
+
+  @Test
+  void genericHistoryResendDelegatesOnlyTheScopedSelectedSetupRow() {
+    AccountInvite selected =
+        AccountInvite.builder()
+            .id(10L)
+            .purpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP)
+            .provisionedUserId("admin-11")
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .status(AccountInviteStatus.EXPIRED)
+            .build();
+    AccountInvite replacement =
+        AccountInvite.builder()
+            .id(12L)
+            .purpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP)
+            .provisionedUserId("admin-11")
+            .targetRole(AccountInviteTargetRole.TENANT_ADMIN)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .build();
+    when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(selected));
+    when(existingAccountSetupIssuer.reissueSelectedInvite(
+            AccountInviteTargetRole.TENANT_ADMIN, "admin-11", 10L))
+        .thenReturn(replacement);
+
+    var result = service.resendInvite(new SendInviteCommand(10L, 999L));
+
+    verify(accessPolicy).authorizeAccess(selected);
+    assertThat(result.invite()).isSameAs(replacement);
+    assertThat(result.rawToken()).isNull();
+    assertThat(result.acceptUrl()).isNull();
+    verifyNoInteractions(templateRepository);
   }
 
   // --- another Träger's template is refused before any mail or write (ORISO-Admin#1026) ---
@@ -1169,6 +1239,23 @@ class AccountInviteServiceTest {
 
     assertThatThrownBy(() -> service.acceptInvite("raw-token", "user-1"))
         .isInstanceOf(NotFoundException.class);
+  }
+
+  @Test
+  void ordinaryAcceptanceCannotProvisionAnExistingAccountSetupToken() {
+    AccountInvite setup =
+        AccountInvite.builder()
+            .id(1L)
+            .purpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP)
+            .status(AccountInviteStatus.EMAIL_SENT)
+            .expiresAt(LocalDateTime.now().plusDays(1))
+            .provisionedUserId("existing-id")
+            .build();
+    when(accountInviteRepository.findByTokenHash(any())).thenReturn(Optional.of(setup));
+
+    assertThatThrownBy(() -> service.acceptInvite("raw-token", "different-id"))
+        .isInstanceOf(BadRequestException.class);
+    verify(accountInviteRepository, never()).claimForAcceptance(any(), any(), any());
   }
 
   @Test
