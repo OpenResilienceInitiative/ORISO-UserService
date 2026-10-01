@@ -100,6 +100,12 @@ public interface AdminRepository
 
   List<Admin> findByType(Admin.AdminType type);
 
+  /** Admins of the given type that administrate at least one agency, ordered by id. */
+  @Query(
+      "SELECT a FROM Admin a WHERE a.type = :type "
+          + "AND EXISTS (SELECT aa.id FROM AdminAgency aa WHERE aa.admin = a) ORDER BY a.id")
+  List<Admin> findAssignedToAnAgencyByType(@Param("type") Admin.AdminType type);
+
   List<Admin> findAllByIdIn(Set<String> adminIds);
 
   Optional<Admin> findFirstByUsernameIgnoreCaseOrEmailIgnoreCase(String username, String email);

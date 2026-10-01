@@ -2272,6 +2272,33 @@ paths:
         '403': { description: Caller is not a platform administrator }
         '404': { description: Draft not found }
 
+  /users/admin/service-notices/drafts/{campaignKey}/dry-run:
+    get:
+      tags: [service-notice-dry-run-controller]
+      operationId: dryRunServiceNoticeDraft
+      summary: Count who a planned notice would reach, without recording or sending anything
+      description: >-
+        Implemented by the handwritten platform-administrator controller; the /service-prefixed
+        ingress alias serves the same operation. The audience is computed server-side
+        (counselling-centre admins); the response carries counts only, never addresses.
+      x-internal: true
+      security:
+        - Bearer: []
+      parameters:
+        - name: campaignKey
+          in: path
+          required: true
+          schema: { type: string, pattern: '^[A-Za-z0-9][A-Za-z0-9-]{0,79}$' }
+      responses:
+        '200':
+          description: Current audience counts; Cache-Control no-store
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ServiceNoticeDryRun' }
+        '401': { description: Missing or invalid bearer token }
+        '403': { description: Caller is not a platform administrator }
+        '404': { description: Draft not found }
+
   /users/chat-series/{seriesId}/join-requests:
     post:
       tags: [chat-series-controller]
@@ -2446,6 +2473,17 @@ components:
         preheader: { type: string }
         html: { type: string }
         text: { type: string }
+    ServiceNoticeDryRun:
+      type: object
+      required: [campaignKey, audience, recipients, mail, feedOnlyPreferenceOff, feedOnlyNoAddress, feedOnlyNoSenderTenant]
+      properties:
+        campaignKey: { type: string }
+        audience: { type: string, enum: [AGENCY_ADMINS] }
+        recipients: { type: integer, description: Everyone who would get the in-app entry }
+        mail: { type: integer, description: Recipients who would also get the mail }
+        feedOnlyPreferenceOff: { type: integer, description: In-app only because their service-notice switch is off }
+        feedOnlyNoAddress: { type: integer, description: In-app only because no real address is stored }
+        feedOnlyNoSenderTenant: { type: integer, description: In-app only because no sender tenant is known }
     GuestIdentitySuggestionRequest:
       type: object
       required: [locale, count, exclude]

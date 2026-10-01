@@ -8,6 +8,7 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
+import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeAudience;
 import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeDraftService;
 import de.caritas.cob.userservice.api.service.servicenotice.ServiceNoticeDraftService.DraftView;
 import java.time.LocalDate;
@@ -57,6 +58,7 @@ class ServiceNoticeDraftControllerAuthorizationIT {
   @Autowired private MockMvc mvc;
   @MockitoBean private ServiceNoticeDraftService drafts;
   @MockitoBean private AuthenticatedUser authenticatedUser;
+  @MockitoBean private ServiceNoticeAudience audience;
 
   @Test
   void anonymousTenantAdminAndTechnicalCallerCannotReadThePlatformDraft() throws Exception {
@@ -104,5 +106,27 @@ class ServiceNoticeDraftControllerAuthorizationIT {
         .andExpect(status().isOk())
         .andExpect(
             header().string("Cache-Control", org.hamcrest.Matchers.containsString("no-store")));
+  }
+
+  @Test
+  void tenantAdminAndTechnicalCallerCannotCountThePlatformAudience() throws Exception {
+    mvc.perform(get(DRAFT + "/dry-run")).andExpect(status().isUnauthorized());
+    mvc.perform(
+            get(DRAFT + "/dry-run")
+                .with(
+                    jwt()
+                        .jwt(
+                            token ->
+                                token
+                                    .claim(
+                                        "realm_access",
+                                        Map.of("roles", List.of("agency-admin", "tenant-admin")))
+                                    .claim("tenantId", 7))))
+        .andExpect(status().isForbidden());
+    mvc.perform(
+            get(DRAFT + "/dry-run")
+                .with(jwt().authorities(new SimpleGrantedAuthority("technical"))))
+        .andExpect(status().isForbidden());
+    verifyNoInteractions(audience);
   }
 }
