@@ -260,6 +260,15 @@ public class UserController implements UsersApi {
   }
 
   /**
+   * Checks permission before the browser sends its encrypted first enquiry. Finalization rechecks
+   * permission independently.
+   */
+  @Override
+  public ResponseEntity<Void> checkEnquiryPermission(@PathVariable Long sessionId) {
+    return userRegistrationControllerDelegate.checkEnquiryPermission(sessionId);
+  }
+
+  /**
    * @param sessionId Session Id (required)
    * @param enquiryMessage Enquiry message (required)
    * @return {@link ResponseEntity} containing {@link CreateEnquiryMessageResponseDTO}

@@ -351,6 +351,9 @@ public class SecurityConfig {
                     "/service/users/sessions/{sessionId:[0-9]+}/contact-sheet-email")
                 .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT)
                 .requestMatchers(
+                    HttpMethod.GET, "/users/sessions/{sessionId:[0-9]+}/enquiry/permission")
+                .hasAuthority(USER_DEFAULT)
+                .requestMatchers(
                     "/users/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/appointments/sessions/{sessionId:[0-9]+}/enquiry/new",
                     "/users/askers/consultingType/new",

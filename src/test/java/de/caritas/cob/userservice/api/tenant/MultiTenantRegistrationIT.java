@@ -116,6 +116,12 @@ class MultiTenantRegistrationIT {
   @Autowired private UserRepository userRepository;
   @Autowired private SessionRepository sessionRepository;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
+      ownerFactory;
+
+  private de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures dpaOwner;
+
   @MockitoBean(
       extraInterfaces = {
         IdentityAccountRemover.class,
@@ -166,6 +172,8 @@ class MultiTenantRegistrationIT {
 
   @BeforeEach
   void oneAgencyOfTenantTwo() throws Exception {
+    dpaOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, TENANT);
     when(agencyFacts.find(AGENCY))
         .thenReturn(Optional.of(new AgencyFacts.Agency(AGENCY, TENANT, false, List.of())));
     // The platform domain resolves to the main tenant, as with single-domain multitenancy.
@@ -234,6 +242,7 @@ class MultiTenantRegistrationIT {
       fixtures.removeAll();
     } finally {
       TenantContext.clear();
+      dpaOwner.close();
     }
   }
 

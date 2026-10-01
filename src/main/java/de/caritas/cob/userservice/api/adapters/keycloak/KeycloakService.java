@@ -271,9 +271,10 @@ public class KeycloakService
                 keycloakClient.get(keycloakClient.getBearerToken(), requestUrl, OtpInfoDTO.class));
 
     var body = response.getBody();
-    return body == null
-        ? IdentityOtpCredential.empty()
-        : keycloakMapper.identityOtpCredentialOf(body);
+    if (body == null) {
+      throw new KeycloakException("OTP credential lookup returned an empty response");
+    }
+    return keycloakMapper.identityOtpCredentialOf(body);
   }
 
   @Override

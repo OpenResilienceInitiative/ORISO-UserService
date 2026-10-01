@@ -30,7 +30,6 @@ import org.jeasy.random.EasyRandom;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
-import org.mockito.InjectMocks;
 import org.mockito.Mock;
 import org.mockito.Spy;
 import org.mockito.junit.jupiter.MockitoExtension;
@@ -39,13 +38,26 @@ import org.springframework.test.util.ReflectionTestUtils;
 @ExtendWith(MockitoExtension.class)
 public class CreateAnonymousEnquiryFacadeTest {
 
-  @InjectMocks private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
+  private CreateAnonymousEnquiryFacade createAnonymousEnquiryFacade;
   @Mock private AnonymousUserCreatorService anonymousUserCreatorService;
   @Mock private AnonymousConversationCreatorService anonymousConversationCreatorService;
   @Mock private AnonymousUsernameRegistry usernameRegistry;
   @Mock private UserHelper userHelper;
   @Mock private ConsultingTypeManager consultingTypeManager;
   @Spy private TenantContextProvider tenantContextProvider = new TenantContextProvider();
+
+  @org.junit.jupiter.api.BeforeEach
+  void realDpaPolicyFixture() {
+    createAnonymousEnquiryFacade =
+        new CreateAnonymousEnquiryFacade(
+            anonymousUserCreatorService,
+            de.caritas.cob.userservice.api.testHelper.PermittingDpaOwnerFixture.policy(),
+            anonymousConversationCreatorService,
+            usernameRegistry,
+            userHelper,
+            consultingTypeManager,
+            tenantContextProvider);
+  }
 
   EasyRandom easyRandom = new EasyRandom();
 

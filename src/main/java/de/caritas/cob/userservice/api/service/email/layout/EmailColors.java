@@ -20,12 +20,7 @@ import java.util.Locale;
  *   <li>{@link #borderColor(String)} gives a nearly invisible button a visible outline.
  * </ul>
  *
- * <p>The neutral surfaces are <em>not</em> defined here — they are literals in {@code
- * classpath:email/layout/*.html}, taken one-for-one from the product's own tokens in {@code
- * ORISO-Admin/src/app.css}: {@code #e4e2e2} (--admin-workspace-background), {@code #ffffff}
- * (--m3-surface-container-lowest), {@code #f0edee} (--m3-surface-container), {@code #c4c7c8}
- * (--admin-field-outline), {@code #1b1b1c} (--m3-on-surface), {@code #444748}
- * (--m3-on-surface-variant) and {@code #747878} (--m3-outline).
+ * <p>Neutral surface colours belong to the canonical generated mail resources.
  */
 public final class EmailColors {
 
