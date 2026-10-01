@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertInstanceOf;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
@@ -10,7 +11,15 @@ import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
+import ch.qos.logback.classic.Level;
+import ch.qos.logback.classic.Logger;
+import ch.qos.logback.classic.spi.ILoggingEvent;
+import ch.qos.logback.core.read.ListAppender;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import de.caritas.cob.userservice.api.adapters.matrix.MatrixSynapseService;
 import de.caritas.cob.userservice.api.exception.httpresponses.ForbiddenException;
 import de.caritas.cob.userservice.api.helper.AuthenticatedUser;
@@ -34,8 +43,10 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.mock.web.MockMultipartFile;
+import org.springframework.test.web.servlet.setup.MockMvcBuilders;
 
 @ExtendWith(MockitoExtension.class)
 class MatrixMessageControllerTest {
@@ -165,11 +176,61 @@ class MatrixMessageControllerTest {
     var response = controller.getCurrentUserMatrixToken("ORISO_WEB_DEVICE_ONE");
 
     assertEquals(HttpStatus.OK, response.getStatusCode());
-    var body = assertInstanceOf(Map.class, response.getBody());
+    var body = new ObjectMapper().convertValue(response.getBody(), Map.class);
     assertEquals("abc", body.get("accessToken"));
     assertEquals("dev1", body.get("deviceId"));
     assertEquals("ephemeral-uia-password", body.get("uiaPassword"));
     assertEquals("no-store", response.getHeaders().getCacheControl());
+  }
+
+  @Test
+  void browserLoginResponseKeepsCredentialsOnWireButOutOfMvcTraceLogs() throws Exception {
+    String token = "synthetic-browser-token-for-log-test";
+    String password = "synthetic-stable-uia-credential-for-log-test";
+    when(authenticatedUser.getUserId()).thenReturn(USER_ID);
+    when(authenticatedUser.isConsultant()).thenReturn(false);
+    when(userService.getUser(USER_ID)).thenReturn(Optional.of(userWithMatrixId()));
+    when(matrixSynapseService.loginBrowserDevice(MATRIX_USER_ID, "DEVICE_A"))
+        .thenReturn(
+            Map.of(
+                "access_token",
+                token,
+                "user_id",
+                MATRIX_USER_ID,
+                "device_id",
+                "DEVICE_A",
+                "interactive_auth_password",
+                password));
+
+    var logger =
+        (Logger) LoggerFactory.getLogger("org.springframework.web.servlet.mvc.method.annotation");
+    var previousLevel = logger.getLevel();
+    var appender = new ListAppender<ILoggingEvent>();
+    appender.start();
+    logger.addAppender(appender);
+    logger.setLevel(Level.TRACE);
+    try {
+      var mvc = MockMvcBuilders.standaloneSetup(controller).build();
+      var result =
+          mvc.perform(get("/matrix/me/token").param("deviceId", "DEVICE_A"))
+              .andExpect(status().isOk())
+              .andExpect(header().string("Cache-Control", "no-store"))
+              .andReturn();
+      var json = new ObjectMapper().readTree(result.getResponse().getContentAsString());
+      assertEquals(token, json.path("accessToken").asText());
+      assertEquals(password, json.path("uiaPassword").asText());
+      assertEquals(MATRIX_USER_ID, json.path("userId").asText());
+      assertEquals("DEVICE_A", json.path("deviceId").asText());
+      assertEquals(55 * 60 * 1000L, json.path("expiresInMs").asLong());
+      var messages = appender.list.stream().map(ILoggingEvent::getFormattedMessage).toList();
+      assertThat(messages).anyMatch(message -> message.startsWith("Writing ["));
+      assertThat(messages)
+          .noneMatch(message -> message.contains(password) || message.contains(token));
+    } finally {
+      logger.detachAppender(appender);
+      logger.setLevel(previousLevel);
+      appender.stop();
+    }
   }
 
   @Test

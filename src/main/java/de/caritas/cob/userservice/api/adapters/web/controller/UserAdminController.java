@@ -1,6 +1,5 @@
 package de.caritas.cob.userservice.api.adapters.web.controller;
 
-import com.google.common.collect.Lists;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminFilter;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminResponseDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.AdminSearchResultDTO;
@@ -80,6 +79,9 @@ public class UserAdminController implements UseradminApi {
   private final @NonNull AuthenticatedUser authenticatedUser;
   private final @NonNull GrantConsultantIdentityService grantConsultantIdentityService;
   private final @NonNull UserIdentitiesService userIdentitiesService;
+  private final @NonNull de.caritas.cob.userservice.api.service.accountinvite
+          .ExistingAccountSetupIssuer
+      accountSetupIssuer;
 
   /**
    * Creates the root hal based navigation entity.
@@ -125,6 +127,10 @@ public class UserAdminController implements UseradminApi {
 
     createConsultantDTO.setEmail(createConsultantDTO.getEmail().toLowerCase(Locale.ROOT));
     var consultant = consultantAdminFacade.createNewConsultant(createConsultantDTO);
+    accountSetupIssuer.issueAfterCreation(
+        de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole.COUNSELLOR,
+        consultant.getEmbedded().getId(),
+        createConsultantDTO.getPassword());
 
     return ResponseEntity.ok(consultant);
   }
@@ -213,8 +219,6 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> createConsultantAgency(
       @PathVariable String consultantId, CreateConsultantAgencyDTO createConsultantAgencyDTO) {
-    consultantAdminFacade.checkPermissionsToAssignedAgencies(
-        Lists.newArrayList(createConsultantAgencyDTO));
     this.consultantAdminFacade.createNewConsultantAgency(consultantId, createConsultantAgencyDTO);
     return new ResponseEntity<>(HttpStatus.CREATED);
   }
@@ -222,7 +226,6 @@ public class UserAdminController implements UseradminApi {
   @Override
   public ResponseEntity<Void> setConsultantAgencies(
       String consultantId, List<CreateConsultantAgencyDTO> agencyList) {
-    this.consultantAdminFacade.checkPermissionsToAssignedAgencies(agencyList);
     this.consultantAdminFacade.setConsultantAgencies(consultantId, agencyList);
     return ResponseEntity.ok().build();
   }
@@ -423,7 +426,8 @@ public class UserAdminController implements UseradminApi {
     // that stored the address as typed, so the same person could end up with two
     // differently-cased identities depending on which screen created them.
     createAdminDTO.setEmail(createAdminDTO.getEmail().toLowerCase(Locale.ROOT));
-    return ResponseEntity.ok(this.adminUserFacade.createNewAgencyAdmin(createAdminDTO));
+    var admin = this.adminUserFacade.createNewAgencyAdmin(createAdminDTO);
+    return ResponseEntity.ok(admin);
   }
 
   @Override
@@ -443,7 +447,7 @@ public class UserAdminController implements UseradminApi {
 
   @Override
   public ResponseEntity<List<Long>> getAdminAgencies(@PathVariable String adminId) {
-    var adminAgencies = this.adminUserFacade.findAdminUserAgencyIds(adminId);
+    var adminAgencies = this.adminUserFacade.findAgencyIdsOfAdminInCallerScope(adminId);
     return ResponseEntity.ok(adminAgencies);
   }
 

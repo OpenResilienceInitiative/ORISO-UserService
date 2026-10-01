@@ -2,11 +2,9 @@ package de.caritas.cob.userservice.api.tenant;
 
 import static de.caritas.cob.userservice.api.config.auth.UserRole.TECHNICAL;
 
+import de.caritas.cob.userservice.api.config.auth.KeycloakRoles;
 import jakarta.servlet.http.HttpServletRequest;
-import java.util.Collection;
-import java.util.Map;
 import java.util.Optional;
-import java.util.Set;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
@@ -43,19 +41,7 @@ public class TechnicalOrSuperAdminUserTenantResolver implements TenantResolver {
   }
 
   private boolean containsRole(Jwt token, String expectedRole) {
-    return extractRealmRoles(token).contains(expectedRole);
-  }
-
-  @SuppressWarnings("unchecked")
-  private Set<String> extractRealmRoles(Jwt token) {
-    Object realmAccess = token.getClaims().get("realm_access");
-    if (realmAccess instanceof Map<?, ?> realmAccessMap) {
-      Object rolesClaim = realmAccessMap.get("roles");
-      if (rolesClaim instanceof Collection<?> roles) {
-        return roles.stream().map(Object::toString).collect(java.util.stream.Collectors.toSet());
-      }
-    }
-    return Set.of();
+    return KeycloakRoles.of(token.getClaims()).contains(expectedRole);
   }
 
   @Override

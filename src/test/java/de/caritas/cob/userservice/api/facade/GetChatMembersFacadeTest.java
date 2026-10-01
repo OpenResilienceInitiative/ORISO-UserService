@@ -41,7 +41,7 @@ import org.mockito.quality.Strictness;
 @MockitoSettings(strictness = Strictness.LENIENT)
 public class GetChatMembersFacadeTest {
 
-  private static final String MATRIX_ROOM_ID = "!room:matrix.oriso.org";
+  private static final String MATRIX_ROOM_ID = "!room:matrix.example.org";
 
   @InjectMocks private GetChatMembersFacade getChatMembersFacade;
 
@@ -117,13 +117,13 @@ public class GetChatMembersFacadeTest {
         .thenReturn(
             List.of(
                 new ResolvedRoomMember(
-                    "@consultant:matrix.oriso.org",
+                    "@consultant:matrix.example.org",
                     "consultant-id",
                     "consultantUsername",
                     "Consultant Name",
                     true),
                 new ResolvedRoomMember(
-                    "@asker:matrix.oriso.org",
+                    "@asker:matrix.example.org",
                     "asker-id",
                     "askerUsername",
                     "askerUsername",
@@ -141,7 +141,7 @@ public class GetChatMembersFacadeTest {
         response.getMembers().stream()
             .map(ChatMemberResponseDTO::getId)
             .collect(Collectors.toList());
-    assertThat(matrixIds, contains("@consultant:matrix.oriso.org", "@asker:matrix.oriso.org"));
+    assertThat(matrixIds, contains("@consultant:matrix.example.org", "@asker:matrix.example.org"));
     assertThat(response.getMembers().get(0).getDisplayName(), is("Consultant Name"));
   }
 
@@ -182,7 +182,7 @@ public class GetChatMembersFacadeTest {
         .thenReturn(
             List.of(
                 new ResolvedRoomMember(
-                    "@u:matrix.oriso.org", "u-id", "plainUsername", "Display", false)));
+                    "@u:matrix.example.org", "u-id", "plainUsername", "Display", false)));
 
     ChatMembersResponseDTO response = getChatMembersFacade.getChatMembers(CHAT_ID);
 
