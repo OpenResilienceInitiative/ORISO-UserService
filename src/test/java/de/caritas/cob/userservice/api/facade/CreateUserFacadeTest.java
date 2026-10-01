@@ -462,6 +462,37 @@ public class CreateUserFacadeTest {
         .initializeNewSession(any(), any(), any(ExtendedConsultingTypeResponseDTO.class));
   }
 
+  @Test
+  void
+      createUserAccountWithInitializedConsultingType_Should_JoinTheGroupWithoutARegistrationEvent_When_InvitedToAGroup()
+          throws Exception {
+    when(consultingTypeManager.getConsultingTypeSettings(any()))
+        .thenReturn(CONSULTING_TYPE_SETTINGS_KREUZBUND);
+    when(identityClient.createUser(any())).thenReturn(CREATED_IDENTITY_WITH_USER_ID);
+    givenMatrixProvisioningSucceeds();
+    User user = givenAFullyPersistedUser();
+    Chat group =
+        Chat.builder()
+            .id(4711L)
+            .topic("group")
+            .initialStartDate(LocalDateTime.now())
+            .startDate(LocalDateTime.now())
+            .conversationType(ConversationType.SELF_HELP)
+            .build();
+    when(groupInviteRegistration.resolveInvitedGroup(any())).thenReturn(Optional.of(group));
+    // Without it the event would fail to build and be swallowed, hiding a regression.
+    when(agencyService.getAgencyWithoutCaching(any())).thenReturn(new AgencyDTO());
+
+    Long sessionId =
+        createUserFacade.createUserAccountWithInitializedConsultingType(USER_DTO_SUCHT);
+
+    assertThat(sessionId, nullValue());
+    verify(groupInviteRegistration).join(group, user);
+    // The registration event contract requires a session id, which a group join does not have.
+    verify(statisticsService, never()).fireEvent(any());
+    verify(groupInviteRegistration, never()).leave(any(), any());
+  }
+
   private User givenAFullyPersistedUser() {
     User user = new User();
     user.setUsername("dbUser");

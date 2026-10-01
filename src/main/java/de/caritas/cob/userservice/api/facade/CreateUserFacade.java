@@ -175,19 +175,22 @@ public class CreateUserFacade {
         sessionId = registration.getSessionId();
       }
 
-      try {
-        RegistrationStatisticsEvent registrationEvent =
-            new RegistrationStatisticsEvent(
-                userDTO,
-                user,
-                sessionId,
-                topicService.findTopicInternalIdentifier(userDTO.getMainTopicId()),
-                topicService.findTopicsInternalAttributes(userDTO.getTopicIds()),
-                getTenantName(),
-                getAgencyName(userDTO));
-        statisticsService.fireEvent(registrationEvent);
-      } catch (Exception e) {
-        log.error("Could not create registration statistics event", e);
+      // The registration event contract requires a session id; a group join opens none.
+      if (sessionId != null) {
+        try {
+          RegistrationStatisticsEvent registrationEvent =
+              new RegistrationStatisticsEvent(
+                  userDTO,
+                  user,
+                  sessionId,
+                  topicService.findTopicInternalIdentifier(userDTO.getMainTopicId()),
+                  topicService.findTopicsInternalAttributes(userDTO.getTopicIds()),
+                  getTenantName(),
+                  getAgencyName(userDTO));
+          statisticsService.fireEvent(registrationEvent);
+        } catch (Exception e) {
+          log.error("Could not create registration statistics event", e);
+        }
       }
 
       activeAttempt.complete();
