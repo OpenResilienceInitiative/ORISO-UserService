@@ -22,6 +22,7 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
+import java.util.Set;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
@@ -88,6 +89,80 @@ class GroupAppointmentMailQueueTest {
                 .orElseThrow()
                 .getDueAtUtc())
         .isEqualTo(movedStart.minusHours(24));
+  }
+
+  @Test
+  void aNewCounselorReceivesAConfirmationInsteadOfAnOldScheduleReschedule() {
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(5);
+    var moved = start.plusHours(1);
+    var series = series(start);
+    var state =
+        GroupAppointmentOccurrenceState.builder()
+            .seriesId(42L)
+            .occurrenceIndex(0)
+            .revision(1)
+            .originalStartUtc(start)
+            .effectiveStartUtc(start)
+            .timezone("Europe/Berlin")
+            .status(GroupAppointmentOccurrenceState.Status.ACTIVE)
+            .build();
+    var newMember =
+        new GroupAppointmentMailQueue.Member(
+            GroupAppointmentMailOutbox.RecipientRole.COUNSELOR, "new");
+    when(chats.findSeriesForAppointmentMailUpdate(42L)).thenReturn(Optional.of(series));
+    when(states.findForUpdate(42L, 0)).thenReturn(Optional.of(state));
+    when(states.findBySeriesId(42L)).thenReturn(List.of(state));
+    when(counselors.findBySeriesId(42L))
+        .thenReturn(
+            List.of(
+                GroupChatParticipant.builder().consultantId("existing").build(),
+                GroupChatParticipant.builder().consultantId("new").build()));
+
+    queue.recordOccurrence(series, 0, start, moved, false, Set.of(newMember));
+    queue.recordMemberJoined(series, newMember);
+
+    var saved = ArgumentCaptor.forClass(GroupAppointmentMailOutbox.class);
+    verify(outbox, org.mockito.Mockito.times(4)).save(saved.capture());
+    assertThat(saved.getAllValues().stream().filter(mail -> mail.getRecipientId().equals("new")))
+        .extracting(GroupAppointmentMailOutbox::getEventType)
+        .containsExactlyInAnyOrder(EventType.CONFIRMED, EventType.REMINDER);
+    assertThat(
+            saved.getAllValues().stream().filter(mail -> mail.getRecipientId().equals("existing")))
+        .extracting(GroupAppointmentMailOutbox::getEventType)
+        .containsExactlyInAnyOrder(EventType.RESCHEDULED, EventType.REMINDER);
+  }
+
+  @Test
+  void aNewCounselorDoesNotReceiveCancellationForARemovedOldDate() {
+    var start = LocalDateTime.now(ZoneOffset.UTC).plusDays(5);
+    var series = series(start);
+    var state =
+        GroupAppointmentOccurrenceState.builder()
+            .seriesId(42L)
+            .occurrenceIndex(1)
+            .revision(1)
+            .originalStartUtc(start)
+            .effectiveStartUtc(start)
+            .timezone("Europe/Berlin")
+            .status(GroupAppointmentOccurrenceState.Status.ACTIVE)
+            .build();
+    var newMember =
+        new GroupAppointmentMailQueue.Member(
+            GroupAppointmentMailOutbox.RecipientRole.COUNSELOR, "new");
+    when(chats.findSeriesForAppointmentMailUpdate(42L)).thenReturn(Optional.of(series));
+    when(states.findForUpdate(42L, 1)).thenReturn(Optional.of(state));
+    when(counselors.findBySeriesId(42L))
+        .thenReturn(
+            List.of(
+                GroupChatParticipant.builder().consultantId("existing").build(),
+                GroupChatParticipant.builder().consultantId("new").build()));
+
+    queue.recordRemovedOccurrence(series, 1, Set.of(newMember));
+
+    var saved = ArgumentCaptor.forClass(GroupAppointmentMailOutbox.class);
+    verify(outbox).save(saved.capture());
+    assertThat(saved.getValue().getRecipientId()).isEqualTo("existing");
+    assertThat(saved.getValue().getEventType()).isEqualTo(EventType.CANCELLED);
   }
 
   @Test
