@@ -12,6 +12,7 @@ import static org.mockito.Mockito.when;
 import de.caritas.cob.userservice.api.model.Chat;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.ConversationType;
+import de.caritas.cob.userservice.api.model.GroupAppointmentMailOutbox.RecipientRole;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest;
 import de.caritas.cob.userservice.api.model.GroupChatJoinRequest.Status;
 import de.caritas.cob.userservice.api.model.GroupChatParticipant;
@@ -21,6 +22,7 @@ import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatJoinRequestRepository;
 import de.caritas.cob.userservice.api.port.out.GroupChatParticipantRepository;
 import de.caritas.cob.userservice.api.service.matrix.GroupChatMembershipService;
+import de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
@@ -44,6 +46,7 @@ class GroupChatAdmissionProcessorTest {
   @Mock private ChatRepository chats;
   @Mock private ConsultantRepository consultants;
   @Mock private GroupChatMembershipService membership;
+  @Mock private GroupAppointmentSeriesEventProducer appointmentEvents;
   @Mock private GroupChatAdmissionMatrixRepairService repair;
   @InjectMocks private GroupChatAdmissionProcessor processor;
 
@@ -67,7 +70,7 @@ class GroupChatAdmissionProcessorTest {
     var requester = mock(Consultant.class);
     when(requester.getMatrixUserId()).thenReturn("@r:test");
     when(requests.findByIdForUpdate(7L)).thenReturn(Optional.of(request));
-    when(chats.findById(11L)).thenReturn(Optional.of(series));
+    when(chats.findSeriesForAppointmentMailUpdate(11L)).thenReturn(Optional.of(series));
     when(consultants.findByIdAndDeleteDateIsNull("requester")).thenReturn(Optional.of(requester));
     when(participants.findBySeriesIdForUpdate(11L))
         .thenReturn(
@@ -95,6 +98,7 @@ class GroupChatAdmissionProcessorTest {
     assertThat(request.getAdmissionAttemptCount()).isEqualTo(1);
     assertThat(request.getAdmissionLastAttemptAt()).isNotNull();
     verify(participants, never()).save(any());
+    verify(appointmentEvents, never()).recordMemberJoined(any(), any(), any());
 
     processor.process(7L);
     assertThat(request.getStatus()).isEqualTo(Status.ADMITTED);
@@ -103,9 +107,11 @@ class GroupChatAdmissionProcessorTest {
     verify(participants).save(saved.capture());
     assertThat(saved.getValue().getConsultantId()).isEqualTo("requester");
     assertThat(saved.getValue().getChatId()).isEqualTo(19L);
+    verify(appointmentEvents).recordMemberJoined(series, RecipientRole.COUNSELOR, "requester");
 
     processor.process(7L);
     verify(membership, times(2)).addMemberToRoom(series, "@r:test");
+    verify(appointmentEvents).recordMemberJoined(series, RecipientRole.COUNSELOR, "requester");
   }
 
   @Test
@@ -119,6 +125,7 @@ class GroupChatAdmissionProcessorTest {
 
     assertThat(request.getStatus()).isEqualTo(Status.ADMITTING);
     assertThat(request.getAdmissionRequestedAt()).isNotNull();
+    verify(appointmentEvents, never()).recordMemberJoined(any(), any(), any());
 
     processor.recordFailure(7L);
     assertThat(request.getAdmissionAttemptCount()).isEqualTo(1);

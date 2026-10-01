@@ -57,6 +57,11 @@ class CreateChatSimplifiedGroupChatFacadeTest {
   @Mock private MatrixSynapseService matrixSynapseService;
   @Mock private ConsultantRepository consultantRepository;
   @Mock private GroupChatParticipantRepository groupChatParticipantRepository;
+
+  @Mock
+  private de.caritas.cob.userservice.api.service.notification.GroupAppointmentSeriesEventProducer
+      appointmentEvents;
+
   @Mock private UserRepository userRepository;
 
   @SuppressWarnings("unused")
@@ -81,6 +86,7 @@ class CreateChatSimplifiedGroupChatFacadeTest {
     createChatFacade =
         new CreateChatFacade(
             chatService,
+            appointmentEvents,
             sessionService,
             agencyService,
             chatConverter,
