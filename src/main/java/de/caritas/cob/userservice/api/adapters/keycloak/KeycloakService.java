@@ -37,6 +37,7 @@ import de.caritas.cob.userservice.api.port.out.IdentityEmailOwner;
 import de.caritas.cob.userservice.api.port.out.IdentityEmailOwnerLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLocaleLookup;
 import de.caritas.cob.userservice.api.port.out.IdentityLogin;
+import de.caritas.cob.userservice.api.port.out.IdentityPasswordChangeRequirement;
 import de.caritas.cob.userservice.api.port.out.IdentityPasswordUpdater;
 import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
@@ -99,6 +100,7 @@ public class KeycloakService
         IdentityEmailOwnerLookup,
         IdentityLocaleLookup,
         IdentityPasswordUpdater,
+        IdentityPasswordChangeRequirement,
         IdentityProfileLookup,
         IdentityProfileUpdater,
         IdentityRoleLookup,
@@ -505,11 +507,12 @@ public class KeycloakService
         .anyMatch(userRepresentation -> userRepresentation.getEmail().equals(email));
   }
 
-  private CredentialRepresentation getCredentialRepresentation(final String password) {
+  private CredentialRepresentation getCredentialRepresentation(
+      final String password, boolean temporary) {
     var credentials = new CredentialRepresentation();
     credentials.setType(CredentialRepresentation.PASSWORD);
     credentials.setValue(password);
-    credentials.setTemporary(false);
+    credentials.setTemporary(temporary);
 
     return credentials;
   }
@@ -800,7 +803,16 @@ public class KeycloakService
    */
   @Override
   public void updatePassword(final String userId, final String password) {
-    var newCredentials = getCredentialRepresentation(password);
+    resetPassword(userId, password, false);
+  }
+
+  @Override
+  public void updateTemporaryPassword(final String userId, final String password) {
+    resetPassword(userId, password, true);
+  }
+
+  private void resetPassword(final String userId, final String password, boolean temporary) {
+    var newCredentials = getCredentialRepresentation(password, temporary);
     var userResource = keycloakClient.getUsersResource().get(userId);
 
     try {
@@ -1063,6 +1075,22 @@ public class KeycloakService
               user.getEmail()));
     } catch (NotFoundException ex) {
       return Optional.empty();
+    }
+  }
+
+  @Override
+  public boolean requiresPasswordChange(String userId) {
+    try {
+      UserResource userResource = keycloakClient.getUsersResource().get(userId);
+      if (userResource == null) {
+        return false;
+      }
+      var user = userResource.toRepresentation();
+      return user != null
+          && user.getRequiredActions() != null
+          && user.getRequiredActions().contains("UPDATE_PASSWORD");
+    } catch (NotFoundException missing) {
+      return false;
     }
   }
 

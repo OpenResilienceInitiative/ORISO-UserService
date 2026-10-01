@@ -17,6 +17,8 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantAdminResponseDTO;
+import de.caritas.cob.userservice.api.adapters.web.dto.ConsultantDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminAgencyRelationDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateAdminDTO;
 import de.caritas.cob.userservice.api.adapters.web.dto.CreateConsultantAgencyDTO;
@@ -112,6 +114,10 @@ class UserAdminControllerIT {
 
   @MockitoBean private AdminUserFacade adminUserFacade;
 
+  @MockitoBean
+  private de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer
+      accountSetupIssuer;
+
   @MockitoBean private AdminDtoMapper adminDtoMapper;
 
   @MockitoBean private AuthenticatedUser authenticatedUser;
@@ -205,6 +211,9 @@ class UserAdminControllerIT {
   void createConsultant_Should_returnOk_When_requiredCreateConsultantIsGiven() throws Exception {
     CreateConsultantDTO createConsultantDTO =
         new EasyRandom().nextObject(CreateConsultantDTO.class);
+    when(this.consultantAdminFacade.createNewConsultant(any()))
+        .thenReturn(
+            new ConsultantAdminResponseDTO().embedded(new ConsultantDTO().id("consultant-1")));
 
     this.mvc
         .perform(

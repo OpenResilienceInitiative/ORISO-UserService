@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<databaseChangeLog
+  xmlns="http://www.liquibase.org/xml/ns/dbchangelog"
+  xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+  xsi:schemaLocation="http://www.liquibase.org/xml/ns/dbchangelog http://www.liquibase.org/xml/ns/dbchangelog/dbchangelog-4.5.xsd">
+  <changeSet id="0106-existing-account-setup" author="oriso">
+    <sqlFile
+      path="db/changelog/changeset/0106_existing_account_setup/migrate.sql"
+      relativeToChangelogFile="false" splitStatements="true" stripComments="true" endDelimiter=";"/>
+    <rollback><sql>
+      DROP INDEX idx_account_invite_active_setup_identity ON account_invite;
+      ALTER TABLE account_invite DROP COLUMN active_setup_identity_key;
+      ALTER TABLE account_invite DROP COLUMN initial_password_verifier;
+      ALTER TABLE account_invite DROP COLUMN setup_bound_username;
+      ALTER TABLE account_invite DROP COLUMN purpose;
+    </sql></rollback>
+  </changeSet>
+</databaseChangeLog>

@@ -114,6 +114,8 @@ class AccountInviteTopicPermissionIT {
   @Autowired private AuthenticatedUser caller;
   @Autowired private InviteEmailTemplateRepository templateRepository;
 
+  @MockitoBean private ExistingAccountSetupIssuer existingAccountSetupIssuer;
+
   @MockitoBean private IdentityEmailOwnerLookup identityEmailOwnerLookup;
   @MockitoBean private de.caritas.cob.userservice.api.service.agency.AgencyService agencyService;
 

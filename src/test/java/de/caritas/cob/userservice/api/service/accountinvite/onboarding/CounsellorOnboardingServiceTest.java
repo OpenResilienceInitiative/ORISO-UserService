@@ -28,6 +28,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityProfile;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
@@ -168,6 +170,36 @@ class CounsellorOnboardingServiceTest {
     assertEquals(DEPARTMENT_TOPIC_ID, state.topics().get(0).id());
     assertEquals("Family counselling", state.topics().get(0).name());
     assertEquals(EXTRA_AGENCY_TOPIC_ID, state.topics().get(1).id());
+  }
+
+  @Test
+  void existingAccountSetupWithUncertainClaimDoesNotExposeThePublicWizard() {
+    var setup = invite();
+    setup.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+    setup.setProvisioningStatus(AccountInviteProvisioningStatus.IN_PROGRESS);
+    setup.setProvisioningFailureReason("SETUP_OUTCOME_INDETERMINATE");
+    inviteResolves(setup);
+
+    var failure =
+        assertThrows(
+            AccountInviteLinkException.class, () -> service.resolveOnboardingInvite(RAW_TOKEN));
+    assertEquals(
+        AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED, failure.getReason());
+    verifyNoInteractions(agencyService, topicService);
+  }
+
+  @Test
+  void acceptedExistingAccountSetupCannotResumePublicInviteTwoFactorActivation() {
+    var setup = invite();
+    setup.setPurpose(AccountInvitePurpose.EXISTING_ACCOUNT_SETUP);
+    setup.setStatus(AccountInviteStatus.ACCEPTED);
+    setup.setTwoFactorStatus(TwoFactorGateStatus.PENDING_SETUP);
+    inviteResolves(setup);
+
+    var failure =
+        assertThrows(
+            AccountInviteLinkException.class, () -> service.resolveOnboardingInvite(RAW_TOKEN));
+    assertEquals(AccountInviteLinkException.Reason.CONSUMED, failure.getReason());
   }
 
   @Test
