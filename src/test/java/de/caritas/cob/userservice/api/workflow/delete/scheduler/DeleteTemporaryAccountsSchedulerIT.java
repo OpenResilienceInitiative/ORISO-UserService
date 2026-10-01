@@ -23,15 +23,17 @@ import de.caritas.cob.userservice.api.config.apiclient.ConsultingTypeServiceApiC
 import de.caritas.cob.userservice.api.config.apiclient.MailServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.config.apiclient.TopicServiceApiControllerFactory;
 import de.caritas.cob.userservice.api.model.Chat;
+import de.caritas.cob.userservice.api.model.ChatAgency;
+import de.caritas.cob.userservice.api.model.ConversationType;
 import de.caritas.cob.userservice.api.model.User;
-import de.caritas.cob.userservice.api.model.UserChat;
+import de.caritas.cob.userservice.api.port.out.ChatAgencyRepository;
 import de.caritas.cob.userservice.api.port.out.ChatRepository;
 import de.caritas.cob.userservice.api.port.out.ConsultantRepository;
 import de.caritas.cob.userservice.api.port.out.ScheduledTaskClaimRepository;
 import de.caritas.cob.userservice.api.port.out.SessionRepository;
 import de.caritas.cob.userservice.api.port.out.UserChatRepository;
 import de.caritas.cob.userservice.api.port.out.UserRepository;
-import de.caritas.cob.userservice.api.service.ChatService;
+import de.caritas.cob.userservice.api.service.chat.GroupChatInviteTokens;
 import de.caritas.cob.userservice.api.service.consultingtype.ApplicationSettingsService;
 import de.caritas.cob.userservice.api.service.user.UserService;
 import de.caritas.cob.userservice.api.tenant.TenantContext;
@@ -75,6 +77,7 @@ import org.springframework.test.context.TestPropertySource;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.context.bean.override.mockito.MockitoSpyBean;
 import org.springframework.test.web.servlet.MockMvc;
+import org.springframework.test.web.servlet.ResultActions;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriTemplateHandler;
 
@@ -111,13 +114,14 @@ class DeleteTemporaryAccountsSchedulerIT {
   @Autowired private ChatRepository chatRepository;
   @Autowired private UserChatRepository userChatRepository;
   @Autowired private ConsultantRepository consultantRepository;
-  @Autowired private ChatService chatService;
   @Autowired private AnonymousUserDeletionUnit accountRemover;
+  @Autowired private ChatAgencyRepository chatAgencyRepository;
 
   private static final String SEEDED_CONSULTANT_ID = "0b3b1cc6-be98-4787-aa56-212259d811b9";
   private static final EasyRandom easyRandom = new EasyRandom();
   private final List<Long> groupsToRemove = new ArrayList<>();
   private final List<String> registeredUserIds = new ArrayList<>();
+  private Chat inviteGroup;
 
   @Value("${user.temporary.deleteWorkflow.maxAge}")
   private Duration maxAge;
@@ -192,18 +196,34 @@ class DeleteTemporaryAccountsSchedulerIT {
   void tearDown() {
     TenantContext.clear();
     dpaOwner.close();
-    // Accounts a test kept on purpose must not leak into other ITs sharing this database.
-    registeredUserIds.forEach(accountRemover::deleteUser);
-    registeredUserIds.clear();
-    groupsToRemove.forEach(
-        id -> {
-          chatRepository
-              .findById(id)
-              .ifPresent(chat -> userChatRepository.deleteAll(userChatRepository.findByChat(chat)));
-          chatRepository.deleteById(id);
-        });
-    groupsToRemove.clear();
-    deleteSchedulerClaim();
+    // Accounts a test kept on purpose must not leak into other ITs sharing this database. One
+    // failing account must not skip the others, the groups or the claim.
+    var failures = new ArrayList<RuntimeException>();
+    try {
+      for (var userId : registeredUserIds) {
+        try {
+          accountRemover.deleteUser(userId);
+        } catch (RuntimeException failure) {
+          failures.add(failure);
+        }
+      }
+      registeredUserIds.clear();
+    } finally {
+      groupsToRemove.forEach(
+          id -> {
+            chatAgencyRepository.deleteAll(chatAgencyRepository.findByChat_Id(id));
+            chatRepository
+                .findById(id)
+                .ifPresent(
+                    chat -> userChatRepository.deleteAll(userChatRepository.findByChat(chat)));
+            chatRepository.deleteById(id);
+          });
+      groupsToRemove.clear();
+      deleteSchedulerClaim();
+    }
+    if (!failures.isEmpty()) {
+      throw failures.get(0);
+    }
   }
 
   @Test
@@ -242,10 +262,22 @@ class DeleteTemporaryAccountsSchedulerIT {
   }
 
   @Test
+  void aTemporaryAccountWithoutAGroupInviteIsRejected() throws Exception {
+    var registration = aRegistration(true);
+
+    send(registration).andExpect(status().isBadRequest());
+
+    assertTrue(
+        StreamSupport.stream(userRepository.findAll().spliterator(), false)
+            .noneMatch(user -> registration.getEmail().equals(user.getEmail())));
+    verify(identityAccounts, never()).createUser(any(UserDTO.class));
+  }
+
+  @Test
   void theGroupAndItsRoomOutliveTheTemporaryParticipant() throws Exception {
     var participant = register(true);
-    var group = givenAGroupWithRoom("!self-help-group:matrix.oriso.org");
-    chatService.saveUserChatRelation(UserChat.builder().user(participant).chat(group).build());
+    var group = inviteGroup;
+    assertTrue(userChatRepository.findByChatAndUser(group, participant).isPresent());
     ageBy(participant, maxAge.plusMinutes(1));
 
     scheduler.performDeletionWorkflow();
@@ -256,8 +288,28 @@ class DeleteTemporaryAccountsSchedulerIT {
   }
 
   private User register(boolean temporary) throws Exception {
+    var registration = aRegistration(temporary);
+    if (temporary) {
+      // The server accepts "temporary" only together with a valid self-help group invite.
+      inviteGroup = givenAGroupWithRoom("!self-help-group:matrix.oriso.org");
+      chatAgencyRepository.save(new ChatAgency(inviteGroup, 1L));
+      registration.setGroupChatId(inviteGroup.getId());
+      registration.setGroupChatInviteToken(inviteGroup.getInviteToken());
+    }
+    send(registration).andExpect(status().isCreated());
+    var email = registration.getEmail();
+
+    var registered =
+        StreamSupport.stream(userRepository.findAll().spliterator(), false)
+            .filter(user -> email.equals(user.getEmail()))
+            .findFirst()
+            .orElseThrow();
+    registeredUserIds.add(registered.getUserId());
+    return registered;
+  }
+
+  private UserDTO aRegistration(boolean temporary) {
     TenantContext.setCurrentTenant(1L);
-    var email = RandomStringUtils.randomAlphabetic(8) + "@example.com";
     var userDTO = new UserDTO();
     userDTO.setUsername(RandomStringUtils.randomAlphabetic(8, 20));
     userDTO.setPassword("s3cret-Passw0rd!");
@@ -267,27 +319,20 @@ class DeleteTemporaryAccountsSchedulerIT {
     userDTO.setState("8");
     userDTO.setTermsAccepted("true");
     userDTO.setConsultingType("1");
-    userDTO.setEmail(email);
+    userDTO.setEmail(RandomStringUtils.randomAlphabetic(8) + "@example.com");
     userDTO.setMainTopicId(1L);
     userDTO.setTopicIds(List.of(1L));
     userDTO.setTemporary(temporary);
+    return userDTO;
+  }
 
-    mockMvc
-        .perform(
-            post("/users/askers/new")
-                .cookie(CSRF_COOKIE)
-                .header(CSRF_HEADER, CSRF_VALUE)
-                .contentType(MediaType.APPLICATION_JSON)
-                .content(objectMapper.writeValueAsString(userDTO)))
-        .andExpect(status().isCreated());
-
-    var registered =
-        StreamSupport.stream(userRepository.findAll().spliterator(), false)
-            .filter(user -> email.equals(user.getEmail()))
-            .findFirst()
-            .orElseThrow();
-    registeredUserIds.add(registered.getUserId());
-    return registered;
+  private ResultActions send(UserDTO registration) throws Exception {
+    return mockMvc.perform(
+        post("/users/askers/new")
+            .cookie(CSRF_COOKIE)
+            .header(CSRF_HEADER, CSRF_VALUE)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(objectMapper.writeValueAsString(registration)));
   }
 
   /**
@@ -310,6 +355,8 @@ class DeleteTemporaryAccountsSchedulerIT {
     chat.setMaxParticipants(10);
     chat.setSourceLanguage("de");
     chat.setMatrixRoomId(matrixRoomId);
+    chat.setConversationType(ConversationType.SELF_HELP);
+    chat.setInviteToken(GroupChatInviteTokens.newToken());
     chat.setUpdateDate(LocalDateTime.now());
     chat = chatRepository.save(chat);
     groupsToRemove.add(chat.getId());

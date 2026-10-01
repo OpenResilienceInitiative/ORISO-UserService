@@ -1,5 +1,6 @@
 package de.caritas.cob.userservice.api.workflow.delete.scheduler;
 
+import de.caritas.cob.userservice.api.tenant.TenantContext;
 import de.caritas.cob.userservice.api.tenant.TenantContextProvider;
 import de.caritas.cob.userservice.api.workflow.delete.service.DeleteTemporaryAccountsService;
 import de.caritas.cob.userservice.api.workflow.scheduling.ScheduledTaskClaimService;
@@ -33,7 +34,12 @@ public class DeleteTemporaryAccountsScheduler {
     if (!enabled || !taskClaimService.tryClaim(TASK_NAME, claimDuration)) {
       return;
     }
-    tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
-    deleteTemporaryAccountsService.deleteExpiredTemporaryAccounts();
+    try {
+      tenantContextProvider.setTechnicalContextIfMultiTenancyIsEnabled();
+      deleteTemporaryAccountsService.deleteExpiredTemporaryAccounts();
+    } finally {
+      // The scheduler thread is pooled; the technical context must not reach the next task.
+      TenantContext.clear();
+    }
   }
 }
