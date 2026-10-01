@@ -1007,7 +1007,8 @@ public class AccountInviteService {
             .orElseThrow(() -> new NotFoundException("Invite e-mail template not found"));
     // Hiding another Träger's template from the list is not enough: the id travels in
     // the send request body, so sending with it has to be refused too (ORISO-Admin#1026).
-    accessPolicy.authorizeTemplateUse(template.getTenantId());
+    // The kind rule rides along: a BST admin may not send with a Träger invite text.
+    accessPolicy.authorizeTemplateUse(template.getTenantId(), template.getKind());
     // Before anything is written: a template without text is refused, never mailed empty.
     InviteDelivery.requireText(template.getSubject(), withoutActionLink(template.getBody()));
     return template;

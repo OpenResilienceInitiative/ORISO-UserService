@@ -315,7 +315,9 @@ class AccountInviteServiceTest {
             .active(true)
             .build();
     lenient().when(templateRepository.findById(21L)).thenReturn(Optional.of(foreign));
-    doThrow(new ForbiddenException("foreign template")).when(accessPolicy).authorizeTemplateUse(8L);
+    doThrow(new ForbiddenException("foreign template"))
+        .when(accessPolicy)
+        .authorizeTemplateUse(8L, InviteEmailTemplateKind.COUNSELLOR_INVITE);
     return foreign;
   }
 

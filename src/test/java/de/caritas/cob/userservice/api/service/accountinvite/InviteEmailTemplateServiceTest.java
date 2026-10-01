@@ -229,9 +229,16 @@ class InviteEmailTemplateServiceTest {
 
   @Test
   void updateTemplate_Should_askThePolicyWithTheStoredOwner_And_notSave_When_itDenies() {
-    var stored = InviteEmailTemplate.builder().id(1L).tenantId(4L).build();
+    var stored =
+        InviteEmailTemplate.builder()
+            .id(1L)
+            .tenantId(4L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .build();
     when(templateRepository.findById(1L)).thenReturn(Optional.of(stored));
-    doThrow(new ForbiddenException("denied")).when(accessPolicy).authorizeTemplateUpdate(4L);
+    doThrow(new ForbiddenException("denied"))
+        .when(accessPolicy)
+        .authorizeTemplateUpdate(4L, InviteEmailTemplateKind.COUNSELLOR_INVITE);
     var command =
         new TemplateCommand(
             InviteEmailTemplateKind.TENANT_INVITE, "Name", "en", "Subj", "Body", true);
@@ -245,9 +252,16 @@ class InviteEmailTemplateServiceTest {
   void requireUsableTemplate_Should_askThePolicyWithTheStoredOwner() {
     // The send path: hiding a foreign template from the list is not enough, because
     // the id travels in the request body.
-    var stored = InviteEmailTemplate.builder().id(1L).tenantId(4L).build();
+    var stored =
+        InviteEmailTemplate.builder()
+            .id(1L)
+            .tenantId(4L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .build();
     when(templateRepository.findById(1L)).thenReturn(Optional.of(stored));
-    doThrow(new ForbiddenException("denied")).when(accessPolicy).authorizeTemplateUse(4L);
+    doThrow(new ForbiddenException("denied"))
+        .when(accessPolicy)
+        .authorizeTemplateUse(4L, InviteEmailTemplateKind.COUNSELLOR_INVITE);
 
     assertThatThrownBy(() -> service.requireUsableTemplate(1L))
         .isInstanceOf(ForbiddenException.class);
@@ -282,18 +296,104 @@ class InviteEmailTemplateServiceTest {
 
   @Test
   void listTemplates_Should_askOnlyForOwnAndPlatformTemplates_When_callerIsATraeger() {
-    List<InviteEmailTemplate> visible = List.of(InviteEmailTemplate.builder().id(3L).build());
+    List<InviteEmailTemplate> visible =
+        List.of(
+            InviteEmailTemplate.builder()
+                .id(3L)
+                .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+                .build());
     when(accessPolicy.seesEveryTemplate()).thenReturn(false);
     when(accessPolicy.templateOwnerTenantId()).thenReturn(9L);
+    when(accessPolicy.mayUseTemplateKind(InviteEmailTemplateKind.COUNSELLOR_INVITE))
+        .thenReturn(true);
     when(templateRepository.findVisibleForTenant(InviteEmailTemplateKind.COUNSELLOR_INVITE, 9L))
         .thenReturn(visible);
 
-    assertThat(service.listTemplates(InviteEmailTemplateKind.COUNSELLOR_INVITE)).isSameAs(visible);
+    assertThat(service.listTemplates(InviteEmailTemplateKind.COUNSELLOR_INVITE))
+        .containsExactlyElementsOf(visible);
     verify(templateRepository, never()).findAllVisible(any());
   }
 
   // ---------------------------------------------------------------------------
-  // a template can never produce an empty mail, the built-in defaults stay in place
+  // kind rules per admin role
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void listTemplates_Should_dropKindsOutOfReach_When_callerIsATraeger() {
+    var counsellor =
+        InviteEmailTemplate.builder()
+            .id(1L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .build();
+    var dpa =
+        InviteEmailTemplate.builder().id(2L).kind(InviteEmailTemplateKind.DPA_FORWARD).build();
+    when(accessPolicy.seesEveryTemplate()).thenReturn(false);
+    when(accessPolicy.templateOwnerTenantId()).thenReturn(9L);
+    when(accessPolicy.mayUseTemplateKind(InviteEmailTemplateKind.COUNSELLOR_INVITE))
+        .thenReturn(true);
+    when(accessPolicy.mayUseTemplateKind(InviteEmailTemplateKind.DPA_FORWARD)).thenReturn(false);
+    when(templateRepository.findVisibleForTenant(null, 9L)).thenReturn(List.of(counsellor, dpa));
+
+    assertThat(service.listTemplates(null)).containsExactly(counsellor);
+  }
+
+  @Test
+  void listTemplates_Should_returnNothingWithoutQuerying_When_kindIsOutOfReach() {
+    when(accessPolicy.seesEveryTemplate()).thenReturn(false);
+    when(accessPolicy.mayUseTemplateKind(InviteEmailTemplateKind.DPA_FORWARD)).thenReturn(false);
+
+    assertThat(service.listTemplates(InviteEmailTemplateKind.DPA_FORWARD)).isEmpty();
+    verify(templateRepository, never()).findVisibleForTenant(any(), any());
+  }
+
+  @Test
+  void createTemplate_Should_notSave_When_kindIsOutOfReach() {
+    doThrow(new ForbiddenException("denied"))
+        .when(accessPolicy)
+        .authorizeTemplateKind(InviteEmailTemplateKind.DPA_FORWARD);
+    var command =
+        new TemplateCommand(InviteEmailTemplateKind.DPA_FORWARD, "Name", "de", "S", "Body", true);
+
+    assertThatThrownBy(() -> service.createTemplate(command))
+        .isInstanceOf(ForbiddenException.class);
+    verify(templateRepository, never()).save(any());
+  }
+
+  @Test
+  void updateTemplate_Should_notSave_When_theNewKindIsOutOfReach() {
+    var stored =
+        InviteEmailTemplate.builder()
+            .id(1L)
+            .tenantId(4L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .build();
+    when(templateRepository.findById(1L)).thenReturn(Optional.of(stored));
+    doThrow(new ForbiddenException("denied"))
+        .when(accessPolicy)
+        .authorizeTemplateKind(InviteEmailTemplateKind.TENANT_INVITE);
+    var command =
+        new TemplateCommand(InviteEmailTemplateKind.TENANT_INVITE, "Name", "de", "S", "Body", true);
+
+    assertThatThrownBy(() -> service.updateTemplate(1L, command))
+        .isInstanceOf(ForbiddenException.class);
+    assertThat(stored.getKind()).isEqualTo(InviteEmailTemplateKind.COUNSELLOR_INVITE);
+    verify(templateRepository, never()).save(any());
+  }
+
+  @Test
+  void mayChange_Should_passTheKindToThePolicy() {
+    var template =
+        InviteEmailTemplate.builder()
+            .tenantId(4L)
+            .kind(InviteEmailTemplateKind.DPA_FORWARD)
+            .build();
+    when(accessPolicy.canChangeTemplate(4L, InviteEmailTemplateKind.DPA_FORWARD)).thenReturn(false);
+
+    assertThat(service.mayChange(template)).isFalse();
+  }
+
+  // ---------------------------------------------------------------------------
+  // a template can never produce an empty mail
   // ---------------------------------------------------------------------------
 
   @Test

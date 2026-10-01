@@ -242,7 +242,7 @@ class InviteEmailPreviewServiceTest {
     when(templateRepository.findById(6L)).thenReturn(Optional.of(foreign));
     org.mockito.Mockito.doThrow(new ForbiddenException("foreign template"))
         .when(accessPolicy)
-        .authorizeTemplateUse(2L);
+        .authorizeTemplateUse(2L, InviteEmailTemplateKind.COUNSELLOR_INVITE);
 
     assertThatThrownBy(() -> previewService.preview(new PreviewCommand(6L, null, null, null, null)))
         .isInstanceOf(ForbiddenException.class);
