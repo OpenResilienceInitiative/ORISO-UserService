@@ -26,9 +26,9 @@ public class AssignChatFacade {
 
   private final ChatService chatService;
   private final UserService userService;
-  private final GroupAppointmentSeriesEventProducer appointmentEvents;
   private final UserChatRepository userChats;
   private final GroupCounsellingDpaPolicy groupCounsellingDpaPolicy;
+  private final GroupAppointmentSeriesEventProducer appointmentEvents;
 
   /**
    * Assign a chat to the authenticated user.

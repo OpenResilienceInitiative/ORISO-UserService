@@ -495,30 +495,28 @@ public class ChatService {
               chatId));
     }
 
-    // Materialize required values before reconciliation can write to Matrix.
-    int duration = chatDTO.getDuration();
-    // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
-    // one when the client sends it (validated like the create path), and preserve the existing
-    // zone when the DTO omits it rather than silently resetting to UTC.
-    ZoneId updatedZone = chat.zoneId();
-    if (chatDTO.getTimezone() != null && !chatDTO.getTimezone().isBlank()) {
-      try {
-        updatedZone = ZoneId.of(chatDTO.getTimezone());
-      } catch (DateTimeException invalidTimezone) {
-        throw new BadRequestException(
-            "Invalid timezone: " + chatDTO.getTimezone(), invalidTimezone);
-      }
-    }
-
-    // Same contract as create: materialize the requested wall-clock time in its zone.
-    LocalDateTime startDate =
-        Chat.toUtc(chatDTO.getStartDate(), chatDTO.getStartTime(), updatedZone);
-    // Acquire the series lock before participant rows, as in the admission worker.
     int oldRepeatCount = appointmentEvents.seedBeforeEdit(chat);
     Set<String> oldCounselorIds =
         groupChatParticipantRepository.findBySeriesId(chatId).stream()
             .map(member -> member.getConsultantId())
             .collect(Collectors.toSet());
+
+    // Timezone drives the recurrence math (occurrenceStart: DST/monthly/yearly). Persist a new
+    // one when the client sends it (validated like the create path), and preserve the existing
+    // zone when the DTO omits it rather than silently resetting to UTC.
+    ZoneId zone = chat.zoneId();
+    if (chatDTO.getTimezone() != null && !chatDTO.getTimezone().isBlank()) {
+      try {
+        zone = ZoneId.of(chatDTO.getTimezone());
+      } catch (DateTimeException invalidTimezone) {
+        throw new BadRequestException(
+            "Invalid timezone: " + chatDTO.getTimezone(), invalidTimezone);
+      }
+    }
+    // Materialize required values before reconciliation can write to Matrix. Same contract as
+    // create: the request carries wall-clock time in the chat's zone.
+    LocalDateTime startDate = Chat.toUtc(chatDTO.getStartDate(), chatDTO.getStartTime(), zone);
+    int duration = chatDTO.getDuration();
 
     participantReconciliationService.reconcile(chat, chatDTO.getConsultantIds());
 

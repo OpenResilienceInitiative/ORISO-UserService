@@ -59,7 +59,7 @@ class AssignChatFacadeTest {
                 de.caritas.cob.userservice.api.port.out.ChatAgencyRepository.class),
             realAgencies);
     assignChatFacade =
-        new AssignChatFacade(chatService, userService, appointmentEvents, userChats, groupPolicy);
+        new AssignChatFacade(chatService, userService, userChats, groupPolicy, appointmentEvents);
   }
 
   @Test
