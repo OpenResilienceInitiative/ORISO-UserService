@@ -257,7 +257,8 @@ public class AdviceSeekerReplyEmailService {
           requireBaseUrl(
               multitenancyEnabled ? tenantTemplates.getTenantBaseUrl(tenant) : applicationBaseUrl);
       var recipientBrand = branding.resolveNotification(claim.getTenantId(), baseUrl);
-      var values = emailBrand.values(baseUrl, route.emailThemeColor());
+      var values = emailBrand.valuesForResolvedBrand(baseUrl, recipientBrand);
+      values.put("platformName", values.get("offeringName"));
       // Notification copy and footer identity stay platform-neutral. Only validated visual
       // theming from this exact recipient tenant may vary between installations.
       if (recipientBrand.logoUrl() != null) {

@@ -81,6 +81,7 @@ class GlobalSmtpTestEmailServiceTest {
                 values ->
                     "stored-smtp.example.org:465".equals(values.get("smtpHost"))
                         && "noreply@stored.example.org".equals(values.get("smtpFrom"))));
+    verify(emailBrand).valuesForTenant("https://app.example.org", null);
     MimeMessage sent = sentMessage();
     Properties session = sent.getSession().getProperties();
     assertThat(session.getProperty("mail.smtp.host")).isEqualTo("stored-smtp.example.org");
@@ -117,7 +118,7 @@ class GlobalSmtpTestEmailServiceTest {
 
     service.sendTestEmail(dto);
 
-    verify(emailBrand).values("https://app.example.org", null);
+    verify(emailBrand).valuesForTenant("https://app.example.org", null);
   }
 
   @Test
@@ -176,7 +177,8 @@ class GlobalSmtpTestEmailServiceTest {
   }
 
   private void givenRenderedMail() {
-    when(emailBrand.values(eq("https://app.example.org"), any()))
+    when(emailBrand.valuesForTenant(
+            eq("https://app.example.org"), org.mockito.ArgumentMatchers.isNull()))
         .thenReturn(Map.of("appUrl", "https://app.example.org"));
     when(emailRenderer.render(eq("smtp-test"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(

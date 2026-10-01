@@ -56,7 +56,17 @@ public class WelcomeEmailService {
       return;
     }
 
-    Map<String, String> values = new LinkedHashMap<>(emailBrand.values(applicationBaseUrl, null));
+    Map<String, String> values;
+    try {
+      values =
+          new LinkedHashMap<>(emailBrand.valuesForTenant(applicationBaseUrl, user.getTenantId()));
+    } catch (RuntimeException brandingFailure) {
+      log.warn(
+          "Skipping welcome mail for tenant {}: branding failed ({})",
+          user.getTenantId(),
+          brandingFailure.getClass().getSimpleName());
+      return;
+    }
     values.put("username", plainUsername);
     values.put("loginUrl", values.get("appUrl"));
 

@@ -70,8 +70,8 @@ class InquiryAcceptedMailDeliveryTest {
                 7L,
                 new SenderOrganisation(
                     "Tenant Seven Company", "Tenant Street", "contact@tenant-seven.example.org")));
-    var brand = new OrisoEmailBrand(organisations);
-    ReflectionTestUtils.setField(brand, "platformName", "Independent Platform");
+    when(branding.platformName()).thenReturn("Independent Platform");
+    var brand = new OrisoEmailBrand(organisations, branding);
     var values = new TenantEmailBrandValues(brand, organisations, "https://platform.example.org");
     var composer = new NotificationMailComposer(new OrisoEmailRenderer(true), branding, values);
     var delivery =
