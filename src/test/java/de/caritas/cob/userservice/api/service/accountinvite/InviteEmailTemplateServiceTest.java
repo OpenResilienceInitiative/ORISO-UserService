@@ -291,4 +291,79 @@ class InviteEmailTemplateServiceTest {
     assertThat(service.listTemplates(InviteEmailTemplateKind.COUNSELLOR_INVITE)).isSameAs(visible);
     verify(templateRepository, never()).findAllVisible(any());
   }
+
+  // ---------------------------------------------------------------------------
+  // a template can never produce an empty mail, the built-in defaults stay in place
+  // ---------------------------------------------------------------------------
+
+  @Test
+  void createTemplate_Should_throwBadRequest_When_bodyIsOnlyTheActionLink() {
+    // The layout renders the link as a button and lifts {{inviteLink}} out of the body,
+    // so such a body would arrive as an empty mail.
+    var command =
+        new TemplateCommand(
+            InviteEmailTemplateKind.COUNSELLOR_INVITE,
+            "Name",
+            "de",
+            "S",
+            " {{inviteLink}} \n",
+            true);
+
+    assertThatThrownBy(() -> service.createTemplate(command))
+        .isInstanceOf(BadRequestException.class);
+    verify(templateRepository, never()).save(any());
+  }
+
+  @Test
+  void updateTemplate_Should_keepASystemDefaultInPlace() {
+    var systemDefault =
+        InviteEmailTemplate.builder()
+            .id(1L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .language("de")
+            .active(true)
+            .systemDefault(true)
+            .build();
+    when(templateRepository.findById(1L)).thenReturn(Optional.of(systemDefault));
+
+    for (var command :
+        List.of(
+            new TemplateCommand(
+                InviteEmailTemplateKind.TENANT_INVITE, "N", "de", "S", "Body", true),
+            new TemplateCommand(
+                InviteEmailTemplateKind.COUNSELLOR_INVITE, "N", "en", "S", "Body", true),
+            new TemplateCommand(
+                InviteEmailTemplateKind.COUNSELLOR_INVITE, "N", null, "S", "Body", true),
+            new TemplateCommand(
+                InviteEmailTemplateKind.COUNSELLOR_INVITE, "N", "de", "S", "Body", false))) {
+      assertThatThrownBy(() -> service.updateTemplate(1L, command))
+          .as("%s", command)
+          .isInstanceOf(BadRequestException.class);
+    }
+    verify(templateRepository, never()).save(any());
+  }
+
+  @Test
+  void updateTemplate_Should_saveNewText_When_systemDefaultKeepsKindLanguageAndActive() {
+    var systemDefault =
+        InviteEmailTemplate.builder()
+            .id(1L)
+            .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+            .language("de")
+            .active(true)
+            .systemDefault(true)
+            .build();
+    when(templateRepository.findById(1L)).thenReturn(Optional.of(systemDefault));
+    when(templateRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));
+
+    var saved =
+        service.updateTemplate(
+            1L,
+            new TemplateCommand(
+                InviteEmailTemplateKind.COUNSELLOR_INVITE, "N", "de", "New", "New body", null));
+
+    assertThat(saved.getSubject()).isEqualTo("New");
+    assertThat(saved.getSystemDefault()).isTrue();
+    assertThat(saved.getActive()).isTrue();
+  }
 }

@@ -389,6 +389,65 @@ class AccountInviteServiceTest {
     verify(accountInviteRepository, never()).save(any());
   }
 
+  // --- an invite is never mailed with an empty subject or body ---
+
+  /** A stored row that renders empty: the layout lifts {{inviteLink}} out of the body. */
+  private void givenTemplateWithoutText() {
+    lenient()
+        .when(templateRepository.findById(31L))
+        .thenReturn(
+            Optional.of(
+                InviteEmailTemplate.builder()
+                    .id(31L)
+                    .kind(InviteEmailTemplateKind.COUNSELLOR_INVITE)
+                    .subject("Welcome")
+                    .body("  {{inviteLink}}\n")
+                    .active(true)
+                    .build()));
+  }
+
+  @Test
+  void sendInvite_Should_RefuseATemplateWithoutText_BeforeMailOrWrite() {
+    AccountInvite invite =
+        AccountInvite.builder()
+            .id(10L)
+            .tenantId(7L)
+            .recipientEmail("owner@example.org")
+            .targetRole(AccountInviteTargetRole.COUNSELLOR)
+            .status(AccountInviteStatus.DRAFT)
+            .build();
+    lenient().when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
+    givenTemplateWithoutText();
+
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(10L, 31L)))
+        .isInstanceOf(BadRequestException.class);
+
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    verifyNoInteractions(inviteMailDispatchService, deliveryRepository);
+    verify(accountInviteRepository, never()).save(any());
+  }
+
+  @Test
+  void createAndSendInvite_Should_RefuseATemplateWithoutText_BeforeCreatingTheInvite() {
+    givenTemplateWithoutText();
+    var command =
+        new CreateAccountInviteCommand(
+            AccountInviteTargetRole.COUNSELLOR,
+            7L,
+            "new@example.org",
+            "New",
+            "Counsellor",
+            null,
+            null,
+            30L);
+
+    assertThatThrownBy(() -> service.createAndSendInvite(command, 31L))
+        .isInstanceOf(BadRequestException.class);
+
+    verifyNoInteractions(inviteMailDispatchService, deliveryRepository);
+    verify(accountInviteRepository, never()).saveAndFlush(any());
+  }
+
   // --- TEN-INV-U6 (#890): SENT only after the transport confirmed the handover ---
 
   @Test
@@ -405,7 +464,7 @@ class AccountInviteServiceTest {
             .id(20L)
             .kind(InviteEmailTemplateKind.TENANT_INVITE)
             .subject("s")
-            .body("{{inviteLink}}")
+            .body("Use {{inviteLink}}")
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
@@ -461,7 +520,7 @@ class AccountInviteServiceTest {
             .status(AccountInviteStatus.DRAFT)
             .build();
     InviteEmailTemplate template =
-        InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
+        InviteEmailTemplate.builder().id(20L).subject("s").body("Use {{inviteLink}}").build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
@@ -520,7 +579,7 @@ class AccountInviteServiceTest {
             .id(20L)
             .kind(InviteEmailTemplateKind.TENANT_INVITE)
             .subject("s")
-            .body("{{inviteLink}}")
+            .body("Use {{inviteLink}}")
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
@@ -572,7 +631,7 @@ class AccountInviteServiceTest {
             .id(20L)
             .kind(InviteEmailTemplateKind.TENANT_INVITE)
             .subject("s")
-            .body("{{inviteLink}}")
+            .body("Use {{inviteLink}}")
             .build();
     when(accountInviteRepository.findById(10L)).thenReturn(Optional.of(oldInvite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
@@ -1982,7 +2041,7 @@ class AccountInviteServiceTest {
             .status(AccountInviteStatus.DRAFT)
             .build();
     InviteEmailTemplate template =
-        InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
+        InviteEmailTemplate.builder().id(20L).subject("s").body("Use {{inviteLink}}").build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     lenient()
@@ -2009,7 +2068,7 @@ class AccountInviteServiceTest {
             .status(AccountInviteStatus.DRAFT)
             .build();
     InviteEmailTemplate template =
-        InviteEmailTemplate.builder().id(20L).subject("s").body("{{inviteLink}}").build();
+        InviteEmailTemplate.builder().id(20L).subject("s").body("Use {{inviteLink}}").build();
     when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
     lenient()
@@ -2065,6 +2124,16 @@ class AccountInviteServiceTest {
 
   @Test
   void render_Should_returnEmptyString_When_templateValueNull() {
+    AccountInvite invite = AccountInvite.builder().recipientEmail("a@example.org").build();
+
+    assertThat(AccountInviteService.render(null, invite, "https://x/t")).isEmpty();
+    assertThat(AccountInviteService.renderBody(null, invite, "https://x/t")).isEmpty();
+  }
+
+  @Test
+  void sendInvite_Should_RefuseATemplateWithoutSubjectAndBody_InsteadOfMailingItEmpty() {
+    // This used to mail an empty subject and body. An empty invite is worse than a 400:
+    // the invitee cannot act on it, the admin never learns it went wrong.
     AccountInvite invite =
         AccountInvite.builder()
             .id(1L)
@@ -2073,18 +2142,14 @@ class AccountInviteServiceTest {
             .build();
     InviteEmailTemplate template =
         InviteEmailTemplate.builder().id(20L).subject(null).body(null).build();
-    when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
+    lenient().when(accountInviteRepository.findById(1L)).thenReturn(Optional.of(invite));
     when(templateRepository.findById(20L)).thenReturn(Optional.of(template));
-    lenient()
-        .when(accountInviteRepository.save(any()))
-        .thenAnswer(invocation -> invocation.getArgument(0));
-    when(deliveryRepository.save(any())).thenAnswer(invocation -> invocation.getArgument(0));
 
-    givenSuccessfulDispatch();
-    var result = service.sendInvite(new SendInviteCommand(1L, 20L));
+    assertThatThrownBy(() -> service.sendInvite(new SendInviteCommand(1L, 20L)))
+        .isInstanceOf(BadRequestException.class);
 
-    assertThat(result.delivery().getSubjectSnapshot()).isEmpty();
-    assertThat(result.delivery().getBodySnapshot()).isEmpty();
+    assertThat(invite.getStatus()).isEqualTo(AccountInviteStatus.DRAFT);
+    verifyNoInteractions(inviteMailDispatchService, deliveryRepository);
   }
 
   // --- hash() determinism ---

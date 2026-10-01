@@ -7,6 +7,7 @@ import de.caritas.cob.userservice.api.model.InviteEmailTemplate;
 import de.caritas.cob.userservice.api.port.out.InviteEmailTemplateRepository;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Objects;
 import lombok.NonNull;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
@@ -56,6 +57,7 @@ public class InviteEmailTemplateService {
     // another Träger is refused as 403, not silently reported as missing, so the Admin
     // can tell "not yours" from "gone".
     accessPolicy.authorizeTemplateUpdate(template.getTenantId());
+    keepSystemDefaultInPlace(template, command);
     template.setKind(command.kind());
     template.setName(command.name().trim());
     template.setLanguage(trimToNull(command.language()));
@@ -101,6 +103,25 @@ public class InviteEmailTemplateService {
     return template;
   }
 
+  /**
+   * A built-in default must stay the default for its kind and language and stay switched on, or an
+   * invite could again go out without a usable template. Its text may change.
+   */
+  private static void keepSystemDefaultInPlace(
+      InviteEmailTemplate template, TemplateCommand command) {
+    if (!Boolean.TRUE.equals(template.getSystemDefault())) {
+      return;
+    }
+    if (command.kind() != template.getKind()
+        || !Objects.equals(trimToNull(command.language()), template.getLanguage())) {
+      throw new BadRequestException(
+          "A system default template keeps its kind and language; create a new template instead");
+    }
+    if (Boolean.FALSE.equals(command.active())) {
+      throw new BadRequestException("A system default template cannot be deactivated");
+    }
+  }
+
   private static void validate(TemplateCommand command) {
     if (command == null) {
       throw new BadRequestException("Request body is required");
@@ -116,6 +137,11 @@ public class InviteEmailTemplateService {
     }
     if (isBlank(command.body())) {
       throw new BadRequestException("body is required");
+    }
+    // The layout renders the action link as a button and lifts {{inviteLink}} out of the body,
+    // so a body of nothing but the link would arrive as an empty mail.
+    if (isBlank(AccountInviteService.withoutActionLink(command.body()))) {
+      throw new BadRequestException("body needs text besides {{inviteLink}}");
     }
   }
 
