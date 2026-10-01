@@ -34,6 +34,7 @@ import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTopicPe
 import de.caritas.cob.userservice.api.service.accountinvite.AgencyFacts;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService;
 import de.caritas.cob.userservice.api.service.accountinvite.CounsellorInviteProvisioningService.ProvisionCounsellorCommand;
+import de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupService;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteAccountRoles;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteBoard;
 import de.caritas.cob.userservice.api.service.accountinvite.InviteEmailDeliveryStatus;
@@ -50,6 +51,7 @@ import de.caritas.cob.userservice.api.service.email.layout.BrandedEmail;
 import java.lang.reflect.Method;
 import java.time.LocalDateTime;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -67,6 +69,7 @@ class AccountInviteControllerTest {
 
   @Mock private AccountInviteService accountInviteService;
   @Mock private CounsellorInviteProvisioningService counsellorInviteProvisioningService;
+  @Mock private ExistingAccountSetupService existingAccountSetupService;
   @Mock private InviteEmailTemplateService templateService;
   @Mock private InviteEmailDeliveryRepository deliveryRepository;
   @Mock private InviteEmailPreviewService previewService;
@@ -80,6 +83,10 @@ class AccountInviteControllerTest {
         new AccountInviteController(
             accountInviteService,
             counsellorInviteProvisioningService,
+            existingAccountSetupService,
+            mock(
+                de.caritas.cob.userservice.api.service.accountinvite.ExistingAccountSetupIssuer
+                    .class),
             templateService,
             deliveryRepository,
             previewService,
@@ -787,6 +794,24 @@ class AccountInviteControllerTest {
     assertEquals(true, tree.has("dpaSignedAt"), "dpaSignedAt must stay present in the payload");
     assertEquals(true, tree.get("dpaSignedAt").isNull(), "not signed yet must serialize as null");
     assertEquals("2026-08-20T10:00:00", tree.path("dpaForwardedAt").asString());
+  }
+
+  @Test
+  void setupConfirmationAcceptsOnlyChosenPasswordAndReturnsLoginPhase() {
+    var response =
+        controller.confirmExistingAccountSetup("setup-token", Map.of("password", "new-secret"));
+
+    verify(existingAccountSetupService).confirm("setup-token", "new-secret");
+    assertEquals(Map.of("phase", "COMPLETED"), response.getBody());
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            controller.confirmExistingAccountSetup(
+                "setup-token", Map.of("password", "new-secret", "tenantId", 42)));
+    assertThrows(
+        BadRequestException.class,
+        () ->
+            controller.confirmExistingAccountSetup("setup-token", Map.of("role", "TENANT_ADMIN")));
   }
 
   private static AccountInvite sampleInvite() {

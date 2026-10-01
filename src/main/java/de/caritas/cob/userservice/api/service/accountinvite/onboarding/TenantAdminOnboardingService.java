@@ -15,6 +15,8 @@ import de.caritas.cob.userservice.api.port.out.IdentityClient;
 import de.caritas.cob.userservice.api.port.out.IdentityProfileLookup;
 import de.caritas.cob.userservice.api.port.out.IdentitySecondFactor;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteLinkException;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteProvisioningStatus;
+import de.caritas.cob.userservice.api.service.accountinvite.AccountInvitePurpose;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteService;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteStatus;
 import de.caritas.cob.userservice.api.service.accountinvite.AccountInviteTargetRole;
@@ -133,6 +135,11 @@ public class TenantAdminOnboardingService {
     if (resolved.pendingTwoFactorResume()) {
       return new OnboardingInviteState(resolved.invite(), true, null, null);
     }
+    if (resolved.invite().getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP) {
+      // This link changes credentials on an existing account. It has no new tenant or DPA record
+      // to create, and resolving it must not depend on the operator DPA text service.
+      return new OnboardingInviteState(resolved.invite(), false, null, null, true);
+    }
     if (resolved.joinsExistingTenant()) {
       // The Träger already has its own DPA; the invitee confirms nothing on its behalf.
       return new OnboardingInviteState(resolved.invite(), false, null, null, true);
@@ -147,6 +154,15 @@ public class TenantAdminOnboardingService {
         () -> {
           AccountInvite invite = findTenantAdminInvite(rawToken);
           LocalDateTime now = LocalDateTime.now();
+
+          if (invite.getPurpose() == AccountInvitePurpose.EXISTING_ACCOUNT_SETUP
+              && invite.getProvisioningStatus() == AccountInviteProvisioningStatus.IN_PROGRESS) {
+            return ResolvedOnboardingInvite.dead(
+                new AccountInviteLinkException(
+                    "SETUP_OUTCOME_INDETERMINATE".equals(invite.getProvisioningFailureReason())
+                        ? AccountInviteLinkException.Reason.SETUP_OPERATOR_REVIEW_REQUIRED
+                        : AccountInviteLinkException.Reason.SETUP_IN_PROGRESS));
+          }
 
           if (invite.getStatus() == AccountInviteStatus.EMAIL_SENT) {
             AccountInviteLinkException expired = expireIfPastExpiry(invite, now);
@@ -192,6 +208,9 @@ public class TenantAdminOnboardingService {
       String rawToken, RegisterTenantAdminCommand command) {
     validateRegistration(command);
     AccountInvite invite = findTenantAdminInvite(rawToken);
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("This link is for existing-account setup");
+    }
     LocalDateTime now = LocalDateTime.now();
 
     if (invite.getStatus() != AccountInviteStatus.EMAIL_SENT) {
@@ -260,7 +279,7 @@ public class TenantAdminOnboardingService {
       throw linkDeathException(current);
     }
 
-    var admin = createAdminService.createNewTenantAdmin(buildAdminDto(invite, command));
+    var admin = createAdminService.createNewTenantAdminFromInvite(buildAdminDto(invite, command));
     try {
       IdentityOtpCredential otpInfo =
           identitySecondFactor.getOtpCredential(
@@ -339,7 +358,9 @@ public class TenantAdminOnboardingService {
       throw linkDeathException(current);
     }
 
-    var admin = createAdminService.createNewTenantAdmin(buildAdminDto(invite, command));
+    // The invited person chose this credential. Joining an existing tenant must not turn it into
+    // a temporary direct-create password or send an existing-account setup link.
+    var admin = createAdminService.createNewTenantAdminFromInvite(buildAdminDto(invite, command));
     try {
       IdentityOtpCredential otpInfo =
           identitySecondFactor.getOtpCredential(
@@ -747,6 +768,7 @@ public class TenantAdminOnboardingService {
     boolean withinExpiryWindow =
         invite.getExpiresAt() == null || !invite.getExpiresAt().isBefore(now);
     return invite.getStatus() == AccountInviteStatus.ACCEPTED
+        && invite.getPurpose() == AccountInvitePurpose.INVITE
         && twoFactorStillPending
         && withinExpiryWindow;
   }

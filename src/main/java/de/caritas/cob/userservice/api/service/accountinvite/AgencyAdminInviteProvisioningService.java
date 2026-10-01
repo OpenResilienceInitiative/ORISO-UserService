@@ -48,6 +48,9 @@ public class AgencyAdminInviteProvisioningService {
   public AccountInvite acceptAsAgencyAdmin(
       String rawToken, String username, String password, WizardAccept wizard) {
     AccountInvite invite = accountInviteService.findInviteByToken(rawToken);
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("This link is for existing-account setup");
+    }
     wizard.requireUnchanged(invite);
     if (invite.getTargetRole() != AccountInviteTargetRole.AGENCY_ADMIN) {
       throw new BadRequestException("Not an agency-admin invite");

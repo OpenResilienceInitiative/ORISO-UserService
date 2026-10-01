@@ -47,6 +47,9 @@ public class CounsellorInviteProvisioningService {
   public AccountInvite acceptInvite(
       String rawToken, ProvisionCounsellorCommand command, WizardAccept wizard) {
     AccountInvite invite = accountInviteService.findInviteByToken(rawToken);
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("This link is for existing-account setup");
+    }
     wizard.requireUnchanged(invite);
     // A counselling agency admin comes here only via the wizard, which asks for the admin grant.
     boolean agencyAdminAlsoCounselling =

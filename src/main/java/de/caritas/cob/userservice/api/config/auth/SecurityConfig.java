@@ -228,7 +228,9 @@ public class SecurityConfig {
                 .requestMatchers(
                     HttpMethod.POST,
                     "/users/account-invites/*/accept",
-                    "/service/users/account-invites/*/accept")
+                    "/service/users/account-invites/*/accept",
+                    "/users/account-invites/*/setup",
+                    "/service/users/account-invites/*/setup")
                 .permitAll()
                 .requestMatchers(HttpMethod.OPTIONS, "/**")
                 .permitAll()
@@ -250,6 +252,8 @@ public class SecurityConfig {
                     HttpMethod.POST,
                     "/users/account-invites/{token}/accept",
                     "/service/users/account-invites/{token}/accept",
+                    "/users/account-invites/{token}/setup",
+                    "/service/users/account-invites/{token}/setup",
                     "/users/account-invites/{token}/onboarding/register",
                     "/service/users/account-invites/{token}/onboarding/register",
                     "/users/account-invites/{token}/onboarding/two-factor",

@@ -65,6 +65,9 @@ public class InviteRoleChange {
       throw new NotFoundException("Account invite not found");
     }
     accessPolicy.authorizeAccess(invite);
+    if (invite.getPurpose() != AccountInvitePurpose.INVITE) {
+      throw new BadRequestException("Existing-account setup cannot change roles");
+    }
     LocalDateTime now = LocalDateTime.now();
     requirePending(invite, now);
     InviteRowHold.hold(accountInviteRepository, invite, now);

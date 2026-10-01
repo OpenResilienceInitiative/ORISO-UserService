@@ -201,6 +201,7 @@ class CreateConsultantSagaTest {
         ArgumentCaptor.forClass(de.caritas.cob.userservice.api.model.Consultant.class);
     verify(consultantService).saveConsultant(captured.capture());
     assertThat(captured.getValue().getPasswordChangeRequired(), is(true));
+    verify(identityPasswordUpdater).updateTemporaryPassword(KEYCLOAK_USER_ID, VALID_PASSWORD);
   }
 
   @Test
@@ -364,7 +365,7 @@ class CreateConsultantSagaTest {
     stubKeycloakUserCreation();
     doThrow(new CustomValidationHttpStatusException(PASSWORD_NOT_VALID, HttpStatus.BAD_REQUEST))
         .when(identityPasswordUpdater)
-        .updatePassword(anyString(), anyString());
+        .updateTemporaryPassword(anyString(), anyString());
 
     assertThrows(
         CustomValidationHttpStatusException.class,
@@ -665,7 +666,7 @@ class CreateConsultantSagaTest {
     stubKeycloakUserCreation();
     doThrow(new RuntimeException("keycloak down"))
         .when(identityPasswordUpdater)
-        .updatePassword(anyString(), anyString());
+        .updateTemporaryPassword(anyString(), anyString());
 
     var ex =
         assertThrows(

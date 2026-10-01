@@ -1502,6 +1502,113 @@ paths:
           description: FORBIDDEN - invite outside the caller's scope
       security:
         - Bearer: [ ]
+  # The existing account-invite controller owns these routes directly. They stay x-internal so
+  # OpenAPI generation cannot add a second Spring controller for the same paths. Admin calls
+  # the documented HTTP routes directly; x-internal does not create a generated client method.
+  /users/account-invites/{token}/setup:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: Choose a permanent password for the existing account bound to this setup token
+      description: >-
+        Public bootstrap operation, also served with the /service prefix. The opaque mailed token
+        is the only identity input; the request cannot choose an account, tenant, email, or role.
+        Completion returns to ordinary login and its existing two-factor and legal gates.
+      operationId: confirmExistingAccountSetup
+      parameters:
+        - name: token
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [password]
+              additionalProperties: false
+              properties:
+                password:
+                  type: string
+                  format: password
+      responses:
+        200:
+          description: Permanent password saved; continue through ordinary login
+          content:
+            application/json:
+              schema:
+                type: object
+                x-internal: true
+                required: [phase]
+                properties:
+                  phase:
+                    type: string
+                    enum: [COMPLETED]
+        400:
+          description: Invalid request or chosen password rejected before mutation
+        404:
+          description: Setup token not found
+        410:
+          description: Expired, revoked, in-progress, or operator-review setup token
+  /useradmin/accounts/{identityId}/setup-link:
+    post:
+      x-internal: true
+      tags:
+        - account-invite-controller
+      summary: Reissue a definitive existing-account setup link within the caller's admin scope
+      description: >-
+        The server rereads the persisted account and rejects in-progress or indeterminate password
+        claims. No raw token or initial password is returned. The mailed setup link replaces the
+        prior link only when its existing-account binding remains unchanged.
+      operationId: reissueExistingAccountSetup
+      parameters:
+        - name: identityId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              x-internal: true
+              required: [targetRole]
+              additionalProperties: false
+              properties:
+                targetRole:
+                  type: string
+                  enum: [TENANT_ADMIN, AGENCY_ADMIN, COUNSELLOR]
+      responses:
+        200:
+          description: Link queued for the saved account email
+          content:
+            application/json:
+              schema:
+                type: object
+                x-internal: true
+                required: [delivery]
+                properties:
+                  delivery:
+                    type: string
+                    enum: [SENT]
+        400:
+          description: Invalid role or request
+        403:
+          description: Account outside the caller's role or tenant scope
+        404:
+          description: Account not found
+        409:
+          description: Link in progress, binding changed, or operator review required
+        502:
+          description: Mail provider unavailable; saved account and setup state remain available
+      security:
+        - Bearer: [ ]
   /useradmin/self-assignments:
     post:
       x-internal: true
@@ -2636,6 +2743,10 @@ components:
           format: int64
         targetRole:
           $ref: '#/components/schemas/AccountInviteTargetRole'
+        onboardingPurpose:
+          type: string
+          enum: [INVITE, EXISTING_ACCOUNT_SETUP]
+          description: Server-derived purpose; absent in older clients means an ordinary invite.
         tenantId:
           type: integer
           format: int64
@@ -2668,6 +2779,9 @@ components:
           description: A waiting invite whose unit has no pending admin invite any more; derived on read.
         provisioningStatus:
           type: string
+        setupRecoveryReason:
+          type: string
+          description: Fixed admin-only setup recovery code; absent from the public token response.
         provisionedUserId:
           type: string
         inviteStatus:
