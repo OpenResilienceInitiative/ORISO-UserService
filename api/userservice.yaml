@@ -1823,6 +1823,40 @@ paths:
           description: INTERNAL SERVER ERROR - server encountered unexpected condition
       security:
         - Bearer: [ ]
+  /users/sessions/{sessionId}/contact-sheet-email:
+    post:
+      tags:
+        - user-controller
+      summary: 'Request the maintained counselling-centre contact details by email [Authorization: Role: user]'
+      description: 'Only the authenticated session owner can request this mail. The server selects the recipient and centre from the session. No request body or recipient address is accepted by the operation contract.'
+      operationId: sendContactSheetEmail
+      parameters:
+        - name: sessionId
+          in: path
+          description: Session id
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        204:
+          description: NO CONTENT - SMTP transport confirmed this explicit contact-mail request
+        400:
+          description: BAD REQUEST - invalid session id
+        401:
+          description: UNAUTHORIZED - no/invalid authentication
+        403:
+          description: FORBIDDEN - wrong role, session owner, tenant access or CSRF token
+        404:
+          description: NOT FOUND - session does not exist
+        409:
+          description: CONFLICT - inactive session, invalid recipient or missing maintained contact
+        500:
+          description: INTERNAL SERVER ERROR - required configuration, contact dependency or confirmed SMTP dispatch unavailable
+        502:
+          description: BAD GATEWAY - contact service lookup failed; no upstream details returned
+      security:
+        - Bearer: [ ]
   /users/sessions/{sessionId}/supervisors:
     get:
       tags:

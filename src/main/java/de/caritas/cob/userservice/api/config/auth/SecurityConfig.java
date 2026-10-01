@@ -342,6 +342,11 @@ public class SecurityConfig {
                     "/service/users/statistics/consultant")
                 .hasAuthority(CONSULTANT_DEFAULT)
                 .requestMatchers(
+                    HttpMethod.POST,
+                    "/users/sessions/{sessionId:[0-9]+}/contact-sheet-email",
+                    "/service/users/sessions/{sessionId:[0-9]+}/contact-sheet-email")
+                .hasAnyAuthority(USER_DEFAULT, ANONYMOUS_DEFAULT)
+                .requestMatchers(
                     HttpMethod.GET, "/users/sessions/{sessionId:[0-9]+}/enquiry/permission")
                 .hasAuthority(USER_DEFAULT)
                 .requestMatchers(

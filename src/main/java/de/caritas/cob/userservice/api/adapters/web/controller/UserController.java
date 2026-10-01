@@ -70,6 +70,7 @@ import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceCommandService;
 import de.caritas.cob.userservice.api.service.chat.ChatOccurrenceQueryService;
 import de.caritas.cob.userservice.api.service.chat.GroupChatRoleService;
 import de.caritas.cob.userservice.api.service.notification.EventNotificationService;
+import de.caritas.cob.userservice.api.service.notification.RequestedContactSheetService;
 import de.caritas.cob.userservice.api.service.user.UserAccountService;
 import de.caritas.cob.userservice.generated.api.adapters.web.controller.UsersApi;
 import io.swagger.annotations.Api;
@@ -141,7 +142,14 @@ public class UserController implements UsersApi {
   private final @NotNull ChatOccurrenceCommandService chatOccurrenceCommandService;
   private final @NotNull GroupChatRoleService groupChatRoleService;
   private final @NotNull AuthenticatedUser authenticatedUser;
+  private final @NonNull RequestedContactSheetService requestedContactSheetService;
   private final @NotNull IdentitySuggestionControllerDelegate identitySuggestionControllerDelegate;
+
+  @Override
+  public ResponseEntity<Void> sendContactSheetEmail(Long sessionId) {
+    requestedContactSheetService.send(sessionId, authenticatedUser.getUserId());
+    return ResponseEntity.noContent().build();
+  }
 
   @Override
   public ResponseEntity<
