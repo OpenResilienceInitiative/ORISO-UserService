@@ -13,6 +13,7 @@ import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import ch.qos.logback.classic.Level;
+import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.Consultant;
 import de.caritas.cob.userservice.api.model.User;
 import de.caritas.cob.userservice.api.model.identity.IdentitySession;
@@ -341,6 +342,80 @@ class MagicLinkLoginServiceTest {
   // ── sendMagicLinkEmailSafely — happy path entered ────────────────────────
 
   @Test
+  void requestMagicLink_UsesAdviceSeekersSavedFrenchForTheDispatchedMail() {
+    User user = validUserWithMagicLinkEnabled();
+    user.setLanguageCode(LanguageCode.fr);
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
+    stubReadyMail();
+
+    try (MockedStatic<Transport> transport = mockStatic(Transport.class)) {
+      assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+          .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+      transport.verify(() -> Transport.send(any(Message.class)));
+    }
+
+    verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.FR), any());
+    verify(emailBrand).valuesForTenant("https://app.example.org", 42L);
+    verify(oneTimeTokenStore)
+        .store(eq("magic-login"), anyString(), eq("u-1"), any(Instant.class), eq(false));
+  }
+
+  @Test
+  void requestMagicLink_UsesCounsellorsSavedTurkishForTheDispatchedMail() {
+    when(userService.findUserByUsername(anyString())).thenReturn(Optional.empty());
+    Consultant consultant = new Consultant();
+    consultant.setId("c-1");
+    consultant.setUsername("consultant");
+    consultant.setEmail("consultant@example.com");
+    consultant.setTenantId(42L);
+    consultant.setMagicLinkLoginEnabled(Boolean.TRUE);
+    consultant.setLanguageCode(LanguageCode.tr);
+    when(consultantService.findConsultantForSignIn("consultant"))
+        .thenReturn(Optional.of(consultant));
+    stubReadyMail();
+
+    try (MockedStatic<Transport> transport = mockStatic(Transport.class)) {
+      assertThat(magicLinkLoginService.requestMagicLink("consultant"))
+          .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+      transport.verify(() -> Transport.send(any(Message.class)));
+    }
+
+    verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.TR), any());
+    verify(oneTimeTokenStore)
+        .store(eq("magic-login"), anyString(), eq("c-1"), any(Instant.class), eq(false));
+  }
+
+  @Test
+  void requestMagicLink_DoesNotIssueWrongLanguageMailWhenSavedLanguageIsMissing() {
+    User user = validUserWithMagicLinkEnabled();
+    user.setLanguageCode(null);
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
+    stubReadyMail();
+
+    try (MockedStatic<Transport> transport = mockStatic(Transport.class)) {
+      assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+          .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+      transport.verifyNoInteractions();
+    }
+    verifyNoInteractions(emailRenderer, oneTimeTokenStore);
+  }
+
+  @Test
+  void requestMagicLink_DoesNotIssueWrongLanguageMailForUnsupportedSavedLanguage() {
+    User user = validUserWithMagicLinkEnabled();
+    user.setLanguageCode(LanguageCode.es);
+    when(userService.findUserByUsername("testuser")).thenReturn(Optional.of(user));
+    stubReadyMail();
+
+    try (MockedStatic<Transport> transport = mockStatic(Transport.class)) {
+      assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+          .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+      transport.verifyNoInteractions();
+    }
+    verifyNoInteractions(emailRenderer, oneTimeTokenStore);
+  }
+
+  @Test
   void requestMagicLink_Should_KeepSmtpLookupFailurePrivate_WithoutCreatingLoginToken() {
     when(userService.findUserByUsername("testuser"))
         .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
@@ -382,7 +457,8 @@ class MagicLinkLoginServiceTest {
         .thenReturn(Optional.of(credentials));
     Map<String, String> brandValues = new HashMap<>();
     brandValues.put("appUrl", "https://app.example.org");
-    when(emailBrand.values(eq("https://app.example.org"), any())).thenReturn(brandValues);
+    when(emailBrand.valuesForTenant(eq("https://app.example.org"), eq(42L)))
+        .thenReturn(brandValues);
     when(emailRenderer.render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any()))
         .thenReturn(new OrisoEmailRenderer.RenderedEmail("subject", "<html></html>", "text"));
 
@@ -417,7 +493,26 @@ class MagicLinkLoginServiceTest {
     }
 
     verify(emailRenderer).render(eq("anmeldelink"), eq(OrisoEmailRenderer.Tone.DE_FORMAL), any());
+    verify(emailBrand).valuesForTenant("https://app.example.org", 42L);
     verify(applicationSettingsService).getGlobalSmtpSettingsSnapshot();
+  }
+
+  @Test
+  void requestMagicLink_Should_NotStoreToken_When_TenantBrandingFails() {
+    when(userService.findUserByUsername("testuser"))
+        .thenReturn(Optional.of(validUserWithMagicLinkEnabled()));
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
+        .thenReturn(Optional.of(smtpCredentials("user", "pass")));
+    when(emailBrand.valuesForTenant("https://app.example.org", 42L))
+        .thenThrow(new IllegalStateException("tenant branding unavailable"));
+
+    assertThat(magicLinkLoginService.requestMagicLink("testuser"))
+        .isEqualTo(MagicLinkRequestResult.ACCEPTED);
+
+    verify(emailBrand).valuesForTenant("https://app.example.org", 42L);
+    verify(oneTimeTokenStore, never())
+        .store(anyString(), anyString(), anyString(), any(), anyBoolean());
+    verify(emailRenderer, never()).render(anyString(), any(), any());
   }
 
   // ── consumeMagicLink — happy path returns provider-neutral session ────────
@@ -558,8 +653,19 @@ class MagicLinkLoginServiceTest {
     user.setUserId("u-1");
     user.setUsername("testuser");
     user.setEmail("real@example.com");
+    user.setTenantId(42L);
+    user.setLanguageCode(LanguageCode.de);
     user.setMagicLinkLoginEnabled(Boolean.TRUE);
     return user;
+  }
+
+  private void stubReadyMail() {
+    when(applicationSettingsService.getGlobalSmtpSettingsSnapshot())
+        .thenReturn(Optional.of(smtpCredentials("user", "pass")));
+    when(emailBrand.valuesForTenant("https://app.example.org", 42L))
+        .thenReturn(Map.of("appUrl", "https://app.example.org"));
+    when(emailRenderer.render(eq("anmeldelink"), any(), any()))
+        .thenReturn(new OrisoEmailRenderer.RenderedEmail("subject", "<html></html>", "text"));
   }
 
   private ApplicationSettingsSmtpCredentialsDTO smtpCredentials(String username, String password) {

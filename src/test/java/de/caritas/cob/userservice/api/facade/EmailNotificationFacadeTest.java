@@ -21,6 +21,7 @@ import static org.assertj.core.api.AssertionsForInterfaceTypes.assertThat;
 import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoInteractions;
@@ -357,9 +358,18 @@ class EmailNotificationFacadeTest {
   @Mock private MailService mailService;
   @Mock private NotificationRequestFacts notificationRequestFacts;
 
+  private final de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver
+      brandResolver =
+          new de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver(
+              mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class),
+              mock(TenantTemplateSupplier.class),
+              "Beispielplattform",
+              "",
+              APPLICATION_BASE_URL);
+
   @Spy
   private OrisoEmailBrand emailBrand =
-      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
+      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner(), brandResolver);
 
   @Mock SessionService sessionService;
   @Mock ConsultantService consultantService;
@@ -398,7 +408,7 @@ class EmailNotificationFacadeTest {
     when(notificationRequestFacts.forSession(any())).thenReturn(List.of());
     ReflectionTestUtils.setField(
         emailNotificationFacade, APPLICATION_BASE_URL_FIELD_NAME, APPLICATION_BASE_URL);
-    ReflectionTestUtils.setField(emailBrand, "platformName", "Beispielplattform");
+    ReflectionTestUtils.setField(emailBrand, "brandingResolver", brandResolver);
     ReflectionTestUtils.setField(
         assignEnquiryEmailSupplier, "consultantService", consultantService);
     facadeLogCaptor = LogbackCaptor.forClass(EmailNotificationFacade.class);
@@ -998,7 +1008,8 @@ class EmailNotificationFacadeTest {
     verify(mailService).sendEmailNotification(captor.capture());
     assertThat(captor.getValue().getMails().get(0).getTemplate())
         .isEqualTo("inquiry-accepted-notification");
-    org.assertj.core.api.Assertions.assertThat(emailBrand.values("https://app.example.org", null))
+    org.assertj.core.api.Assertions.assertThat(
+            emailBrand.valuesForTenant("https://app.example.org", null))
         .containsEntry("platformName", "Independent Platform")
         .containsEntry("offeringName", "Independent Platform");
   }
@@ -1033,10 +1044,22 @@ class EmailNotificationFacadeTest {
                       "app.base.url",
                       APPLICATION_BASE_URL,
                       "multitenancy.enabled",
+                      "false",
+                      "feature.multitenancy.with.single.domain.enabled",
                       "false")));
-      context.registerBean(OrisoEmailBrand.class, () -> emailBrand);
+      context.registerBean(
+          de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class,
+          () -> mock(de.caritas.cob.userservice.api.admin.service.tenant.TenantService.class));
+      context.registerBean(TenantTemplateSupplier.class, () -> tenantTemplateSupplier);
+      context.register(
+          de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver.class);
       context.registerBean(EmailNotificationFacade.class, () -> emailNotificationFacade);
       context.refresh();
+      ReflectionTestUtils.setField(
+          emailBrand,
+          "brandingResolver",
+          context.getBean(
+              de.caritas.cob.userservice.api.service.email.layout.EmailBrandingResolver.class));
     }
   }
 

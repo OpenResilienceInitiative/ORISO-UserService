@@ -23,7 +23,8 @@ public class TenantSystemEmailDelivery {
     FREE_TEXT_NOTICE,
     HANDOVER_REQUESTED,
     HANDOVER_CONFIRMED,
-    NEW_MESSAGE
+    NEW_MESSAGE,
+    CONTACT_SHEET
   }
 
   private final @NonNull TenantSystemEmailClient tenantClient;

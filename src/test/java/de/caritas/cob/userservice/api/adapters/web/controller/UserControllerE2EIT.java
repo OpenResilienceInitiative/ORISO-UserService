@@ -196,6 +196,12 @@ class UserControllerE2EIT {
 
   @Autowired private SessionRepository sessionRepository;
 
+  @Autowired
+  private de.caritas.cob.userservice.api.config.apiclient.TenantServiceApiControllerFactory
+      ownerFactory;
+
+  private de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures dpaOwner;
+
   @Autowired private UserVerifier userVerifier;
 
   @Autowired private Messaging messenger;
@@ -249,6 +255,7 @@ class UserControllerE2EIT {
 
   @AfterEach
   void reset() {
+    dpaOwner.close();
     de.caritas.cob.userservice.api.tenant.TenantContext.clear();
     if (nonNull(user)) {
       user.setDeleteDate(null);
@@ -293,6 +300,8 @@ class UserControllerE2EIT {
 
   @BeforeEach
   public void setUp() throws MatrixCreateUserException {
+    dpaOwner =
+        de.caritas.cob.userservice.api.testHelper.DpaOwnerHttpFixtures.permit(ownerFactory, 1L);
     MatrixCreateUserResponseDTO matrixCreateUserResponse = new MatrixCreateUserResponseDTO();
     matrixCreateUserResponse.setUserId("@test-user:matrix.example.org");
     when(matrixSynapseService.createUser(anyString(), anyString(), anyString()))

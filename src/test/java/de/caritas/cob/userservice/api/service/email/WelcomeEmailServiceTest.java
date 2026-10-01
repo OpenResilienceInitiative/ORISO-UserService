@@ -4,12 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import com.neovisionaries.i18n.LanguageCode;
 import de.caritas.cob.userservice.api.model.User;
+import de.caritas.cob.userservice.api.service.email.layout.EmailBrandingFixture;
 import de.caritas.cob.userservice.api.service.email.sender.SenderOrganisationFixture;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -36,7 +38,9 @@ class WelcomeEmailServiceTest {
 
   @Spy
   private OrisoEmailBrand emailBrand =
-      new OrisoEmailBrand(SenderOrganisationFixture.platformOwner());
+      new OrisoEmailBrand(
+          SenderOrganisationFixture.platformOwner(),
+          EmailBrandingFixture.platform("https://app.example.org"));
 
   @InjectMocks private WelcomeEmailService service;
 
@@ -48,7 +52,6 @@ class WelcomeEmailServiceTest {
   void setUp() {
     ReflectionTestUtils.setField(service, "applicationBaseUrl", "https://app.example.org");
     ReflectionTestUtils.setField(service, "emailDummySuffix", "@dummy.invalid");
-    ReflectionTestUtils.setField(emailBrand, "platformName", "Online-Beratung");
     when(platformSmtpSettings.requireConfigured()).thenReturn(smtp);
   }
 
@@ -124,6 +127,18 @@ class WelcomeEmailServiceTest {
     service.sendWelcomeEmail(user, "ruhiges-yak-1428");
 
     verify(dispatcher).send(eq(smtp), eq("jemand@example.org"), any());
+  }
+
+  @Test
+  void brandingFailureLeavesRegistrationMailUnsent() {
+    doThrow(new IllegalStateException("invalid tenant URL"))
+        .when(emailBrand)
+        .valuesForTenant("https://app.example.org", 1L);
+
+    service.sendWelcomeEmail(user("jemand@example.org"), "ruhiges-yak-1428");
+
+    verify(dispatcher, never()).send(any(), anyString(), any());
+    verify(platformSmtpSettings, never()).requireConfigured();
   }
 
   @Test
